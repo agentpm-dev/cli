@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentpm.dev/schemas/agentpm.manifest.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "kind": { "type": "string", "enum": ["agent", "tool"] },
+    "name": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "description": { "type": "string" },
+    "tools": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string", "minLength": 1 },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+              "version": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "entrypoint": { "type": "string", "minLength": 1 },
+    "inputs": { "type": "object" },
+    "outputs": { "type": "object" }
+  },
+
+  "required": ["kind", "name", "version", "description"],
+
+  "oneOf": [
+    {
+      "properties": { "kind": { "const": "agent" } },
+      "required": ["tools"]
+    },
+    {
+      "properties": { "kind": { "const": "tool" } },
+      "required": ["entrypoint", "inputs", "outputs"]
+    }
+  ]
+}
