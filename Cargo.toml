@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "crates/agentpm-cli",
+  "crates/agentpm-sdk"
+]
+resolver = "2"
