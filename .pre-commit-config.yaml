@@ -7,7 +7,6 @@ repos:
         language: system
         types: [rust]
 
-      # Heavier: run clippy on push (workspace-wide, fail on warnings)
       - id: clippy
         name: clippy (workspace)
         entry: bash -lc 'cargo clippy --workspace --all-targets -- -D warnings'

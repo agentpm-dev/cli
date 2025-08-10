@@ -5,10 +5,10 @@ pub use anyhow::{Context, Result};
 pub use clap::{Args, Subcommand};
 
 // Common logging macros
-pub use tracing::{debug, error, info, warn};
+pub use tracing::debug;
 
 // Config and auth helpers are used by most commands
-pub use crate::auth::{TokenCache, read_token, write_token};
+pub use crate::auth::read_token;
 pub use crate::config::Config;
 
 // SDK client (so commands don’t have to name the path)

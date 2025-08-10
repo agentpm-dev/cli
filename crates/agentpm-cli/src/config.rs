@@ -8,6 +8,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub base_url: String,
+    #[allow(dead_code)] // TODO: will be used when we add config file writes
     pub config_dir: PathBuf,
     pub token_file: PathBuf,
 }
