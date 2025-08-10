@@ -1,10 +1,15 @@
-# .pre-commit-config.yaml
 repos:
   - repo: local
     hooks:
       - id: rustfmt
         name: rustfmt (changed files)
-        entry: bash -lc 'rustfmt --edition 2021 "$@"'
+        entry: bash -lc 'rustfmt --edition 2024 "$@"'
         language: system
         types: [rust]
 
+      - id: rustfmt-all
+        name: rustfmt (entire workspace)
+        entry: cargo fmt --all
+        language: system
+        pass_filenames: false
+        stages: [manual]   # won’t run automatically

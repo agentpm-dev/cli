@@ -49,8 +49,8 @@ pub struct ToolRun {
 /// Stream/log event from a run
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
-    pub ts: String,                  // ISO-8601 string for now
-    pub level: String,               // e.g., "info", "error"
+    pub ts: String,    // ISO-8601 string for now
+    pub level: String, // e.g., "info", "error"
     pub message: String,
     pub fields: Option<serde_json::Value>,
 }

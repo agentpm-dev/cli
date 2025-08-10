@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 mod assets;
 mod auth;

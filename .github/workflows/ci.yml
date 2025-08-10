@@ -7,12 +7,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      # Pin the toolchain (recommended to specify an exact version)
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.89.0
+          components: rustfmt, clippy
+
+      - name: Show tool versions
+        run: rustc --version && cargo fmt --version
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
       - name: fmt
         run: cargo fmt --all -- --check
+
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
+
       - name: test
         run: cargo test --all
