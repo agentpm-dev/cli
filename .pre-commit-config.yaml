@@ -7,6 +7,15 @@ repos:
         language: system
         types: [rust]
 
+      # Heavier: run clippy on push (workspace-wide, fail on warnings)
+      - id: clippy
+        name: clippy (workspace)
+        entry: bash -lc 'cargo clippy --workspace --all-targets -- -D warnings'
+        language: system
+        pass_filenames: false
+        stages: [ push ]
+        files: '\.(rs|toml)$'        # only run if Rust/Cargo files changed
+
       - id: rustfmt-all
         name: rustfmt (entire workspace)
         entry: cargo fmt --all
