@@ -8,8 +8,8 @@ pub use clap::{Args, Subcommand};
 pub use tracing::{debug, error, info, warn};
 
 // Config and auth helpers are used by most commands
-pub use crate::config::Config;
 pub use crate::auth::{read_token, write_token, TokenCache};
+pub use crate::config::Config;
 
 // SDK client (so commands don’t have to name the path)
 pub use agentpm_sdk::AgentPmClient;

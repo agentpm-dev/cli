@@ -1,7 +1,7 @@
 use crate::prelude::*;
-pub mod whoami;
-pub mod login;
 pub mod init;
+pub mod login;
+pub mod whoami;
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {

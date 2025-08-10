@@ -4,9 +4,9 @@ use thiserror::Error;
 /// The structured error body returned by the API when status != 2xx
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiErrorBody {
-    pub code: Option<String>,                    // e.g., "unauthorized", "not_found"
-    pub message: Option<String>,                 // human-readable message
-    pub details: Option<serde_json::Value>,      // extra context (optional)
+    pub code: Option<String>,               // e.g., "unauthorized", "not_found"
+    pub message: Option<String>,            // human-readable message
+    pub details: Option<serde_json::Value>, // extra context (optional)
 }
 
 #[derive(Error, Debug)]

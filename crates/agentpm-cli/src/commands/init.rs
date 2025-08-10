@@ -4,7 +4,10 @@ use crate::prelude::*;
 use std::path::PathBuf;
 
 #[derive(clap::ValueEnum, Clone, Debug)]
-pub enum InitKind { Tool, Agent }
+pub enum InitKind {
+    Tool,
+    Agent,
+}
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
@@ -30,19 +33,25 @@ impl InitArgs {
         let out = self.out_dir.unwrap_or(std::env::current_dir()?);
         match self.kind {
             InitKind::Tool => {
-                let rendered = render(TOOL_AGENT_JSON_TPL, &[
-                    ("TOOL_NAME", &self.name),
-                    ("TOOL_DESCRIPTION", &self.description),
-                ]);
+                let rendered = render(
+                    TOOL_AGENT_JSON_TPL,
+                    &[
+                        ("TOOL_NAME", &self.name),
+                        ("TOOL_DESCRIPTION", &self.description),
+                    ],
+                );
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
                 println!("Created {}", path.display());
             }
             InitKind::Agent => {
-                let rendered = render(AGENT_JSON_TPL, &[
-                    ("AGENT_NAME", &self.name),
-                    ("AGENT_DESCRIPTION", &self.description),
-                ]);
+                let rendered = render(
+                    AGENT_JSON_TPL,
+                    &[
+                        ("AGENT_NAME", &self.name),
+                        ("AGENT_DESCRIPTION", &self.description),
+                    ],
+                );
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
                 println!("Created {}", path.display());
