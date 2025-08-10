@@ -1,13 +1,14 @@
 use anyhow::{Context, Result};
-use std::fs;
-use std::path::PathBuf;
 use directories::ProjectDirs;
 use serde::Deserialize;
+use std::fs;
+use std::path::PathBuf;
 
 /// What we use throughout the CLI after merging file/env/flags.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub base_url: String,
+    #[allow(dead_code)] // TODO: will be used when we add config file writes
     pub config_dir: PathBuf,
     pub token_file: PathBuf,
 }

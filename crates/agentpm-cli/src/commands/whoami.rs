@@ -15,7 +15,6 @@ impl WhoAmIArgs {
             debug!("using cached token");
         }
 
-
         let client = AgentPmClient::new(cfg.base_url.clone())?;
 
         match client.whoami().await {
@@ -26,10 +25,16 @@ impl WhoAmIArgs {
                 eprintln!("Not authorized. Try: `agentpm login`.");
             }
             Err(SdkError::Http(e)) if e.is_connect() => {
-                eprintln!("Can’t connect to {}. Check DNS/hosts or server is running.\n{e}", cfg.base_url);
+                eprintln!(
+                    "Can’t connect to {}. Check DNS/hosts or server is running.\n{e}",
+                    cfg.base_url
+                );
             }
             Err(SdkError::Http(e)) if e.is_timeout() => {
-                eprintln!("Request to {} timed out. Is the server reachable?\n{e}", cfg.base_url);
+                eprintln!(
+                    "Request to {} timed out. Is the server reachable?\n{e}",
+                    cfg.base_url
+                );
             }
             Err(e) => {
                 eprintln!("{e}");

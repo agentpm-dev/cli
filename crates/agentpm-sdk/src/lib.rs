@@ -1,6 +1,6 @@
 pub mod client;
-pub mod types;
 pub mod error;
+pub mod types;
 
 pub use client::AgentPmClient;
 pub use error::{Result, SdkError};

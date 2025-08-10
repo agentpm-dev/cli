@@ -1,13 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+mod assets;
+mod auth;
 mod commands;
 mod config;
-mod auth;
-mod prelude;
-mod assets;
 mod io;
+mod prelude;
 /*
 TODO:
 Try: AGENTPM_BASE_URL=http://127.0.0.1:8080 (or whatever you’ll run locally), or
@@ -22,7 +22,12 @@ Add a hosts entry if you want a pretty domain:
 #[command(name = "agentpm", version, about = "AgentPM CLI")]
 struct Cli {
     /// API base URL (env: AGENTPM_BASE_URL)
-    #[arg(long, global = true, env = "AGENTPM_BASE_URL", default_value = "https://api.agentpackagemanager.local")]
+    #[arg(
+        long,
+        global = true,
+        env = "AGENTPM_BASE_URL",
+        default_value = "https://api.agentpackagemanager.local"
+    )]
     base_url: String,
 
     #[command(subcommand)]
