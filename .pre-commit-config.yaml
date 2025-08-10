@@ -13,7 +13,6 @@ repos:
         entry: bash -lc 'cargo clippy --workspace --all-targets -- -D warnings'
         language: system
         pass_filenames: false
-        stages: [ push ]
         files: '\.(rs|toml)$'        # only run if Rust/Cargo files changed
 
       - id: rustfmt-all
