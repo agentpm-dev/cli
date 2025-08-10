@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentpm.dev/schemas/agentpm.manifest.schema.json",
+  "$id": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
   "type": "object",
   "additionalProperties": false,
 
