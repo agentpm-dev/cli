@@ -11,6 +11,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+jsonschema = { version = "0.17", features = ["draft202012"] }
+globwalk = "0.9"
+ureq = { version = "2.9", default-features = true } # simple HTTP for schema fetch
 toml = "0.8"
 directories = "5"
 agentpm-sdk = { path = "../agentpm-sdk" }

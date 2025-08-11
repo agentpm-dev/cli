@@ -1,5 +1,6 @@
 use crate::prelude::*;
 pub mod init;
+pub mod lint;
 pub mod login;
 pub mod whoami;
 
@@ -13,4 +14,7 @@ pub enum Commands {
 
     /// Scaffold agent.json (tool or agent)
     Init(init::InitArgs),
+
+    /// Lint agent.json (tool or agent)
+    Lint(lint::LintArgs),
 }
