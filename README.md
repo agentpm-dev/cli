@@ -1,1 +1,79 @@
 # AgentPM CLI
+
+Command-line tool for building AgentPM tools and agents.
+
+---
+
+## Installation
+
+### Option A — From source (devs & contributors)
+
+Requires the Rust toolchain.
+
+```bash
+# from the repo root
+cargo install --path crates/agentpm-cli --locked
+# binaries go to: ~/.cargo/bin (ensure it's on your PATH)
+```
+
+```bash
+# Update later:
+cargo install --path crates/agentpm-cli --locked
+```
+
+```bash
+# Uninstall:
+cargo uninstall agentpm-cli
+```
+
+### Option B — Prebuilt binaries (no Rust toolchain)
+
+#### macOS (Intel/Apple Silicon) and Linux x86_64.
+```bash
+# One-liner (installs to ~/.local/bin by default)
+curl -fsSL https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh | bash
+```
+
+```bash
+# Review first, then run:
+curl -fsSL -o install.sh https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh
+bash install.sh
+```
+
+```bash
+# Custom install location:
+PREFIX=/usr/local sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh)"
+```
+
+The installer downloads the latest GitHub Release asset for your OS/arch and places agentpm on your PATH.
+
+## Installation
+
+```bash
+agentpm --help
+agentpm init --kind tool --name demo --description "My first tool"
+```
+
+## Contributing
+
+- Toolchain pinned via rust-toolchain.toml
+- CI checks: cargo fmt, cargo clippy -D warnings, cargo test
+
+### Run locally:
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets -- -D warnings
+cargo test --all
+```
+
+#### Pre-commit hooks (optional):
+
+```bash
+pre-commit install --hook-type pre-commit --hook-type pre-push
+pre-commit run --all-files
+```
+
+## License
+
+MIT — see [LICENSE](https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/LICENSE)

@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use jsonschema::{Draft, JSONSchema};
 use serde::Serialize;
 use serde_json::Value;
-use std::fs;
+use std::{fs, path::PathBuf};
 
 #[derive(Args, Debug, Default)]
 pub struct LintArgs {
@@ -48,9 +48,14 @@ struct LintFileReport {
 impl LintArgs {
     pub async fn run(self) -> Result<()> {
         // Resolve schema
-        let schema_source = self
-            .schema
-            .unwrap_or_else(|| "schemas/agentpm.manifest.schema.json".to_string());
+        let schema_source = self.schema.unwrap_or_else(|| {
+            let local_path = PathBuf::from("schemas/agentpm.manifest.schema.json");
+            if local_path.exists() {
+                local_path.to_string_lossy().into_owned()
+            } else {
+                "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json".to_string()
+            }
+        });
         let schema_value = load_schema_value(&schema_source)?;
         let schema_static: &'static serde_json::Value = Box::leak(Box::new(schema_value));
         let compiled = JSONSchema::options()
