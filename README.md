@@ -2,8 +2,6 @@
 
 Command-line tool for building AgentPM tools and agents.
 
----
-
 ## Installation
 
 ### Option A — From source (devs & contributors)
