@@ -8,38 +8,40 @@ Command-line tool for building AgentPM tools and agents.
 
 Requires the Rust toolchain.
 
+#### From the repo root
 ```bash
-# from the repo root
-cargo install --path crates/agentpm-cli --locked
-# binaries go to: ~/.cargo/bin (ensure it's on your PATH)
-```
 
-```bash
-# Update later:
 cargo install --path crates/agentpm-cli --locked
 ```
+binaries go to: ~/.cargo/bin (ensure it's on your PATH)
 
+#### Update later:
 ```bash
-# Uninstall:
+cargo install --path crates/agentpm-cli --locked
+```
+
+#### Uninstall:
+```bash
 cargo uninstall agentpm-cli
 ```
 
 ### Option B — Prebuilt binaries (no Rust toolchain)
 
 #### macOS (Intel/Apple Silicon) and Linux x86_64.
+
+#### One-liner (installs to ~/.local/bin by default)
 ```bash
-# One-liner (installs to ~/.local/bin by default)
 curl -fsSL https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh | bash
 ```
 
+#### Review first, then run:
 ```bash
-# Review first, then run:
 curl -fsSL -o install.sh https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh
 bash install.sh
 ```
 
+#### Custom install location:
 ```bash
-# Custom install location:
 PREFIX=/usr/local sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh)"
 ```
 
