@@ -1,0 +1,60 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # macOS Intel
+          - os: macos-13
+            target: x86_64-apple-darwin
+          # macOS Apple Silicon
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.89.0
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build -p agentpm-cli --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          BIN="agentpm"
+          TGT="${{ matrix.target }}"
+          SRC="target/${TGT}/release/${BIN}"
+          # tar.gz the single binary (no version in the filename → supports /latest/download/)
+          tar -C "target/${TGT}/release" -czf "dist/${BIN}-${TGT}.tar.gz" "${BIN}"
+
+          # Checksums
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            shasum -a 256 "dist/${BIN}-${TGT}.tar.gz" > "dist/${BIN}-${TGT}.sha256"
+          else
+            sha256sum "dist/${BIN}-${TGT}.tar.gz" > "dist/${BIN}-${TGT}.sha256"
+          fi
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/agentpm-${{ matrix.target }}.tar.gz
+            dist/agentpm-${{ matrix.target }}.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
