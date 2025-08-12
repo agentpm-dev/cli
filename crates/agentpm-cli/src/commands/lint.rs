@@ -4,10 +4,7 @@ use anyhow::anyhow;
 use jsonschema::{Draft, JSONSchema};
 use serde::Serialize;
 use serde_json::Value;
-use std::{
-    fs,
-    path::{PathBuf},
-};
+use std::{fs, path::PathBuf};
 
 #[derive(Args, Debug, Default)]
 pub struct LintArgs {
