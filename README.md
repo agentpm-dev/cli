@@ -47,7 +47,29 @@ PREFIX=/usr/local sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/a
 
 The installer downloads the latest GitHub Release asset for your OS/arch and places agentpm on your PATH.
 
-## Installation
+#### macOS PATH note
+
+The installer defaults to `~/.local/bin`, which isn’t on `PATH` by default on macOS.
+
+**Option A — add it to PATH (recommended for user-local installs):**
+```bash
+# zsh (macOS default): add to both login and interactive shells
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+# reload current shell
+source ~/.zprofile 2>/dev/null || true
+source ~/.zshrc    2>/dev/null || true
+# verify
+which agentpm && agentpm --version
+```
+
+**Option B — install system-wide (no PATH changes needed on most Macs):**
+```bash
+PREFIX=/usr/local sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh)"
+```
+Tip: different terminals (Terminal.app, iTerm, VS Code) may read different startup files. Adding to both ~/.zprofile and ~/.zshrc covers most setups.
+
+## Quick start
 
 ```bash
 agentpm --help
