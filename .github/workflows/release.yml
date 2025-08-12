@@ -29,6 +29,16 @@ jobs:
           toolchain: 1.89.0
           targets: ${{ matrix.target }}
 
+      - name: Verify tag matches CLI crate version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CRATE_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/agentpm-cli/Cargo.toml | head -1)
+          if [ "$CRATE_VERSION" != "$TAG" ]; then
+            echo "Version mismatch: tag v$TAG != crates/agentpm-cli $CRATE_VERSION"
+            exit 1
+          fi
+
       - name: Build
         run: cargo build -p agentpm-cli --release --target ${{ matrix.target }}
 
