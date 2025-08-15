@@ -89,6 +89,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set VERSION and download checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
         id: shas
         run: |
           set -euo pipefail
