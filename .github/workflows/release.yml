@@ -71,3 +71,114 @@ jobs:
             dist/agentpm-${{ matrix.target }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+  publish-homebrew:
+    name: "Publish Homebrew formula"
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      OWNER: agentpm-dev
+      REPO: cli
+      TAP_REPO: agentpm-dev/homebrew-tap
+      FORMULA_NAME: agentpm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gh
+        uses: cli/cli@v2
+
+      - name: Set VERSION and download checksums
+        id: shas
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"                       # e.g., v0.1.0
+          VER="${TAG#v}"                                 # 0.1.0
+          echo "ver=$VER" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          
+          mkdir -p dist-sha
+          gh release download "$TAG" -R "$OWNER/$REPO" -p "agentpm-*.sha256" -D dist-sha
+          
+          # Grab the first column (hash) from each file
+          AARCH64_MAC=$(cut -d' ' -f1 dist-sha/agentpm-aarch64-apple-darwin.sha256)
+          X64_MAC=$(cut -d' ' -f1 dist-sha/agentpm-x86_64-apple-darwin.sha256)
+          X64_LINUX=$(cut -d' ' -f1 dist-sha/agentpm-x86_64-unknown-linux-gnu.sha256)
+          
+          echo "aarch64_mac=$AARCH64_MAC" >> $GITHUB_OUTPUT
+          echo "x64_mac=$X64_MAC" >> $GITHUB_OUTPUT
+          echo "x64_linux=$X64_LINUX" >> $GITHUB_OUTPUT
+
+      - name: Generate Homebrew formula
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.shas.outputs.tag }}"
+          VER="${{ steps.shas.outputs.ver }}"
+          AARCH64_MAC="${{ steps.shas.outputs.aarch64_mac }}"
+          X64_MAC="${{ steps.shas.outputs.x64_mac }}"
+          X64_LINUX="${{ steps.shas.outputs.x64_linux }}"
+          
+          mkdir -p tap/Formula
+          cat > tap/Formula/${FORMULA_NAME}.rb <<'RUBY'
+          class Agentpm < Formula
+            desc "AgentPM CLI"
+            homepage "https://github.com/agentpm-dev/cli"
+            version "__VER__"
+            license "MIT"
+          
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/agentpm-dev/cli/releases/download/__TAG__/agentpm-aarch64-apple-darwin.tar.gz"
+                sha256 "__AARCH64_MAC__"
+              else
+                url "https://github.com/agentpm-dev/cli/releases/download/__TAG__/agentpm-x86_64-apple-darwin.tar.gz"
+                sha256 "__X64_MAC__"
+              end
+            end
+          
+            on_linux do
+              if Hardware::CPU.intel?
+                url "https://github.com/agentpm-dev/cli/releases/download/__TAG__/agentpm-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "__X64_LINUX__"
+              else
+                odie "Unsupported architecture"
+              end
+            end
+          
+            def install
+              bin.install "agentpm"
+            end
+          
+            test do
+              output = shell_output("#{bin}/agentpm --version")
+              assert_match "agentpm", output
+            end
+          end
+          RUBY
+          
+          sed -i "s/__TAG__/$TAG/g" tap/Formula/${FORMULA_NAME}.rb
+          sed -i "s/__VER__/$VER/g" tap/Formula/${FORMULA_NAME}.rb
+          sed -i "s/__AARCH64_MAC__/$AARCH64_MAC/g" tap/Formula/${FORMULA_NAME}.rb
+          sed -i "s/__X64_MAC__/$X64_MAC/g" tap/Formula/${FORMULA_NAME}.rb
+          sed -i "s/__X64_LINUX__/$X64_LINUX/g" tap/Formula/${FORMULA_NAME}.rb
+
+      - name: Create PR in tap repo
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.AGENTPM_TAP_TOKEN }}   # <-- PAT with write to agentpm-dev/homebrew-tap
+          commit-message: "agentpm: update formula to ${{ steps.shas.outputs.ver }}"
+          title: "agentpm ${{
+              steps.shas.outputs.ver }} (automated)"
+          body: "Update formula for tag ${{ steps.shas.outputs.tag }}"
+          branch: "agentpm-${{ steps.shas.outputs.ver }}"
+          delete-branch: true
+          base: "main"
+          path: "tap"
+          push-to-fork: "false"
+          signoff: true
+          author: "agentpm-bot <bot@users.noreply.github.com>"
+          committer: "agentpm-bot <bot@users.noreply.github.com>"
+          repository: ${{ env.TAP_REPO }}
