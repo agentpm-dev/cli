@@ -88,9 +88,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install gh
-        uses: cli/cli@v2
-
       - name: Set VERSION and download checksums
         id: shas
         run: |
