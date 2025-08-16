@@ -78,7 +78,7 @@ jobs:
           Compress-Archive -Path $BinPath -DestinationPath $Zip
           Get-FileHash $Zip -Algorithm SHA256 | ForEach-Object { $_.Hash + "  " + $Zip } | Out-File "dist/agentpm-${{ matrix.target }}.sha256" -Encoding ascii
 
-      - name: Upload release assets
+      - name: Upload release assets (Unix)
         if: matrix.os != 'windows-latest'
         uses: softprops/action-gh-release@v2
         with:
