@@ -167,17 +167,13 @@ jobs:
       - name: Create PR in tap repo
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.AGENTPM_TAP_TOKEN }}   # <-- PAT with write to agentpm-dev/homebrew-tap
+          token: ${{ secrets.AGENTPM_TAP_TOKEN }}   # PAT with write to agentpm-dev/homebrew-tap
+          repository: agentpm-dev/homebrew-tap
+          path: tap
           commit-message: "agentpm: update formula to ${{ steps.shas.outputs.ver }}"
-          title: "agentpm ${{
-              steps.shas.outputs.ver }} (automated)"
+          title: "agentpm ${{ steps.shas.outputs.ver }} (automated)"
           body: "Update formula for tag ${{ steps.shas.outputs.tag }}"
           branch: "agentpm-${{ steps.shas.outputs.ver }}"
           delete-branch: true
           base: "main"
-          path: "tap"
-          push-to-fork: "false"
           signoff: true
-          author: "agentpm-bot <bot@users.noreply.github.com>"
-          committer: "agentpm-bot <bot@users.noreply.github.com>"
-          repository: ${{ env.TAP_REPO }}
