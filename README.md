@@ -31,6 +31,32 @@ agentpm --version
 brew info agentpm
 ```
 
+#### Scoop (Windows)
+
+Install via our Scoop bucket:
+```powershell
+scoop bucket add agentpm https://github.com/agentpm-dev/scoop-bucket
+scoop install agentpm
+```
+
+Upgrade:
+```powershell
+scoop update
+scoop update agentpm
+```
+
+Uninstall:
+```bash
+scoop uninstall agentpm
+```
+
+Verify:
+```bash
+where agentpm
+agentpm --version
+scoop info agentpm
+```
+
 ### Option B — From source (devs & contributors)
 
 Requires the Rust toolchain.
