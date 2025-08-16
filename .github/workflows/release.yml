@@ -23,6 +23,9 @@ jobs:
           # macOS Apple Silicon
           - os: macos-latest
             target: aarch64-apple-darwin
+          # Windows
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +48,8 @@ jobs:
       - name: Build
         run: cargo build -p agentpm-cli --release --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           set -euo pipefail
@@ -62,6 +66,16 @@ jobs:
           else
             sha256sum "dist/${BIN}-${TGT}.tar.gz" > "dist/${BIN}-${TGT}.sha256"
           fi
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $BinPath = "target/${{ matrix.target }}/release/agentpm.exe"
+          $Zip = "dist/agentpm-${{ matrix.target }}.zip"
+          Compress-Archive -Path $BinPath -DestinationPath $Zip
+          Get-FileHash $Zip -Algorithm SHA256 | ForEach-Object { $_.Hash + "  " + $Zip } | Out-File "dist/agentpm-${{ matrix.target }}.sha256" -Encoding ascii
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
