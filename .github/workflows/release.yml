@@ -79,10 +79,21 @@ jobs:
           Get-FileHash $Zip -Algorithm SHA256 | ForEach-Object { $_.Hash + "  " + $Zip } | Out-File "dist/agentpm-${{ matrix.target }}.sha256" -Encoding ascii
 
       - name: Upload release assets
+        if: matrix.os != 'windows-latest'
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/agentpm-${{ matrix.target }}.tar.gz
+            dist/agentpm-${{ matrix.target }}.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release assets (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/agentpm-${{ matrix.target }}.zip
             dist/agentpm-${{ matrix.target }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
