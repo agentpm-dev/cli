@@ -4,6 +4,33 @@
   "type": "object",
   "additionalProperties": false,
 
+  "$defs": {
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "version"],
+      "properties": {
+        "type": { "type": "string", "enum": ["python", "node"] },
+        "version": {
+          "type": "string",
+          "description": "Minimum required runtime version",
+          "pattern": "^\\d+(\\.\\d+){0,2}$"
+        }
+      }
+    }
+  },
+
+  "dependentSchemas": {
+    "tools":      { "properties": { "kind": { "const": "agent" } } },
+    "entrypoint": {
+      "properties": { "kind": { "const": "tool" } }
+    },
+    "inputs":     { "properties": { "kind": { "const": "tool" } } },
+    "outputs":    { "properties": { "kind": { "const": "tool" } } },
+    "files":      { "properties": { "kind": { "const": "tool" } } },
+    "runtime":    { "properties": { "kind": { "const": "tool" } } }
+  },
+
   "properties": {
     "$schema": { "type": "string", "format": "uri" },
     "kind": { "type": "string", "enum": ["agent", "tool"] },
@@ -30,6 +57,12 @@
         ]
       }
     },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "runtime": { "$ref": "#/$defs/runtime" },
     "entrypoint": { "type": "string", "minLength": 1 },
     "inputs": { "type": "object" },
     "outputs": { "type": "object" }
@@ -44,7 +77,7 @@
     },
     {
       "properties": { "kind": { "const": "tool" } },
-      "required": ["entrypoint", "inputs", "outputs"]
+      "required": ["entrypoint", "inputs", "outputs", "files"]
     }
   ]
 }
