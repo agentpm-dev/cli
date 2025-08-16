@@ -9,7 +9,6 @@ Command-line tool for building AgentPM tools and agents.
 #### Homebrew (macOS & Linux)
 
 Install via our tap:
-
 ```bash
 brew tap agentpm-dev/tap
 brew install agentpm
@@ -36,46 +35,46 @@ brew info agentpm
 
 Requires the Rust toolchain.
 
-#### From the repo root
+From the repo root:
 ```bash
 
 cargo install --path crates/agentpm-cli --locked
 ```
 binaries go to: ~/.cargo/bin (ensure it's on your PATH)
 
-#### Update later:
+Update later:
 ```bash
 cargo install --path crates/agentpm-cli --locked
 ```
 
-#### Uninstall:
+Uninstall:
 ```bash
 cargo uninstall agentpm-cli
 ```
 
-### Option B — Prebuilt binaries (no Rust toolchain)
+### Option C — Prebuilt binaries (no Rust toolchain)
 
 #### macOS (Intel/Apple Silicon) and Linux x86_64.
 
-#### One-liner (installs to ~/.local/bin by default)
+One-liner (installs to ~/.local/bin by default)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh | bash
 ```
 
-#### Review first, then run:
+Review first, then run:
 ```bash
 curl -fsSL -o install.sh https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh
 bash install.sh
 ```
 
-#### Custom install location:
+Custom install location:
 ```bash
 PREFIX=/usr/local sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh)"
 ```
 
 The installer downloads the latest GitHub Release asset for your OS/arch and places agentpm on your PATH.
 
-#### macOS PATH note
+**macOS PATH note**
 
 The installer defaults to `~/.local/bin`, which isn’t on `PATH` by default on macOS.
 
