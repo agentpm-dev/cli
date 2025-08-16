@@ -202,3 +202,89 @@ jobs:
           delete-branch: true
           base: "main"
           signoff: true
+
+
+  publish-scoop:
+    name: "Publish Scoop manifest"
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      OWNER: agentpm-dev
+      REPO: cli
+      BUCKET_REPO: agentpm-dev/scoop-bucket
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set VERSION and download Windows checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        id: shas
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"      # v0.1.0
+          VER="${TAG#v}"                # 0.1.0
+          echo "ver=$VER" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          
+          mkdir -p dist-sha
+          gh release download "$TAG" -R "$OWNER/$REPO" -p "agentpm-x86_64-pc-windows-msvc.sha256" -D dist-sha
+          WIN64=$(cut -d' ' -f1 dist-sha/agentpm-x86_64-pc-windows-msvc.sha256)
+          echo "win64=$WIN64" >> $GITHUB_OUTPUT
+
+      - name: Checkout scoop-bucket
+        uses: actions/checkout@v4
+        with:
+          repository: agentpm-dev/scoop-bucket
+          token: ${{ secrets.AGENTPM_TAP_TOKEN }}
+          path: scoop
+          fetch-depth: 0
+
+      - name: Generate Scoop manifest
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.shas.outputs.tag }}"
+          VER="${{ steps.shas.outputs.ver }}"
+          WIN64="${{ steps.shas.outputs.win64 }}"
+          
+          mkdir -p scoop/bucket
+          cat > scoop/bucket/agentpm.json <<JSON
+          {
+            "version": "$VER",
+            "description": "AgentPM CLI",
+            "homepage": "https://github.com/agentpm-dev/cli",
+            "license": "MIT",
+            "architecture": {
+              "64bit": {
+                "url": "https://github.com/agentpm-dev/cli/releases/download/$TAG/agentpm-x86_64-pc-windows-msvc.zip",
+                "hash": "$WIN64"
+              }
+            },
+            "bin": "agentpm.exe",
+            "checkver": {
+              "github": "https://github.com/agentpm-dev/cli"
+            },
+            "autoupdate": {
+              "architecture": {
+                "64bit": {
+                  "url": "https://github.com/agentpm-dev/cli/releases/download/v\$version/agentpm-x86_64-pc-windows-msvc.zip"
+                }
+              }
+            }
+          }
+          JSON
+
+      - name: Create PR in Scoop bucket
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.AGENTPM_TAP_TOKEN }}   # PAT with write to agentpm-dev/scoop-bucket
+          path: scoop
+          commit-message: "agentpm: ${{ steps.shas.outputs.ver }}"
+          title: "agentpm ${{ steps.shas.outputs.ver }} (automated)"
+          body: "Update manifest for tag ${{ steps.shas.outputs.tag }}"
+          branch: "agentpm-${{ steps.shas.outputs.ver }}"
+          delete-branch: true
+          base: "main"
+          signoff: true
