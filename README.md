@@ -2,6 +2,11 @@
 
 Command-line tool for building AgentPM tools and agents.
 
+[![CI](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml)
+[![Homebrew tap](https://img.shields.io/badge/homebrew-agentpm--dev%2Ftap-blue)](https://github.com/agentpm-dev/homebrew-tap)
+[![Scoop bucket](https://img.shields.io/badge/scoop-agentpm--dev%2Fscoop--bucket-blue)](https://github.com/agentpm-dev/scoop-bucket)
+
+
 ## Installation
 
 ### Option A — Package Managers
