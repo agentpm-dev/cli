@@ -111,6 +111,14 @@ jobs:
           echo "x64_mac=$X64_MAC" >> $GITHUB_OUTPUT
           echo "x64_linux=$X64_LINUX" >> $GITHUB_OUTPUT
 
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: agentpm-dev/homebrew-tap
+          token: ${{ secrets.AGENTPM_TAP_TOKEN }}
+          path: tap
+          fetch-depth: 0
+
       - name: Generate Homebrew formula
         run: |
           set -euo pipefail
@@ -163,12 +171,14 @@ jobs:
           sed -i "s/__AARCH64_MAC__/$AARCH64_MAC/g" tap/Formula/${FORMULA_NAME}.rb
           sed -i "s/__X64_MAC__/$X64_MAC/g" tap/Formula/${FORMULA_NAME}.rb
           sed -i "s/__X64_LINUX__/$X64_LINUX/g" tap/Formula/${FORMULA_NAME}.rb
+          
+          echo "Preview:"
+          head -n 40 tap/Formula/${FORMULA_NAME}.rb || true
 
       - name: Create PR in tap repo
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.AGENTPM_TAP_TOKEN }}   # PAT with write to agentpm-dev/homebrew-tap
-          repository: agentpm-dev/homebrew-tap
+          token: ${{ secrets.AGENTPM_TAP_TOKEN }}
           path: tap
           commit-message: "agentpm: update formula to ${{ steps.shas.outputs.ver }}"
           title: "agentpm ${{ steps.shas.outputs.ver }} (automated)"
