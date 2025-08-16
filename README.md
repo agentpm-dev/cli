@@ -134,6 +134,10 @@ agentpm --help
 agentpm init --kind tool --name demo --description "My first tool"
 ```
 
+### Manifest schema
+
+See the [schema docs](./schemas/README.md) for `agent.json` format, validation, and examples.
+
 ## Contributing
 
 - Toolchain pinned via rust-toolchain.toml

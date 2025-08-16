@@ -1,0 +1,196 @@
+# AgentPM Manifest Schema
+
+This folder contains the JSON Schema that defines `agent.json` for AgentPM.
+
+- **File:** `agentpm.manifest.schema.json`
+- **Kinds:** `agent` (composed of tools) and `tool` (single tool package)
+- **Strictness:** `additionalProperties: false` (unknown fields are rejected)
+
+---
+
+## Quick start
+
+### Generate from the CLI
+
+You can scaffold a valid manifest with the CLI:
+
+```bash
+agentpm init --kind tool --name summarize --description "Summarize input text"
+```
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
+  "kind": "tool",
+  "name": "summarize",
+  "version": "0.1.0",
+  "description": "Summarize input text",
+  "entrypoint": "dist/summarize.js",
+  "inputs": { "type": "object" },
+  "outputs": { "type": "object" },
+  "files": ["dist/"],
+  "runtime": { "type": "node", "version": "20.10" }
+}
+```
+
+```bash
+agentpm init --kind agent --name research-assistant --description "Assistant composed of multiple tools"
+```
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "kind": "agent",
+  "name": "research-assistant",
+  "version": "0.1.0",
+  "description": "Assistant composed of multiple tools",
+  "tools": [
+    { "name": "summarize", "version": "0.1.0" }
+  ]
+}
+```
+
+> For fully reproducible validation, **pin to a tag or commit**:
+>
+> ```
+> https://raw.githubusercontent.com/agentpm-dev/cli/v0.1.0/schemas/agentpm.manifest.schema.json
+> ```
+> or
+> ```
+> https://raw.githubusercontent.com/agentpm-dev/cli/<COMMIT_SHA>/schemas/agentpm.manifest.schema.json
+> ```
+
+---
+
+## Validate locally
+
+Use the built-in linter:
+```bash
+# In the directory containing agent.json
+agentpm lint
+```
+
+Or specify a path:
+```bash
+agentpm lint path/to/agent.json
+```
+
+> Editor tips: most IDEs (VS Code, JetBrains) will validate automatically when `$schema` is present.
+
+---
+
+## Field reference (overview)
+
+| Field         | Type      | Required | Allowed on | Notes |
+|---------------|-----------|----------|------------|-------|
+| `$schema`     | string    | no       | both       | URI to this schema (optional but recommended) |
+| `kind`        | enum      | **yes**  | both       | `"agent"` or `"tool"` (discriminator) |
+| `name`        | string    | **yes**  | both       | `^[a-z][a-z0-9-]{0,63}$` |
+| `version`     | semver    | **yes**  | both       | SemVer string (supports pre/metadata) |
+| `description` | string    | **yes**  | both       | Free text |
+| `tools`       | array     | **yes**¹ | **agent**  | Array of tool refs: string or `{name, version}` |
+| `entrypoint`  | string    | **yes**² | **tool**   | Path to runnable entry (e.g., `dist/main.js`) |
+| `inputs`      | object    | **yes**² | **tool**   | JSON Schema (or shape) for inputs |
+| `outputs`     | object    | **yes**² | **tool**   | JSON Schema (or shape) for outputs |
+| `files`       | string[]  | **yes**² | **tool**   | Non-empty list of paths/globs to package |
+| `runtime`     | object    | no       | **tool**   | `{ type: "python"|"node", version: "MAJOR[.MINOR[.PATCH]]" }` |
+
+¹ required only when `kind = "agent"`  
+² required only when `kind = "tool"`
+
+**Kind-specific rules** are enforced via schema constraints:
+- `entrypoint`, `inputs`, `outputs`, `files`, `runtime` ⇒ **only valid on tools**
+- `tools` ⇒ **only valid on agents**
+
+---
+
+## Examples
+
+### Tool (single-tool package)
+
+```json
+{
+  "kind": "tool",
+  "name": "summarize",
+  "version": "0.1.0",
+  "description": "Summarize input text",
+  "entrypoint": "dist/summarize.js",
+  "inputs": { "type": "object" },
+  "outputs": { "type": "object" },
+  "files": ["dist/"],
+  "runtime": { "type": "node", "version": "20.10" }
+}
+```
+
+### Agent (composed)
+
+```json
+{
+  "kind": "agent",
+  "name": "research-assistant",
+  "version": "0.1.0",
+  "description": "Assistant composed of multiple tools",
+  "tools": [
+    "tool://acme/summarize@1.2.0",
+    { "name": "translate", "version": "1.0.0" }
+  ]
+}
+```
+
+## Defining `inputs` and `outputs`
+
+Both `inputs` and `outputs` are **JSON Schema (Draft 2020-12)** objects that describe the shape your tool expects/returns. The most common pattern is:
+
+- `type: "object"`
+- a `properties` map
+- a `required` list
+- (optional but recommended) `additionalProperties: false`
+
+```json
+"inputs": {
+  "type": "object",
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "Text to process"
+    }
+  },
+  "required": ["text"]
+},
+"outputs": {
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "Summarized text"
+    }
+  },
+  "required": ["summary"]
+}
+```
+
+---
+
+## Versioning & stability
+
+- The schema file is versioned in this repo. When making **breaking** changes, copy to a new filename (e.g., `agentpm.manifest.schema.v2.json`) and update docs.
+- Generators should point `$schema` to a **tag** (e.g., `v0.1.0`) or **commit** for stability.
+- The CLI will evolve to validate manifests against the bundled schema version it supports.
+
+---
+
+## Design notes
+
+- **Strict by default:** `additionalProperties: false` rejects unknown fields.
+- **SemVer check:** `version` uses a SemVer-compatible regex.
+- **Paths:** `files` entries are strings; treat them as repo-relative paths or globs. Future work may add `exclude`.
+
+---
+
+## Contributing
+
+PRs welcome! If you add fields:
+1. Update the schema with constraints.
+2. Add examples under `schemas/examples/`.
+3. Note whether they’re `agent`-only or `tool`-only.
+4. Update this README and the main CLI README as needed.
