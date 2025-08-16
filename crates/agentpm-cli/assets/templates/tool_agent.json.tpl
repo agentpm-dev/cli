@@ -4,6 +4,7 @@
   "name": "{{TOOL_NAME}}",
   "version": "0.1.0",
   "description": "{{TOOL_DESCRIPTION}}",
+  "files": [],
   "entrypoint": "{{TOOL_ENTRYPOINT}}",
   "inputs": {
     "type": "object",
