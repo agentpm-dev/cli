@@ -4,7 +4,35 @@ Command-line tool for building AgentPM tools and agents.
 
 ## Installation
 
-### Option A — From source (devs & contributors)
+### Option A — Package Managers
+
+#### Homebrew (macOS & Linux)
+
+Install via our tap:
+
+```bash
+brew tap agentpm-dev/tap
+brew install agentpm
+```
+
+Upgrade:
+```bash
+brew update && brew upgrade agentpm
+```
+
+Uninstall:
+```bash
+brew uninstall agentpm
+```
+
+Verify:
+```bash
+which agentpm
+agentpm --version
+brew info agentpm
+```
+
+### Option B — From source (devs & contributors)
 
 Requires the Rust toolchain.
 
