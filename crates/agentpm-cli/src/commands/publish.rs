@@ -1,0 +1,298 @@
+use crate::auth;
+use crate::manifest::{
+    ToolManifest, load_manifest_value, parse_tool_manifest, resolve_schema_source,
+    validate_manifest_value,
+};
+use crate::prelude::*;
+use anyhow::{anyhow, bail};
+use flate2::{Compression, write::GzEncoder};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::path::Component;
+use std::{
+    collections::HashSet,
+    fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
+use tar::Builder as TarBuilder;
+use tracing::{info, warn};
+use walkdir::WalkDir;
+
+#[derive(Args, Debug, Default)]
+pub struct PublishArgs {
+    /// Path to the manifest (agent.json)
+    #[arg(long, default_value = "agent.json")]
+    pub manifest: String,
+
+    /// Override schema URL or path (same flag as lint)
+    #[arg(long, value_name = "URL|PATH")]
+    pub schema: Option<String>,
+
+    /// Treat warnings as errors (same semantics as lint)
+    #[arg(long)]
+    pub strict: bool,
+
+    /// Dry-run: validate and package but do not upload
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// Server response for the MVP one-shot upload endpoint
+#[derive(Debug, Deserialize)]
+struct PublishReceipt {
+    // Stable fields we plan to return from the API
+    #[allow(dead_code)]
+    pub id: String, // tool artifact id
+    #[allow(dead_code)]
+    pub name: String, // tool name
+    #[allow(dead_code)]
+    pub version: String, // version just published
+    #[allow(dead_code)]
+    pub url: String, // canonical UI URL (www / apex)
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub message: String, // optional server note
+}
+
+impl PublishArgs {
+    pub async fn run(self, base_url: String) -> Result<()> {
+        let cfg = Config::load(base_url.clone())?;
+
+        // 1) Load PAT (login is required; for MVP we use cached token)
+        let _token = match auth::read_token(&cfg)? {
+            Some(t) => t.access_token,
+            None => {
+                return Err(anyhow!(
+                    "Not logged in. Run `agentpm login` to store a Personal Access Token."
+                ));
+            }
+        };
+
+        // 2) Validate manifest using the same schema as `lint`
+        let manifest_path = PathBuf::from(&self.manifest);
+        let (mut manifest_value, _raw) = load_manifest_value(&manifest_path)
+            .with_context(|| format!("loading {}", manifest_path.display()))?;
+
+        let schema_source = resolve_schema_source(self.schema);
+        let (schema_ok, issues) = validate_manifest_value(
+            &schema_source,
+            &manifest_path.to_string_lossy(),
+            &mut manifest_value,
+            /*fix=*/ false,
+        )?;
+
+        // Print issues like lint
+        for i in &issues {
+            let badge = if i.level == "error" { "ERROR" } else { "WARN " };
+            eprintln!("  [{badge}] {}", i.message);
+            if !i.instance_path.is_empty() {
+                eprintln!("        at instance {}", i.instance_path);
+            }
+            if !i.schema_path.is_empty() {
+                eprintln!("        vs schema  {}", i.schema_path);
+            }
+        }
+
+        // strict semantics match lint
+        let has_error = issues.iter().any(|i| i.level == "error");
+        let has_warning = issues.iter().any(|i| i.level == "warning");
+        let ok_flag = if self.strict {
+            schema_ok && !has_warning
+        } else {
+            schema_ok && !has_error
+        };
+        if !ok_flag {
+            return Err(anyhow!(
+                "Manifest validation failed (strict={})",
+                self.strict
+            ));
+        }
+
+        // 3) Strongly-typed and kind enforcement (shared)
+        let mf = parse_tool_manifest(&manifest_value)?;
+
+        // 4) Package files: agent.json + entrypoint + declared files
+        let tar_path = package_tool(&mf, &manifest_path).context("packaging files into tar.gz")?;
+        let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
+
+        info!(
+            "Package ready: {} ({} bytes, sha256:{})",
+            tar_path.display(),
+            size_bytes,
+            sha256_hex
+        );
+
+        if self.dry_run {
+            println!("Dry-run: package created at {}", tar_path.display());
+            return Ok(());
+        }
+
+        // 5) Upload to registry (MVP: single call, multipart form)
+        //    POST {base_url}/v1/tools/publish
+        //    Authorization: Bearer <PAT>
+        //    multipart fields:
+        //      - metadata: JSON (manifest + client info + sha256/size)
+        //      - artifact: file (application/gzip)
+
+        Ok(())
+    }
+}
+
+// === Helpers ===
+
+/// Create a .tar.gz containing:
+/// - agent.json (as root/agent.json)
+/// - entrypoint (preserve the relative path)
+/// - files patterns (globs/dirs), preserving relative paths
+fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf> {
+    // Root directory where manifest lives
+    let root = manifest_path.parent().unwrap_or(Path::new("."));
+    let out_dir = root.join("target").join("agentpm");
+    fs::create_dir_all(&out_dir).ok();
+
+    let out_path = out_dir.join(format!("{}-{}.tar.gz", manifest.name, manifest.version));
+    let f =
+        fs::File::create(&out_path).with_context(|| format!("creating {}", out_path.display()))?;
+    let enc = GzEncoder::new(f, Compression::default());
+    let mut tar = TarBuilder::new(enc);
+
+    // 1) agent.json
+    {
+        let mut header = tar::Header::new_gnu();
+        let manifest_bytes = fs::read(manifest_path)?;
+        header.set_size(manifest_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+    }
+
+    // 2) entrypoint
+    let (ep_abs, ep_tar_name) = validate_and_locate_entrypoint(root, &manifest.entrypoint)?;
+    append_path_to_tar_named(&mut tar, &ep_abs, &ep_tar_name)?;
+
+    // Start dedup set using normalized tar names
+    let mut seen: HashSet<String> = HashSet::new();
+    seen.insert(ep_tar_name.clone());
+
+    // 3) files array (dirs/globs)
+    for pat in &manifest.files {
+        let rel = Path::new(pat);
+        let abs = root.join(rel);
+        if !abs.exists() {
+            warn!("files entry does not exist: {}", abs.display());
+            continue;
+        }
+
+        if abs.is_file() {
+            let tar_name = rel_to_tar_name(rel);
+            if seen.insert(tar_name.clone()) {
+                append_path_to_tar_named(&mut tar, &abs, &tar_name)?;
+            }
+        } else {
+            for entry in WalkDir::new(&abs).into_iter().filter_map(|e| e.ok()) {
+                let path_abs = entry.path();
+                if path_abs.is_dir() {
+                    continue;
+                }
+
+                // Compute a project-relative path then normalize to a tar name
+                let rel_path = match path_abs.strip_prefix(root) {
+                    Ok(r) => r.to_path_buf(),
+                    Err(_) => {
+                        // Outside the project root, skip (extra safety)
+                        continue;
+                    }
+                };
+                let tar_name = rel_to_tar_name(&rel_path);
+
+                // Exclude our packaging output
+                if tar_name.starts_with("target/agentpm/") {
+                    continue;
+                }
+
+                if seen.insert(tar_name.clone()) {
+                    append_path_to_tar_named(&mut tar, path_abs, &tar_name)?;
+                }
+            }
+        }
+    }
+
+    tar.finish()?;
+    Ok(out_path)
+}
+
+// Normalize a relative Path into a forward-slash tar name (portable across OSes)
+fn rel_to_tar_name(p: &Path) -> String {
+    p.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn validate_and_locate_entrypoint(root: &Path, entrypoint: &str) -> Result<(PathBuf, String)> {
+    let ep_rel = Path::new(entrypoint);
+
+    // Must be a relative path with no parent traversal
+    if ep_rel.is_absolute() {
+        bail!(
+            "`entrypoint` must be a relative path (got absolute: {})",
+            ep_rel.display()
+        );
+    }
+    if ep_rel
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        bail!("`entrypoint` must not contain `..`: {}", ep_rel.display());
+    }
+
+    let ep_abs = root.join(ep_rel);
+    let md = std::fs::metadata(&ep_abs)
+        .with_context(|| format!("entrypoint file not found: {}", ep_abs.display()))?;
+    if !md.is_file() {
+        bail!("`entrypoint` is not a file: {}", ep_abs.display());
+    }
+
+    let tar_name = rel_to_tar_name(ep_rel); // exactly matches manifest string, normalized
+    Ok((ep_abs, tar_name))
+}
+
+fn append_path_to_tar_named<W: Write>(
+    tar: &mut TarBuilder<W>,
+    abs: &Path,
+    name_in_tar: &str,
+) -> Result<()> {
+    let mut header = tar::Header::new_gnu();
+    let md = std::fs::metadata(abs)?;
+    header.set_size(md.len());
+    header.set_mode(0o644);
+    header.set_cksum();
+    let mut f = std::fs::File::open(abs)?;
+    tar.append_data(&mut header, name_in_tar, &mut f)?;
+    Ok(())
+}
+
+fn file_digest_and_len(path: &Path) -> Result<(String, u64)> {
+    let mut f = fs::File::open(path)?;
+    let mut sha = Sha256::new();
+    let len = io::copy(&mut f, &mut sha::Writer(&mut sha))
+        .map_err(|e| anyhow!("hashing {}: {}", path.display(), e))?;
+    let hex = format!("{:x}", sha.finalize());
+    Ok((hex, len))
+}
+
+// helper to use io::copy into a hasher
+mod sha {
+    use sha2::Digest;
+    pub struct Writer<'a, D: Digest>(pub &'a mut D);
+    impl<'a, D: Digest> std::io::Write for Writer<'a, D> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.update(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+}

@@ -2,6 +2,7 @@ use crate::prelude::*;
 pub mod init;
 pub mod lint;
 pub mod login;
+pub mod publish;
 pub mod whoami;
 
 #[derive(Subcommand, Debug)]
@@ -17,4 +18,7 @@ pub enum Commands {
 
     /// Lint agent.json (tool or agent)
     Lint(lint::LintArgs),
+
+    /// Publish a tool to the registry
+    Publish(publish::PublishArgs),
 }

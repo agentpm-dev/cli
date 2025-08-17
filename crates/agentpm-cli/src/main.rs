@@ -7,8 +7,8 @@ mod auth;
 mod commands;
 mod config;
 mod io;
+mod manifest;
 mod prelude;
-mod util;
 /*
 TODO:
 Try: AGENTPM_BASE_URL=http://127.0.0.1:8080 (or whatever you’ll run locally), or
@@ -48,5 +48,6 @@ async fn main() -> Result<()> {
         commands::Commands::Login(args) => args.run(cli.base_url.clone()).await,
         commands::Commands::Init(args) => args.run(cli.base_url.clone()).await,
         commands::Commands::Lint(args) => args.run().await,
+        commands::Commands::Publish(arg) => arg.run(cli.base_url.clone()).await,
     }
 }
