@@ -3,6 +3,8 @@ use reqwest::multipart;
 use reqwest::{Client, Response};
 use serde_json::Value;
 use std::time::Duration;
+use std::net::IpAddr;
+use url::Url;
 
 #[derive(Clone)]
 pub struct AgentPmClient {
@@ -32,13 +34,34 @@ impl AgentPmClient {
     }
 
     fn api_base(&self) -> String {
-        let b = self.base_url.trim_end_matches('/');
-        if b.contains("://api.") {
-            b.to_string()
-        } else if let Some((scheme, rest)) = b.split_once("://") {
+        let raw = self.base_url.trim_end_matches('/');
+
+        // Try robust parsing first
+        if let Ok(u) = Url::parse(raw) {
+            let host = u.host_str().unwrap_or("");
+
+            // localhost or any IP: don't rewrite
+            let is_ip = host.parse::<IpAddr>().is_ok();
+            let is_local = host.eq_ignore_ascii_case("localhost");
+            if is_ip || is_local || host.starts_with("api.") {
+                return trim_trailing_slash(u.as_str());
+            }
+
+            // Rewrite www/apex → api.<domain>, keep scheme/port/path
+            let rewritten = format!("api.{}", host.trim_start_matches("www."));
+            let mut out = u;
+            // set_host only changes the host; scheme/port/path preserved
+            let _ = out.set_host(Some(&rewritten));
+            return trim_trailing_slash(out.as_str());
+        }
+
+        // Fallback heuristic if parse fails (rare)
+        if raw.contains("localhost") || raw.contains("://api.") {
+            raw.to_string()
+        } else if let Some((scheme, rest)) = raw.split_once("://") {
             format!("{}://api.{}", scheme, rest.trim_start_matches("www."))
         } else {
-            format!("https://api.{}", b.trim_start_matches("www."))
+            format!("https://api.{}", raw.trim_start_matches("www."))
         }
     }
 
@@ -71,7 +94,7 @@ impl AgentPmClient {
         artifact_path: impl AsRef<std::path::Path>,
         suggested_filename: &str,
     ) -> Result<crate::types::PublishReceipt> {
-        let url = format!("{}/v1/tools/publish", self.api_base());
+        let url = format!("{}/v1/tools", self.api_base());
 
         // MVP: read into memory (simple and fine for small/med artifacts)
         let bytes = tokio::fs::read(&artifact_path).await.map_err(|e| {
@@ -139,4 +162,8 @@ impl AgentPmClient {
 
         Err(SdkError::Other(format!("HTTP {}", status)))
     }
+}
+
+fn trim_trailing_slash(s: &str) -> String {
+    s.trim_end_matches('/').to_string()
 }
