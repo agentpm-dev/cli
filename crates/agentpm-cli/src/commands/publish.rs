@@ -6,7 +6,6 @@ use crate::manifest::{
 use crate::prelude::*;
 use anyhow::{anyhow, bail};
 use flate2::{Compression, write::GzEncoder};
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::Component;
 use std::{
@@ -38,29 +37,12 @@ pub struct PublishArgs {
     pub dry_run: bool,
 }
 
-/// Server response for the MVP one-shot upload endpoint
-#[derive(Debug, Deserialize)]
-struct PublishReceipt {
-    // Stable fields we plan to return from the API
-    #[allow(dead_code)]
-    pub id: String, // tool artifact id
-    #[allow(dead_code)]
-    pub name: String, // tool name
-    #[allow(dead_code)]
-    pub version: String, // version just published
-    #[allow(dead_code)]
-    pub url: String, // canonical UI URL (www / apex)
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub message: String, // optional server note
-}
-
 impl PublishArgs {
     pub async fn run(self, base_url: String) -> Result<()> {
         let cfg = Config::load(base_url.clone())?;
 
         // 1) Load PAT (login is required; for MVP we use cached token)
-        let _token = match auth::read_token(&cfg)? {
+        let token = match auth::read_token(&cfg)? {
             Some(t) => t.access_token,
             None => {
                 return Err(anyhow!(
@@ -109,7 +91,7 @@ impl PublishArgs {
             ));
         }
 
-        // 3) Strongly-typed and kind enforcement (shared)
+        // 3) Strongly typed and kind enforcement (shared)
         let mf = parse_tool_manifest(&manifest_value)?;
 
         // 4) Package files: agent.json + entrypoint + declared files
@@ -134,6 +116,33 @@ impl PublishArgs {
         //    multipart fields:
         //      - metadata: JSON (manifest + client info + sha256/size)
         //      - artifact: file (application/gzip)
+        let client = AgentPmClient::new(cfg.base_url.clone())?.with_token(token);
+
+        let meta = serde_json::json!({
+            "manifest": manifest_value,
+            "sha256": sha256_hex,
+            "size": size_bytes,
+            "client": {
+                "product": "agentpm-cli",
+                "version": env!("CARGO_PKG_VERSION"),
+                "os": std::env::consts::OS,
+                "arch": std::env::consts::ARCH,
+            }
+        });
+        let filename = artifact_filename(&mf.name, &mf.version, &mf.runtime);
+
+        let receipt = client
+            .publish_tool_from_path(&meta, &tar_path, &filename)
+            .await
+            .context("publishing to registry")?;
+
+        // Print receipt
+        println!("✓ Published {}@{}", receipt.name, receipt.version);
+        println!("  id:   {}", receipt.id);
+        println!("  url:  {}", receipt.url);
+        if !receipt.message.is_empty() {
+            println!("  note: {}", receipt.message);
+        }
 
         Ok(())
     }
@@ -280,6 +289,17 @@ fn file_digest_and_len(path: &Path) -> Result<(String, u64)> {
         .map_err(|e| anyhow!("hashing {}: {}", path.display(), e))?;
     let hex = format!("{:x}", sha.finalize());
     Ok((hex, len))
+}
+
+fn runtime_suffix(runtime: &serde_json::Value) -> String {
+    let t = runtime.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let v = runtime.get("version").and_then(|v| v.as_str()).unwrap_or("");
+    if t.is_empty() { return "".into(); }
+    if v.is_empty() { format!("-{}", t) } else { format!("-{}{}", t, v.replace('.', "")) }
+}
+
+fn artifact_filename(name: &str, version: &str, runtime: &serde_json::Value) -> String {
+    format!("{}-{}{}.tar.gz", name, version, runtime_suffix(runtime))
 }
 
 // helper to use io::copy into a hasher
