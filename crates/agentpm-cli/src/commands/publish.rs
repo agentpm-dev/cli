@@ -47,7 +47,7 @@ impl PublishArgs {
     pub async fn run(self, base_url: String) -> Result<()> {
         let cfg = Config::load(base_url.clone())?;
 
-        // Quiet if user asked OR stderr is not a terminal (piped/redirected)
+        // Quiet if the user asked OR stderr is not a terminal (piped/redirected)
         let auto_quiet = !std::io::stderr().is_terminal();
         let quiet = self.quiet || auto_quiet;
 
