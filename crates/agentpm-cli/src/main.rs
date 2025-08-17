@@ -9,6 +9,7 @@ mod config;
 mod io;
 mod manifest;
 mod prelude;
+mod ui;
 /*
 TODO:
 Try: AGENTPM_BASE_URL=http://127.0.0.1:8080 (or whatever you’ll run locally), or

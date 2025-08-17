@@ -4,9 +4,11 @@ use crate::manifest::{
     validate_manifest_value,
 };
 use crate::prelude::*;
+use crate::ui::Step;
 use anyhow::{anyhow, bail};
 use flate2::{Compression, write::GzEncoder};
 use sha2::{Digest, Sha256};
+use std::io::IsTerminal;
 use std::path::Component;
 use std::{
     collections::HashSet,
@@ -35,16 +37,29 @@ pub struct PublishArgs {
     /// Dry-run: validate and package but do not upload
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Suppress progress output (also auto-enabled when not a TTY)
+    #[arg(long)]
+    pub quiet: bool,
 }
 
 impl PublishArgs {
     pub async fn run(self, base_url: String) -> Result<()> {
         let cfg = Config::load(base_url.clone())?;
 
+        // Quiet if user asked OR stderr is not a terminal (piped/redirected)
+        let auto_quiet = !std::io::stderr().is_terminal();
+        let quiet = self.quiet || auto_quiet;
+
         // 1) Load PAT (login is required; for MVP we use cached token)
+        let mut s = Step::new("Reading credentials", quiet);
         let token = match auth::read_token(&cfg)? {
-            Some(t) => t.access_token,
+            Some(t) => {
+                s.ok("");
+                t.access_token
+            }
             None => {
+                s.err("not logged in");
                 return Err(anyhow!(
                     "Not logged in. Run `agentpm login` to store a Personal Access Token."
                 ));
@@ -52,6 +67,7 @@ impl PublishArgs {
         };
 
         // 2) Validate manifest using the same schema as `lint`
+        let mut s = Step::new("Validating manifest", quiet);
         let manifest_path = PathBuf::from(&self.manifest);
         let (mut manifest_value, _raw) = load_manifest_value(&manifest_path)
             .with_context(|| format!("loading {}", manifest_path.display()))?;
@@ -85,18 +101,26 @@ impl PublishArgs {
             schema_ok && !has_error
         };
         if !ok_flag {
+            s.err("failed");
             return Err(anyhow!(
                 "Manifest validation failed (strict={})",
                 self.strict
             ));
         }
+        s.ok("schema + semantics");
 
         // 3) Strongly typed and kind enforcement (shared)
         let mf = parse_tool_manifest(&manifest_value)?;
 
         // 4) Package files: agent.json + entrypoint + declared files
+        let mut s = Step::new("Packaging files", quiet);
         let tar_path = package_tool(&mf, &manifest_path).context("packaging files into tar.gz")?;
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
+        s.ok(format!(
+            "{} bytes, sha256: {}",
+            size_bytes,
+            &sha256_hex[..12]
+        ));
 
         info!(
             "Package ready: {} ({} bytes, sha256:{})",
@@ -116,6 +140,7 @@ impl PublishArgs {
         //    multipart fields:
         //      - metadata: JSON (manifest + client info + sha256/size)
         //      - artifact: file (application/gzip)
+        let mut s = Step::new("Uploading artifact", quiet);
         let client = AgentPmClient::new(cfg.base_url.clone())?.with_token(token);
 
         let meta = serde_json::json!({
@@ -131,10 +156,20 @@ impl PublishArgs {
         });
         let filename = artifact_filename(&mf.name, &mf.version, &mf.runtime);
 
-        let receipt = client
+        let res = client
             .publish_tool_from_path(&meta, &tar_path, &filename)
-            .await
-            .context("publishing to registry")?;
+            .await;
+
+        let receipt = match res {
+            Ok(r) => {
+                s.ok("done");
+                r
+            }
+            Err(e) => {
+                s.err("upload failed");
+                return Err(e.into());
+            }
+        };
 
         // Print receipt
         println!("✓ Published {}@{}", receipt.name, receipt.version);
@@ -293,9 +328,18 @@ fn file_digest_and_len(path: &Path) -> Result<(String, u64)> {
 
 fn runtime_suffix(runtime: &serde_json::Value) -> String {
     let t = runtime.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let v = runtime.get("version").and_then(|v| v.as_str()).unwrap_or("");
-    if t.is_empty() { return "".into(); }
-    if v.is_empty() { format!("-{}", t) } else { format!("-{}{}", t, v.replace('.', "")) }
+    let v = runtime
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if t.is_empty() {
+        return "".into();
+    }
+    if v.is_empty() {
+        format!("-{}", t)
+    } else {
+        format!("-{}{}", t, v.replace('.', ""))
+    }
 }
 
 fn artifact_filename(name: &str, version: &str, runtime: &serde_json::Value) -> String {
