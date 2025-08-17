@@ -2,8 +2,8 @@ use crate::error::{ApiErrorBody, Result, SdkError};
 use reqwest::multipart;
 use reqwest::{Client, Response};
 use serde_json::Value;
-use std::time::Duration;
 use std::net::IpAddr;
+use std::time::Duration;
 use url::Url;
 
 #[derive(Clone)]
