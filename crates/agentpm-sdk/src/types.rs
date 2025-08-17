@@ -1,5 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Deserialize)]
+pub struct PublishReceipt {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub url: String,
+    #[serde(default)]
+    pub message: String,
+}
+
 /// Basic identity returned by `/whoami`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {

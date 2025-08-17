@@ -1,0 +1,202 @@
+use anyhow::{Context, Result, anyhow};
+use jsonschema::{Draft, JSONSchema};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+#[derive(Serialize, Debug, Clone)]
+pub struct LintIssue {
+    pub file: String,
+    pub level: &'static str, // "error" | "warning"
+    pub message: String,
+    pub instance_path: String,
+    pub schema_path: String,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct LintFileReport {
+    pub file: String,
+    pub ok: bool,
+    pub issues: Vec<LintIssue>,
+}
+
+/// Minimal shape we need from agent.json for publish.
+/// Keep it liberal (Value) for forward-compat fields.
+#[derive(Debug, Deserialize)]
+pub struct ToolManifest {
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+    pub entrypoint: String,
+    #[serde(default)]
+    pub files: Vec<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub runtime: Value,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub inputs: Value,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub outputs: Value,
+    // allow unknowns to pass through
+}
+
+/// Resolve the schema source (local file if present; else hosted URL)
+pub fn resolve_schema_source(override_opt: Option<String>) -> String {
+    if let Some(x) = override_opt {
+        return x;
+    }
+    let local_path = PathBuf::from("schemas/agentpm.manifest.schema.json");
+    if local_path.exists() {
+        local_path.to_string_lossy().into_owned()
+    } else {
+        "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json".to_string()
+    }
+}
+
+/// Load a JSON schema from a file or URL.
+pub fn load_schema_value(source: &str) -> Result<Value> {
+    if source.starts_with("http://") || source.starts_with("https://") {
+        let resp = reqwest::blocking::get(source)
+            .with_context(|| format!("fetching schema from {source}"))?;
+        let text = resp.text()?;
+        Ok(serde_json::from_str(&text)?)
+    } else {
+        let text = fs::read_to_string(source)
+            .with_context(|| format!("reading schema from {}", source))?;
+        Ok(serde_json::from_str(&text)?)
+    }
+}
+
+/// Read and parse a manifest file.
+pub fn load_manifest_value(path: &Path) -> Result<(Value, String)> {
+    let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let value: Value = serde_json::from_str(&text)
+        .with_context(|| format!("parsing JSON from {}", path.display()))?;
+    Ok((value, text))
+}
+
+/// Validate a manifest `Value` against the schema and our semantic warnings.
+/// If `fix == true`, this may mutate the `value` (e.g., auto-insert $schema).
+/// Returns (ok, issues).
+pub fn validate_manifest_value(
+    schema_source: &str,
+    file_label: &str,
+    value: &mut Value,
+    fix: bool,
+) -> Result<(bool, Vec<LintIssue>)> {
+    // Compile schema (keep simple for now; we can cache later if needed)
+    let schema_value = load_schema_value(schema_source)?;
+    let schema_static: &'static serde_json::Value = Box::leak(Box::new(schema_value));
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(schema_static)?;
+
+    let mut issues: Vec<LintIssue> = Vec::new();
+
+    // Schema errors
+    if let Err(errors) = compiled.validate(value) {
+        for e in errors {
+            issues.push(LintIssue {
+                file: file_label.to_string(),
+                level: "error",
+                message: e.to_string(),
+                instance_path: e.instance_path.to_string(),
+                schema_path: e.schema_path.to_string(),
+            });
+        }
+    }
+
+    // Semantic warnings (mirror what `lint` had)
+    if value.get("$schema").is_none() {
+        issues.push(LintIssue {
+            file: file_label.to_string(),
+            level: "warning",
+            message: "Missing $schema; editors may lack IntelliSense.".into(),
+            instance_path: "".into(),
+            schema_path: "".into(),
+        });
+        if fix && let Some(obj) = value.as_object_mut() {
+            obj.insert("$schema".into(), Value::String(schema_source.to_string()));
+        }
+    }
+
+    if let Some(Value::String(desc)) = value.get("description")
+        && desc.trim().is_empty()
+    {
+        issues.push(LintIssue {
+            file: file_label.to_string(),
+            level: "warning",
+            message: "`description` should not be empty".into(),
+            instance_path: "/description".into(),
+            schema_path: "".into(),
+        });
+    }
+
+    let has_error = issues.iter().any(|i| i.level == "error");
+    Ok((!has_error, issues))
+}
+
+/// Discover manifest files from CLI args (dirs/globs/files).
+pub fn discover_manifest_files(paths: &[String]) -> Result<Vec<PathBuf>> {
+    // Default: ./agent.json
+    if paths.is_empty() {
+        let p = PathBuf::from("agent.json");
+        return Ok(if p.exists() { vec![p] } else { vec![] });
+    }
+
+    let mut out = Vec::new();
+    for raw in paths {
+        let p = PathBuf::from(raw);
+        if p.is_dir() {
+            let candidate = p.join("agent.json");
+            if candidate.exists() {
+                out.push(candidate);
+            }
+        } else if p.file_name().map(|f| f == "agent.json").unwrap_or(false) && p.exists() {
+            out.push(p);
+        } else {
+            // Glob-ish: allow users to pass things like "**/agent.json"
+            if let Ok(paths) = glob::glob(raw) {
+                for entry in paths.flatten() {
+                    if entry
+                        .file_name()
+                        .map(|f| f == "agent.json")
+                        .unwrap_or(false)
+                        && entry.exists()
+                    {
+                        out.push(entry);
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Write back a (possibly fixed) manifest in pretty JSON.
+pub fn write_manifest_pretty(path: &Path, value: &Value) -> Result<()> {
+    let pretty = serde_json::to_string_pretty(value)?;
+    fs::write(path, pretty + "\n")
+        .with_context(|| format!("failed to write fixed file {}", path.display()))?;
+    Ok(())
+}
+
+/// Parse the strongly typed Tool manifest; enforce kind = "tool" here if desired.
+pub fn parse_tool_manifest(value: &Value) -> Result<ToolManifest> {
+    let mf: ToolManifest =
+        serde_json::from_value(value.clone()).context("parsing manifest into ToolManifest")?;
+    if mf.kind != "tool" {
+        return Err(anyhow!(format!(
+            "`agentpm publish` currently supports only kind=\"tool\" (got kind=\"{}\")",
+            mf.kind
+        )));
+    }
+    Ok(mf)
+}
