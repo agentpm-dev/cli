@@ -1,10 +1,12 @@
 use crate::error::{ApiErrorBody, Result, SdkError};
-use reqwest::multipart;
 use reqwest::{Client, Response};
-use serde_json::Value;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use serde_json::{json, Value};
 use std::net::IpAddr;
+use std::path::Path;
 use std::time::Duration;
 use url::Url;
+use crate::{InitPublish, PublishReceipt};
 
 #[derive(Clone)]
 pub struct AgentPmClient {
@@ -85,44 +87,88 @@ impl AgentPmClient {
             .map_err(|e| SdkError::Other(e.to_string()))
     }
 
-    /// POST /v1/tools/publish (multipart form)
-    /// - metadata: JSON string
-    /// - artifact: .tar.gz
+    /// New flow:
+    /// 1) POST /v1/tools/publish/init (JSON metadata)
+    /// 2) PUT bytes to S3 presigned URL with returned headers
+    /// 3) POST /v1/tools/publish/finalize (JSON { upload_id })
     pub async fn publish_tool_from_path(
         &self,
         metadata: &Value,
-        artifact_path: impl AsRef<std::path::Path>,
-        suggested_filename: &str,
-    ) -> Result<crate::types::PublishReceipt> {
-        let url = format!("{}/v1/tools", self.api_base());
-
-        // MVP: read into memory (simple and fine for small/med artifacts)
+        artifact_path: impl AsRef<Path>,
+        _suggested_filename: &str, // used only for logs/errors; S3 key is determined server-side
+    ) -> SdkResult<PublishReceipt> {
+        // Read artifact (MVP: buffer; streaming variant can come later)
         let bytes = tokio::fs::read(&artifact_path).await.map_err(|e| {
-            SdkError::Other(format!(
-                "reading artifact {}: {}",
-                artifact_path.as_ref().display(),
-                e
-            ))
+            SdkError::Other(format!("reading artifact {}: {}", artifact_path.as_ref().display(), e))
         })?;
+        let size_bytes = bytes.len() as u64;
 
-        let part = multipart::Part::bytes(bytes)
-            .file_name(suggested_filename.to_string())
-            .mime_str("application/gzip")?;
-
-        let form = multipart::Form::new()
-            .text("metadata", serde_json::to_string(metadata)?)
-            .part("artifact", part);
-
-        let resp = self
-            .auth(self.http.post(url))
-            .multipart(form)
+        // --- Step 1: init ---
+        let init_url = format!("{}/v1/tools/publish/init", self.api_base());
+        let init_resp = self
+            .auth(self.http.post(init_url))
+            .json(metadata)
             .send()
-            .await?;
-
-        let resp = self.ensure_success(resp).await?;
-        resp.json::<crate::types::PublishReceipt>()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))
+            .map_err(|e| SdkError::Other(e.to_string()))?;
+
+        let init_resp = self.ensure_success(init_resp).await?;
+        let init = init_resp
+            .json::<InitPublish>()
+            .await
+            .map_err(|e| SdkError::Other(format!("parsing init response: {}", e)))?;
+
+        // Optional guard: respect max_bytes if present
+        if let Some(max) = init.max_bytes && size_bytes > max {
+            return Err(SdkError::Other(format!(
+                "artifact size {} exceeds max_bytes {} (server policy)",
+                size_bytes, max
+            )));
+        }
+
+        // --- Step 2: presigned PUT to S3 ---
+        // Build headers exactly as server specified
+        let mut hdrs = HeaderMap::new();
+        for (k, v) in init.headers.iter() {
+            let name = HeaderName::from_bytes(k.as_bytes())
+                .map_err(|e| SdkError::Other(format!("invalid presigned header name {}: {}", k, e)))?;
+            let val = HeaderValue::from_str(v)
+                .map_err(|e| SdkError::Other(format!("invalid presigned header value for {}: {}", k, e)))?;
+            hdrs.insert(name, val);
+        }
+
+        let s3_put = self
+            .http
+            .put(&init.put_url)
+            .headers(hdrs)
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|e| SdkError::Other(format!("S3 PUT failed to start: {}", e)))?;
+
+        let status = s3_put.status();
+        if !status.is_success() {
+            // S3 errors are XML; surface the text for debuggability
+            let txt = s3_put.text().await.unwrap_or_default();
+            return Err(SdkError::Other(format!("S3 PUT failed: {} {}", status, txt)));
+        }
+
+        // --- Step 3: finalize ---
+        let finalize_url = format!("{}/v1/tools/publish/finalize", self.api_base());
+        let finalize_resp = self
+            .auth(self.http.post(finalize_url))
+            .json(&json!({ "upload_id": init.upload_id }))
+            .send()
+            .await
+            .map_err(|e| SdkError::Other(e.to_string()))?;
+
+        let finalize_resp = self.ensure_success(finalize_resp).await?;
+        let receipt = finalize_resp
+            .json::<PublishReceipt>()
+            .await
+            .map_err(|e| SdkError::Other(format!("parsing finalize response: {}", e)))?;
+
+        Ok(receipt)
     }
 
     /// Centralized error mapping; returns the same Response on success.

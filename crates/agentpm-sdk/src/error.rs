@@ -35,3 +35,5 @@ pub enum SdkError {
 
 /// Convenience alias used throughout the SDK
 pub type Result<T> = std::result::Result<T, SdkError>;
+
+pub type SdkResult<T> = std::result::Result<T, SdkError>;
