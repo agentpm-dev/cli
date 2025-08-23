@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 pub struct PublishReceipt {
@@ -8,6 +9,21 @@ pub struct PublishReceipt {
     pub url: String,
     #[serde(default)]
     pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InitPublish {
+    pub upload_id: String,
+    pub put_url: String,
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub tmp_key: String,
+    pub final_key: String,
+    pub expires_in: u32,
+    #[serde(default)]
+    pub expires_at: String,
+    #[serde(default)]
+    pub max_bytes: Option<u64>,
 }
 
 /// Basic identity returned by `/whoami`
