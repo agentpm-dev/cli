@@ -18,6 +18,7 @@ pub struct ResolveResponse {
 pub struct ResolveRespItem {
     pub name: String,
     pub version: String,
+    /// 64-char lowercase hex SHA-256
     pub integrity: String,
 }
 
@@ -35,7 +36,7 @@ pub struct InstallArtifact {
     pub name: String,
     /// Concrete resolved version (e.g., "1.3.4")
     pub version: String,
-    /// "sha256-<base64>"
+    /// 64-char lowercase hex SHA-256
     pub integrity: String,
     /// Short-lived GET URL for the tarball
     pub presigned_url: String,

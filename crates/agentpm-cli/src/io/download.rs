@@ -1,10 +1,10 @@
 use agentpm_sdk::models::install as sdkm;
 use anyhow::{Context, Result, anyhow, bail};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::{StreamExt, stream::FuturesUnordered};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::path::{Component, Path, PathBuf};
+use hex::FromHex;
 use tokio::{fs, io::AsyncReadExt, io::AsyncWriteExt, task};
 
 /// Downloads all artifacts (in parallel), verifies integrity, and extracts to tools_dir.
@@ -87,10 +87,10 @@ pub async fn download_to(client: &Client, url: &str, dest: &Path) -> Result<()> 
     Ok(())
 }
 
-/// Compute and compare sha256 with the "sha256-<base64>" integrity string.
+/// Compute and compare sha256 with a 64-char lowercase hex integrity.
 /// Returns Ok(()) if matches, Err otherwise.
-pub async fn ensure_sha256(path: &Path, integrity: &str) -> Result<()> {
-    let want = parse_integrity(integrity)?;
+pub async fn ensure_sha256(path: &Path, integrity_hex: &str) -> Result<()> {
+    let want = parse_integrity_hex(integrity_hex)?;
     let have = sha256_file(path).await?;
     if have == want {
         Ok(())
@@ -99,23 +99,18 @@ pub async fn ensure_sha256(path: &Path, integrity: &str) -> Result<()> {
     }
 }
 
-/// Same as ensure_sha256 but returns Err with context if mismatched (used for skip path).
-pub async fn verify_sha256(path: &Path, integrity: &str) -> Result<()> {
-    ensure_sha256(path, integrity).await
+/// Same as ensure_sha256 but used in a "can we skip?" path.
+pub async fn verify_sha256(path: &Path, integrity_hex: &str) -> Result<()> {
+    ensure_sha256(path, integrity_hex).await
 }
 
-fn parse_integrity(integrity: &str) -> Result<Vec<u8>> {
-    let prefix = "sha256-";
-    if !integrity.starts_with(prefix) {
-        bail!("unsupported integrity (expected sha256-...)");
+fn parse_integrity_hex(integrity_hex: &str) -> Result<Vec<u8>> {
+    let s = integrity_hex.trim();
+    if s.len() != 64 {
+        bail!("invalid sha256 hex length (expected 64 chars)");
     }
-    let b64 = &integrity[prefix.len()..];
-    let bytes = BASE64
-        .decode(b64.as_bytes())
-        .map_err(|e| anyhow!("invalid base64 in integrity: {}", e))?;
-    if bytes.len() != 32 {
-        bail!("invalid sha256 length in integrity");
-    }
+    let bytes = <Vec<u8>>::from_hex(s)
+        .map_err(|e| anyhow!("invalid sha256 hex: {}", e))?;
     Ok(bytes)
 }
 
