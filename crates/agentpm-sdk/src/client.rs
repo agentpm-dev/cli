@@ -1,12 +1,12 @@
 use crate::error::{ApiErrorBody, Result, SdkError};
-use reqwest::{Client, Response, header::CONTENT_TYPE};
+use crate::{InitPublish, PublishReceipt};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use serde_json::{json, Value};
+use reqwest::{Client, Response, header::CONTENT_TYPE};
+use serde_json::{Value, json};
 use std::net::IpAddr;
 use std::path::Path;
 use std::time::Duration;
 use url::Url;
-use crate::{InitPublish, PublishReceipt};
 
 #[derive(Clone)]
 pub struct AgentPmClient {
@@ -99,7 +99,11 @@ impl AgentPmClient {
     ) -> SdkResult<PublishReceipt> {
         // Read artifact (MVP: buffer; TODO: streaming variant can come later)
         let bytes = tokio::fs::read(&artifact_path).await.map_err(|e| {
-            SdkError::Other(format!("reading artifact {}: {}", artifact_path.as_ref().display(), e))
+            SdkError::Other(format!(
+                "reading artifact {}: {}",
+                artifact_path.as_ref().display(),
+                e
+            ))
         })?;
         let size_bytes = bytes.len() as u64;
 
@@ -119,7 +123,9 @@ impl AgentPmClient {
             .map_err(|e| SdkError::Other(format!("parsing init response: {}", e)))?;
 
         // Optional guard: respect max_bytes if present
-        if let Some(max) = init.max_bytes && size_bytes > max {
+        if let Some(max) = init.max_bytes
+            && size_bytes > max
+        {
             return Err(SdkError::Other(format!(
                 "artifact size {} exceeds max_bytes {} (server policy)",
                 size_bytes, max
@@ -130,10 +136,12 @@ impl AgentPmClient {
         // Build headers exactly as server specified
         let mut hdrs = HeaderMap::new();
         for (k, v) in init.headers.iter() {
-            let name = HeaderName::from_bytes(k.as_bytes())
-                .map_err(|e| SdkError::Other(format!("invalid presigned header name {}: {}", k, e)))?;
-            let val = HeaderValue::from_str(v)
-                .map_err(|e| SdkError::Other(format!("invalid presigned header value for {}: {}", k, e)))?;
+            let name = HeaderName::from_bytes(k.as_bytes()).map_err(|e| {
+                SdkError::Other(format!("invalid presigned header name {}: {}", k, e))
+            })?;
+            let val = HeaderValue::from_str(v).map_err(|e| {
+                SdkError::Other(format!("invalid presigned header value for {}: {}", k, e))
+            })?;
             hdrs.insert(name, val);
         }
 
@@ -150,7 +158,10 @@ impl AgentPmClient {
         if !status.is_success() {
             // S3 errors are XML; surface the text for debuggability
             let txt = s3_put.text().await.unwrap_or_default();
-            return Err(SdkError::Other(format!("S3 PUT failed: {} {}", status, txt)));
+            return Err(SdkError::Other(format!(
+                "S3 PUT failed: {} {}",
+                status, txt
+            )));
         }
 
         // --- Step 3: finalize ---
@@ -205,9 +216,14 @@ impl AgentPmClient {
         }
 
         // Try a structured JSON error first (even if the content-type is wrong)
-        if !bytes.is_empty() && let Ok(body) = serde_json::from_slice::<ApiErrorBody>(&bytes) {
+        if !bytes.is_empty()
+            && let Ok(body) = serde_json::from_slice::<ApiErrorBody>(&bytes)
+        {
             if body.code.is_some() || body.message.is_some() || body.details.is_some() {
-                return Err(SdkError::Api { status: status.as_u16(), body });
+                return Err(SdkError::Api {
+                    status: status.as_u16(),
+                    body,
+                });
             }
 
             // Fallback: show status, content-type, and body text (truncated)
@@ -228,5 +244,9 @@ fn trim_trailing_slash(s: &str) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max { s.to_string() } else { format!("{}… [truncated {} bytes]", &s[..max], s.len()-max) }
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}… [truncated {} bytes]", &s[..max], s.len() - max)
+    }
 }
