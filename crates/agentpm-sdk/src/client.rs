@@ -1,5 +1,5 @@
 use crate::error::{ApiErrorBody, Result, SdkError};
-use reqwest::{Client, Response};
+use reqwest::{Client, Response, header::CONTENT_TYPE};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{json, Value};
 use std::net::IpAddr;
@@ -178,17 +178,25 @@ impl AgentPmClient {
             return Ok(resp);
         }
 
-        // Grab Retry-After (before consuming the body)
+        // Copy headers out (no borrows tied to `resp`)
+        let headers = resp.headers().clone();
+
+        // Grab headers we care about before consuming the body
         let retry_after = resp
             .headers()
             .get("retry-after")
             .and_then(|h| h.to_str().ok())
             .and_then(|s| s.parse::<u64>().ok());
 
-        // Consume body once for error details
+        let ct = headers
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("<none>");
+
+        // Consume body once
         let bytes = resp.bytes().await.unwrap_or_default();
 
-        // Map common statuses first
+        // Map common statuses
         match status.as_u16() {
             401 => return Err(SdkError::Unauthorized),
             404 => return Err(SdkError::NotFound),
@@ -196,14 +204,19 @@ impl AgentPmClient {
             _ => {}
         }
 
-        // Try a structured JSON error
-        if !bytes.is_empty() {
-            if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(&bytes) {
-                return Err(SdkError::Api(body));
+        // Try a structured JSON error first (even if the content-type is wrong)
+        if !bytes.is_empty() && let Ok(body) = serde_json::from_slice::<ApiErrorBody>(&bytes) {
+            if body.code.is_some() || body.message.is_some() || body.details.is_some() {
+                return Err(SdkError::Api { status: status.as_u16(), body });
             }
-            if let Ok(txt) = String::from_utf8(bytes.to_vec()) {
-                return Err(SdkError::Other(txt));
-            }
+
+            // Fallback: show status, content-type, and body text (truncated)
+            let text = String::from_utf8_lossy(&bytes);
+            return Err(SdkError::Other(format!(
+                "HTTP {} ({ct}): {}",
+                status,
+                truncate(&text, 2000)
+            )));
         }
 
         Err(SdkError::Other(format!("HTTP {}", status)))
@@ -212,4 +225,8 @@ impl AgentPmClient {
 
 fn trim_trailing_slash(s: &str) -> String {
     s.trim_end_matches('/').to_string()
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max { s.to_string() } else { format!("{}… [truncated {} bytes]", &s[..max], s.len()-max) }
 }
