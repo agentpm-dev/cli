@@ -1,3 +1,4 @@
+use crate::semver::types::Lock;
 use anyhow::{Context, Result, anyhow};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
@@ -199,4 +200,28 @@ pub fn parse_tool_manifest(value: &Value) -> Result<ToolManifest> {
         )));
     }
     Ok(mf)
+}
+
+/// Lock files
+#[allow(dead_code)]
+pub fn write_lock<P: AsRef<Path>>(dir: P, lock: &Lock) -> Result<()> {
+    let path = dir.as_ref().join("agent.lock");
+    let json = serde_json::to_string_pretty(lock)?;
+    fs::write(path, json)?;
+    Ok(())
+}
+
+pub fn read_lock_or_default<P: AsRef<Path>>(dir: P) -> Result<Lock> {
+    let path = dir.as_ref().join("agent.lock");
+    if path.exists() {
+        let data = fs::read(path)?;
+        let lock: Lock = serde_json::from_slice(&data)?;
+        Ok(lock)
+    } else {
+        Ok(Lock {
+            lockfile_version: 1,
+            generated: chrono::Utc::now(), // or to_rfc3339() if using String
+            dependencies: Default::default(),
+        })
+    }
 }

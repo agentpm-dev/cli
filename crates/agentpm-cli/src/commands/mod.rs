@@ -1,5 +1,6 @@
 use crate::prelude::*;
 pub mod init;
+pub mod install;
 pub mod lint;
 pub mod login;
 pub mod publish;
@@ -21,4 +22,7 @@ pub enum Commands {
 
     /// Publish a tool to the registry
     Publish(publish::PublishArgs),
+
+    /// Install tool(s) from the registry
+    Install(install::InstallArgs),
 }

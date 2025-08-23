@@ -1,4 +1,5 @@
 use crate::error::{ApiErrorBody, Result, SdkError};
+use crate::models::install::{InstallInitResponse, ResolveRequest, ResolveResponse};
 use crate::{InitPublish, PublishReceipt};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Response, header::CONTENT_TYPE};
@@ -180,6 +181,42 @@ impl AgentPmClient {
             .map_err(|e| SdkError::Other(format!("parsing finalize response: {}", e)))?;
 
         Ok(receipt)
+    }
+
+    pub async fn resolve_install(&self, desired: &ResolveRequest) -> SdkResult<ResolveResponse> {
+        let url = format!("{}/v1/tools/install/resolve", self.api_base());
+        let resp = self
+            .auth(self.http.post(url))
+            .json(desired)
+            .send()
+            .await
+            .map_err(|e| SdkError::Other(e.to_string()))?;
+
+        let resp = self.ensure_success(resp).await?;
+        let resolve_resp = resp
+            .json::<ResolveResponse>()
+            .await
+            .map_err(|e| SdkError::Other(format!("parsing resolve response: {}", e)))?;
+
+        Ok(resolve_resp)
+    }
+
+    pub async fn install_init(&self, plan: &ResolveResponse) -> SdkResult<InstallInitResponse> {
+        let url = format!("{}/v1/tools/install/init", self.api_base());
+        let resp = self
+            .auth(self.http.post(url))
+            .json(plan)
+            .send()
+            .await
+            .map_err(|e| SdkError::Other(e.to_string()))?;
+
+        let resp = self.ensure_success(resp).await?;
+        let resolve_resp = resp
+            .json::<InstallInitResponse>()
+            .await
+            .map_err(|e| SdkError::Other(format!("parsing init response: {}", e)))?;
+
+        Ok(resolve_resp)
     }
 
     /// Centralized error mapping; returns the same Response on success.

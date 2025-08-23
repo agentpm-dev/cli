@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+chrono = { version = "0.4.41", features = ["serde", "clock"] }
 clap = { version = "4", features = ["derive", "env"] }
 directories = "5"
 flate2 = "1"
@@ -28,3 +29,6 @@ ureq = { version = "2.9", default-features = true } # simple HTTP for schema fet
 agentpm-sdk = { path = "../agentpm-sdk" }
 reqwest = "0.11.27"
 walkdir = "2.5.0"
+semver = "1.0.26"
+futures = "0.3.31"
+base64 = "0.21.7"
