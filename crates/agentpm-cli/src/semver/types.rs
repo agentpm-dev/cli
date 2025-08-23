@@ -121,7 +121,6 @@ fn parse_spec(spec: &str) -> Result<(String, String)> {
     }
 }
 
-#[allow(dead_code)]
 pub fn lock_from_plan(plan: &ResolvePlan) -> Lock {
     let mut deps = std::collections::BTreeMap::new();
 

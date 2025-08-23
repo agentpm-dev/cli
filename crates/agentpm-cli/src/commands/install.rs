@@ -1,7 +1,10 @@
-use crate::manifest::{load_manifest_value, read_lock_or_default};
+use crate::manifest::{
+    load_manifest_value, read_lock_or_default, write_lock, write_manifest_pretty_atomic,
+};
 use crate::prelude::*;
 use crate::semver::adapt::{plan_to_sdk_resolve, to_sdk_request};
-use crate::semver::types::{DesiredSet, ResolvePlan};
+use crate::semver::types::{DesiredSet, ResolvePlan, lock_from_plan};
+use crate::semver::update::maybe_update_agent_json;
 use crate::{auth, io::download::download_and_extract_all, io::fs, ui::Step};
 use anyhow::anyhow;
 use serde_json::Value;
@@ -54,7 +57,7 @@ impl InstallArgs {
 
         // 1) Load agent.json (must be kind=agent)
         let manifest_path = PathBuf::from(&self.manifest);
-        let (manifest_value, _raw) = load_manifest_value(&manifest_path)
+        let (mut manifest_value, _raw) = load_manifest_value(&manifest_path)
             .with_context(|| format!("loading {}", manifest_path.display()))?;
 
         if manifest_value.get("kind").and_then(Value::as_str) != Some("agent") {
@@ -101,6 +104,23 @@ impl InstallArgs {
         fs::ensure_dirs(&[&dl_dir, &tools_dir])?;
         download_and_extract_all(&init, &dl_dir, &tools_dir, self.refresh).await?;
         s.ok("");
+
+        // 6) Finalize (report success for metrics / server-side bookkeeping)
+        let mut s = Step::new("Finalizing install", self.quiet);
+        client.install_finalize(&init.session_id).await?;
+        s.ok("");
+
+        // 7) Update lockfile (unless --frozen)
+        if !self.frozen {
+            write_lock(".", &lock_from_plan(&plan))?;
+        }
+
+        // 8) If single-spec and not present in agent.json, append or update range if allowed
+        if let Some(spec) = &self.spec && maybe_update_agent_json(&mut manifest_value, spec, self.update_range)? {
+            write_manifest_pretty_atomic(&manifest_path, &manifest_value)?;
+        }
+
+        Step::final_msg("Installed ✓", self.quiet);
 
         Ok(())
     }

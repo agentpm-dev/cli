@@ -219,6 +219,20 @@ impl AgentPmClient {
         Ok(resolve_resp)
     }
 
+    pub async fn install_finalize(&self, session_id: &str) -> SdkResult<()> {
+        let url = format!("{}/v1/tools/install/finalize", self.api_base());
+        let resp = self
+            .auth(self.http.post(url))
+            .json(&serde_json::json!({"session_id": session_id}))
+            .send()
+            .await
+            .map_err(|e| SdkError::Other(e.to_string()))?;
+
+        let _ = self.ensure_success(resp).await?;
+
+        Ok(())
+    }
+
     /// Centralized error mapping; returns the same Response on success.
     async fn ensure_success(&self, resp: Response) -> SdkResult<Response> {
         let status = resp.status();
