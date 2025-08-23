@@ -97,7 +97,7 @@ impl AgentPmClient {
         artifact_path: impl AsRef<Path>,
         _suggested_filename: &str, // used only for logs/errors; S3 key is determined server-side
     ) -> SdkResult<PublishReceipt> {
-        // Read artifact (MVP: buffer; streaming variant can come later)
+        // Read artifact (MVP: buffer; TODO: streaming variant can come later)
         let bytes = tokio::fs::read(&artifact_path).await.map_err(|e| {
             SdkError::Other(format!("reading artifact {}: {}", artifact_path.as_ref().display(), e))
         })?;
