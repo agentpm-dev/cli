@@ -116,7 +116,9 @@ impl InstallArgs {
         }
 
         // 8) If single-spec and not present in agent.json, append or update range if allowed
-        if let Some(spec) = &self.spec && maybe_update_agent_json(&mut manifest_value, spec, self.update_range)? {
+        if let Some(spec) = &self.spec
+            && maybe_update_agent_json(&mut manifest_value, spec, self.update_range)?
+        {
             write_manifest_pretty_atomic(&manifest_path, &manifest_value)?;
         }
 

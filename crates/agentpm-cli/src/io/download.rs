@@ -1,10 +1,10 @@
 use agentpm_sdk::models::install as sdkm;
 use anyhow::{Context, Result, anyhow, bail};
 use futures::{StreamExt, stream::FuturesUnordered};
+use hex::FromHex;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::path::{Component, Path, PathBuf};
-use hex::FromHex;
 use tokio::{fs, io::AsyncReadExt, io::AsyncWriteExt, task};
 
 /// Downloads all artifacts (in parallel), verifies integrity, and extracts to tools_dir.
@@ -109,8 +109,7 @@ fn parse_integrity_hex(integrity_hex: &str) -> Result<Vec<u8>> {
     if s.len() != 64 {
         bail!("invalid sha256 hex length (expected 64 chars)");
     }
-    let bytes = <Vec<u8>>::from_hex(s)
-        .map_err(|e| anyhow!("invalid sha256 hex: {}", e))?;
+    let bytes = <Vec<u8>>::from_hex(s).map_err(|e| anyhow!("invalid sha256 hex: {}", e))?;
     Ok(bytes)
 }
 
