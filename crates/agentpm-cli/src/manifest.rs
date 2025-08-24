@@ -3,6 +3,7 @@ use anyhow::{Context, Result, anyhow};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::{
     fs,
     io::Write,
@@ -25,6 +26,25 @@ pub struct LintFileReport {
     pub issues: Vec<LintIssue>,
 }
 
+fn default_cwd() -> String {
+    ".".into()
+}
+fn default_timeout_ms() -> u64 {
+    60_000
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct Entrypoint {
+    pub command: String,   // required
+    pub args: Vec<String>, // default: []
+    #[serde(default = "default_cwd")]
+    pub cwd: String, // default: "."
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64, // default: 60000
+    pub env: HashMap<String, String>, // default: {}
+}
+
 /// Minimal shape we need from agent.json for publish.
 /// Keep it liberal (Value) for forward-compat fields.
 #[derive(Debug, Deserialize)]
@@ -34,7 +54,7 @@ pub struct ToolManifest {
     pub version: String,
     #[allow(dead_code)]
     pub description: Option<String>,
-    pub entrypoint: String,
+    pub entrypoint: Entrypoint,
     #[serde(default)]
     pub files: Vec<String>,
     #[allow(dead_code)]

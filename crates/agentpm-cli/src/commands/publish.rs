@@ -1,6 +1,6 @@
 use crate::auth;
 use crate::manifest::{
-    ToolManifest, load_manifest_value, parse_tool_manifest, resolve_schema_source,
+    Entrypoint, ToolManifest, load_manifest_value, parse_tool_manifest, resolve_schema_source,
     validate_manifest_value,
 };
 use crate::prelude::*;
@@ -275,7 +275,11 @@ fn rel_to_tar_name(p: &Path) -> String {
         .join("/")
 }
 
-fn validate_and_locate_entrypoint(root: &Path, entrypoint: &str) -> Result<(PathBuf, String)> {
+fn validate_and_locate_entrypoint(
+    root: &Path,
+    entrypoint: &Entrypoint,
+) -> Result<(PathBuf, String)> {
+    let entrypoint = entrypoint.args[0].as_str();
     let ep_rel = Path::new(entrypoint);
 
     // Must be a relative path with no parent traversal
