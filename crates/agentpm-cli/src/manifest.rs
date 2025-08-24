@@ -1,9 +1,11 @@
+use crate::semver::types::Lock;
 use anyhow::{Context, Result, anyhow};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -188,6 +190,43 @@ pub fn write_manifest_pretty(path: &Path, value: &Value) -> Result<()> {
     Ok(())
 }
 
+pub fn write_manifest_pretty_atomic(path: &Path, value: &Value) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    // Serialize with trailing newline
+    let mut data = serde_json::to_vec_pretty(value)?;
+    if !data.ends_with(b"\n") {
+        data.push(b'\n');
+    }
+
+    // Write to .tmp then rename
+    let tmp = path.with_extension("tmp");
+    {
+        let mut f = fs::File::create(&tmp)
+            .with_context(|| format!("opening temp file {}", tmp.display()))?;
+        f.write_all(&data)
+            .with_context(|| format!("writing {}", tmp.display()))?;
+        let _ = f.sync_all(); // best-effort
+    }
+
+    // On Windows, replace existing file safely
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+    fs::rename(&tmp, path)
+        .with_context(|| format!("renaming {} -> {}", tmp.display(), path.display()))?;
+
+    // Best-effort fsync of the directory
+    if let Some(parent) = path.parent()
+        && let Ok(dirf) = fs::File::open(parent)
+    {
+        let _ = dirf.sync_all();
+    }
+
+    Ok(())
+}
+
 /// Parse the strongly typed Tool manifest; enforce kind = "tool" here if desired.
 pub fn parse_tool_manifest(value: &Value) -> Result<ToolManifest> {
     let mf: ToolManifest =
@@ -199,4 +238,26 @@ pub fn parse_tool_manifest(value: &Value) -> Result<ToolManifest> {
         )));
     }
     Ok(mf)
+}
+
+/// Lock files
+pub fn write_lock<P: AsRef<Path>>(dir: P, lock: &Lock) -> Result<()> {
+    let path = dir.as_ref().join("agent.lock");
+    let v: Value = serde_json::to_value(lock)?; // convert to Value
+    write_manifest_pretty_atomic(&path, &v) // reuse atomic writer
+}
+
+pub fn read_lock_or_default<P: AsRef<Path>>(dir: P) -> Result<Lock> {
+    let path = dir.as_ref().join("agent.lock");
+    if path.exists() {
+        let data = fs::read(path)?;
+        let lock: Lock = serde_json::from_slice(&data)?;
+        Ok(lock)
+    } else {
+        Ok(Lock {
+            lockfile_version: 1,
+            generated: chrono::Utc::now(), // or to_rfc3339() if using String
+            dependencies: Default::default(),
+        })
+    }
 }

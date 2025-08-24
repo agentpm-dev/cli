@@ -9,6 +9,7 @@ mod config;
 mod io;
 mod manifest;
 mod prelude;
+mod semver;
 mod ui;
 /*
 TODO:
@@ -50,5 +51,6 @@ async fn main() -> Result<()> {
         commands::Commands::Init(args) => args.run(cli.base_url.clone()).await,
         commands::Commands::Lint(args) => args.run().await,
         commands::Commands::Publish(arg) => arg.run(cli.base_url.clone()).await,
+        commands::Commands::Install(arg) => arg.run(cli.base_url.clone()).await,
     }
 }

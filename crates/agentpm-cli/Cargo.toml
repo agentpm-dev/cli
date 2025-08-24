@@ -9,11 +9,13 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+chrono = { version = "0.4.41", features = ["serde", "clock"] }
 clap = { version = "4", features = ["derive", "env"] }
 directories = "5"
 flate2 = "1"
 glob = "0.3"
 globwalk = "0.9"
+hex = "0.4"
 is-terminal = "0.4"
 jsonschema = { version = "0.17", features = ["draft202012"] }
 serde = { version = "1", features = ["derive"] }
@@ -26,5 +28,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 ureq = { version = "2.9", default-features = true } # simple HTTP for schema fetch
 agentpm-sdk = { path = "../agentpm-sdk" }
-reqwest = "0.11.27"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "blocking"] }
 walkdir = "2.5.0"
+semver = "1.0.26"
+futures = "0.3.31"
+base64 = "0.21.7"

@@ -46,6 +46,13 @@ impl Step {
         eprintln!("✗ {} ({}) — {}", self.label, fmt_dur(dur), details.into());
         self.finished = true;
     }
+
+    pub fn final_msg(msg: impl AsRef<str>, quiet: bool) {
+        if quiet {
+            return;
+        }
+        eprintln!("{}", msg.as_ref());
+    }
 }
 
 fn fmt_dur(d: Duration) -> String {

@@ -147,6 +147,7 @@ impl PublishArgs {
             "manifest": manifest_value,
             "sha256": sha256_hex,
             "size": size_bytes,
+            // TODO: namespace_handle
             "client": {
                 "product": "agentpm-cli",
                 "version": env!("CARGO_PKG_VERSION"),
