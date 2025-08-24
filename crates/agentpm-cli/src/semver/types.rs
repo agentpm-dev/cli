@@ -36,7 +36,6 @@ pub struct Lock {
 pub struct LockedDependency {
     pub version: String,
     pub integrity: String,
-    pub artifact: String, // optional local path/filename
 }
 
 impl DesiredSet {
@@ -130,12 +129,6 @@ pub fn lock_from_plan(plan: &ResolvePlan) -> Lock {
             LockedDependency {
                 version: item.version.clone(),
                 integrity: item.integrity.clone(),
-                // TODO: choose own convention here — e.g., where cache tarballs live
-                artifact: format!(
-                    "tools/{}/{}.tgz",
-                    item.name.replace('@', "").replace('/', "-"),
-                    item.version
-                ),
             },
         );
     }
