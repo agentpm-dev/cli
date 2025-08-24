@@ -25,7 +25,13 @@ agentpm init --kind tool --name summarize --description "Summarize input text"
   "name": "summarize",
   "version": "0.1.0",
   "description": "Summarize input text",
-  "entrypoint": "dist/summarize.js",
+  "entrypoint": {
+    "command": "node",
+    "args": ["dist/summarize.js"],
+    "cwd": ".",
+    "timeout_ms": 60000,
+    "env": { }
+  },
   "inputs": { "type": "object" },
   "outputs": { "type": "object" },
   "files": ["dist/"],
@@ -45,7 +51,7 @@ agentpm init --kind agent --name research-assistant --description "Assistant com
   "version": "0.1.0",
   "description": "Assistant composed of multiple tools",
   "tools": [
-    { "name": "summarize", "version": "0.1.0" }
+    { "name": "@test/summarize", "version": "0.1.0" }
   ]
 }
 ```
@@ -81,19 +87,19 @@ agentpm lint path/to/agent.json
 
 ## Field reference (overview)
 
-| Field         | Type      | Required | Allowed on | Notes |
-|---------------|-----------|----------|------------|-------|
-| `$schema`     | string    | no       | both       | URI to this schema (optional but recommended) |
-| `kind`        | enum      | **yes**  | both       | `"agent"` or `"tool"` (discriminator) |
-| `name`        | string    | **yes**  | both       | `^[a-z][a-z0-9-]{0,63}$` |
-| `version`     | semver    | **yes**  | both       | SemVer string (supports pre/metadata) |
-| `description` | string    | **yes**  | both       | Free text |
-| `tools`       | array     | **yes**¹ | **agent**  | Array of tool refs: string or `{name, version}` |
-| `entrypoint`  | string    | **yes**² | **tool**   | Path to runnable entry (e.g., `dist/main.js`) |
-| `inputs`      | object    | **yes**² | **tool**   | JSON Schema (or shape) for inputs |
-| `outputs`     | object    | **yes**² | **tool**   | JSON Schema (or shape) for outputs |
-| `files`       | string[]  | **yes**² | **tool**   | Non-empty list of paths/globs to package |
-| `runtime`     | object    | no       | **tool**   | `{ type: "python"|"node", version: "MAJOR[.MINOR[.PATCH]]" }` |
+| Field         | Type      | Required | Allowed on | Notes                                                 |
+|---------------|-----------|----------|------------|-------------------------------------------------------|
+| `$schema`     | string    | no       | both       | URI to this schema (optional but recommended)         |
+| `kind`        | enum      | **yes**  | both       | `"agent"` or `"tool"` (discriminator)                 |
+| `name`        | string    | **yes**  | both       | `^[a-z][a-z0-9-]{0,63}$`                              |
+| `version`     | semver    | **yes**  | both       | SemVer string (supports pre/metadata)                 |
+| `description` | string    | **yes**  | both       | Free text                                             |
+| `tools`       | array     | **yes**¹ | **agent**  | Array of tool refs: string or `{name, version}`       |
+| `entrypoint`  | string    | **yes**² | **tool**   | Execution ref `{command, args, cwd, timeout_ms, env}` |
+| `inputs`      | object    | **yes**² | **tool**   | JSON Schema (or shape) for inputs                     |
+| `outputs`     | object    | **yes**² | **tool**   | JSON Schema (or shape) for outputs                    |
+| `files`       | string[]  | **yes**² | **tool**   | Non-empty list of paths/globs to package              |
+| `runtime`     | object    | no       | **tool**   | `{ type: "python", version: "3.11"}`                  |"node", version: "MAJOR[.MINOR[.PATCH]]" }` |
 
 ¹ required only when `kind = "agent"`  
 ² required only when `kind = "tool"`
@@ -167,6 +173,18 @@ Both `inputs` and `outputs` are **JSON Schema (Draft 2020-12)** objects that des
   },
   "required": ["summary"]
 }
+```
+
+## Defining `entrypoint`
+
+```json
+ "entrypoint": {
+    "command": "node", // node|python
+    "args": ["dist/summarize.js"], // Path to runnable entry
+    "cwd": ".", // optional
+    "timeout_ms": 60000, // optional
+    "env": { } // optional
+  },
 ```
 
 ---

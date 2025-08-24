@@ -63,7 +63,18 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "runtime": { "$ref": "#/$defs/runtime" },
-    "entrypoint": { "type": "string", "minLength": 1 },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "args"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "cwd": { "type": "string" },
+        "timeout_ms": { "type": "number" },
+        "env": { "type": "object" }
+      }
+    },
     "inputs": { "type": "object" },
     "outputs": { "type": "object" }
   },
