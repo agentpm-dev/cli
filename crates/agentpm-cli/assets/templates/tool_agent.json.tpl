@@ -5,7 +5,10 @@
   "version": "0.1.0",
   "description": "{{TOOL_DESCRIPTION}}",
   "files": [],
-  "entrypoint": "{{TOOL_ENTRYPOINT}}",
+  "entrypoint": {
+    "command": "{{TOOL_ENTRYPOINT_COMMAND}}",
+    "args": []
+  },
   "inputs": {
     "type": "object",
     "properties": {
