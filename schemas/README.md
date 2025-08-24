@@ -87,19 +87,19 @@ agentpm lint path/to/agent.json
 
 ## Field reference (overview)
 
-| Field         | Type      | Required | Allowed on | Notes                                                 |
-|---------------|-----------|----------|------------|-------------------------------------------------------|
-| `$schema`     | string    | no       | both       | URI to this schema (optional but recommended)         |
-| `kind`        | enum      | **yes**  | both       | `"agent"` or `"tool"` (discriminator)                 |
-| `name`        | string    | **yes**  | both       | `^[a-z][a-z0-9-]{0,63}$`                              |
-| `version`     | semver    | **yes**  | both       | SemVer string (supports pre/metadata)                 |
-| `description` | string    | **yes**  | both       | Free text                                             |
-| `tools`       | array     | **yes**¹ | **agent**  | Array of tool refs: string or `{name, version}`       |
-| `entrypoint`  | string    | **yes**² | **tool**   | Execution ref `{command, args, cwd, timeout_ms, env}` |
-| `inputs`      | object    | **yes**² | **tool**   | JSON Schema (or shape) for inputs                     |
-| `outputs`     | object    | **yes**² | **tool**   | JSON Schema (or shape) for outputs                    |
-| `files`       | string[]  | **yes**² | **tool**   | Non-empty list of paths/globs to package              |
-| `runtime`     | object    | no       | **tool**   | `{ type: "python", version: "3.11"}`                  |"node", version: "MAJOR[.MINOR[.PATCH]]" }` |
+| Field         | Type      | Required | Allowed on | Notes                                                          |
+|---------------|-----------|----------|------------|----------------------------------------------------------------|
+| `$schema`     | string    | no       | both       | URI to this schema (optional but recommended)                  |
+| `kind`        | enum      | **yes**  | both       | `"agent"` or `"tool"` (discriminator)                          |
+| `name`        | string    | **yes**  | both       | `^[a-z][a-z0-9-]{0,63}$`                                       |
+| `version`     | semver    | **yes**  | both       | SemVer string (supports pre/metadata)                          |
+| `description` | string    | **yes**  | both       | Free text                                                      |
+| `tools`       | array     | **yes**¹ | **agent**  | Array of tool refs: string or `{name, version}`                |
+| `entrypoint`  | string    | **yes**² | **tool**   | Execution ref `{command, args, cwd, timeout_ms, env}`          |
+| `inputs`      | object    | **yes**² | **tool**   | JSON Schema (or shape) for inputs                              |
+| `outputs`     | object    | **yes**² | **tool**   | JSON Schema (or shape) for outputs                             |
+| `files`       | string[]  | **yes**² | **tool**   | Non-empty list of paths/globs to package                       |
+| `runtime`     | object    | no       | **tool**   | `{ type: "python or node", version: "MAJOR[.MINOR[.PATCH]]" }` | 
 
 ¹ required only when `kind = "agent"`  
 ² required only when `kind = "tool"`
