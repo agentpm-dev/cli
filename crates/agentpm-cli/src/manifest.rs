@@ -161,11 +161,12 @@ pub fn validate_manifest_value(
         });
     }
 
-    if let Some(Value::Object(runtime)) = value.get("runtime") &&
-        let Some(Value::String(runtime_type)) = runtime.get("type") &&
-        let Some(Value::Object(entrypoint)) = value.get("entrypoint") {
-
-        let command = entrypoint.get("command")
+    if let Some(Value::Object(runtime)) = value.get("runtime")
+        && let Some(Value::String(runtime_type)) = runtime.get("type")
+        && let Some(Value::Object(entrypoint)) = value.get("entrypoint")
+    {
+        let command = entrypoint
+            .get("command")
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
@@ -176,7 +177,10 @@ pub fn validate_manifest_value(
             issues.push(LintIssue {
                 file: file_label.to_string(),
                 level: "error",
-                message: format!("`runtime.type` should match `entrypoint.command` ({} vs {})", canon, runtime_interpreter),
+                message: format!(
+                    "`runtime.type` should match `entrypoint.command` ({} vs {})",
+                    canon, runtime_interpreter
+                ),
                 instance_path: "/runtime/type".into(),
                 schema_path: "".into(),
             });
