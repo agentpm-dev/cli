@@ -161,8 +161,61 @@ pub fn validate_manifest_value(
         });
     }
 
+    if let Some(Value::Object(runtime)) = value.get("runtime")
+        && let Some(Value::String(runtime_type)) = runtime.get("type")
+        && let Some(Value::Object(entrypoint)) = value.get("entrypoint")
+    {
+        let command = entrypoint
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let canon = canonical_interpreter(command);
+        let runtime_interpreter = canonical_interpreter(runtime_type);
+
+        if canon != runtime_interpreter && !is_interpreter_match(&runtime_interpreter, &canon) {
+            issues.push(LintIssue {
+                file: file_label.to_string(),
+                level: "error",
+                message: format!(
+                    "`runtime.type` should match `entrypoint.command` ({} vs {})",
+                    canon, runtime_interpreter
+                ),
+                instance_path: "/runtime/type".into(),
+                schema_path: "".into(),
+            });
+        }
+    }
+
     let has_error = issues.iter().any(|i| i.level == "error");
     Ok((!has_error, issues))
+}
+
+fn canonical_interpreter(cmd: &str) -> String {
+    let base = cmd.to_lowercase();
+
+    base.strip_suffix(".exe")
+        .or_else(|| base.strip_suffix(".cmd"))
+        .or_else(|| base.strip_suffix(".bat"))
+        .unwrap_or(&base)
+        .to_string()
+}
+
+fn is_interpreter_match(runtime: &str, command: &str) -> bool {
+    if runtime == command {
+        return true;
+    }
+
+    // map runtime -> acceptable command names
+    let mut aliases: HashMap<&str, &[&str]> = HashMap::new();
+    aliases.insert("python", &["python3"]);
+    aliases.insert("node", &["nodejs"]);
+
+    if let Some(cmds) = aliases.get(runtime) {
+        cmds.contains(&command)
+    } else {
+        false
+    }
 }
 
 /// Discover manifest files from CLI args (dirs/globs/files).
