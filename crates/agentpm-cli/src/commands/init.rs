@@ -16,7 +16,7 @@ pub struct InitArgs {
     kind: InitKind,
 
     /// Name for the tool or agent (depending on --kind)
-    #[arg(long, default_value = "my-agent")]
+    #[arg(long, default_value = "my-tool")]
     name: String,
 
     /// Description for the tool or agent

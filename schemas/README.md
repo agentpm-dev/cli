@@ -179,7 +179,7 @@ Both `inputs` and `outputs` are **JSON Schema (Draft 2020-12)** objects that des
 
 ```json
  "entrypoint": {
-    "command": "node", // node|python
+    "command": "node", // Bare interpreter (node|nodejs|python|python3) name or absolute path to it 
     "args": ["dist/summarize.js"], // Path to runnable entry
     "cwd": ".", // optional
     "timeout_ms": 60000, // optional

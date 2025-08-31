@@ -68,7 +68,14 @@
       "additionalProperties": false,
       "required": ["command", "args"],
       "properties": {
-        "command": { "type": "string", "enum": ["node", "nodejs", "python", "python3"] },
+        "command": {
+          "type": "string",
+          "description": "Bare interpreter name or absolute path to it.",
+          "anyOf": [
+            { "enum": ["node", "nodejs", "python", "python3"] },
+            { "pattern": "^(/|[A-Za-z]:\\\\\\\\|\\\\\\\\\\\\\\\\).+" }
+          ]
+        },
         "args": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "cwd": { "type": "string" },
         "timeout_ms": { "type": "number" },
