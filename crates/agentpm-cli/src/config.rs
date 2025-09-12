@@ -61,7 +61,11 @@ impl Config {
 }
 
 fn default_base_url() -> String {
-    "https://api.agentpackagemanager.com".to_string()
+    if cfg!(debug_assertions) {
+        "http://api.agentpackagemanager.local".into()
+    } else {
+        "https://api.agentpackagemanager.com".into()
+    }
 }
 
 fn project_dirs() -> Option<ProjectDirs> {

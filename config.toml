@@ -1,1 +1,1 @@
-base_url = "https://api.agentpackagemanager.local"
+AGENTPM_BASE_URL = "http://api.agentpackagemanager.local"
