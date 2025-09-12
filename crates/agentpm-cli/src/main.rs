@@ -29,12 +29,20 @@ struct Cli {
         long,
         global = true,
         env = "AGENTPM_BASE_URL",
-        default_value = "https://api.agentpackagemanager.com"
+        default_value_t = default_base_url()
     )]
     base_url: String,
 
     #[command(subcommand)]
     command: commands::Commands,
+}
+
+fn default_base_url() -> String {
+    if cfg!(debug_assertions) {
+        "http://api.agentpackagemanager.local".into()
+    } else {
+        "https://api.agentpackagemanager.com".into()
+    }
 }
 
 #[tokio::main]
