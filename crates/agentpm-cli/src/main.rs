@@ -29,7 +29,7 @@ struct Cli {
         long,
         global = true,
         env = "AGENTPM_BASE_URL",
-        default_value = "https://api.agentpackagemanager.local"
+        default_value = "https://api.agentpackagemanager.com"
     )]
     base_url: String,
 
