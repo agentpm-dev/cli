@@ -279,7 +279,8 @@ fn is_valid_module_name(s: &str) -> bool {
     if s.is_empty() || s.starts_with('.') || s.ends_with('.') || s.contains("..") {
         return false;
     }
-    s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
 }
 
 /// Resolve entrypoint.args to a concrete file:
@@ -296,7 +297,8 @@ fn validate_and_locate_entrypoint(
 
     // 1) Python module mode: look for "-m" and take the next token as module
     if let Some(mpos) = args.iter().position(|a| a == "-m") {
-        let module = args.get(mpos + 1)
+        let module = args
+            .get(mpos + 1)
             .ok_or_else(|| anyhow!("`python -m` requires a module name right after `-m`"))?;
         if !is_valid_module_name(module) {
             bail!("invalid Python module name for `-m`: {module}");
@@ -314,12 +316,21 @@ fn validate_and_locate_entrypoint(
             bail!(
                 "`python -m {module}`: could not find `{}/__main__.py` or `{}.py` under {}. \
                  Make sure your `files` includes the package/module.",
-                mod_path, mod_path, root.display()
+                mod_path,
+                mod_path,
+                root.display()
             );
         };
 
-        if ep_rel.is_absolute() || ep_rel.components().any(|c| matches!(c, Component::ParentDir)) {
-            bail!("resolved entrypoint must be a relative path within the project: {}", ep_rel.display());
+        if ep_rel.is_absolute()
+            || ep_rel
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
+        {
+            bail!(
+                "resolved entrypoint must be a relative path within the project: {}",
+                ep_rel.display()
+            );
         }
 
         let ep_abs = root.join(&ep_rel);
@@ -338,21 +349,35 @@ fn validate_and_locate_entrypoint(
         .iter()
         .enumerate()
         .find(|(_, a)| !a.starts_with('-'))
-        .ok_or_else(|| anyhow!("`entrypoint.args` must start with the script path; flags go after the script"))?;
+        .ok_or_else(|| {
+            anyhow!("`entrypoint.args` must start with the script path; flags go after the script")
+        })?;
 
     let ep_rel = Path::new(script);
     if ep_rel.is_absolute() {
-        bail!("`entrypoint.args[{idx}]` must be a relative path (got absolute: {})", ep_rel.display());
+        bail!(
+            "`entrypoint.args[{idx}]` must be a relative path (got absolute: {})",
+            ep_rel.display()
+        );
     }
-    if ep_rel.components().any(|c| matches!(c, Component::ParentDir)) {
-        bail!("`entrypoint.args[{idx}]` must not contain `..`: {}", ep_rel.display());
+    if ep_rel
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        bail!(
+            "`entrypoint.args[{idx}]` must not contain `..`: {}",
+            ep_rel.display()
+        );
     }
 
     let ep_abs = root.join(ep_rel);
     let md = std::fs::metadata(&ep_abs)
         .with_context(|| format!("entrypoint file not found: {}", ep_abs.display()))?;
     if !md.is_file() {
-        bail!("`entrypoint.args[{idx}]` is not a file: {}", ep_abs.display());
+        bail!(
+            "`entrypoint.args[{idx}]` is not a file: {}",
+            ep_abs.display()
+        );
     }
 
     let tar_name = rel_to_tar_name(ep_rel);
