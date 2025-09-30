@@ -275,17 +275,88 @@ fn rel_to_tar_name(p: &Path) -> String {
         .join("/")
 }
 
+fn is_valid_module_name(s: &str) -> bool {
+    if s.is_empty() || s.starts_with('.') || s.ends_with('.') || s.contains("..") {
+        return false;
+    }
+    s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+}
+
+/// Resolve entrypoint.args to a concrete file:
+/// - python -m pkg.mod  => pkg/mod/__main__.py OR pkg/mod.py
+/// - otherwise          => first non-flag arg is the script path
 fn validate_and_locate_entrypoint(
     root: &Path,
     entrypoint: &Entrypoint,
 ) -> Result<(PathBuf, String)> {
-    let entrypoint = entrypoint.args[0].as_str();
-    let ep_rel = Path::new(entrypoint);
+    let args: &[String] = &entrypoint.args;
+    if args.is_empty() {
+        bail!("`entrypoint.args` must have at least one element");
+    }
 
-    // Must be a relative path with no parent traversal
+    // 1) Python module mode: look for "-m" and take the next token as module
+    if let Some(mpos) = args.iter().position(|a| a == "-m") {
+        let module = args
+            .get(mpos + 1)
+            .ok_or_else(|| anyhow!("`python -m` requires a module name right after `-m`"))?;
+        if !is_valid_module_name(module) {
+            bail!("invalid Python module name for `-m`: {module}");
+        }
+        // map pkg.mod -> pkg/mod
+        let mod_path = module.replace('.', "/");
+        let candidate_pkg_main = Path::new(&mod_path).join("__main__.py");
+        let candidate_module_py = Path::new(&mod_path).with_extension("py");
+
+        let ep_rel = if root.join(&candidate_pkg_main).is_file() {
+            candidate_pkg_main
+        } else if root.join(&candidate_module_py).is_file() {
+            candidate_module_py
+        } else {
+            bail!(
+                "`python -m {module}`: could not find `{}/__main__.py` or `{}.py` under {}. \
+                 Make sure your `files` includes the package/module.",
+                mod_path,
+                mod_path,
+                root.display()
+            );
+        };
+
+        if ep_rel.is_absolute()
+            || ep_rel
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
+        {
+            bail!(
+                "resolved entrypoint must be a relative path within the project: {}",
+                ep_rel.display()
+            );
+        }
+
+        let ep_abs = root.join(&ep_rel);
+        let md = std::fs::metadata(&ep_abs)
+            .with_context(|| format!("entrypoint file not found: {}", ep_abs.display()))?;
+        if !md.is_file() {
+            bail!("`entrypoint` is not a file: {}", ep_abs.display());
+        }
+
+        let tar_name = rel_to_tar_name(&ep_rel);
+        return Ok((ep_abs, tar_name));
+    }
+
+    // 2) Script mode: first non-flag token is the script path
+    let (idx, script) = args
+        .iter()
+        .enumerate()
+        .find(|(_, a)| !a.starts_with('-'))
+        .ok_or_else(|| {
+            anyhow!("`entrypoint.args` must start with the script path; flags go after the script")
+        })?;
+
+    let ep_rel = Path::new(script);
     if ep_rel.is_absolute() {
         bail!(
-            "`entrypoint` must be a relative path (got absolute: {})",
+            "`entrypoint.args[{idx}]` must be a relative path (got absolute: {})",
             ep_rel.display()
         );
     }
@@ -293,17 +364,23 @@ fn validate_and_locate_entrypoint(
         .components()
         .any(|c| matches!(c, Component::ParentDir))
     {
-        bail!("`entrypoint` must not contain `..`: {}", ep_rel.display());
+        bail!(
+            "`entrypoint.args[{idx}]` must not contain `..`: {}",
+            ep_rel.display()
+        );
     }
 
     let ep_abs = root.join(ep_rel);
     let md = std::fs::metadata(&ep_abs)
         .with_context(|| format!("entrypoint file not found: {}", ep_abs.display()))?;
     if !md.is_file() {
-        bail!("`entrypoint` is not a file: {}", ep_abs.display());
+        bail!(
+            "`entrypoint.args[{idx}]` is not a file: {}",
+            ep_abs.display()
+        );
     }
 
-    let tar_name = rel_to_tar_name(ep_rel); // exactly matches manifest string, normalized
+    let tar_name = rel_to_tar_name(ep_rel);
     Ok((ep_abs, tar_name))
 }
 
