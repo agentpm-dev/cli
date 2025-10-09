@@ -1,4 +1,4 @@
-# AgentPM CLI
+# AgentPM™ CLI
 
 Command-line tool for building AgentPM tools and agents.
 
