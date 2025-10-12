@@ -2,11 +2,11 @@ use crate::auth;
 use crate::auth::TokenCache;
 use crate::config::Config;
 use crate::prelude::*;
-use anyhow::{bail};
+use agentpm_sdk::{DevicePollRes, DeviceStartRes};
+use anyhow::bail;
 use is_terminal::IsTerminal;
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
-use agentpm_sdk::{DeviceStartRes, DevicePollRes};
 
 #[derive(Args, Debug, Default)]
 pub struct LoginArgs {
@@ -138,9 +138,13 @@ pub async fn try_whoami_and_maybe_persist(
             // Friendly one-liners; do NOT return Err to avoid a backtrace
             let msg = e.to_string();
             let lmsg = msg.to_ascii_lowercase();
-            if msg.contains("401") || lmsg.contains("unauthorized") || lmsg.contains("invalid token")
+            if msg.contains("401")
+                || lmsg.contains("unauthorized")
+                || lmsg.contains("invalid token")
             {
-                eprintln!("Token validation failed (401 Unauthorized). Is the PAT correct and unrevoked?");
+                eprintln!(
+                    "Token validation failed (401 Unauthorized). Is the PAT correct and unrevoked?"
+                );
             } else if msg.contains("403") || lmsg.contains("forbidden") {
                 eprintln!("Token validated but lacks required scopes (403 Forbidden).");
             } else {
@@ -159,7 +163,11 @@ impl LoginArgs {
 
         // Decide how to get the token:
         let token = if let Some(opt) = &self.token_opt {
-            if opt == "-" { Some(read_token_from_stdin()?) } else { Some(opt.trim().to_owned()) }
+            if opt == "-" {
+                Some(read_token_from_stdin()?)
+            } else {
+                Some(opt.trim().to_owned())
+            }
         } else if self.stdin || (!stdin_is_tty && !self.paste && !self.device) {
             Some(read_token_from_stdin()?)
         } else if self.paste {
@@ -169,7 +177,7 @@ impl LoginArgs {
             None
         };
 
-        if let Some(pat) = token  {
+        if let Some(pat) = token {
             // Mode 1/2 behavior: validate and maybe write
             if !looks_like_pat(&pat) {
                 eprintln!(
@@ -190,15 +198,26 @@ impl LoginArgs {
         });
 
         // Start
-        let start = match client.cli_device_start(&self.scopes, "agentpm-cli", device_meta).await {
+        let start = match client
+            .cli_device_start(&self.scopes, "agentpm-cli", device_meta)
+            .await
+        {
             Ok(res) => res,
             Err(e) => {
                 // If server doesn’t have device flow yet, auto-fallback to paste UX
                 let msg = format!("{e:#}");
-                if msg.contains("404") || msg.to_ascii_lowercase().contains(&"Not Found".to_ascii_lowercase()) || msg.contains("501") {
-                    eprintln!("Device login not available on this server; falling back to paste mode.");
+                if msg.contains("404")
+                    || msg
+                        .to_ascii_lowercase()
+                        .contains(&"Not Found".to_ascii_lowercase())
+                    || msg.contains("501")
+                {
+                    eprintln!(
+                        "Device login not available on this server; falling back to paste mode."
+                    );
                     let pat = prompt_for_token_hidden_or_fallback()?;
-                    try_whoami_and_maybe_persist(&cfg, &cfg.base_url.clone(), &pat, self.no_write).await?;
+                    try_whoami_and_maybe_persist(&cfg, &cfg.base_url.clone(), &pat, self.no_write)
+                        .await?;
                     return Ok(());
                 }
                 return Err(e).context("Failed to start device login");
@@ -212,7 +231,11 @@ impl LoginArgs {
 
         // Poll
         let deadline = Instant::now() + Duration::from_secs(self.timeout);
-        let mut interval = if self.interval > 0 { self.interval } else { start.interval.max(1) };
+        let mut interval = if self.interval > 0 {
+            self.interval
+        } else {
+            start.interval.max(1)
+        };
         let mut last_info = Instant::now();
 
         loop {
@@ -222,30 +245,47 @@ impl LoginArgs {
             }
 
             match client.cli_device_poll(&start.device_code).await {
-                Ok(DevicePollRes::AuthorizationPending) => {
+                Ok(DevicePollRes::AuthorizationPending {
+                    interval: server_interval,
+                }) => {
+                    // If server suggests a new interval, adopt it (within sane bounds)
+                    if let Some(si) = server_interval {
+                        // clamp 1..=30 to avoid silly values
+                        let si = si.clamp(1, 30);
+                        if si != interval {
+                            interval = si;
+                        }
+                    }
                     // periodic heartbeat line
                     if last_info.elapsed() >= Duration::from_secs(15) {
                         eprintln!("Still waiting for approval… (code: {})", start.user_code);
                         last_info = Instant::now();
                     }
                 }
-                Ok(DevicePollRes::SlowDown) => {
-                    // backoff gently
-                    interval = (interval + 2).min(15);
-                }
+
                 Ok(DevicePollRes::Denied) => {
                     eprintln!("Access denied in browser. Aborting.");
                     break;
-                },
+                }
+
                 Ok(DevicePollRes::Expired) => {
                     eprintln!("Code expired. Re-run `agentpm login`.");
                     break;
-                },
+                }
+
+                Ok(DevicePollRes::ServerError) => {
+                    // transient hiccup; back off a bit
+                    interval = (interval + 2).min(15);
+                    eprintln!("Server error during polling; backing off to {}s…", interval);
+                }
+
                 Ok(DevicePollRes::Success { pat, .. }) => {
-                    // Validate whoami for a friendly confirmation
-                    try_whoami_and_maybe_persist(&cfg, &cfg.base_url.clone(), &pat, self.no_write).await?;
+                    // Validate + persist using your helper
+                    let _ = try_whoami_and_maybe_persist(&cfg, &cfg.base_url, &pat, self.no_write)
+                        .await?;
                     break;
                 }
+
                 Err(e) => {
                     // Network hiccup—don’t crash immediately
                     eprintln!("Polling error: {e}. Retrying…");
@@ -264,7 +304,9 @@ fn print_device_instructions(start: &DeviceStartRes, stdout_is_tty: bool) {
     println!("  URL : {}", start.verification_uri);
     println!("  CODE: {}", start.user_code);
     if stdout_is_tty {
-        println!("\n(We’ll keep polling for up to {} minutes. Press Ctrl+C to cancel.)",
-                 (start.expires_in as f64 / 60.0).ceil() as u64);
+        println!(
+            "\n(We’ll keep polling for up to {} minutes. Press Ctrl+C to cancel.)",
+            (start.expires_in as f64 / 60.0).ceil() as u64
+        );
     }
 }

@@ -102,17 +102,41 @@ pub struct DeviceStartRes {
 }
 
 /// POST /cli/device/poll
-#[derive(serde::Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
+#[derive(Debug)]
 pub enum DevicePollRes {
-    AuthorizationPending,
-    SlowDown, // optional; server may send
-    Denied,   // map access_denied to this
-    Expired,  // map expired_token to this
+    AuthorizationPending { interval: Option<u64> },
+    Denied,   // access_denied
+    Expired,  // expired_token
+    ServerError, // 5xx or error == server_error
     Success {
         pat: String,
-        token_id: String,
+        token_type: Option<String>,
         scopes: Vec<String>,
         created_at: String,
     },
+}
+
+// Helper structs to deserialize the various shapes
+#[derive(Deserialize)]
+pub struct PendingWire {
+    pub status: String,                 // "authorization_pending"
+    #[serde(default)]
+    pub interval: Option<u64>,          // optional
+}
+
+#[derive(Deserialize)]
+pub struct SuccessWire {
+    pub pat: String,
+    #[serde(default)]
+    pub token_type: Option<String>,     // "Bearer" (optional)
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct ErrorWire {
+    pub error: String,                  // "access_denied" | "expired_token" | "server_error" | ...
+    #[allow(dead_code)]
+    pub message: Option<String>,
 }

@@ -1,8 +1,9 @@
 use crate::error::{ApiErrorBody, Result, SdkError};
 use crate::models::install::{InstallInitResponse, ResolveRequest, ResolveResponse};
-use crate::{DevicePollRes, DeviceStartRes, InitPublish, PublishReceipt, User};
+use crate::models::device::{DeviceStartReq, DevicePollReq};
+use crate::{DevicePollRes, DeviceStartRes, InitPublish, PublishReceipt, User, SuccessWire, ErrorWire, PendingWire};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Client, Response, header::CONTENT_TYPE};
+use reqwest::{Client, Response, StatusCode, header::CONTENT_TYPE};
 use serde_json::{Value, json};
 use std::net::IpAddr;
 use std::path::Path;
@@ -239,24 +240,127 @@ impl AgentPmClient {
         &self,
         scopes: &[String],
         client_name: &str,
-        device_meta: serde_json::Value,
+        device_meta: Value,
     ) -> SdkResult<DeviceStartRes> {
-        // implement: POST /cli/device/start
-        println!("{:?} {} {}", scopes, client_name, device_meta);
-        Ok(DeviceStartRes {
-            device_code: "".to_string(),
-            user_code: "".to_string(),
-            verification_uri: "https://agentpackagemanager.com/activate".to_string(),
-            interval: 0,
-            expires_in: 0,
-        })
-        // Err(SdkError::NotFound)
+        let req = DeviceStartReq {
+            scopes: scopes.to_vec(),
+            client: client_name.to_string(),
+            device_meta,
+        };
+
+        let url = format!("{}/cli/device/start", self.api_base());
+        let resp = self
+            .auth(self.http.post(url))
+            .json(&req)
+            .send()
+            .await
+            .map_err(|e| SdkError::Other(e.to_string()))?;
+
+        let resp = self.ensure_success(resp).await?;
+        let start_resp = resp
+            .json::<DeviceStartRes>()
+            .await
+            .map_err(|e| SdkError::Other(format!("parsing device/start response: {}", e)))?;
+
+        Ok(start_resp)
     }
 
     pub async fn cli_device_poll(&self, device_code: &str) -> SdkResult<DevicePollRes> {
-        // implement: POST /cli/device/poll
-        println!("{}", device_code);
-        Err(SdkError::NotFound)
+        let req = DevicePollReq {
+            device_code: device_code.to_string()
+        };
+
+        let url = format!("{}/cli/device/poll", self.api_base());
+        let resp = self
+            .auth(self.http.post(url.clone()))
+            .json(&req)
+            .send()
+            .await
+            .map_err(|e| SdkError::Other(e.to_string()))?;
+
+        let status = resp.status();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| SdkError::Other(format!("reading device/poll body: {}", e)))?;
+
+        // 2xx: either pending or success
+        if status.is_success() {
+            // Peek to decide which wire struct to use
+            // Avoid failing on minor shape differences
+            let val: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+
+            if val.get("pat").is_some() {
+                // Success payload
+                let ok: SuccessWire = serde_json::from_slice(&bytes)
+                    .map_err(|e| SdkError::Other(format!("parsing device/poll success: {}", e)))?;
+                return Ok(DevicePollRes::Success {
+                    pat: ok.pat,
+                    token_type: ok.token_type,
+                    scopes: ok.scopes,
+                    created_at: ok.created_at,
+                });
+            }
+
+            if val.get("status").is_some() {
+                let p: PendingWire = serde_json::from_slice(&bytes)
+                    .map_err(|e| SdkError::Other(format!("parsing device/poll pending: {}", e)))?;
+                if p.status == "authorization_pending" {
+                    return Ok(DevicePollRes::AuthorizationPending { interval: p.interval });
+                }
+                return Err(SdkError::Other(format!(
+                    "unexpected device/poll 200 body: {}",
+                    String::from_utf8_lossy(&bytes)
+                )));
+            }
+
+            return Err(SdkError::Other(format!(
+                "unexpected device/poll 200 body: {}",
+                String::from_utf8_lossy(&bytes)
+            )));
+        }
+
+        // 400: backend sends structured { error: ... }
+        if status == StatusCode::BAD_REQUEST {
+            if let Ok(errw) = serde_json::from_slice::<ErrorWire>(&bytes) {
+                return Ok(match errw.error.as_str() {
+                    "access_denied" => DevicePollRes::Denied,
+                    "expired_token" => DevicePollRes::Expired,
+                    "server_error"  => DevicePollRes::ServerError,
+                    _ => {
+                        // Unknown 400 error shape; treat as server error so caller can retry/backoff
+                        DevicePollRes::ServerError
+                    }
+                });
+            }
+            return Err(SdkError::Other(format!(
+                "device/poll 400 body: {}",
+                String::from_utf8_lossy(&bytes)
+            )));
+        }
+
+        // 401/404/429: keep parity with ensure_success mappings
+        match status.as_u16() {
+            401 => return Err(SdkError::Unauthorized),
+            404 => return Err(SdkError::NotFound),
+            429 => {
+                // try to parse Retry-After; we don't have headers now, so just signal rate limit
+                return Err(SdkError::RateLimited { retry_after: None });
+            }
+            _ => {}
+        }
+
+        // 5xx: let the caller keep polling briefly
+        if status.is_server_error() {
+            return Ok(DevicePollRes::ServerError);
+        }
+
+        // Everything else → opaque error
+        Err(SdkError::Other(format!(
+            "device/poll HTTP {}: {}",
+            status,
+            String::from_utf8_lossy(&bytes)
+        )))
     }
 
     /// Centralized error mapping; returns the same Response on success.
