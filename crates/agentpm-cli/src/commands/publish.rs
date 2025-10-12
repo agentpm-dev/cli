@@ -1,4 +1,3 @@
-use crate::auth;
 use crate::manifest::{
     Entrypoint, ToolManifest, load_manifest_value, parse_tool_manifest, resolve_schema_source,
     validate_manifest_value,
@@ -41,6 +40,10 @@ pub struct PublishArgs {
     /// Suppress progress output (also auto-enabled when not a TTY)
     #[arg(long)]
     pub quiet: bool,
+
+    /// Personal Access Token for headless auth (overrides env/file)
+    #[arg(long, value_name = "PAT", env = "APM_TOKEN")]
+    pub token: Option<String>,
 }
 
 impl PublishArgs {
@@ -53,18 +56,11 @@ impl PublishArgs {
 
         // 1) Load PAT (login is required; for MVP we use cached token)
         let mut s = Step::new("Reading credentials", quiet);
-        let token = match auth::read_token(&cfg)? {
-            Some(t) => {
-                s.ok("");
-                t.access_token
-            }
-            None => {
-                s.err("not logged in");
-                return Err(anyhow!(
-                    "Not logged in. Run `agentpm login` to store a Personal Access Token."
-                ));
-            }
-        };
+        let token = resolve_token(&cfg, self.token.clone())?
+            .ok_or_else(|| anyhow!(
+                "No credentials. Provide a PAT via:\n  • --token <PAT>\n  • APM_TOKEN env var\nOr run `agentpm login --paste` to save one locally."
+            ))?;
+        s.ok(format!("using {}", mask_token(&token)));
 
         // 2) Validate manifest using the same schema as `lint`
         let mut s = Step::new("Validating manifest", quiet);

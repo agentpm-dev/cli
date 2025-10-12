@@ -9,6 +9,32 @@ pub struct TokenCache {
     // Later: expiry, refresh_token, scopes, etc.
 }
 
+pub fn resolve_token(cfg: &Config, flag_token: Option<String>) -> Result<Option<String>> {
+    // 1) Explicit flag takes top priority
+    if let Some(t) = flag_token
+        && !t.trim().is_empty()
+    {
+        return Ok(Some(t));
+    }
+    // 2) Environment variable
+    if let Ok(t) = std::env::var("APM_TOKEN") {
+        let t = t.trim().to_owned();
+        if !t.is_empty() {
+            return Ok(Some(t));
+        }
+    }
+    // 3) Fallback: token file (existing behavior)
+    Ok(read_token(cfg)?.map(|t| t.access_token))
+}
+
+// (nice-to-have for logs)
+pub fn mask_token(t: &str) -> String {
+    if t.len() <= 10 {
+        return "apm_****".into();
+    }
+    format!("{}…{}", &t[..8], &t[t.len() - 2..])
+}
+
 pub fn read_token(cfg: &Config) -> Result<Option<TokenCache>> {
     if !cfg.token_file.exists() {
         return Ok(None);

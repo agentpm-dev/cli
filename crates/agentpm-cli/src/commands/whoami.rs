@@ -1,21 +1,29 @@
 use crate::prelude::*;
 
 #[derive(Args, Debug, Default)]
-pub struct WhoAmIArgs {}
+pub struct WhoAmIArgs {
+    /// Personal Access Token for headless auth (overrides env/file)
+    #[arg(long, value_name = "PAT", env = "APM_TOKEN")]
+    pub token: Option<String>,
+}
 
 impl WhoAmIArgs {
     pub async fn run(self, base_url: String) -> Result<()> {
-        // TODO: Next step when you’re ready: wire whoami to actually use the token from auth::read_token and call a real GET /whoami in the SDK.
-
         // Load merged config (defaults/file/flag)
         let cfg = Config::load(base_url)?;
 
-        // (Optional) read cached token to show how commands can access it
-        if let Some(_tok) = read_token(&cfg)? {
-            debug!("using cached token");
-        }
+        let token = resolve_token(&cfg, self.token.clone())?;
 
-        let client = AgentPmClient::new(cfg.base_url.clone())?;
+        let mut client = AgentPmClient::new(cfg.base_url.clone())?;
+        if let Some(t) = token.clone() {
+            client = client.with_token(t);
+        } else {
+            // No token → clear message and exit 0 (like docker/podman do)
+            println!(
+                "Not authenticated. Set APM_TOKEN or pass --token, or run `agentpm login --paste`."
+            );
+            return Ok(());
+        }
 
         match client.whoami().await {
             Ok(me) => {
