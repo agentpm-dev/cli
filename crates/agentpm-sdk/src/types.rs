@@ -90,3 +90,29 @@ pub struct Page<T> {
     pub next_page_token: Option<String>,
     pub total: Option<u64>,
 }
+
+/// POST /cli/device/start
+#[derive(serde::Deserialize)]
+pub struct DeviceStartRes {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub interval: u64,
+    pub expires_in: u64,
+}
+
+/// POST /cli/device/poll
+#[derive(serde::Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum DevicePollRes {
+    AuthorizationPending,
+    SlowDown, // optional; server may send
+    Denied,   // map access_denied to this
+    Expired,  // map expired_token to this
+    Success {
+        pat: String,
+        token_id: String,
+        scopes: Vec<String>,
+        created_at: String,
+    },
+}

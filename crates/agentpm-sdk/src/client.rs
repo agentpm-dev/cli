@@ -1,6 +1,6 @@
 use crate::error::{ApiErrorBody, Result, SdkError};
 use crate::models::install::{InstallInitResponse, ResolveRequest, ResolveResponse};
-use crate::{InitPublish, PublishReceipt, User};
+use crate::{DevicePollRes, DeviceStartRes, InitPublish, PublishReceipt, User};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Response, header::CONTENT_TYPE};
 use serde_json::{Value, json};
@@ -233,6 +233,30 @@ impl AgentPmClient {
         let _ = self.ensure_success(resp).await?;
 
         Ok(())
+    }
+
+    pub async fn cli_device_start(
+        &self,
+        scopes: &[String],
+        client_name: &str,
+        device_meta: serde_json::Value,
+    ) -> SdkResult<DeviceStartRes> {
+        // implement: POST /cli/device/start
+        println!("{:?} {} {}", scopes, client_name, device_meta);
+        Ok(DeviceStartRes {
+            device_code: "".to_string(),
+            user_code: "".to_string(),
+            verification_uri: "https://agentpackagemanager.com/activate".to_string(),
+            interval: 0,
+            expires_in: 0,
+        })
+        // Err(SdkError::NotFound)
+    }
+
+    pub async fn cli_device_poll(&self, device_code: &str) -> SdkResult<DevicePollRes> {
+        // implement: POST /cli/device/poll
+        println!("{}", device_code);
+        Err(SdkError::NotFound)
     }
 
     /// Centralized error mapping; returns the same Response on success.
