@@ -56,13 +56,3 @@ pub fn write_token(cfg: &Config, token: &TokenCache) -> Result<()> {
     f.write_all(json.as_bytes())?;
     Ok(())
 }
-
-/// Placeholder "login" that just writes a demo token.
-/// Replace it with real auth flow (device code / OAuth / username+password)
-pub async fn login_stub(cfg: &Config) -> Result<()> {
-    let demo = TokenCache {
-        access_token: "DEMO_TOKEN_CHANGE_ME".to_string(),
-    };
-    write_token(cfg, &demo)?;
-    Ok(())
-}
