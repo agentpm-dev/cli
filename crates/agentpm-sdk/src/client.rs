@@ -1,6 +1,6 @@
 use crate::error::{ApiErrorBody, Result, SdkError};
 use crate::models::install::{InstallInitResponse, ResolveRequest, ResolveResponse};
-use crate::{InitPublish, PublishReceipt};
+use crate::{InitPublish, PublishReceipt, User};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Response, header::CONTENT_TYPE};
 use serde_json::{Value, json};
@@ -76,16 +76,18 @@ impl AgentPmClient {
         }
     }
 
-    /// GET /whoami -> String (replace with types::User later)
-    pub async fn whoami(&self) -> Result<String> {
-        let url = format!("{}/whoami", self.api_base());
+    /// GET /whoami
+    pub async fn whoami(&self) -> SdkResult<User> {
+        let url = format!("{}/v1/whoami", self.api_base());
         let resp = self.auth(self.http.get(url)).send().await?;
 
-        // TODO: Replace with types::User if your API returns structured JSON
-        let resp = self.ensure_success(resp).await?;
-        resp.text()
+        let whoami_resp = self.ensure_success(resp).await?;
+        let whoami = whoami_resp
+            .json::<User>()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))
+            .map_err(|e| SdkError::Other(format!("parsing init response: {}", e)))?;
+
+        Ok(whoami)
     }
 
     /// New flow:

@@ -17,7 +17,7 @@ pub fn resolve_token(cfg: &Config, flag_token: Option<String>) -> Result<Option<
         return Ok(Some(t));
     }
     // 2) Environment variable
-    if let Ok(t) = std::env::var("APM_TOKEN") {
+    if let Ok(t) = std::env::var("AGENTPM_TOKEN") {
         let t = t.trim().to_owned();
         if !t.is_empty() {
             return Ok(Some(t));

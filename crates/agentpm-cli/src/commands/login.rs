@@ -89,8 +89,30 @@ impl LoginArgs {
 
         // Validate via /auth/whoami before writing
         let client = AgentPmClient::new(cfg.base_url.clone())?.with_token(token.clone());
-        let _who = match client.whoami().await {
-            Ok(w) => w,
+        match client.whoami().await {
+            Ok(who) => {
+                // Persist unless --no-write
+                if self.no_write {
+                    println!(
+                        "✅ Token valid for {} ({:?}). (--no-write set; nothing saved.)",
+                        who.email,
+                        who.scopes.unwrap_or_else(Vec::new)
+                    );
+                } else {
+                    auth::write_token(
+                        &cfg,
+                        &TokenCache {
+                            access_token: token.clone(),
+                        },
+                    )?;
+                    println!(
+                        "✅  Logged in as {} ({:?})\nSaved credentials to: {}",
+                        who.email,
+                        who.scopes.unwrap_or_else(Vec::new),
+                        cfg.token_file.display()
+                    );
+                }
+            }
             Err(e) => {
                 // Try to make 401/403 clear to users
                 let msg = format!("{e}");
@@ -98,41 +120,17 @@ impl LoginArgs {
                     || msg.contains("unauthorized")
                     || msg.contains("invalid token")
                 {
-                    bail!(
+                    eprintln!(
                         "Token validation failed (401 Unauthorized). Is the PAT correct and unrevoked?"
                     );
+                } else if msg.contains("403") {
+                    eprintln!("Token validated but lacks required scopes (403 Forbidden).");
+                } else {
+                    eprintln!("Failed to validate token: {msg}");
                 }
-                if msg.contains("403") {
-                    bail!("Token validated but lacks required scopes (403 Forbidden).");
-                }
-                bail!("Failed to validate token: {msg}");
             }
         };
 
-        // Persist unless --no-write
-        let one = "TODO";
-        let two = "TODO";
-        if self.no_write {
-            println!(
-                "✅ Token valid for {} ({}). (--no-write set; nothing saved.)",
-                one, two
-            );
-        } else {
-            auth::write_token(
-                &cfg,
-                &TokenCache {
-                    access_token: token.clone(),
-                },
-            )?;
-            println!(
-                "✅ Logged in as {} ({})\nSaved credentials to: {}",
-                one,
-                two,
-                // who.user.email,
-                // who.user.id,
-                cfg.token_file.display()
-            );
-        }
         Ok(())
     }
 }

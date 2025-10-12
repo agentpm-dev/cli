@@ -26,11 +26,17 @@ impl WhoAmIArgs {
         }
 
         match client.whoami().await {
-            Ok(me) => {
-                println!("{me}");
+            Ok(who) => {
+                println!(
+                    "✅  Logged in as {} ({:?})",
+                    who.email,
+                    who.scopes.unwrap_or_else(Vec::new),
+                );
             }
             Err(SdkError::Unauthorized) => {
-                eprintln!("Not authorized. Try: `agentpm login`.");
+                eprintln!(
+                    "Token validation failed (401 Unauthorized). Is the PAT correct and unrevoked?"
+                );
             }
             Err(SdkError::Http(e)) if e.is_connect() => {
                 eprintln!(

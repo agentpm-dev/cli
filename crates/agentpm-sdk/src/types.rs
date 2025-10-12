@@ -29,9 +29,11 @@ pub struct InitPublish {
 /// Basic identity returned by `/whoami`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
-    pub id: String,
+    pub kind: String,
+    pub sub: String,
     pub email: String,
-    pub name: Option<String>,
+    pub scopes: Option<Vec<String>>,
+    pub pat_id: Option<String>,
 }
 
 /// A tool registered in AgentPM
