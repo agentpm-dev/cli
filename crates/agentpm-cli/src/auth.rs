@@ -40,9 +40,28 @@ pub fn read_token(cfg: &Config) -> Result<Option<TokenCache>> {
         return Ok(None);
     }
 
-    let text = fs::read_to_string(&cfg.token_file)
+    let raw = fs::read_to_string(&cfg.token_file)
         .with_context(|| format!("reading token file {}", cfg.token_file.display()))?;
-    let token: TokenCache = serde_json::from_str(&text).context("parsing token JSON from cache")?;
+
+    // Empty file → no token
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let mut token: TokenCache =
+        serde_json::from_str(&raw).context("parsing token JSON from cache")?;
+
+    // Empty/whitespace token → no token
+    let acc = token.access_token.trim();
+    if acc.is_empty() {
+        return Ok(None);
+    }
+
+    // Normalize by trimming before returning
+    if acc.len() != token.access_token.len() {
+        token.access_token = acc.to_owned();
+    }
+
     Ok(Some(token))
 }
 
