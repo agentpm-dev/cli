@@ -5,7 +5,7 @@ use crate::prelude::*;
 use crate::semver::adapt::{plan_to_sdk_resolve, to_sdk_request};
 use crate::semver::types::{DesiredSet, ResolvePlan, lock_from_plan};
 use crate::semver::update::maybe_update_agent_json;
-use crate::{auth, io::download::download_and_extract_all, io::fs, ui::Step};
+use crate::{io::download::download_and_extract_all, io::fs, ui::Step};
 use anyhow::anyhow;
 use serde_json::Value;
 use std::io::IsTerminal;
@@ -35,6 +35,10 @@ pub struct InstallArgs {
     /// Reduce output
     #[clap(long)]
     pub quiet: bool,
+
+    /// Personal Access Token for headless auth (overrides env/file)
+    #[arg(long, value_name = "PAT", env = "APM_TOKEN")]
+    pub token: Option<String>,
 }
 
 impl InstallArgs {
@@ -47,8 +51,12 @@ impl InstallArgs {
 
         // 0) Load PAT (login is not required, but send in incase private repo; for MVP we use cached token)
         let mut s = Step::new("Reading credentials", quiet);
-        let token: Option<String> = auth::read_token(&cfg)?.map(|t| t.access_token);
-        s.ok("");
+        let token = resolve_token(&cfg, self.token.clone())?;
+        if let Some(t) = &token {
+            s.ok(format!("using {}", mask_token(t)));
+        } else {
+            s.ok("none (public installs only)");
+        }
 
         let mut client = AgentPmClient::new(base_url.clone())?;
         if let Some(ref tok) = token {

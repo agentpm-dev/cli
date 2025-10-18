@@ -29,9 +29,11 @@ pub struct InitPublish {
 /// Basic identity returned by `/whoami`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
-    pub id: String,
+    pub kind: String,
+    pub sub: String,
     pub email: String,
-    pub name: Option<String>,
+    pub scopes: Option<Vec<String>>,
+    pub pat_id: Option<String>,
 }
 
 /// A tool registered in AgentPM
@@ -87,4 +89,56 @@ pub struct Page<T> {
     pub items: Vec<T>,
     pub next_page_token: Option<String>,
     pub total: Option<u64>,
+}
+
+/// POST /cli/device/start
+#[derive(serde::Deserialize)]
+pub struct DeviceStartRes {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub interval: u64,
+    pub expires_in: u64,
+}
+
+/// POST /cli/device/poll
+#[derive(Debug)]
+pub enum DevicePollRes {
+    AuthorizationPending {
+        interval: Option<u64>,
+    },
+    Denied,      // access_denied
+    Expired,     // expired_token
+    ServerError, // 5xx or error == server_error
+    Success {
+        pat: String,
+        token_type: Option<String>,
+        scopes: Vec<String>,
+        created_at: String,
+    },
+}
+
+// Helper structs to deserialize the various shapes
+#[derive(Deserialize)]
+pub struct PendingWire {
+    pub status: String, // "authorization_pending"
+    #[serde(default)]
+    pub interval: Option<u64>, // optional
+}
+
+#[derive(Deserialize)]
+pub struct SuccessWire {
+    pub pat: String,
+    #[serde(default)]
+    pub token_type: Option<String>, // "Bearer" (optional)
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct ErrorWire {
+    pub error: String, // "access_denied" | "expired_token" | "server_error" | ...
+    #[allow(dead_code)]
+    pub message: Option<String>,
 }

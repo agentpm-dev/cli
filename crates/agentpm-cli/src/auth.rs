@@ -9,14 +9,59 @@ pub struct TokenCache {
     // Later: expiry, refresh_token, scopes, etc.
 }
 
+pub fn resolve_token(cfg: &Config, flag_token: Option<String>) -> Result<Option<String>> {
+    // 1) Explicit flag takes top priority
+    if let Some(t) = flag_token
+        && !t.trim().is_empty()
+    {
+        return Ok(Some(t));
+    }
+    // 2) Environment variable
+    if let Ok(t) = std::env::var("AGENTPM_TOKEN") {
+        let t = t.trim().to_owned();
+        if !t.is_empty() {
+            return Ok(Some(t));
+        }
+    }
+    // 3) Fallback: token file (existing behavior)
+    Ok(read_token(cfg)?.map(|t| t.access_token))
+}
+
+// (nice-to-have for logs)
+pub fn mask_token(t: &str) -> String {
+    if t.len() <= 10 {
+        return "apm_****".into();
+    }
+    format!("{}…{}", &t[..8], &t[t.len() - 2..])
+}
+
 pub fn read_token(cfg: &Config) -> Result<Option<TokenCache>> {
     if !cfg.token_file.exists() {
         return Ok(None);
     }
 
-    let text = fs::read_to_string(&cfg.token_file)
+    let raw = fs::read_to_string(&cfg.token_file)
         .with_context(|| format!("reading token file {}", cfg.token_file.display()))?;
-    let token: TokenCache = serde_json::from_str(&text).context("parsing token JSON from cache")?;
+
+    // Empty file → no token
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let mut token: TokenCache =
+        serde_json::from_str(&raw).context("parsing token JSON from cache")?;
+
+    // Empty/whitespace token → no token
+    let acc = token.access_token.trim();
+    if acc.is_empty() {
+        return Ok(None);
+    }
+
+    // Normalize by trimming before returning
+    if acc.len() != token.access_token.len() {
+        token.access_token = acc.to_owned();
+    }
+
     Ok(Some(token))
 }
 
@@ -28,15 +73,5 @@ pub fn write_token(cfg: &Config, token: &TokenCache) -> Result<()> {
     let mut f = fs::File::create(&cfg.token_file)
         .with_context(|| format!("creating {}", cfg.token_file.display()))?;
     f.write_all(json.as_bytes())?;
-    Ok(())
-}
-
-/// Placeholder "login" that just writes a demo token.
-/// Replace it with real auth flow (device code / OAuth / username+password)
-pub async fn login_stub(cfg: &Config) -> Result<()> {
-    let demo = TokenCache {
-        access_token: "DEMO_TOKEN_CHANGE_ME".to_string(),
-    };
-    write_token(cfg, &demo)?;
     Ok(())
 }
