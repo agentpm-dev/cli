@@ -3,7 +3,7 @@ use crate::prelude::*;
 #[derive(Args, Debug, Default)]
 pub struct WhoAmIArgs {
     /// Personal Access Token for headless auth (overrides env/file)
-    #[arg(long, value_name = "PAT", env = "APM_TOKEN")]
+    #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
     pub token: Option<String>,
 }
 
@@ -20,7 +20,7 @@ impl WhoAmIArgs {
         } else {
             // No token → clear message and exit 0 (like docker/podman do)
             println!(
-                "Not authenticated. Set APM_TOKEN or pass --token, or run `agentpm login --paste`."
+                "Not authenticated. Set AGENTPM_TOKEN or pass --token, or run `agentpm login --paste`."
             );
             return Ok(());
         }

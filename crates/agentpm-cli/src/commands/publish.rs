@@ -42,7 +42,7 @@ pub struct PublishArgs {
     pub quiet: bool,
 
     /// Personal Access Token for headless auth (overrides env/file)
-    #[arg(long, value_name = "PAT", env = "APM_TOKEN")]
+    #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
     pub token: Option<String>,
 }
 
@@ -58,7 +58,7 @@ impl PublishArgs {
         let mut s = Step::new("Reading credentials", quiet);
         let token = resolve_token(&cfg, self.token.clone())?
             .ok_or_else(|| anyhow!(
-                "No credentials. Provide a PAT via:\n  • --token <PAT>\n  • APM_TOKEN env var\nOr run `agentpm login --paste` to save one locally."
+                "No credentials. Provide a PAT via:\n  • --token <PAT>\n  • AGENTPM_TOKEN env var\nOr run `agentpm login --paste` to save one locally."
             ))?;
         s.ok(format!("using {}", mask_token(&token)));
 
