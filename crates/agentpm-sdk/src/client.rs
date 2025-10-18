@@ -1,7 +1,10 @@
 use crate::error::{ApiErrorBody, Result, SdkError};
+use crate::models::device::{DevicePollReq, DeviceStartReq};
 use crate::models::install::{InstallInitResponse, ResolveRequest, ResolveResponse};
-use crate::models::device::{DeviceStartReq, DevicePollReq};
-use crate::{DevicePollRes, DeviceStartRes, InitPublish, PublishReceipt, User, SuccessWire, ErrorWire, PendingWire};
+use crate::{
+    DevicePollRes, DeviceStartRes, ErrorWire, InitPublish, PendingWire, PublishReceipt,
+    SuccessWire, User,
+};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Response, StatusCode, header::CONTENT_TYPE};
 use serde_json::{Value, json};
@@ -267,7 +270,7 @@ impl AgentPmClient {
 
     pub async fn cli_device_poll(&self, device_code: &str) -> SdkResult<DevicePollRes> {
         let req = DevicePollReq {
-            device_code: device_code.to_string()
+            device_code: device_code.to_string(),
         };
 
         let url = format!("{}/cli/device/poll", self.api_base());
@@ -306,7 +309,9 @@ impl AgentPmClient {
                 let p: PendingWire = serde_json::from_slice(&bytes)
                     .map_err(|e| SdkError::Other(format!("parsing device/poll pending: {}", e)))?;
                 if p.status == "authorization_pending" {
-                    return Ok(DevicePollRes::AuthorizationPending { interval: p.interval });
+                    return Ok(DevicePollRes::AuthorizationPending {
+                        interval: p.interval,
+                    });
                 }
                 return Err(SdkError::Other(format!(
                     "unexpected device/poll 200 body: {}",
@@ -326,7 +331,7 @@ impl AgentPmClient {
                 return Ok(match errw.error.as_str() {
                     "access_denied" => DevicePollRes::Denied,
                     "expired_token" => DevicePollRes::Expired,
-                    "server_error"  => DevicePollRes::ServerError,
+                    "server_error" => DevicePollRes::ServerError,
                     _ => {
                         // Unknown 400 error shape; treat as server error so caller can retry/backoff
                         DevicePollRes::ServerError

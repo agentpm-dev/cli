@@ -104,9 +104,11 @@ pub struct DeviceStartRes {
 /// POST /cli/device/poll
 #[derive(Debug)]
 pub enum DevicePollRes {
-    AuthorizationPending { interval: Option<u64> },
-    Denied,   // access_denied
-    Expired,  // expired_token
+    AuthorizationPending {
+        interval: Option<u64>,
+    },
+    Denied,      // access_denied
+    Expired,     // expired_token
     ServerError, // 5xx or error == server_error
     Success {
         pat: String,
@@ -119,16 +121,16 @@ pub enum DevicePollRes {
 // Helper structs to deserialize the various shapes
 #[derive(Deserialize)]
 pub struct PendingWire {
-    pub status: String,                 // "authorization_pending"
+    pub status: String, // "authorization_pending"
     #[serde(default)]
-    pub interval: Option<u64>,          // optional
+    pub interval: Option<u64>, // optional
 }
 
 #[derive(Deserialize)]
 pub struct SuccessWire {
     pub pat: String,
     #[serde(default)]
-    pub token_type: Option<String>,     // "Bearer" (optional)
+    pub token_type: Option<String>, // "Bearer" (optional)
     #[serde(default)]
     pub scopes: Vec<String>,
     pub created_at: String,
@@ -136,7 +138,7 @@ pub struct SuccessWire {
 
 #[derive(Deserialize)]
 pub struct ErrorWire {
-    pub error: String,                  // "access_denied" | "expired_token" | "server_error" | ...
+    pub error: String, // "access_denied" | "expired_token" | "server_error" | ...
     #[allow(dead_code)]
     pub message: Option<String>,
 }

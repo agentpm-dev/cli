@@ -5,7 +5,7 @@ pub use anyhow::{Context, Result};
 pub use clap::{Args, Subcommand};
 
 // Config and auth helpers are used by most commands
-pub use crate::auth::{resolve_token, mask_token};
+pub use crate::auth::{mask_token, resolve_token};
 pub use crate::config::Config;
 
 // SDK client (so commands don’t have to name the path)
