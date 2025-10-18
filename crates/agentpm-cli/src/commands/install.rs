@@ -37,7 +37,7 @@ pub struct InstallArgs {
     pub quiet: bool,
 
     /// Personal Access Token for headless auth (overrides env/file)
-    #[arg(long, value_name = "PAT", env = "APM_TOKEN")]
+    #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
     pub token: Option<String>,
 }
 
