@@ -208,7 +208,7 @@ impl KeysArgs {
                 let id = key_id_from_pub_b64(&pub_b64)?;
                 let path = key_path(&id)?;
                 write_key_file_atomic(&path, &stored)?;
-                println!("✅ Created key \"{label}\"");
+                println!("✅  Created key \"{label}\"");
                 println!("   id: {id}");
                 println!("   stored at: {}", path.display());
             }

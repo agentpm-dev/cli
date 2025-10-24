@@ -1,6 +1,7 @@
 use crate::error::{ApiErrorBody, Result, SdkError};
 use crate::models::device::{DevicePollReq, DeviceStartReq};
 use crate::models::install::{InstallInitResponse, ResolveRequest, ResolveResponse};
+use crate::models::namespace::{CreateNamespaceSignerReq, RevokeNamespaceSignerReq};
 use crate::{
     DevicePollRes, DeviceStartRes, ErrorWire, InitPublish, PendingWire, PublishReceipt,
     SuccessWire, User,
@@ -366,6 +367,56 @@ impl AgentPmClient {
             status,
             String::from_utf8_lossy(&bytes)
         )))
+    }
+
+    pub async fn create_namespace_signer(
+        &self,
+        namespace: String,
+        label: String,
+        public_key_b64: &str,
+    ) -> SdkResult<Response> {
+        let req = CreateNamespaceSignerReq {
+            label,
+            public_key_b64: public_key_b64.to_string(),
+            algo: "ed25519".parse().unwrap(),
+        };
+
+        let url = format!("{}/namespaces/{}/signers", self.api_base(), namespace);
+        let resp = self
+            .auth(self.http.post(url))
+            .json(&req)
+            .send()
+            .await
+            .map_err(|e| SdkError::Other(e.to_string()))?;
+
+        let resp = self.ensure_success(resp).await?;
+
+        Ok(resp)
+    }
+
+    pub async fn revoke_namespace_signer(
+        &self,
+        namespace: String,
+        signer_id: String,
+    ) -> SdkResult<Response> {
+        let req = RevokeNamespaceSignerReq { is_active: false };
+
+        let url = format!(
+            "{}/namespaces/{}/signers/{}",
+            self.api_base(),
+            namespace,
+            signer_id
+        );
+        let resp = self
+            .auth(self.http.patch(url))
+            .json(&req)
+            .send()
+            .await
+            .map_err(|e| SdkError::Other(e.to_string()))?;
+
+        let resp = self.ensure_success(resp).await?;
+
+        Ok(resp)
     }
 
     /// Centralized error mapping; returns the same Response on success.
