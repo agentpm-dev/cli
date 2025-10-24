@@ -1,8 +1,10 @@
 use crate::prelude::*;
 pub mod init;
 pub mod install;
+pub mod keys;
 pub mod lint;
 pub mod login;
+pub mod namespace;
 pub mod publish;
 pub mod whoami;
 
@@ -25,4 +27,10 @@ pub enum Commands {
 
     /// Install tool(s) from the registry
     Install(install::InstallArgs),
+
+    /// Manage local signing keys
+    Keys(keys::KeysArgs),
+
+    /// Manage namespace signers (server-side)
+    Namespace(namespace::NamespaceArgs),
 }
