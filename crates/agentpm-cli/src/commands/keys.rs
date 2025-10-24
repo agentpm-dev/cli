@@ -6,6 +6,7 @@ use argon2::{
     password_hash::{PasswordHash, SaltString},
 };
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
 use chacha20poly1305::{
     XChaCha20Poly1305, // 24-byte nonce variant
     XNonce,            // 24-byte nonce type
@@ -84,13 +85,13 @@ fn key_path(key_id: &str) -> Result<PathBuf> {
     Ok(keystore_dir()?.join(format!("{key_id}.json")))
 }
 
-/// Produce a stable key id: first 12 chars of base64(SHA256(raw_pubkey))
-fn key_id_from_pub_b64(pub_b64: &str) -> Result<String> {
-    let raw = B64.decode(pub_b64)?;
-    let mut h = Sha256::new();
-    h.update(&raw);
-    let fp = B64.encode(h.finalize());
-    Ok(fp[..12].to_string())
+/// Produce a stable, filename-safe id from the raw 32-byte public key (base64):
+/// id = base64url(SHA256(raw_pubkey)) prefix, e.g. first 16 chars
+pub fn key_id_from_pub_b64(pub_b64: &str) -> anyhow::Result<String> {
+    let raw = base64::engine::general_purpose::STANDARD.decode(pub_b64)?;
+    let fp = B64URL.encode(Sha256::digest(&raw));
+    // choose length: 12–20 chars; 16 is a nice balance
+    Ok(fp[..16].to_string())
 }
 
 fn encrypt_private(sk_bytes: &[u8], pass: &str) -> Result<(String, String, String)> {
