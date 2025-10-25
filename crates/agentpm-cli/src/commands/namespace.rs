@@ -43,7 +43,12 @@ pub enum NamespaceCmd {
 impl NamespaceArgs {
     pub async fn run(self, base_url: String) -> Result<()> {
         match self.command {
-            NamespaceCmd::AddSigner { namespace, label, pubkey, token } => {
+            NamespaceCmd::AddSigner {
+                namespace,
+                label,
+                pubkey,
+                token,
+            } => {
                 let cfg = Config::load(base_url.clone())?;
                 let token = resolve_token(&cfg, token)?;
                 let mut client = AgentPmClient::new(base_url)?;
@@ -67,7 +72,10 @@ impl NamespaceArgs {
                     }
                 };
 
-                match client.create_namespace_signer(namespace, label.clone(), input.trim()).await {
+                match client
+                    .create_namespace_signer(namespace, label.clone(), input.trim())
+                    .await
+                {
                     Ok(..) => {
                         println!("✅  Added signer \"{}\"", label);
                     }
@@ -76,7 +84,11 @@ impl NamespaceArgs {
                 }
             }
 
-            NamespaceCmd::RevokeSigner { namespace, signer_id, token } => {
+            NamespaceCmd::RevokeSigner {
+                namespace,
+                signer_id,
+                token,
+            } => {
                 let cfg = Config::load(base_url.clone())?;
                 let token = resolve_token(&cfg, token)?;
                 let mut client = AgentPmClient::new(base_url)?;
@@ -89,7 +101,10 @@ impl NamespaceArgs {
                     return Ok(());
                 }
 
-                match client.revoke_namespace_signer(namespace, signer_id.clone()).await {
+                match client
+                    .revoke_namespace_signer(namespace, signer_id.clone())
+                    .await
+                {
                     Ok(_) => println!("✅  Revoked signer {}", signer_id),
                     Err(SdkError::NotFound) => eprintln!("Signer not found."),
                     Err(SdkError::Unauthorized) => eprintln!("Unauthorized (401)."),

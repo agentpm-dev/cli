@@ -7,6 +7,7 @@ mod auth;
 mod commands;
 mod config;
 mod io;
+mod keys;
 mod manifest;
 mod prelude;
 mod semver;

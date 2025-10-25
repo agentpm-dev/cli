@@ -1,4 +1,4 @@
-use crate::commands::keys::StoredKeyV1;
+use crate::keys::signing::StoredKeyV1;
 use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs;

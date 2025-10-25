@@ -1,3 +1,8 @@
+use crate::auth::read_key_file;
+use crate::commands::keys::key_id_from_pub_b64;
+use crate::keys::signing::{
+    StoredKeyV1, decrypt_private, keystore_dir, prompt_passphrase_with_fallback,
+};
 use crate::manifest::{
     Entrypoint, ToolManifest, load_manifest_value, parse_tool_manifest, resolve_schema_source,
     validate_manifest_value,
@@ -5,6 +10,8 @@ use crate::manifest::{
 use crate::prelude::*;
 use crate::ui::Step;
 use anyhow::{anyhow, bail};
+use base64::Engine;
+use ed25519_dalek::{Signer, SigningKey};
 use flate2::{Compression, write::GzEncoder};
 use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
@@ -40,6 +47,14 @@ pub struct PublishArgs {
     /// Suppress progress output (also auto-enabled when not a TTY)
     #[arg(long)]
     pub quiet: bool,
+
+    /// Sign this publish using a local key
+    #[arg(long)]
+    pub sign: bool,
+
+    /// Key id to use when --sign (from `agentpm keys list`)
+    #[arg(long, value_name = "KEY_ID")]
+    pub key_id: Option<String>,
 
     /// Personal Access Token for headless auth (overrides env/file)
     #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
@@ -153,8 +168,46 @@ impl PublishArgs {
         });
         let filename = artifact_filename(&mf.name, &mf.version, &mf.runtime);
 
+        // Build optional finalize_extra
+        let finalize_extra: Option<serde_json::Value> = if self.sign {
+            // pick a local key (reuse helper from keys code)
+            let (_key_id, stored) = select_local_key(self.key_id.as_deref())?;
+            let pass = prompt_passphrase_with_fallback("Key passphrase: ")?;
+            let sk_bytes = decrypt_private(&stored, &pass)?;
+            let sk_arr: [u8; 32] = sk_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow!("expected 32-byte ed25519 secret key"))?;
+            let signing_key = SigningKey::from_bytes(&sk_arr);
+
+            // Minimal statement (server checks name/version/digest)
+            let statement = serde_json::json!({
+                "type": "agentpm.tool.signature.v1",
+                "name": mf.name,
+                "version": mf.version,
+                "artifactDigest": format!("sha256:{sha256_hex}"),
+                "createdAt": chrono::Utc::now().to_rfc3339(),
+            });
+
+            // Canonical-ish JSON (stable enough for our purpose)
+            let statement_bytes = serde_json::to_vec(&statement)?;
+            let sig = signing_key.sign(&statement_bytes);
+            let signature_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
+
+            Some(serde_json::json!({
+                "author_signatures": [{
+                    "algo": "ed25519",
+                    "public_key_b64": stored.public_key_b64,
+                    "signature_b64": signature_b64,
+                    "statement_json": statement
+                }]
+            }))
+        } else {
+            None
+        };
+
         let res = client
-            .publish_tool_from_path(&meta, &tar_path, &filename)
+            .publish_tool_from_path(&meta, &tar_path, &filename, finalize_extra)
             .await;
 
         let receipt = match res {
@@ -422,6 +475,59 @@ fn runtime_suffix(runtime: &serde_json::Value) -> String {
 
 fn artifact_filename(name: &str, version: &str, runtime: &serde_json::Value) -> String {
     format!("{}-{}{}.tar.gz", name, version, runtime_suffix(runtime))
+}
+
+fn select_local_key(key_id_flag: Option<&str>) -> Result<(String, StoredKeyV1)> {
+    let dir = keystore_dir()?;
+    let mut found: Vec<(String, StoredKeyV1)> = Vec::new();
+
+    if dir.exists() {
+        for ent in fs::read_dir(&dir)? {
+            let ent = ent?;
+            if !ent.file_type()?.is_file() {
+                continue;
+            }
+            if !ent.file_name().to_string_lossy().ends_with(".json") {
+                continue;
+            }
+
+            let path = ent.path();
+            match read_key_file(&path) {
+                Ok(k) => {
+                    let id = key_id_from_pub_b64(&k.public_key_b64)?;
+                    found.push((id, k));
+                }
+                Err(_) => {
+                    // Optionally log: eprintln!("Skipping unreadable key file: {}", path.display());
+                    continue;
+                }
+            }
+        }
+    }
+
+    if let Some(want) = key_id_flag {
+        found
+            .into_iter()
+            .find(|(id, _)| id == want)
+            .ok_or_else(|| anyhow!("No local key with id {}", want))
+    } else {
+        match found.len() {
+            0 => Err(anyhow!("No local keys. Run `agentpm keys generate`.")),
+            1 => Ok(found.into_iter().next().unwrap()),
+            _ => {
+                // Helpful hint if multiple
+                let ids = found
+                    .iter()
+                    .map(|(id, k)| format!("{id}\t{}", k.label))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Err(anyhow!(
+                    "Multiple keys present; pass --key-id <id>. Available:\n{}",
+                    ids
+                ))
+            }
+        }
+    }
 }
 
 // helper to use io::copy into a hasher
