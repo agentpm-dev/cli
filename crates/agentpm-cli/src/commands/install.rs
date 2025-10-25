@@ -128,7 +128,7 @@ impl InstallArgs {
                 s.err("failed");
                 let list = missing.join(", ");
                 return Err(anyhow::anyhow!(
-                "Registry attestation required but missing for: {list}"
+                    "Registry attestation required but missing for: {list}"
                 ));
             }
         }
