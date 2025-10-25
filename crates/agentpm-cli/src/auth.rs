@@ -1,7 +1,9 @@
+use crate::keys::signing::StoredKeyV1;
 use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
+use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenCache {
@@ -73,5 +75,65 @@ pub fn write_token(cfg: &Config, token: &TokenCache) -> Result<()> {
     let mut f = fs::File::create(&cfg.token_file)
         .with_context(|| format!("creating {}", cfg.token_file.display()))?;
     f.write_all(json.as_bytes())?;
+    Ok(())
+}
+
+pub fn read_key_file(path: &Path) -> Result<StoredKeyV1> {
+    let data = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let k = serde_json::from_slice::<StoredKeyV1>(&data)
+        .with_context(|| format!("parsing {}", path.display()))?;
+    Ok(k)
+}
+
+/// Atomic JSON write with strict perms.
+pub fn write_key_file_atomic(path: &Path, key: &StoredKeyV1) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("no parent dir"))?;
+    fs::create_dir_all(parent)?;
+
+    // temp file in same dir for atomic rename
+    let tmp = parent.join(format!(
+        ".{}.tmp-{}",
+        path.file_name().unwrap().to_string_lossy(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_micros()
+    ));
+
+    let json = serde_json::to_vec_pretty(key)?;
+    {
+        let mut f = fs::File::create(&tmp)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
+        }
+        f.write_all(&json)?;
+        // flush file contents & metadata
+        f.sync_all()?;
+    }
+
+    // atomic swap into place
+    fs::rename(&tmp, path)?;
+
+    // ensure the directory entry is durable (best-effort on non-Unix)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let dir = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY)
+            .open(parent)?;
+        dir.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    {
+        // on Windows and others, flush the destination file again (best effort)
+        if let Ok(mut f) = fs::File::options().read(true).open(path) {
+            let _ = f.sync_all();
+        }
+    }
+
     Ok(())
 }

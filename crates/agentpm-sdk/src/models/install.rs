@@ -44,4 +44,16 @@ pub struct InstallArtifact {
     pub size: Option<u64>,
     /// Optional: e.g., "application/gzip"
     pub content_type: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signing: Option<SigningSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SigningSummary {
+    /// "off" | "optional" | "required"
+    pub mode: String,
+    pub min_author_signatures: u32,
+    pub author_signatures_present: u32,
+    pub registry_attested: bool,
 }
