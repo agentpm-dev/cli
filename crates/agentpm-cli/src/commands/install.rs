@@ -36,6 +36,10 @@ pub struct InstallArgs {
     #[clap(long)]
     pub quiet: bool,
 
+    /// Fail install if the registry attestation is missing for any artifact
+    #[clap(long)]
+    pub require_attestation: bool,
+
     /// Personal Access Token for headless auth (overrides env/file)
     #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
     pub token: Option<String>,
@@ -103,6 +107,32 @@ impl InstallArgs {
         // 4) Init download session → presigned URLs
         let mut s = Step::new("Requesting download URLs", self.quiet);
         let init = client.install_init(&plan_to_sdk_resolve(&plan)).await?; // includes per-artifact presigned URL + expected hash
+
+        if self.require_attestation {
+            let mut missing: Vec<String> = Vec::new();
+
+            for a in &init.artifacts {
+                let att_ok = a
+                    .signing
+                    .as_ref()
+                    .map(|s| s.registry_attested)
+                    .unwrap_or(false); // treat absence as not attested
+
+                if !att_ok {
+                    // name is already "@ns/tool"
+                    missing.push(format!("{}@{}", a.name, a.version));
+                }
+            }
+
+            if !missing.is_empty() {
+                s.err("failed");
+                let list = missing.join(", ");
+                return Err(anyhow::anyhow!(
+                "Registry attestation required but missing for: {list}"
+                ));
+            }
+        }
+
         s.ok("");
 
         // 5) Download + verify + extract (parallel)
