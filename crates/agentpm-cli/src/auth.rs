@@ -130,7 +130,7 @@ pub fn write_key_file_atomic(path: &Path, key: &StoredKeyV1) -> anyhow::Result<(
     #[cfg(not(unix))]
     {
         // on Windows and others, flush the destination file again (best effort)
-        if let Ok(mut f) = fs::File::options().read(true).open(path) {
+        if let Ok(f) = fs::File::options().read(true).open(path) {
             let _ = f.sync_all();
         }
     }
