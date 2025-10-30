@@ -14,7 +14,7 @@ use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use flate2::{Compression, write::GzEncoder};
 use sha2::{Digest, Sha256};
-use std::fs::{File, symlink_metadata, read_link};
+use std::fs::{File, read_link, symlink_metadata};
 use std::io::IsTerminal;
 use std::os::unix::fs::MetadataExt;
 use std::path::Component;
@@ -24,15 +24,13 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
 };
-use tar::{Builder as TarBuilder, Header, EntryType};
+use tar::{Builder as TarBuilder, EntryType, Header};
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
 const MAX_ARTIFACT_BYTES: u64 = 3 * 1024 * 1024 * 1024; // 3 GB
 const MAX_TAR_ENTRIES: usize = 15_000;
-static BLOCKED_EMBEDDED_EXTS: &[&str] = &[
-    ".zip", ".whl", ".7z", ".rar", ".tar", ".tgz", ".tar.gz",
-];
+static BLOCKED_EMBEDDED_EXTS: &[&str] = &[".zip", ".whl", ".7z", ".rar", ".tar", ".tgz", ".tar.gz"];
 
 #[derive(Args, Debug, Default)]
 pub struct PublishArgs {
@@ -137,9 +135,9 @@ impl PublishArgs {
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
         if size_bytes > MAX_ARTIFACT_BYTES {
             bail!(
-            "artifact is too large ({} bytes > {} bytes).",
-            size_bytes,
-            MAX_ARTIFACT_BYTES
+                "artifact is too large ({} bytes > {} bytes).",
+                size_bytes,
+                MAX_ARTIFACT_BYTES
             );
         }
 
@@ -366,7 +364,9 @@ fn is_embedded_archive(name: &str) -> bool {
 
 fn ensure_safe_tar_name(name: &str) -> Result<()> {
     // forbid absolute paths and parent traversal
-    if name.starts_with('/') { bail!("unsafe absolute path in archive: {name}"); }
+    if name.starts_with('/') {
+        bail!("unsafe absolute path in archive: {name}");
+    }
     if name.split('/').any(|seg| seg == "..") {
         bail!("unsafe parent traversal in archive path: {name}");
     }
@@ -522,8 +522,7 @@ fn append_path_to_tar_named<W: Write>(
         header.set_entry_type(EntryType::Symlink);
         header.set_size(0);
         // Read the link target (store as linkname inside the tar)
-        let target = read_link(abs)
-            .with_context(|| format!("readlink {}", abs.display()))?;
+        let target = read_link(abs).with_context(|| format!("readlink {}", abs.display()))?;
         let target_str = target.to_string_lossy();
         header
             .set_link_name(&*target_str)
@@ -539,8 +538,7 @@ fn append_path_to_tar_named<W: Write>(
         header.set_entry_type(EntryType::Regular);
         header.set_size(meta.len());
         header.set_cksum();
-        let mut f = File::open(abs)
-            .with_context(|| format!("open {}", abs.display()))?;
+        let mut f = File::open(abs).with_context(|| format!("open {}", abs.display()))?;
         tar.append_data(&mut header, name_in_tar, &mut f)?;
         return Ok(());
     }
@@ -550,7 +548,11 @@ fn append_path_to_tar_named<W: Write>(
         header.set_entry_type(EntryType::Directory);
         header.set_size(0);
         header.set_cksum();
-        tar.append_data(&mut header, name_in_tar.trim_end_matches('/').to_string() + "/", &mut std::io::empty())?;
+        tar.append_data(
+            &mut header,
+            name_in_tar.trim_end_matches('/').to_string() + "/",
+            &mut std::io::empty(),
+        )?;
         return Ok(());
     }
 
