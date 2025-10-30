@@ -14,9 +14,8 @@ use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use flate2::{Compression, write::GzEncoder};
 use sha2::{Digest, Sha256};
-use std::fs::{File, read_link, symlink_metadata};
+use std::fs::{File, Metadata, read_link, symlink_metadata};
 use std::io::IsTerminal;
-use std::os::unix::fs::MetadataExt;
 use std::path::Component;
 use std::{
     collections::HashSet,
@@ -506,16 +505,15 @@ fn append_path_to_tar_named<W: Write>(
     header.set_mtime(0);
 
     // Mode: preserve exec bit on regular files, otherwise 0644; for symlinks mode is ignored
+    // ----- Mode (platform-specific) -----
     #[cfg(unix)]
-    let mode = {
-        let m = meta.mode();
-        // Keep rw bits, but preserve execute bits if present; default to 0644
-        let exec = m & 0o111 != 0;
-        if exec { 0o755 } else { 0o644 }
-    };
-    #[cfg(not(unix))]
-    let mode = 0o644;
-    header.set_mode(mode);
+    {
+        header.set_mode(mode_from_meta(&meta));
+    }
+    #[cfg(windows)]
+    {
+        header.set_mode(mode_from_meta_for_name(&meta, name_in_tar));
+    }
 
     if meta.file_type().is_symlink() {
         // Tar symlink: size must be 0 and entry type is Symlink
@@ -557,6 +555,30 @@ fn append_path_to_tar_named<W: Write>(
     }
 
     bail!("unsupported file type for {}", abs.display());
+}
+
+#[cfg(unix)]
+fn mode_from_meta(meta: &Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    let m = meta.permissions().mode();
+    let exec = (m & 0o111) != 0;
+    if exec { 0o755 } else { 0o644 }
+}
+
+#[cfg(windows)]
+fn mode_from_meta_for_name(_meta: &Metadata, name_in_tar: &str) -> u32 {
+    // Heuristic: treat common Windows “executables” as executable in the tar.
+    // Everything else gets 0644.
+    use std::ffi::OsStr;
+    let ext = Path::new(name_in_tar)
+        .extension()
+        .and_then(OsStr::to_str)
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "exe" | "bat" | "cmd" | "ps1" | "com" => 0o755,
+        _ => 0o644,
+    }
 }
 
 fn file_digest_and_len(path: &Path) -> Result<(String, u64)> {
