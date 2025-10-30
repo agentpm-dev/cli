@@ -14,7 +14,9 @@ use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use flate2::{Compression, write::GzEncoder};
 use sha2::{Digest, Sha256};
+use std::fs::{File, read_link, symlink_metadata};
 use std::io::IsTerminal;
+use std::os::unix::fs::MetadataExt;
 use std::path::Component;
 use std::{
     collections::HashSet,
@@ -22,9 +24,13 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
 };
-use tar::Builder as TarBuilder;
+use tar::{Builder as TarBuilder, EntryType, Header};
 use tracing::{info, warn};
 use walkdir::WalkDir;
+
+const MAX_ARTIFACT_BYTES: u64 = 3 * 1024 * 1024 * 1024; // 3 GB
+const MAX_TAR_ENTRIES: usize = 15_000;
+static BLOCKED_EMBEDDED_EXTS: &[&str] = &[".zip", ".whl", ".7z", ".rar", ".tar", ".tgz", ".tar.gz"];
 
 #[derive(Args, Debug, Default)]
 pub struct PublishArgs {
@@ -127,6 +133,14 @@ impl PublishArgs {
         let mut s = Step::new("Packaging files", quiet);
         let tar_path = package_tool(&mf, &manifest_path).context("packaging files into tar.gz")?;
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
+        if size_bytes > MAX_ARTIFACT_BYTES {
+            bail!(
+                "artifact is too large ({} bytes > {} bytes).",
+                size_bytes,
+                MAX_ARTIFACT_BYTES
+            );
+        }
+
         s.ok(format!(
             "{} bytes, sha256: {}",
             size_bytes,
@@ -251,6 +265,8 @@ fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf
     let enc = GzEncoder::new(f, Compression::default());
     let mut tar = TarBuilder::new(enc);
 
+    let mut member_count: usize = 0;
+
     // 1) agent.json
     {
         let mut header = tar::Header::new_gnu();
@@ -258,12 +274,19 @@ fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf
         header.set_size(manifest_bytes.len() as u64);
         header.set_mode(0o644);
         header.set_cksum();
+
+        ensure_safe_tar_name("agent.json")?;
+        member_count += 1;
+        if member_count > MAX_TAR_ENTRIES {
+            bail!("too many files in package (> {MAX_TAR_ENTRIES})");
+        }
+
         tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
     }
 
     // 2) entrypoint
     let (ep_abs, ep_tar_name) = validate_and_locate_entrypoint(root, &manifest.entrypoint)?;
-    append_path_to_tar_named(&mut tar, &ep_abs, &ep_tar_name)?;
+    append_checked(&mut tar, &ep_abs, &ep_tar_name, &mut member_count)?;
 
     // Start dedup set using normalized tar names
     let mut seen: HashSet<String> = HashSet::new();
@@ -281,7 +304,7 @@ fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf
         if abs.is_file() {
             let tar_name = rel_to_tar_name(rel);
             if seen.insert(tar_name.clone()) {
-                append_path_to_tar_named(&mut tar, &abs, &tar_name)?;
+                append_checked(&mut tar, &abs, &tar_name, &mut member_count)?;
             }
         } else {
             for entry in WalkDir::new(&abs).into_iter().filter_map(|e| e.ok()) {
@@ -306,7 +329,7 @@ fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf
                 }
 
                 if seen.insert(tar_name.clone()) {
-                    append_path_to_tar_named(&mut tar, path_abs, &tar_name)?;
+                    append_checked(&mut tar, path_abs, &tar_name, &mut member_count)?;
                 }
             }
         }
@@ -314,6 +337,40 @@ fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf
 
     tar.finish()?;
     Ok(out_path)
+}
+
+fn append_checked<W: std::io::Write>(
+    tar: &mut tar::Builder<W>,
+    src: &Path,
+    tar_name: &str,
+    member_count: &mut usize,
+) -> Result<()> {
+    ensure_safe_tar_name(tar_name)?;
+    if is_embedded_archive(tar_name) {
+        bail!("embedded archive not allowed in package: {tar_name}");
+    }
+    *member_count += 1;
+    if *member_count > MAX_TAR_ENTRIES {
+        bail!("too many files in package (> {MAX_TAR_ENTRIES})");
+    }
+    append_path_to_tar_named(tar, src, tar_name)
+}
+
+fn is_embedded_archive(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    // handle double extensions like .tar.gz
+    BLOCKED_EMBEDDED_EXTS.iter().any(|ext| lower.ends_with(ext))
+}
+
+fn ensure_safe_tar_name(name: &str) -> Result<()> {
+    // forbid absolute paths and parent traversal
+    if name.starts_with('/') {
+        bail!("unsafe absolute path in archive: {name}");
+    }
+    if name.split('/').any(|seg| seg == "..") {
+        bail!("unsafe parent traversal in archive path: {name}");
+    }
+    Ok(())
 }
 
 // Normalize a relative Path into a forward-slash tar name (portable across OSes)
@@ -438,14 +495,68 @@ fn append_path_to_tar_named<W: Write>(
     abs: &Path,
     name_in_tar: &str,
 ) -> Result<()> {
-    let mut header = tar::Header::new_gnu();
-    let md = std::fs::metadata(abs)?;
-    header.set_size(md.len());
-    header.set_mode(0o644);
-    header.set_cksum();
-    let mut f = std::fs::File::open(abs)?;
-    tar.append_data(&mut header, name_in_tar, &mut f)?;
-    Ok(())
+    let meta = symlink_metadata(abs).with_context(|| format!("stat {}", abs.display()))?;
+
+    // Build a fresh GNU header
+    let mut header = Header::new_gnu();
+
+    // Normalize metadata for reproducibility
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+
+    // Mode: preserve exec bit on regular files, otherwise 0644; for symlinks mode is ignored
+    #[cfg(unix)]
+    let mode = {
+        let m = meta.mode();
+        // Keep rw bits, but preserve execute bits if present; default to 0644
+        let exec = m & 0o111 != 0;
+        if exec { 0o755 } else { 0o644 }
+    };
+    #[cfg(not(unix))]
+    let mode = 0o644;
+    header.set_mode(mode);
+
+    if meta.file_type().is_symlink() {
+        // Tar symlink: size must be 0 and entry type is Symlink
+        header.set_entry_type(EntryType::Symlink);
+        header.set_size(0);
+        // Read the link target (store as linkname inside the tar)
+        let target = read_link(abs).with_context(|| format!("readlink {}", abs.display()))?;
+        let target_str = target.to_string_lossy();
+        header
+            .set_link_name(&*target_str)
+            .context("setting tar link name")?;
+        header.set_cksum();
+        // Append header only (no payload for symlink)
+        tar.append_data(&mut header, name_in_tar, &mut std::io::empty())?;
+        return Ok(());
+    }
+
+    if meta.is_file() {
+        // Regular file: set size and stream the payload
+        header.set_entry_type(EntryType::Regular);
+        header.set_size(meta.len());
+        header.set_cksum();
+        let mut f = File::open(abs).with_context(|| format!("open {}", abs.display()))?;
+        tar.append_data(&mut header, name_in_tar, &mut f)?;
+        return Ok(());
+    }
+
+    if meta.is_dir() {
+        // If you want to include explicit directory entries (optional)
+        header.set_entry_type(EntryType::Directory);
+        header.set_size(0);
+        header.set_cksum();
+        tar.append_data(
+            &mut header,
+            name_in_tar.trim_end_matches('/').to_string() + "/",
+            &mut std::io::empty(),
+        )?;
+        return Ok(());
+    }
+
+    bail!("unsupported file type for {}", abs.display());
 }
 
 fn file_digest_and_len(path: &Path) -> Result<(String, u64)> {
