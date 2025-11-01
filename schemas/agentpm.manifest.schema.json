@@ -24,7 +24,6 @@
       "required": ["required", "description"],
       "properties": {
         "required": { "type": "boolean" },
-        "sensitive": { "type": "boolean", "default": false },
         "description": { "type": "string" },
         "default": { "type": "string" }
       }
