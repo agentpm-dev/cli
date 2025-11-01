@@ -108,6 +108,7 @@
       "properties": {
         "vars": {
           "type": "object",
+          "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" },
           "additionalProperties": { "$ref": "#/$defs/envVar" }
         }
       }
