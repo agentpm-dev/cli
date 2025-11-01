@@ -23,7 +23,7 @@
       "additionalProperties": false,
       "required": ["required", "description"],
       "properties": {
-        "required": { "type": "boolean" },
+        "required": { "type": "boolean", "default": false },
         "description": { "type": "string" },
         "default": { "type": "string" }
       }
