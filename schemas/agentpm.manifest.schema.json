@@ -17,6 +17,17 @@
           "pattern": "^\\d+(\\.\\d+){0,2}$"
         }
       }
+    },
+    "envVar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "description"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "sensitive": { "type": "boolean", "default": false },
+        "description": { "type": "string" },
+        "default": { "type": "string" }
+      }
     }
   },
 
@@ -90,7 +101,18 @@
       }
     },
     "inputs": { "type": "object" },
-    "outputs": { "type": "object" }
+    "outputs": { "type": "object" },
+
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vars": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/envVar" }
+        }
+      }
+    }
   },
 
   "required": ["kind", "name", "version", "description"],
