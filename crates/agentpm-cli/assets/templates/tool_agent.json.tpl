@@ -6,31 +6,9 @@
   "description": "{{TOOL_DESCRIPTION}}",
   "files": [],
   "entrypoint": {
-    "command": "{{TOOL_ENTRYPOINT_COMMAND}}",
+    "command": "",
     "args": []
   },
-  "inputs": {
-    "type": "object",
-    "properties": {
-      "text": {
-        "type": "string",
-        "description": "Text to process"
-      }
-    },
-    "required": [
-      "text"
-    ]
-  },
-  "outputs": {
-    "type": "object",
-    "properties": {
-      "summary": {
-        "type": "string",
-        "description": "Summarized text"
-      }
-    },
-    "required": [
-      "summary"
-    ]
-  }
+  "inputs": {},
+  "outputs": {}
 }
