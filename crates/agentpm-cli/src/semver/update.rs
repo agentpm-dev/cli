@@ -123,19 +123,24 @@ fn parse_string_name_and_range(s: &str) -> Option<(String, Option<String>)> {
     Some((name, range))
 }
 
-/// Split on the last '@' to separate optional range.
-/// Works for both namespaced and bare names.
 fn split_name_and_optional_range(s: &str) -> (String, Option<String>) {
+    let s = s.trim();
+
     if let Some(idx) = s.rfind('@') {
-        // Two cases:
-        // 1) "@owner/name@^1.2"
-        // 2) "summarize@^1.2" (not typical, but we handle it)
-        let name = s[..idx].to_string();
+        // If the last '@' is the leading scope marker (idx == 0)
+        // OR the part before it doesn't contain '/', it's not a version separator.
+        if idx == 0 || !s[..idx].contains('/') {
+            return (s.to_string(), None);
+        }
+
+        let name = &s[..idx];
         let range_part = s[idx + 1..].trim();
+
         if range_part.is_empty() {
-            (name, None)
+            // Treat trailing '@' as "no range" (caller can default to "*")
+            (name.to_string(), None)
         } else {
-            (name, Some(range_part.to_string()))
+            (name.to_string(), Some(range_part.to_string()))
         }
     } else {
         (s.to_string(), None)
