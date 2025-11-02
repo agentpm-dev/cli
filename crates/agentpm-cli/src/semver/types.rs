@@ -97,7 +97,9 @@ impl DesiredSet {
 
 fn parse_tool_str(s: &str) -> Result<(String, String)> {
     // Split on the LAST '@' so we don't confuse the leading scope '@'
-    if let Some(idx) = s.rfind('@') &&idx > 0 {
+    if let Some(idx) = s.rfind('@')
+        && idx > 0
+    {
         let name = &s[..idx];
         let ver = &s[idx + 1..];
         if name.contains('/') {
