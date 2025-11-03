@@ -27,8 +27,10 @@ impl AgentPmClient {
     pub fn new(base_url: impl Into<String>) -> Result<Self> {
         Ok(Self {
             http: Client::builder()
-                .timeout(Duration::from_secs(10))
+                .connect_timeout(Duration::from_secs(30))
+                .timeout(Duration::from_secs(600))
                 .user_agent("agentpm-cli/0.1")
+                .no_gzip()
                 .build()?,
             base_url: base_url.into(),
             token: None,
