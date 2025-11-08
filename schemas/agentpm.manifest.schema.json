@@ -112,6 +112,21 @@
           "additionalProperties": { "$ref": "#/$defs/envVar" }
         }
       }
+    },
+
+    "readme": { "type": "string", "minLength": 1 },
+
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spdx": {
+          "type": "string",
+          "description": "SPDX identifier or expression (e.g., MIT, Apache-2.0, MIT OR Apache-2.0)",
+          "minLength": 1
+        },
+        "file": { "type": "string", "minLength": 1 }
+      }
     }
   },
 

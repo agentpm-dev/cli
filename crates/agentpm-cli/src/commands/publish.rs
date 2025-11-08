@@ -13,6 +13,7 @@ use anyhow::{anyhow, bail};
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use flate2::{Compression, write::GzEncoder};
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use sha2::{Digest, Sha256};
 use std::fs::{File, Metadata, read_link, symlink_metadata};
 use std::io::IsTerminal;
@@ -30,6 +31,9 @@ use walkdir::WalkDir;
 const MAX_ARTIFACT_BYTES: u64 = 3 * 1024 * 1024 * 1024; // 3 GB
 const MAX_TAR_ENTRIES: usize = 15_000;
 static BLOCKED_EMBEDDED_EXTS: &[&str] = &[".zip", ".whl", ".7z", ".rar", ".tar", ".tgz", ".tar.gz"];
+
+const MAX_README_BYTES: usize = 512 * 1024; // 512 KB
+const MAX_LICENSE_BYTES: usize = 128 * 1024; // 128 KB
 
 #[derive(Args, Debug, Default)]
 pub struct PublishArgs {
@@ -153,6 +157,102 @@ impl PublishArgs {
             sha256_hex
         );
 
+        let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+
+        // ---- README (optional) ----
+        let manifest_readme_path = manifest_value.get("readme").and_then(|v| v.as_str());
+
+        let readme_payload = match discover_readme(manifest_dir, manifest_readme_path) {
+            Some(p) => {
+                match read_utf8_with_cap(&p, MAX_README_BYTES) {
+                    Ok(md_text) => {
+                        let sha = hex_sha256(md_text.as_bytes());
+                        Some(serde_json::json!({
+                            "path": p.strip_prefix(manifest_dir).unwrap_or(&p).to_string_lossy(),
+                            "sha256": sha,
+                            "content": md_text
+                        }))
+                    }
+                    Err(e) => {
+                        // Non-fatal: warn and omit
+                        eprintln!("Warning: skipping README ({}).", e);
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+
+        // ---- LICENSE (optional) ----
+        let (license_spdx_opt, license_file_opt) = pick_license_paths(&manifest_value);
+
+        let license_payload = {
+            // Prefer file content if provided; spdx is added if present
+            let mut file_block: Option<serde_json::Value> = None;
+            if let Some(rel) = license_file_opt {
+                let p = manifest_dir.join(rel);
+                if p.exists() {
+                    match read_utf8_with_cap(&p, MAX_LICENSE_BYTES) {
+                        Ok(text) => {
+                            let sha = hex_sha256(text.as_bytes());
+                            file_block = Some(serde_json::json!({
+                                "path": p.strip_prefix(manifest_dir).unwrap_or(&p).to_string_lossy(),
+                                "sha256": sha,
+                                "content": text
+                            }));
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: skipping license.file ({}).", e);
+                        }
+                    }
+                } else {
+                    eprintln!("Warning: license.file '{}' not found.", rel);
+                }
+            }
+
+            if license_spdx_opt.is_none() && file_block.is_none() {
+                None
+            } else {
+                let mut obj = JsonMap::new();
+                if let Some(spdx) = license_spdx_opt {
+                    obj.insert("spdx".into(), JsonValue::String(spdx.to_string()));
+                }
+                if let Some(fb) = file_block
+                    && let Some(m) = fb.as_object()
+                {
+                    if let Some(v) = m.get("path") {
+                        obj.insert("path".into(), v.clone());
+                    }
+                    if let Some(v) = m.get("sha256") {
+                        obj.insert("sha256".into(), v.clone());
+                    }
+                    if let Some(v) = m.get("content") {
+                        obj.insert("content".into(), v.clone());
+                    }
+                }
+                Some(JsonValue::Object(obj))
+            }
+        };
+
+        if let Some(r) = &readme_payload
+            && let (Some(p), Some(sha)) = (r.get("path"), r.get("sha256"))
+        {
+            println!("✓ README: {} (sha256 {})", p, sha.as_str().unwrap_or(""));
+        }
+        if let Some(l) = &license_payload {
+            let spdx = l.get("spdx").and_then(|v| v.as_str()).unwrap_or("");
+            if let Some(p) = l.get("path") {
+                println!(
+                    "✓ License: {} (from {}, sha256 {})",
+                    spdx,
+                    p.as_str().unwrap_or("LICENSE"),
+                    l.get("sha256").and_then(|v| v.as_str()).unwrap_or("")
+                );
+            } else if !spdx.is_empty() {
+                println!("✓ License: {}", spdx);
+            }
+        }
+
         if self.dry_run {
             println!("Dry-run: package created at {}", tar_path.display());
             return Ok(());
@@ -171,6 +271,8 @@ impl PublishArgs {
             "manifest": manifest_value,
             "sha256": sha256_hex,
             "size": size_bytes,
+            "readme": readme_payload,
+            "license": license_payload,
             // TODO: namespace_handle eventually when a user can have more than one (orgs + user)
             "client": {
                 "product": "agentpm-cli",
@@ -661,6 +763,62 @@ fn select_local_key(key_id_flag: Option<&str>) -> Result<(String, StoredKeyV1)> 
             }
         }
     }
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn read_utf8_with_cap(path: &Path, max_bytes: usize) -> Result<String> {
+    let md = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    if md.len() as usize > max_bytes {
+        bail!(
+            "{} is too large ({} bytes > {} bytes)",
+            path.display(),
+            md.len(),
+            max_bytes
+        );
+    }
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let s = String::from_utf8(bytes)
+        .with_context(|| format!("{} is not valid UTF-8 text", path.display()))?;
+    Ok(s)
+}
+
+fn discover_readme(base: &Path, from_manifest: Option<&str>) -> Option<PathBuf> {
+    if let Some(p) = from_manifest {
+        let p = base.join(p);
+        if p.exists() {
+            return Some(p);
+        }
+        return None;
+    }
+    // Auto-discover common names
+    for cand in ["README.md", "README", "README.txt"] {
+        let p = base.join(cand);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+// Best-effort fetch of license paths from manifest JSON
+fn pick_license_paths(manifest_json: &serde_json::Value) -> (Option<&str>, Option<&str>) {
+    // returns (license_spdx, license_file)
+    let spdx = manifest_json
+        .get("license")
+        .and_then(|l| l.get("spdx"))
+        .and_then(|v| v.as_str());
+
+    let file = manifest_json
+        .get("license")
+        .and_then(|l| l.get("file"))
+        .and_then(|v| v.as_str());
+
+    (spdx, file)
 }
 
 // helper to use io::copy into a hasher
