@@ -217,7 +217,9 @@ impl PublishArgs {
                 if let Some(spdx) = license_spdx_opt {
                     obj.insert("spdx".into(), JsonValue::String(spdx.to_string()));
                 }
-                if let Some(fb) = file_block && let Some(m) = fb.as_object() {
+                if let Some(fb) = file_block
+                    && let Some(m) = fb.as_object()
+                {
                     if let Some(v) = m.get("path") {
                         obj.insert("path".into(), v.clone());
                     }
@@ -232,7 +234,9 @@ impl PublishArgs {
             }
         };
 
-        if let Some(r) = &readme_payload && let (Some(p), Some(sha)) = (r.get("path"), r.get("sha256")) {
+        if let Some(r) = &readme_payload
+            && let (Some(p), Some(sha)) = (r.get("path"), r.get("sha256"))
+        {
             println!("✓ README: {} (sha256 {})", p, sha.as_str().unwrap_or(""));
         }
         if let Some(l) = &license_payload {
