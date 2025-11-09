@@ -92,7 +92,7 @@ impl InstallArgs {
         } else {
             "Resolving versions"
         };
-        let mut s = Step::new(steps_label, self.quiet);
+        let mut s = Step::new(steps_label, quiet);
 
         let plan = if self.frozen {
             ResolvePlan::from_lock(&desired, &lock)?
@@ -105,7 +105,7 @@ impl InstallArgs {
         s.ok("");
 
         // 4) Init download session → presigned URLs
-        let mut s = Step::new("Requesting download URLs", self.quiet);
+        let mut s = Step::new("Requesting download URLs", quiet);
         let init = client.install_init(&plan_to_sdk_resolve(&plan)).await?; // includes per-artifact presigned URL + expected hash
 
         if self.require_attestation {
@@ -136,15 +136,15 @@ impl InstallArgs {
         s.ok("");
 
         // 5) Download + verify + extract (parallel)
-        let mut s = Step::new("Downloading tools", self.quiet);
+        let mut s = Step::new("Downloading tools", quiet);
         let dl_dir = PathBuf::from(".agentpm/cache");
         let tools_dir = PathBuf::from(".agentpm/tools");
         fs::ensure_dirs(&[&dl_dir, &tools_dir])?;
-        download_and_extract_all(&init, &dl_dir, &tools_dir, self.refresh).await?;
+        download_and_extract_all(&init, &dl_dir, &tools_dir, self.refresh, quiet).await?;
         s.ok("");
 
         // 6) Finalize (report success for metrics / server-side bookkeeping)
-        let mut s = Step::new("Finalizing install", self.quiet);
+        let mut s = Step::new("Finalizing install", quiet);
         client.install_finalize(&init.session_id).await?;
         s.ok("");
 
@@ -160,7 +160,7 @@ impl InstallArgs {
             write_manifest_pretty_atomic(&manifest_path, &manifest_value)?;
         }
 
-        Step::final_msg("Installed ✓", self.quiet);
+        Step::final_msg("Installed ✓", quiet);
 
         Ok(())
     }
