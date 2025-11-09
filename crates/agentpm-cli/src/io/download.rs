@@ -27,6 +27,7 @@ pub async fn download_and_extract_all(
     cache_dir: &Path,
     tools_dir: &Path,
     refresh: bool,
+    quiet: bool,
 ) -> Result<()> {
     fs::create_dir_all(cache_dir).await?;
     fs::create_dir_all(tools_dir).await?;
@@ -45,7 +46,7 @@ pub async fn download_and_extract_all(
 
         //  warn if runtime missing or version too low (non-fatal)
         if let Some(rt) = runtime_type.as_deref() {
-            warn_if_runtime_mismatch(&pkg, &ver, rt, runtime_version.as_deref());
+            warn_if_runtime_mismatch(&pkg, &ver, rt, runtime_version.as_deref(), quiet);
         }
 
         let cache_name = cache_filename(art);
@@ -321,7 +322,13 @@ fn is_version_sufficient(installed: &str, requested: &str) -> Option<bool> {
 }
 
 /// Emit a warning (never errors) if runtime is missing or below requested version.
-fn warn_if_runtime_mismatch(pkg: &str, ver: &str, rt_type: &str, rt_version: Option<&str>) {
+fn warn_if_runtime_mismatch(
+    pkg: &str,
+    ver: &str,
+    rt_type: &str,
+    rt_version: Option<&str>,
+    quiet: bool,
+) {
     let Some(candidates) = runtime_cmd_candidates(rt_type) else {
         eprintln!(
             "ℹ️  agentpm: {pkg}@{ver}: runtime \"{rt_type}\" is not one of the known types \
@@ -355,23 +362,25 @@ fn warn_if_runtime_mismatch(pkg: &str, ver: &str, rt_type: &str, rt_version: Opt
     }
 
     if found_cmd.is_none() {
-        eprintln!(
-            "⚠️  agentpm: {pkg}@{ver}: runtime \"{rt_type}\" not found on PATH (tried: {}). Installation will continue, but this tool may not run here.",
-            candidates.join(", ")
-        );
+        if !quiet {
+            eprintln!(
+                "⚠️  agentpm: {pkg}@{ver}: runtime \"{rt_type}\" not found on PATH (tried: {}). Installation will continue, but this tool may not run here.",
+                candidates.join(", ")
+            );
+        }
         return;
     }
 
     if let Some(req) = rt_version {
         let (cmd, installed_text) = found_cmd.unwrap();
         if let Some(ok) = is_version_sufficient(&installed_text, req) {
-            if !ok {
+            if !ok && !quiet {
                 eprintln!(
                     "⚠️  agentpm: {pkg}@{ver}: runtime \"{rt_type}\" appears below requested version (found \"{}\" via `{}`, need >= {}). Continuing.",
                     installed_text, cmd, req
                 );
             }
-        } else {
+        } else if !quiet {
             // Couldn't parse version—still provide a soft heads-up
             if !installed_text.is_empty() {
                 eprintln!(
