@@ -4,8 +4,20 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use hex::FromHex;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
+use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 use tokio::{fs, io::AsyncReadExt, io::AsyncWriteExt, task};
+
+/// Return canonical + alias command names for a runtime type.
+/// Primary first so the message shows the expected name first.
+fn runtime_cmd_candidates(rt_type: &str) -> Option<Vec<&'static str>> {
+    match rt_type.to_ascii_lowercase().as_str() {
+        "node" | "nodejs" => Some(vec!["node", "nodejs"]),
+        "python" | "python3" => Some(vec!["python", "python3"]),
+        _ => None, // unknown runtime: don't attempt to run anything
+    }
+}
 
 /// Downloads all artifacts (in parallel), verifies integrity, and extracts to tools_dir.
 /// - Uses cache_dir to store .tgz tarballs.
@@ -27,6 +39,14 @@ pub async fn download_and_extract_all(
         let ver = art.version.clone();
         let integrity = art.integrity.clone();
         let url = art.presigned_url.clone();
+
+        let runtime_type = art.runtime.as_ref().map(|r| r.r#type.clone());
+        let runtime_version = art.runtime.as_ref().map(|r| r.version.clone());
+
+        //  warn if runtime missing or version too low (non-fatal)
+        if let Some(rt) = runtime_type.as_deref() {
+            warn_if_runtime_mismatch(&pkg, &ver, rt, runtime_version.as_deref());
+        }
 
         let cache_name = cache_filename(art);
         let cache_path = cache_dir.join(cache_name);
@@ -181,6 +201,191 @@ fn sanitize_entry_path(p: &Path) -> Result<PathBuf> {
         }
     }
     Ok(clean)
+}
+
+/// Try to run `<cmd> --version` (and for python also `-V`) and return the raw version string.
+fn get_cmd_version(cmd: &str) -> io::Result<Option<String>> {
+    // Try `--version` first (works for node & modern python)
+    let out = Command::new(cmd)
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+
+    let ver_text = match out {
+        Ok(o) => {
+            if !o.stdout.is_empty() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else if !o.stderr.is_empty() {
+                Some(String::from_utf8_lossy(&o.stderr).trim().to_string())
+            } else {
+                None
+            }
+        }
+        Err(e) => {
+            // If command not found, bubble up; otherwise try python's -V
+            if e.kind() == io::ErrorKind::NotFound {
+                return Err(e);
+            }
+            None
+        }
+    };
+
+    if ver_text.is_some() {
+        return Ok(ver_text);
+    }
+
+    // Fallback for older Python: `python -V` prints to stderr
+    let out = Command::new(cmd)
+        .arg("-V")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+
+    match out {
+        Ok(o) => {
+            if !o.stdout.is_empty() {
+                Ok(Some(String::from_utf8_lossy(&o.stdout).trim().to_string()))
+            } else if !o.stderr.is_empty() {
+                Ok(Some(String::from_utf8_lossy(&o.stderr).trim().to_string()))
+            } else {
+                Ok(None)
+            }
+        }
+        Err(e) => {
+            if e.kind() == io::ErrorKind::NotFound {
+                Err(e)
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Very small parser: extract major(.minor) from a free-form version string.
+/// Examples:
+///   "v20.11.1" -> (20, Some(11))
+///   "Python 3.11.7" -> (3, Some(11))
+///   "20" -> (20, None)
+fn parse_major_minor(text: &str) -> Option<(u64, Option<u64>)> {
+    // Find first digit run
+    let mut digits = String::new();
+    let mut minor = String::new();
+    let mut seen_dot = false;
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            if !seen_dot {
+                digits.push(c);
+            } else {
+                minor.push(c);
+            }
+        } else if c == '.' && !digits.is_empty() && !seen_dot {
+            seen_dot = true;
+        } else if !digits.is_empty() {
+            break;
+        }
+    }
+    if digits.is_empty() {
+        return None;
+    }
+    let major: u64 = digits.parse().ok()?;
+    let minor_num = if seen_dot && !minor.is_empty() {
+        Some(minor.parse().ok()?)
+    } else {
+        None
+    };
+    Some((major, minor_num))
+}
+
+/// Compare installed vs requested (>= semantics).
+/// If requested has only major, compare majors.
+/// If requested has major.minor, compare lexicographically (major then minor).
+fn is_version_sufficient(installed: &str, requested: &str) -> Option<bool> {
+    let (i_maj, i_min) = parse_major_minor(installed)?;
+    let (r_maj, r_min) = parse_major_minor(requested)?;
+
+    if i_maj > r_maj {
+        return Some(true);
+    }
+    if i_maj < r_maj {
+        return Some(false);
+    }
+    // majors equal
+    match r_min {
+        None => Some(true), // only major required, equal majors OK
+        Some(rm) => {
+            let im = i_min.unwrap_or(0);
+            Some(im >= rm)
+        }
+    }
+}
+
+/// Emit a warning (never errors) if runtime is missing or below requested version.
+fn warn_if_runtime_mismatch(pkg: &str, ver: &str, rt_type: &str, rt_version: Option<&str>) {
+    let Some(candidates) = runtime_cmd_candidates(rt_type) else {
+        eprintln!(
+            "ℹ️  agentpm: {pkg}@{ver}: runtime \"{rt_type}\" is not one of the known types \
+(node/nodejs/python/python3); skipping local availability check."
+        );
+        return;
+    };
+
+    let mut found_cmd: Option<(&str, String)> = None; // (cmd, version_text or "")
+
+    for &cmd in &candidates {
+        match get_cmd_version(cmd) {
+            Ok(Some(ver)) => {
+                found_cmd = Some((cmd, ver));
+                break;
+            }
+            Ok(None) => {
+                // Command exists but no version text; treat as found with unknown version
+                found_cmd = Some((cmd, String::new()));
+                break;
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                // try next alias
+            }
+            Err(_) => {
+                // exists but couldn't run version; treat as found w/ unknown version
+                found_cmd = Some((cmd, String::new()));
+                break;
+            }
+        }
+    }
+
+    if found_cmd.is_none() {
+        eprintln!(
+            "⚠️  agentpm: {pkg}@{ver}: runtime \"{rt_type}\" not found on PATH (tried: {}). Installation will continue, but this tool may not run here.",
+            candidates.join(", ")
+        );
+        return;
+    }
+
+    if let Some(req) = rt_version {
+        let (cmd, installed_text) = found_cmd.unwrap();
+        if let Some(ok) = is_version_sufficient(&installed_text, req) {
+            if !ok {
+                eprintln!(
+                    "⚠️  agentpm: {pkg}@{ver}: runtime \"{rt_type}\" appears below requested version (found \"{}\" via `{}`, need >= {}). Continuing.",
+                    installed_text, cmd, req
+                );
+            }
+        } else {
+            // Couldn't parse version—still provide a soft heads-up
+            if !installed_text.is_empty() {
+                eprintln!(
+                    "ℹ️  agentpm: {pkg}@{ver}: couldn't parse {rt_type} version from \"{}\" (via `{}`); requested >= {}. Continuing.",
+                    installed_text, cmd, req
+                );
+            } else {
+                eprintln!(
+                    "ℹ️  agentpm: {pkg}@{ver}: {rt_type} detected via `{}` but version couldn't be determined; requested >= {}. Continuing.",
+                    cmd, req
+                );
+            }
+        }
+    }
 }
 
 /// Return true if directory exists and has at least one entry.
