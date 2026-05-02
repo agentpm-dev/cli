@@ -26,7 +26,7 @@ This repo contains the Rust CLI, schema, and packaging/install/publish flows.
 - Preserve existing error wording unless the task is intentionally changing UX.
 - Do not add new dependencies casually.
 - Update tests when behavior changes.
-- Update docs when command behavior or user workflow changes.ƒ
+- Update docs when command behavior or user workflow changes.
 
 ## Common Patterns In This Repo
 - `crates/agentpm-cli` owns the CLI entrypoint and subcommands.
@@ -74,24 +74,21 @@ This repo contains the Rust CLI, schema, and packaging/install/publish flows.
 
 ## Do / Don’t
 - Don’t change schema behavior casually.
-    - Do trace schema-related behavior through `schemas/agentpm.manifest.schema.json` and `crates/agentpm-cli/src/manifest.rs`.
-
+  Do trace schema-related behavior through `schemas/agentpm.manifest.schema.json` and `crates/agentpm-cli/src/manifest.rs`.
 - Don’t broad-refactor command flows by default.
-    - Do keep diffs localized to the command and its immediate helpers unless the task clearly requires more.
-
+  Do keep diffs localized to the command and its immediate helpers unless the task clearly requires more.
 - Don’t change error wording casually.
-    - Do preserve existing wording unless the spec or UX explicitly calls for a change.
-
+  Do preserve existing wording unless the spec or UX explicitly calls for a change.
 - Don’t change lockfile shape or resolution behavior casually.
-    - Do treat lockfile changes as compatibility-sensitive product behavior.
+  Do treat lockfile changes as compatibility-sensitive product behavior.
 
 ## Verification
 - Consult `.pre-commit-config.yaml` for the expected formatting/lint checks.
 - Run the narrowest relevant test first, then broader checks when practical.
 - Favor repo-native commands such as:
-    - `cargo fmt --all --check`
-    - `cargo clippy --workspace --all-targets -- -D warnings`
-    - `cargo test --workspace`
+  - `cargo fmt --all --check`
+  - `cargo clippy --workspace --all-targets -- -D warnings`
+  - `cargo test --workspace`
 - If you cannot run a check, mention that explicitly in the final response.
 
 ## Never Do This
