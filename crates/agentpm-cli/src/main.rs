@@ -10,6 +10,7 @@ mod io;
 mod keys;
 mod manifest;
 mod prelude;
+mod runner;
 mod semver;
 mod ui;
 /*

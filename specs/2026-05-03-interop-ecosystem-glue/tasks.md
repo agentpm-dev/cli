@@ -1,0 +1,153 @@
+# Tasks
+
+## Milestone 1: Shared Rust Tool Runner
+- [ ] Add a reusable runner module for installed AgentPM tool execution.
+- [ ] Reuse existing manifest parsing/types where possible.
+- [ ] Add runner-facing structs for tool metadata, runtime, entrypoint, environment variables, and JSON input/output.
+- [ ] Implement AgentPM tool spec parsing for `@namespace/tool-name`, `@namespace/tool-name@version`, `@namespace/tool-name@latest`, and SemVer ranges.
+- [ ] Implement prepared tool path resolution under `.agentpm/tools/<namespace>/<name>/<version>`.
+- [ ] Read `agent.lock` and resolve unversioned specs to the locked version when available.
+- [ ] Resolve exact version specs to installed prepared versions.
+- [ ] Resolve `latest` specs to the highest installed prepared version.
+- [ ] Resolve SemVer range specs to the highest installed prepared version satisfying the range.
+- [ ] Return clear errors for missing lockfiles, missing locked dependencies, missing prepared tools, and invalid specs.
+- [ ] Reject manifests where `kind` is not `tool`.
+- [ ] Enforce presence of `entrypoint.command` and `entrypoint.args` according to the manifest contract.
+- [ ] Implement interpreter resolution for `node`, `nodejs`, `python`, and `python3`.
+- [ ] Support `AGENTPM_NODE` and `AGENTPM_PYTHON` interpreter overrides.
+- [ ] Validate interpreter family against `runtime.type` when declared.
+- [ ] Validate that the resolved interpreter is available before spawning.
+- [ ] Apply `environment.vars` defaults from the manifest.
+- [ ] Fail clearly when required environment variables are missing.
+- [ ] Define environment merge order for process env, entrypoint env, manifest defaults, and caller overrides.
+- [ ] Create isolated run directories for successful/failing tool invocations.
+- [ ] Spawn the tool as a managed subprocess with JSON stdin.
+- [ ] Parse structured JSON from stdout.
+- [ ] Capture stderr for diagnostics.
+- [ ] Enforce default timeout behavior.
+- [ ] Respect `entrypoint.timeout_ms`.
+- [ ] Enforce maximum combined stdout/stderr output size.
+- [ ] Kill runaway subprocesses and child process trees where practical.
+- [ ] Preserve `child.stdout` and `child.stderr` logs on failure.
+- [ ] Clean up temporary run directories on success.
+- [ ] Add unit tests for spec parsing and resolution.
+- [ ] Add unit tests for lockfile-backed unversioned resolution.
+- [ ] Add unit tests for environment defaults and missing required variables.
+- [ ] Add unit tests for interpreter/runtime compatibility checks.
+- [ ] Add fixture-based execution tests for a simple Node tool.
+- [ ] Add fixture-based execution tests for a simple Python tool.
+
+## Milestone 2: `agentpm run`
+- [ ] Add `Run(run::RunArgs)` to the CLI command enum.
+- [ ] Wire `Commands::Run(args) => args.run().await` in `main`.
+- [ ] Implement command shape `agentpm run @namespace/tool-name`.
+- [ ] Add optional `--input` for inline JSON input.
+- [ ] Add optional `--input-file` for JSON input from a file.
+- [ ] Support JSON input from stdin when neither `--input` nor `--input-file` is provided.
+- [ ] Return a clear error when input is missing, unreadable, or invalid JSON.
+- [ ] Add optional `--timeout-ms` to override the manifest/default timeout for a single invocation.
+- [ ] Decide whether to include `--env KEY=value`; implement if included in this phase.
+- [ ] Print the tool's JSON output to stdout.
+- [ ] Print runner errors and diagnostics to stderr.
+- [ ] Ensure the command exits non-zero on failure.
+- [ ] Ensure `agentpm run` does not validate input against the manifest `inputs` schema.
+- [ ] Add CLI tests for stdin input.
+- [ ] Add CLI tests for `--input`.
+- [ ] Add CLI tests for `--input-file`.
+- [ ] Add CLI tests for malformed JSON input.
+- [ ] Add CLI tests for unversioned locked resolution.
+- [ ] Add CLI tests for exact version resolution.
+- [ ] Add CLI tests for missing tool errors.
+- [ ] Add CLI tests for missing required environment variable errors.
+- [ ] Add CLI tests for timeout behavior.
+
+## Milestone 3: Internal Adapter Boundary
+- [ ] Add a small internal adapter-facing abstraction for ecosystem integrations.
+- [ ] Define an adapter-facing installed tool descriptor.
+- [ ] Include package ref, resolved version, manifest name, manifest version, description, input schema, output schema, environment requirements, and runtime metadata in the descriptor.
+- [ ] Add an internal invocation API that routes adapter calls through the shared runner.
+- [ ] Add a helper to list tools from `agent.lock` for adapter exposure.
+- [ ] Ensure adapter code does not duplicate tool resolution or subprocess execution logic.
+- [ ] Keep the adapter boundary private/internal.
+- [ ] Add comments or internal documentation noting that public plugin/WASM support is future work.
+- [ ] Add tests for locked tool descriptor generation.
+- [ ] Add tests confirming adapter invocation uses the shared runner path.
+
+## Milestone 4: HTTP MCP Server
+- [ ] Add `Serve(serve::ServeArgs)` to the CLI command enum.
+- [ ] Wire `Commands::Serve(args) => args.run().await` in `main`.
+- [ ] Implement `agentpm serve --mcp`.
+- [ ] Start a local HTTP MCP-compatible server on `127.0.0.1:7331` by default.
+- [ ] Add `--host` and `--port` options if the implementation can support them cleanly.
+- [ ] Expose all tools listed in `agent.lock` by default.
+- [ ] Add optional `--tool` / `--tools` filtering if included in this phase.
+- [ ] Convert AgentPM tool descriptors into MCP tool metadata.
+- [ ] Derive MCP tool descriptions from `agent.json.description`.
+- [ ] Derive MCP input metadata from `agent.json.inputs` when available.
+- [ ] Preserve or map AgentPM package refs into MCP-safe tool names.
+- [ ] Implement MCP tool call handling.
+- [ ] Route MCP tool calls through the shared runner.
+- [ ] Return tool JSON output through MCP without wrapping it in a new AgentPM-specific envelope.
+- [ ] Map missing tool errors to useful MCP errors.
+- [ ] Map invalid arguments/input errors to useful MCP errors.
+- [ ] Map runner failures to useful MCP errors.
+- [ ] Map timeout failures to useful MCP errors.
+- [ ] Map malformed tool output failures to useful MCP errors.
+- [ ] Add fixture-based tests for listing MCP tools if practical.
+- [ ] Add fixture-based tests for calling a tool through MCP if practical.
+- [ ] Manually verify that at least one MCP-compatible client can connect to the server and call a tool.
+
+## Milestone 5: Skill Scaffold Export
+- [ ] Add `Export(export::ExportArgs)` to the CLI command enum.
+- [ ] Wire `Commands::Export(args) => args.run().await` in `main`.
+- [ ] Implement `agentpm export --skill @namespace/tool-name`.
+- [ ] Resolve the installed tool using the shared resolver.
+- [ ] Generate output under `skills/<tool-name>/` by default.
+- [ ] Add `--output` to override the generated output path.
+- [ ] Add `--force` to allow overwriting an existing output directory.
+- [ ] Fail safely when the output directory already exists and `--force` is not provided.
+- [ ] Generate `SKILL.md`.
+- [ ] Generate `references/tool-contract.md`.
+- [ ] Generate `references/examples.md`.
+- [ ] Generate `scripts/run.sh`.
+- [ ] Mark `scripts/run.sh` executable on platforms where this is supported.
+- [ ] Keep `SKILL.md` concise and workflow-oriented.
+- [ ] Include progressive disclosure by linking from `SKILL.md` to deeper reference files.
+- [ ] Include manifest-derived name/title and description.
+- [ ] Include a generated "When to use this skill" starter section.
+- [ ] Include TODO placeholders for human-authored workflow guidance.
+- [ ] Include execution instructions that delegate to `agentpm run @namespace/tool-name`.
+- [ ] Include input schema details in `references/tool-contract.md`.
+- [ ] Include output schema details in `references/tool-contract.md`.
+- [ ] Include runtime details in `references/tool-contract.md`.
+- [ ] Include environment variable requirements/defaults in `references/tool-contract.md`.
+- [ ] Include starter example invocations in `references/examples.md`.
+- [ ] Avoid presenting the generated Skill as polished/final.
+- [ ] Add tests for generated file structure.
+- [ ] Add tests for overwrite protection.
+- [ ] Add tests for manifest-derived content.
+- [ ] Add tests for output path override.
+
+## Milestone 6: Docs, Examples, and Verification Polish
+- [ ] Update CLI help text for `run`.
+- [ ] Update CLI help text for `serve --mcp`.
+- [ ] Update CLI help text for `export --skill`.
+- [ ] Add docs for `agentpm run` usage.
+- [ ] Add docs for JSON input via stdin.
+- [ ] Add docs for JSON input via `--input`.
+- [ ] Add docs for JSON input via `--input-file`.
+- [ ] Add docs for unversioned, exact version, `latest`, and SemVer range resolution.
+- [ ] Add docs for `agentpm serve --mcp`.
+- [ ] Document default MCP host and port: `127.0.0.1:7331`.
+- [ ] Document that MCP exposes all locked tools by default.
+- [ ] Document how to narrow MCP exposure if filtering flags are implemented.
+- [ ] Add docs for `agentpm export --skill`.
+- [ ] Document generated Skill structure and progressive disclosure.
+- [ ] Document that Skill export is a scaffold, not polished final Skill generation.
+- [ ] Document that Skills may become first-class AgentPM artifacts later.
+- [ ] Document that MCP is the first built-in ecosystem adapter.
+- [ ] Document that public third-party plugin/WASM support is future work.
+- [ ] Add or update an example tool that can be used for `run`, MCP, and Skill export demos.
+- [ ] Add a final end-to-end demo script or documented manual flow.
+- [ ] Confirm all required automated checks pass.
+- [ ] Confirm manual MCP client verification has been performed or note why it could not be completed.
