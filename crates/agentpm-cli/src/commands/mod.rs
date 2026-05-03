@@ -6,6 +6,7 @@ pub mod lint;
 pub mod login;
 pub mod namespace;
 pub mod publish;
+pub mod run;
 pub mod whoami;
 
 #[derive(Subcommand, Debug)]
@@ -27,6 +28,9 @@ pub enum Commands {
 
     /// Install tool(s) from the registry
     Install(install::InstallArgs),
+
+    /// Execute an installed tool with JSON input
+    Run(run::RunArgs),
 
     /// Manage local signing keys
     Keys(keys::KeysArgs),
