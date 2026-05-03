@@ -71,15 +71,21 @@ pub struct RunnerManifest {
     pub kind: String,
     pub name: String,
     pub version: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub entrypoint: Entrypoint,
     #[serde(default)]
     pub runtime: Option<RuntimeDecl>,
     #[serde(default)]
     pub environment: Option<EnvironmentDecl>,
+    #[serde(default)]
+    pub inputs: Value,
+    #[serde(default)]
+    pub outputs: Value,
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RuntimeDecl {
     #[serde(rename = "type")]
     pub runtime_type: String,
@@ -87,13 +93,13 @@ pub struct RuntimeDecl {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
 pub struct EnvironmentDecl {
     #[serde(default)]
     pub vars: HashMap<String, EnvVarDecl>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
 pub struct EnvVarDecl {
     #[serde(default)]
     pub required: bool,

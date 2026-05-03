@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+mod adapter;
 mod assets;
 mod auth;
 mod commands;
