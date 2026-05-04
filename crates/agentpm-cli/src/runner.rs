@@ -13,6 +13,56 @@ use std::time::{Duration, Instant};
 
 #[allow(dead_code)]
 const DEFAULT_OUTPUT_LIMIT_BYTES: usize = 1024 * 1024;
+const ERR_INSTALLED_TOOL_NOT_FOUND: &str = "installed tool not found";
+const ERR_INSTALLED_TOOL_DIR_MISSING: &str = "installed tool directory does not exist";
+const ERR_LOCKFILE_DEPENDENCY_MISSING: &str = "not found in agent.lock";
+const ERR_REQUIRED_ENV_MISSING: &str = "missing required environment variables";
+const ERR_RUNTIME_TYPE_MISMATCH: &str = "runtime/type mismatch";
+const ERR_INTERPRETER_UNSUPPORTED: &str = "unsupported interpreter override or command";
+const ERR_INTERPRETER_OVERRIDE_MISMATCH: &str = "interpreter override mismatch";
+const ERR_INTERPRETER_NOT_EXECUTABLE: &str = "interpreter not found or not executable";
+const ERR_INTERPRETER_HEALTHCHECK_FAILED: &str = "interpreter command failed health check";
+const ERR_TOOL_TIMED_OUT: &str = "tool execution timed out";
+const ERR_TOOL_OUTPUT_NOT_JSON: &str = "tool stdout was not valid JSON";
+const ERR_TOOL_EXITED_UNSUCCESSFULLY: &str = "tool exited unsuccessfully";
+const ERR_ENTRYPOINT_CWD_MISSING: &str = "entrypoint cwd does not exist";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunnerErrorKind {
+    Resolution,
+    Runtime,
+    Timeout,
+    MalformedOutput,
+    SubprocessFailure,
+    Other,
+}
+
+pub(crate) fn classify_runner_error(err: &anyhow::Error) -> RunnerErrorKind {
+    let message = format!("{err:#}");
+    if message.contains(ERR_TOOL_TIMED_OUT) {
+        RunnerErrorKind::Timeout
+    } else if message.contains(ERR_TOOL_OUTPUT_NOT_JSON) {
+        RunnerErrorKind::MalformedOutput
+    } else if message.contains(ERR_REQUIRED_ENV_MISSING)
+        || message.contains(ERR_RUNTIME_TYPE_MISMATCH)
+        || message.contains(ERR_INTERPRETER_UNSUPPORTED)
+        || message.contains(ERR_INTERPRETER_OVERRIDE_MISMATCH)
+        || message.contains(ERR_INTERPRETER_NOT_EXECUTABLE)
+        || message.contains(ERR_INTERPRETER_HEALTHCHECK_FAILED)
+    {
+        RunnerErrorKind::Runtime
+    } else if message.contains(ERR_INSTALLED_TOOL_NOT_FOUND)
+        || message.contains(ERR_INSTALLED_TOOL_DIR_MISSING)
+        || message.contains(ERR_LOCKFILE_DEPENDENCY_MISSING)
+        || message.contains(ERR_ENTRYPOINT_CWD_MISSING)
+    {
+        RunnerErrorKind::Resolution
+    } else if message.contains(ERR_TOOL_EXITED_UNSUCCESSFULLY) {
+        RunnerErrorKind::SubprocessFailure
+    } else {
+        RunnerErrorKind::Other
+    }
+}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,7 +220,8 @@ pub fn resolve_installed_tool(project_dir: &Path, spec: &ToolSpec) -> Result<Res
             let dir = prepared_tool_dir(&tools_root, &spec.package, version);
             if !dir.exists() {
                 bail!(
-                    "installed tool not found for {}@{} at {}",
+                    "{} for {}@{} at {}",
+                    ERR_INSTALLED_TOOL_NOT_FOUND,
                     spec.package,
                     version,
                     dir.display()
@@ -190,7 +241,8 @@ pub fn resolve_installed_tool(project_dir: &Path, spec: &ToolSpec) -> Result<Res
     let tool_dir = prepared_tool_dir(&tools_root, &spec.package, &version);
     if !tool_dir.exists() {
         bail!(
-            "installed tool directory does not exist for {}@{}: {}",
+            "{} for {}@{}: {}",
+            ERR_INSTALLED_TOOL_DIR_MISSING,
             spec.package,
             version,
             tool_dir.display()
@@ -306,21 +358,18 @@ pub fn run_installed_tool(
             &input_bytes,
             &output.stdout,
             &output.stderr,
-            &format!("tool exited unsuccessfully: {code}"),
+            &format!("{ERR_TOOL_EXITED_UNSUCCESSFULLY}: {code}"),
         )?;
         bail!(
-            "tool exited unsuccessfully: {} (logs: {})",
+            "{}: {} (logs: {})",
+            ERR_TOOL_EXITED_UNSUCCESSFULLY,
             code,
             run_dir.display()
         );
     }
 
-    let parsed = serde_json::from_slice(&output.stdout).with_context(|| {
-        format!(
-            "tool stdout was not valid JSON (logs: {})",
-            run_dir.display()
-        )
-    });
+    let parsed = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("{} (logs: {})", ERR_TOOL_OUTPUT_NOT_JSON, run_dir.display()));
     let output = match parsed {
         Ok(v) => v,
         Err(err) => {
@@ -354,7 +403,7 @@ fn resolve_locked_version(project_dir: &Path, package: &str) -> Result<Version> 
     let dep = lock
         .dependencies
         .get(package)
-        .ok_or_else(|| anyhow!("{} not found in agent.lock", package))?;
+        .ok_or_else(|| anyhow!("{} {}", package, ERR_LOCKFILE_DEPENDENCY_MISSING))?;
 
     Version::parse(&dep.version)
         .with_context(|| format!("locked version for {} is not valid semver", package))
@@ -470,7 +519,8 @@ fn prepare_invocation(
             .collect();
         if !missing.is_empty() {
             bail!(
-                "missing required environment variables for {}: {}",
+                "{} for {}: {}",
+                ERR_REQUIRED_ENV_MISSING,
                 resolved.package,
                 missing.join(", ")
             );
@@ -480,7 +530,8 @@ fn prepare_invocation(
     let cwd = resolved.tool_dir.join(&entrypoint.cwd);
     if !cwd.exists() {
         bail!(
-            "entrypoint cwd does not exist for {}: {}",
+            "{} for {}: {}",
+            ERR_ENTRYPOINT_CWD_MISSING,
             resolved.package,
             cwd.display()
         );
@@ -505,7 +556,8 @@ fn resolve_interpreter_command(command: &str, runtime: Option<&RuntimeDecl>) -> 
             .ok_or_else(|| anyhow!("unsupported runtime.type: {}", runtime.runtime_type))?;
         if expected != requested {
             bail!(
-                "runtime/type mismatch: runtime.type={} but entrypoint.command={}",
+                "{}: runtime.type={} but entrypoint.command={}",
+                ERR_RUNTIME_TYPE_MISMATCH,
                 runtime.runtime_type,
                 command
             );
@@ -525,11 +577,12 @@ fn resolve_interpreter_command(command: &str, runtime: Option<&RuntimeDecl>) -> 
 
     let actual = interpreter_family(&resolved)
         .or_else(|| basename_interpreter_family(&resolved))
-        .ok_or_else(|| anyhow!("unsupported interpreter override or command: {resolved}"))?;
+        .ok_or_else(|| anyhow!("{ERR_INTERPRETER_UNSUPPORTED}: {resolved}"))?;
 
     if actual != requested {
         bail!(
-            "interpreter override mismatch: expected {} family, got {}",
+            "{}: expected {} family, got {}",
+            ERR_INTERPRETER_OVERRIDE_MISMATCH,
             requested,
             actual
         );
@@ -574,9 +627,9 @@ fn ensure_interpreter_available(command: &str) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .with_context(|| format!("interpreter not found or not executable: {command}"))?;
+        .with_context(|| format!("{ERR_INTERPRETER_NOT_EXECUTABLE}: {command}"))?;
     if !status.success() {
-        bail!("interpreter command failed health check: {command}");
+        bail!("{ERR_INTERPRETER_HEALTHCHECK_FAILED}: {command}");
     }
     Ok(())
 }
@@ -644,7 +697,8 @@ fn execute_with_timeout(
                 .wait_with_output()
                 .context("collecting timed-out output")?;
             bail!(
-                "tool execution timed out after {} ms (stdout {} bytes, stderr {} bytes)",
+                "{} after {} ms (stdout {} bytes, stderr {} bytes)",
+                ERR_TOOL_TIMED_OUT,
                 timeout_ms,
                 output.stdout.len(),
                 output.stderr.len()

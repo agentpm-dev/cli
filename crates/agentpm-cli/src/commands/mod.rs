@@ -7,6 +7,7 @@ pub mod login;
 pub mod namespace;
 pub mod publish;
 pub mod run;
+pub mod serve;
 pub mod whoami;
 
 #[derive(Subcommand, Debug)]
@@ -31,6 +32,9 @@ pub enum Commands {
 
     /// Execute an installed tool with JSON input
     Run(run::RunArgs),
+
+    /// Expose installed tools through a local MCP server
+    Serve(serve::ServeArgs),
 
     /// Manage local signing keys
     Keys(keys::KeysArgs),
