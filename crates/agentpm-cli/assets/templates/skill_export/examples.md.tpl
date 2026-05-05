@@ -12,14 +12,22 @@ agentpm run {{PACKAGE_REF}} --input '{{INLINE_INPUT}}'
 
 ```bash
 cat <<'JSON' | agentpm run {{PACKAGE_REF}}
-{{PRETTY_INPUT}}
+{{OPTIONAL_INPUT}}
 JSON
+```
+
+## Expanded example
+
+Use this when you want to show optional fields and richer tool behavior:
+
+```json
+{{RICHER_INPUT}}
 ```
 
 ## Helper script
 
 ```bash
-./scripts/run.sh '{{INLINE_INPUT}}'
+./scripts/run.sh '{{RICHER_INLINE_INPUT}}'
 ```
 
 ## TODOs

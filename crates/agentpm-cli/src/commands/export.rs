@@ -176,10 +176,19 @@ fn render_skill_md(resolved: &ResolvedTool) -> String {
     let title = title_case(tool_name);
     let resolved_version = resolved.version.to_string();
     let skill_name = slugify_tool_name(package_ref);
-    let skill_description = format!(
-        "Use this skill when you want to run the {} tool through AgentPM from a skill-capable client while keeping execution delegated to agentpm run.",
-        package_ref
-    );
+    let skill_description = resolved
+        .manifest
+        .description
+        .clone()
+        .unwrap_or_else(|| {
+            format!(
+                "Use this skill when you want to run the {} tool through AgentPM from a skill-capable client while keeping execution delegated to agentpm run.",
+                package_ref
+            )
+        });
+    let quick_start_input = minimal_input_from_schema(&resolved.manifest.inputs, None);
+    let inline_input =
+        serde_json::to_string(&quick_start_input).expect("serializing generated example input");
     let description = resolved
         .manifest
         .description
@@ -192,6 +201,7 @@ fn render_skill_md(resolved: &ResolvedTool) -> String {
             ("SKILL_DESCRIPTION", skill_description.as_str()),
             ("TITLE", title.as_str()),
             ("PACKAGE_REF", package_ref.as_str()),
+            ("INLINE_INPUT", inline_input.as_str()),
             ("RESOLVED_VERSION", resolved_version.as_str()),
             ("DESCRIPTION", description),
         ],
@@ -273,18 +283,29 @@ fn render_environment_requirements(resolved: &ResolvedTool) -> String {
 
 fn render_examples_md(resolved: &ResolvedTool) -> Result<String> {
     let package_ref = &resolved.package;
-    let pretty_example = example_input_from_schema(&resolved.manifest.inputs);
+    let minimal_example = minimal_input_from_schema(&resolved.manifest.inputs, None);
+    let optional_example =
+        single_optional_input_from_schema(&resolved.manifest.inputs).unwrap_or_else(|| {
+            minimal_example.clone()
+        });
+    let richer_example = example_input_from_schema(&resolved.manifest.inputs, None);
     let inline_input =
-        serde_json::to_string(&pretty_example).context("formatting inline example JSON")?;
-    let pretty_input =
-        serde_json::to_string_pretty(&pretty_example).context("formatting example payload")?;
+        serde_json::to_string(&minimal_example).context("formatting inline example JSON")?;
+    let optional_input = serde_json::to_string_pretty(&optional_example)
+        .context("formatting optional example payload")?;
+    let richer_input =
+        serde_json::to_string_pretty(&richer_example).context("formatting richer example JSON")?;
+    let richer_inline_input =
+        serde_json::to_string(&richer_example).context("formatting richer inline example JSON")?;
 
     Ok(render_template(
         EXAMPLES_MD_TPL,
         &[
             ("PACKAGE_REF", package_ref.as_str()),
             ("INLINE_INPUT", inline_input.as_str()),
-            ("PRETTY_INPUT", pretty_input.as_str()),
+            ("OPTIONAL_INPUT", optional_input.as_str()),
+            ("RICHER_INPUT", richer_input.as_str()),
+            ("RICHER_INLINE_INPUT", richer_inline_input.as_str()),
         ],
     ))
 }
@@ -293,7 +314,7 @@ fn render_run_script(resolved: &ResolvedTool) -> String {
     render_template(RUN_SH_TPL, &[("PACKAGE_REF", resolved.package.as_str())])
 }
 
-fn example_input_from_schema(schema: &Value) -> Value {
+fn example_input_from_schema(schema: &Value, property_name: Option<&str>) -> Value {
     if let Some(example) = schema.get("example") {
         return example.clone();
     }
@@ -305,18 +326,118 @@ fn example_input_from_schema(schema: &Value) -> Value {
             let mut map = serde_json::Map::new();
             if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
                 for (name, property) in properties {
-                    map.insert(name.clone(), example_input_from_schema(property));
+                    map.insert(name.clone(), example_input_from_schema(property, Some(name)));
                 }
             }
             Value::Object(map)
         }
         Some("array") => Value::Array(Vec::new()),
-        Some("string") => Value::String("TODO".to_string()),
-        Some("integer") => Value::from(0),
-        Some("number") => Value::from(0),
+        Some("string") => Value::String(default_string_example(property_name)),
+        Some("integer") => default_integer_example(schema),
+        Some("number") => default_number_example(schema),
         Some("boolean") => Value::Bool(true),
         _ => Value::Object(Default::default()),
     }
+}
+
+fn minimal_input_from_schema(schema: &Value, property_name: Option<&str>) -> Value {
+    if let Some(example) = schema.get("example") {
+        return example.clone();
+    }
+    if let Some(default) = schema.get("default") {
+        return default.clone();
+    }
+    match schema.get("type").and_then(Value::as_str) {
+        Some("object") => {
+            let mut map = serde_json::Map::new();
+            let required = schema
+                .get("required")
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<std::collections::HashSet<_>>()
+                })
+                .unwrap_or_default();
+            if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+                for (name, property) in properties {
+                    if required.contains(name.as_str()) {
+                        map.insert(name.clone(), minimal_input_from_schema(property, Some(name)));
+                    }
+                }
+            }
+            Value::Object(map)
+        }
+        Some("array") => Value::Array(Vec::new()),
+        Some("string") => Value::String(default_string_example(property_name)),
+        Some("integer") => default_integer_example(schema),
+        Some("number") => default_number_example(schema),
+        Some("boolean") => Value::Bool(true),
+        _ => Value::Object(Default::default()),
+    }
+}
+
+fn single_optional_input_from_schema(schema: &Value) -> Option<Value> {
+    let Value::Object(minimal) = minimal_input_from_schema(schema, None) else {
+        return None;
+    };
+    let properties = schema.get("properties")?.as_object()?;
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
+
+    // Heuristic: promote the first optional property we encounter into the
+    // "one optional field" example. With serde_json's default Map this is
+    // alphabetic by key; if preserve_order is enabled later it will instead
+    // follow manifest insertion order. That is acceptable for a starter
+    // scaffold, but this function does not promise a semantically "best"
+    // optional field.
+    for (name, property) in properties {
+        if !required.contains(name.as_str()) {
+            let mut with_optional = minimal.clone();
+            with_optional.insert(
+                name.clone(),
+                example_input_from_schema(property, Some(name.as_str())),
+            );
+            return Some(Value::Object(with_optional));
+        }
+    }
+
+    None
+}
+
+fn default_string_example(property_name: Option<&str>) -> String {
+    match property_name {
+        Some("text") => "Hello world".to_string(),
+        Some("message") => "Hello world".to_string(),
+        Some(name) => format!("<{name}>"),
+        None => "<value>".to_string(),
+    }
+}
+
+fn default_integer_example(schema: &Value) -> Value {
+    schema
+        .get("minimum")
+        .and_then(Value::as_i64)
+        .map(Value::from)
+        .unwrap_or_else(|| Value::from(0))
+}
+
+fn default_number_example(schema: &Value) -> Value {
+    schema
+        .get("minimum")
+        .and_then(Value::as_f64)
+        .and_then(serde_json::Number::from_f64)
+        .map(Value::Number)
+        .unwrap_or_else(|| Value::from(0))
 }
 
 fn format_optional_schema(schema: &Value) -> Result<String> {
@@ -478,14 +599,15 @@ mod tests {
         let examples_md = fs::read_to_string(skill_dir.join("references/examples.md")).unwrap();
 
         assert!(skill_md.starts_with("---\nname: echo-json\n"));
-        assert!(skill_md.contains("description: Use this skill when you want to run the @zack/echo-json tool through AgentPM from a skill-capable client while keeping execution delegated to agentpm run."));
+        assert!(skill_md.contains("description: Echo tool for skill export tests"));
         assert!(skill_md.contains("When to use this skill"));
-        assert!(skill_md.contains("agentpm run @zack/echo-json"));
+        assert!(skill_md.contains("agentpm run @zack/echo-json --input '{\"message\":\"Hello world\"}'"));
         assert!(skill_md.contains("TODO: Add the specific workflow cues"));
         assert!(contract_md.contains("Echo tool for skill export tests"));
         assert!(contract_md.contains("\"message\""));
         assert!(contract_md.contains("`API_TOKEN` — required"));
         assert!(examples_md.contains("./scripts/run.sh"));
+        assert!(examples_md.contains("## Expanded example"));
     }
 
     #[test]
@@ -512,6 +634,31 @@ mod tests {
     }
 
     #[test]
+    fn falls_back_to_generic_frontmatter_description_when_manifest_omits_one() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/echo-json", "0.1.0"));
+        root.write_tool(
+            "@zack/echo-json",
+            "0.1.0",
+            minimal_tool_manifest_without_description("python3", "0.1.0"),
+            python_echo_script(),
+        );
+
+        let args = ExportArgs {
+            skill: "@zack/echo-json".to_string(),
+            output: None,
+            force: false,
+        };
+        args.run_with_dir(root.path()).unwrap();
+
+        let skill_dir = root.path().join("skills").join("echo-json");
+        let skill_md = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        assert!(skill_md.contains(
+            "description: Use this skill when you want to run the @zack/echo-json tool through AgentPM from a skill-capable client while keeping execution delegated to agentpm run."
+        ));
+    }
+
+    #[test]
     fn detects_default_output_namespace_collisions() {
         let root = TestProject::new();
         root.write_lock(lock_for("@zack/echo-json", "0.1.0"));
@@ -535,6 +682,71 @@ mod tests {
             .expect("detect namespace collisions");
 
         assert_eq!(collisions, vec!["@acme/echo-json"]);
+    }
+
+    #[test]
+    fn minimal_input_uses_required_fields_only() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": { "type": "string" },
+                "model": { "type": "string" },
+                "doSummary": { "type": "boolean" },
+                "maxSummaryChars": { "type": "integer", "minimum": 40 }
+            },
+            "required": ["text"]
+        });
+
+        let input = minimal_input_from_schema(&schema, None);
+
+        assert_eq!(input, serde_json::json!({ "text": "Hello world" }));
+    }
+
+    #[test]
+    fn richer_input_respects_integer_minimums() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": { "type": "string" },
+                "maxSummaryChars": { "type": "integer", "minimum": 40 }
+            },
+            "required": ["text"]
+        });
+
+        let input = example_input_from_schema(&schema, None);
+
+        assert_eq!(input, serde_json::json!({
+            "text": "Hello world",
+            "maxSummaryChars": 40
+        }));
+    }
+
+    #[test]
+    fn optional_input_adds_one_optional_field() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": { "type": "string" },
+                "doSummary": { "type": "boolean" },
+                "model": { "type": "string" }
+            },
+            "required": ["text"]
+        });
+
+        let input = single_optional_input_from_schema(&schema).expect("optional example");
+
+        assert_eq!(input, serde_json::json!({
+            "text": "Hello world",
+            "doSummary": true
+        }));
+    }
+
+    #[test]
+    fn string_placeholder_uses_property_name() {
+        assert_eq!(default_string_example(Some("model")), "<model>");
+        assert_eq!(default_string_example(Some("query")), "<query>");
+        assert_eq!(default_string_example(None), "<value>");
+        assert_eq!(default_string_example(Some("text")), "Hello world");
     }
 
     fn lock_for(package: &str, version: &str) -> String {
@@ -599,6 +811,38 @@ mod tests {
       }}
     }},
     "required": ["upper"]
+  }}
+}}"#
+        )
+    }
+
+    fn minimal_tool_manifest_without_description(command: &str, version: &str) -> String {
+        format!(
+            r#"{{
+  "kind": "tool",
+  "name": "echo-json",
+  "version": "{version}",
+  "entrypoint": {{
+    "command": "{command}",
+    "args": ["script.py"],
+    "cwd": ".",
+    "timeout_ms": 5000
+  }},
+  "inputs": {{
+    "type": "object",
+    "properties": {{
+      "message": {{
+        "type": "string"
+      }}
+    }}
+  }},
+  "outputs": {{
+    "type": "object",
+    "properties": {{
+      "upper": {{
+        "type": "string"
+      }}
+    }}
   }}
 }}"#
         )
