@@ -1,4 +1,5 @@
 use crate::prelude::*;
+pub mod export;
 pub mod init;
 pub mod install;
 pub mod keys;
@@ -35,6 +36,9 @@ pub enum Commands {
 
     /// Expose installed tools through a local MCP server
     Serve(serve::ServeArgs),
+
+    /// Generate a starter skill scaffold from an installed tool
+    Export(export::ExportArgs),
 
     /// Manage local signing keys
     Keys(keys::KeysArgs),
