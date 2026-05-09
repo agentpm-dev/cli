@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+mod adapter;
 mod assets;
 mod auth;
 mod commands;
@@ -10,6 +11,7 @@ mod io;
 mod keys;
 mod manifest;
 mod prelude;
+mod runner;
 mod semver;
 mod ui;
 /*
@@ -61,6 +63,9 @@ async fn main() -> Result<()> {
         commands::Commands::Lint(args) => args.run().await,
         commands::Commands::Publish(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Install(arg) => arg.run(cli.base_url.clone()).await,
+        commands::Commands::Run(arg) => arg.run(cli.base_url.clone()).await,
+        commands::Commands::Serve(arg) => arg.run(cli.base_url.clone()).await,
+        commands::Commands::Export(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Keys(args) => args.run().await,
         commands::Commands::Namespace(args) => args.run(cli.base_url.clone()).await,
     }

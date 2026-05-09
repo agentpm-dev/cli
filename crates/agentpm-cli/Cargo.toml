@@ -1,6 +1,6 @@
 [package]
 name = "agentpm-cli"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 
 [[bin]]
@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 argon2 = "0.5"
+axum = { version = "0.8", features = ["json"] }
 base64 = "0.21.7"
 chacha20poly1305 = "0.10"
 chrono = { version = "0.4.41", features = ["serde", "clock"] }
@@ -34,12 +35,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tar = "0.4"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 toml = "0.8"
+tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 ureq = { version = "2.9", default-features = true } # simple HTTP for schema fetch
 walkdir = "2.5.0"
 agentpm-sdk = { path = "../agentpm-sdk" }
 libc = "0.2.174"
-

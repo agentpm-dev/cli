@@ -1,4 +1,5 @@
 use crate::prelude::*;
+pub mod export;
 pub mod init;
 pub mod install;
 pub mod keys;
@@ -6,6 +7,8 @@ pub mod lint;
 pub mod login;
 pub mod namespace;
 pub mod publish;
+pub mod run;
+pub mod serve;
 pub mod whoami;
 
 #[derive(Subcommand, Debug)]
@@ -27,6 +30,15 @@ pub enum Commands {
 
     /// Install tool(s) from the registry
     Install(install::InstallArgs),
+
+    /// Execute an installed tool with JSON input
+    Run(run::RunArgs),
+
+    /// Expose installed tools through a local MCP server
+    Serve(serve::ServeArgs),
+
+    /// Generate a starter skill scaffold from an installed tool
+    Export(export::ExportArgs),
 
     /// Manage local signing keys
     Keys(keys::KeysArgs),

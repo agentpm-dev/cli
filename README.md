@@ -129,10 +129,23 @@ Tip: different terminals (Terminal.app, iTerm, VS Code) may read different start
 
 ## Quick start
 
+Create a new AgentPM tool package:
+
 ```bash
 agentpm --help
 agentpm init --kind tool --name demo --description "My first tool"
 ```
+
+Once a tool is installed, AgentPM can expose the same packaged artifact through the shell, MCP, and Skill scaffolds:
+
+```bash
+agentpm install @zack/capitalize
+agentpm run @zack/capitalize --input '{"text":"hello world"}'
+agentpm serve --mcp
+agentpm export --skill @zack/capitalize
+```
+
+That interoperability flow keeps AgentPM as the source of truth for packaging and execution while making installed tools usable from other ecosystems.
 
 ### Manifest schema
 
