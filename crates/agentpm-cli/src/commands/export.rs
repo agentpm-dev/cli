@@ -284,10 +284,8 @@ fn render_environment_requirements(resolved: &ResolvedTool) -> String {
 fn render_examples_md(resolved: &ResolvedTool) -> Result<String> {
     let package_ref = &resolved.package;
     let minimal_example = minimal_input_from_schema(&resolved.manifest.inputs, None);
-    let optional_example =
-        single_optional_input_from_schema(&resolved.manifest.inputs).unwrap_or_else(|| {
-            minimal_example.clone()
-        });
+    let optional_example = single_optional_input_from_schema(&resolved.manifest.inputs)
+        .unwrap_or_else(|| minimal_example.clone());
     let richer_example = example_input_from_schema(&resolved.manifest.inputs, None);
     let inline_input =
         serde_json::to_string(&minimal_example).context("formatting inline example JSON")?;
@@ -326,7 +324,10 @@ fn example_input_from_schema(schema: &Value, property_name: Option<&str>) -> Val
             let mut map = serde_json::Map::new();
             if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
                 for (name, property) in properties {
-                    map.insert(name.clone(), example_input_from_schema(property, Some(name)));
+                    map.insert(
+                        name.clone(),
+                        example_input_from_schema(property, Some(name)),
+                    );
                 }
             }
             Value::Object(map)
@@ -363,7 +364,10 @@ fn minimal_input_from_schema(schema: &Value, property_name: Option<&str>) -> Val
             if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
                 for (name, property) in properties {
                     if required.contains(name.as_str()) {
-                        map.insert(name.clone(), minimal_input_from_schema(property, Some(name)));
+                        map.insert(
+                            name.clone(),
+                            minimal_input_from_schema(property, Some(name)),
+                        );
                     }
                 }
             }
@@ -601,7 +605,10 @@ mod tests {
         assert!(skill_md.starts_with("---\nname: echo-json\n"));
         assert!(skill_md.contains("description: Echo tool for skill export tests"));
         assert!(skill_md.contains("When to use this skill"));
-        assert!(skill_md.contains("agentpm run @zack/echo-json --input '{\"message\":\"Hello world\"}'"));
+        assert!(
+            skill_md
+                .contains("agentpm run @zack/echo-json --input '{\"message\":\"Hello world\"}'")
+        );
         assert!(skill_md.contains("TODO: Add the specific workflow cues"));
         assert!(contract_md.contains("Echo tool for skill export tests"));
         assert!(contract_md.contains("\"message\""));
@@ -715,10 +722,13 @@ mod tests {
 
         let input = example_input_from_schema(&schema, None);
 
-        assert_eq!(input, serde_json::json!({
-            "text": "Hello world",
-            "maxSummaryChars": 40
-        }));
+        assert_eq!(
+            input,
+            serde_json::json!({
+                "text": "Hello world",
+                "maxSummaryChars": 40
+            })
+        );
     }
 
     #[test]
@@ -735,10 +745,13 @@ mod tests {
 
         let input = single_optional_input_from_schema(&schema).expect("optional example");
 
-        assert_eq!(input, serde_json::json!({
-            "text": "Hello world",
-            "doSummary": true
-        }));
+        assert_eq!(
+            input,
+            serde_json::json!({
+                "text": "Hello world",
+                "doSummary": true
+            })
+        );
     }
 
     #[test]
