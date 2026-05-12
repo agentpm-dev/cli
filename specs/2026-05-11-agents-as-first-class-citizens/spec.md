@@ -47,6 +47,19 @@ Direct package install should become kind-aware: direct tool specs continue to i
 
 Phase 3 must preserve the existing manifest-driven install workflow while adding direct agent package installation. Users should be able to install dependencies from a local `kind: "agent"` manifest by running `agentpm install`, and they should also be able to install a published agent package by running `agentpm install @namespace/agent-name@version`.
 
+## Key decisions
+- Agents are first-class package artifacts with `kind: "agent"`.
+- Agents are composition artifacts, not runnable app bundles.
+- Tools are the only dependency type resolved in Phase 3.
+- Reserved fields for skills, knowledge, memory, and profiles are validated and preserved but not resolved.
+- Direct install supports both tools and agents.
+- Manifest-driven install from a local `kind: "agent"` manifest remains supported.
+- Local agent manifests are not copied into `.agentpm/agents`.
+- Registry-installed agent packages are installed into `.agentpm/agents`.
+- Tool dependencies are installed into the shared `.agentpm/tools` layout.
+- Lockfile v2 records package kind, identity, integrity, multiple versions, and dependency relationships.
+- Backend/domain naming should migrate from tools to packages in small steps.
+
 ## Non-goals
 - Do not build a hosted or local agent runtime.
 - Do not implement `agentpm run` for agents.
