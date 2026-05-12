@@ -12,6 +12,19 @@
 - Verify backend package migration preserves existing tool data.
 - Verify registry search and UI distinguish tools from agents.
 - Verify SDKs can load installed agents as metadata and do not execute agents.
+- Verify manifest-driven install still works:
+  - create a local `agent.json` with `kind: "agent"` and `tools`
+  - run `agentpm install`
+  - confirm tools install under `.agentpm/tools`
+  - confirm the local manifest is not copied under `.agentpm/agents`
+- Verify direct tool install still works:
+  - run `agentpm install @namespace/tool-name@version`
+  - confirm the tool installs under `.agentpm/tools`
+- Verify direct agent install works:
+  - run `agentpm install @namespace/agent-name@version`
+  - confirm the agent installs under `.agentpm/agents`
+  - confirm the agent's tools install under `.agentpm/tools`
+- Verify lockfile v2 represents local manifest roots and registry-installed agent roots differently.
 
 ## Automated checks
 Run the relevant commands for each repo after implementation. Adjust command names to match each repo’s actual scripts.
@@ -73,6 +86,13 @@ Run the relevant commands for each repo after implementation. Adjust command nam
 - Search the registry with `all` and verify tools, agents, and namespaces can appear.
 - Open an agent detail page and verify README, examples, dependencies, and reserved references display correctly.
 - Open an existing tool detail page and verify no obvious regression.
+- In a clean temp project, create a local `kind: "agent"` manifest with two tools and run `agentpm install`.
+- Confirm `.agentpm/tools` contains the resolved tool versions.
+- Confirm `.agentpm/agents` is absent or does not contain the local agent.
+- Install a published agent package with `agentpm install @namespace/agent-name@version`.
+- Confirm `.agentpm/agents` contains the installed agent package.
+- Confirm `.agentpm/tools` contains the agent's resolved tool dependencies.
+- Install two agents that depend on different versions of the same tool and confirm both tool versions are present.
 
 ## Expected evidence
 Report back with:
@@ -91,6 +111,12 @@ Report back with:
 - Directory tree showing normalized `.agentpm/agents` and `.agentpm/tools` layout.
 - Screenshots or output snippets for registry search and agent detail page.
 - Notes for anything that could not be verified.
+- Output from `agentpm install` for both manifest-driven and direct agent install workflows.
+- Directory tree snippets showing `.agentpm/agents` and `.agentpm/tools`.
+- `agentpm.lock` snippets showing:
+  - `local:agent` relationship for local manifest install
+  - `agent:@namespace/name@version` relationship for registry-installed agent install
+  - multiple versions of the same tool when applicable
 
 ## Out of scope
 - Running or invoking agents.

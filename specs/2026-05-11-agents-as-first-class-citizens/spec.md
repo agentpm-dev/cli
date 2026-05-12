@@ -15,7 +15,37 @@ An agent package should primarily contain:
 - inline example prompts
 - README and license metadata/content where provided
 
+### Agent manifest shape
+
+A minimal Phase 3 agent manifest should look like:
+
+```json
+{
+  "kind": "agent",
+  "name": "support-agent",
+  "version": "0.1.0",
+  "description": "Triage support requests using installed tools.",
+  "tools": [
+    "@zack/slack-post-message@0.1.0"
+  ],
+  "skills": [],
+  "knowledge": [],
+  "memory": [],
+  "profiles": [],
+  "examples": [
+    {
+      "title": "Triage an incident",
+      "prompt": "Summarize this incident and draft a follow-up issue."
+    }
+  ],
+  "readme": "README.md"
+}
+```
+
 Installing an agent should resolve the agent package, install the agent artifact, resolve and install its tool dependencies, and write a deterministic lockfile that captures package identity, package kind, versions, integrity, and dependency relationships.
+Direct package install should become kind-aware: direct tool specs continue to install a tool, while direct agent specs install the agent plus its resolved tool dependencies.
+
+Phase 3 must preserve the existing manifest-driven install workflow while adding direct agent package installation. Users should be able to install dependencies from a local `kind: "agent"` manifest by running `agentpm install`, and they should also be able to install a published agent package by running `agentpm install @namespace/agent-name@version`.
 
 ## Non-goals
 - Do not build a hosted or local agent runtime.
@@ -42,8 +72,11 @@ Installing an agent should resolve the agent package, install the agent artifact
   - `profiles`
 - Reserved reference fields should support the same reference shape as `tools`: string references and object references.
 - Agent examples are inline prompt examples in `agent.json`, not separate files.
-- Registry/package naming must be package-oriented. The implementation should migrate from tool-specific naming to package naming in small, reviewable steps.
+- Registry/package naming must migrate from tool-specific naming to package-oriented naming in small, reviewable steps. Prefer package-oriented database tables, ORM models, services, API DTOs, and search indexes where practical, while keeping compatibility shims only where needed to reduce migration risk.
 - Package names are unique within a namespace regardless of kind. `@namespace/foo` cannot be both a tool and an agent.
+- Tool and agent registry pages should resolve to different public paths. Do not rely on `/tools/...` as the canonical path for agents.
+- Namespace/package stats should support both aggregate package counts and separate tool vs agent counts where practical.
+- Agent packages should go through the same scan pipeline as tools where the scan behavior applies. Tool-specific scan outputs may remain empty/null for agent packages.
 - The publish scope should move to `packages:publish`.
 - Existing tool publish/install flows should continue to work.
 - Existing tool examples should be verified and updated where necessary.
@@ -73,6 +106,176 @@ Installing an agent should resolve the agent package, install the agent artifact
 - `--frozen` with a v1 lockfile should continue to work for tool-only installs where practical. If a v1 lockfile cannot represent the requested agent dependency graph, fail with a clear message telling the user to run `agentpm install` without `--frozen` to regenerate v2.
 - Registry search and UI should support agents alongside tools and namespaces.
 - Agents should be visually differentiated from tools in the registry.
+- Public registry routing should remain kind-specific where appropriate: tools should continue to have tool pages, and agents should have agent pages. Agents should not be presented under tool routes.
+- AgentPM must support two install workflows:
+  - Manifest-driven install: `agentpm install` reads the local `agent.json` when it is `kind: "agent"` and installs the tools listed in that manifest.
+  - Direct package install: `agentpm install <spec>` resolves the requested package. If the package is a tool, it installs that tool. If the package is an agent, it installs the agent artifact and then resolves/installs that agent's tool dependencies.
+- A local `kind: "agent"` manifest is the source of truth for manifest-driven installs and should not be copied into `.agentpm/agents`.
+- Only registry-installed agent packages should be written under `.agentpm/agents`.
+- Tool dependencies from both local agents and registry-installed agents should install into the normalized shared tools layout under `.agentpm/tools`.
+- Agent installs must continue to support multiple versions of the same tool when different agents resolve different tool versions.
+
+
+### Install workflows
+
+AgentPM supports two agent install workflows.
+
+#### Manifest-driven install
+
+When a project has a local `agent.json` with `kind: "agent"`, running:
+
+```bash
+agentpm install 
+```
+reads the local manifest, resolves the `tools` entries, installs those tools into `.agentpm/tools`, preserves reserved future references in the lockfile, and writes `agentpm.lock`.
+
+The local project manifest is not copied into `.agentpm/agents`; it remains the source of truth.
+
+```text
+project/
+  agent.json
+  agentpm.lock
+
+  .agentpm/
+    tools/
+      zack/
+        slack-post-message/
+          0.1.0/
+      zack/
+        github-issues/
+          0.2.3/
+```
+
+#### Direct agent package install
+
+When a user runs:
+
+```bash
+agentpm install @zack/support-agent@0.1.0
+```
+
+AgentPM resolves the package. If the package is `kind`: "agent", AgentPM downloads the agent artifact into .agentpm/agents, reads the installed agent manifest, resolves the agent's tools, installs those tools into .agentpm/tools, and writes agentpm.lock.
+
+```text
+.agentpm/
+  agents/
+    zack/
+      support-agent/
+        0.1.0/
+          agent.json
+          README.md
+
+  tools/
+    zack/
+      slack-post-message/
+        0.1.0/
+      github-issues/
+        0.2.3/
+```
+
+### Lockfile v2
+
+Phase 3 should introduce `agentpm.lock` version 2.
+
+Lockfile v2 must represent packages by full package identity, including kind, name, and version. This is required so multiple versions of the same package can coexist when different agents resolve different dependency versions.
+
+Package keys should include kind, name, and version, for example:
+
+```json
+{
+  "lockfile_version": 2,
+  "packages": {
+    "agent:@zack/support-agent@0.1.0": {
+      "kind": "agent",
+      "name": "@zack/support-agent",
+      "version": "0.1.0",
+      "integrity": "..."
+    },
+    "tool:@zack/slack-post-message@0.1.0": {
+      "kind": "tool",
+      "name": "@zack/slack-post-message",
+      "version": "0.1.0",
+      "integrity": "..."
+    },
+    "tool:@zack/slack-post-message@0.2.0": {
+      "kind": "tool",
+      "name": "@zack/slack-post-message",
+      "version": "0.2.0",
+      "integrity": "..."
+    }
+  }
+}
+```
+
+Lockfile v2 must also preserve dependency relationships.
+
+For a manifest-driven install, the lockfile should use a local root relationship rather than treating the local project manifest as an installed registry package
+
+```json
+{
+  "lockfile_version": 2,
+  "packages": {
+    "tool:@zack/slack-post-message@0.1.0": {
+      "kind": "tool",
+      "name": "@zack/slack-post-message",
+      "version": "0.1.0",
+      "integrity": "..."
+    }
+  },
+  "relationships": {
+    "local:agent": {
+      "name": "my-local-agent",
+      "version": "0.1.0",
+      "tools": [
+        "tool:@zack/slack-post-message@0.1.0"
+      ],
+      "reserved": {
+        "skills": [],
+        "knowledge": [],
+        "memory": [],
+        "profiles": []
+      }
+    }
+  }
+}
+```
+
+For a direct registry-installed agent, the relationship should use the installed agent package identity:
+
+```json
+{
+  "lockfile_version": 2,
+  "packages": {
+    "agent:@zack/support-agent@0.1.0": {
+      "kind": "agent",
+      "name": "@zack/support-agent",
+      "version": "0.1.0",
+      "integrity": "..."
+    },
+    "tool:@zack/slack-post-message@0.1.0": {
+      "kind": "tool",
+      "name": "@zack/slack-post-message",
+      "version": "0.1.0",
+      "integrity": "..."
+    }
+  },
+  "relationships": {
+    "agent:@zack/support-agent@0.1.0": {
+      "tools": [
+        "tool:@zack/slack-post-message@0.1.0"
+      ],
+      "reserved": {
+        "skills": [],
+        "knowledge": [],
+        "memory": [],
+        "profiles": []
+      }
+    }
+  }
+}
+```
+
+AgentPM should read v1 lockfiles for existing tool-only workflows where practical, but normal non-frozen installs should write lockfile v2. If --frozen encounters a v1 lockfile that cannot represent the requested agent dependency graph, it should fail with a clear message telling the user to run agentpm install without --frozen to regenerate the lockfile.
 
 ## Acceptance criteria
 - `agentpm init --kind agent` creates a valid agent manifest using the Phase 3 schema.
@@ -103,6 +306,14 @@ Installing an agent should resolve the agent package, install the agent artifact
 - Agent detail pages show description, README, examples, tool dependencies, and reserved references when present.
 - Tool detail pages continue to work after the package migration.
 - Existing tool publish/install/run examples continue to work or are updated for the new package/lockfile behavior.
+- Running `agentpm install` with a local `kind: "agent"` manifest resolves and installs the manifest's `tools` entries without installing the local manifest itself into `.agentpm/agents`.
+- Running `agentpm install <tool-spec>` continues to install a single tool package directly.
+- Running `agentpm install <agent-spec>` installs the agent artifact into `.agentpm/agents`, reads that agent's manifest, resolves its tool dependencies, and installs those tools into `.agentpm/tools`.
+- Lockfile v2 can represent both:
+  - dependencies resolved from a local manifest-driven install
+  - dependencies resolved from a registry-installed agent package
+- Lockfile v2 clearly distinguishes a local agent root from registry-installed agent packages.
+- Lint/publish/install should emit a warning when reserved future reference fields are present, making clear that these references are preserved but not resolved in Phase 3.
 
 ## Risks / edge cases
 - The current backend model is tool-specific, so migration from tools to packages can create large diffs if not split carefully.
@@ -117,13 +328,14 @@ Installing an agent should resolve the agent package, install the agent artifact
 - Existing PATs with `tools:publish` may fail if the scope migration is abrupt.
 - Package name uniqueness across kind needs a database constraint or equivalent service-level enforcement.
 - Reserved future reference fields may imply functionality that does not exist yet; docs and warnings should be clear.
+- Direct agent package installs and local manifest-driven installs have different roots. The implementation must avoid incorrectly copying local project manifests into `.agentpm/agents`.
+- Lockfile v2 must represent local agent relationships without pretending the local project manifest is a registry package.
+- `agentpm install <spec>` must detect whether the resolved package is a tool or an agent and branch appropriately.
+- Agent install resolution may require a two-phase flow: resolve/download the agent package first, then read its manifest and resolve/download its tool dependencies.
 
 ## Open questions
 - Should `tools:publish` remain temporarily valid for publishing tool packages, or should the migration require new PATs with `packages:publish` immediately?
-- Should existing public URLs under `/tools/...` remain as redirects after package-oriented routes are added? - No. tools and agents should still resolve to different paths.
 - Should the database migration physically rename tables in one sequence of migrations, or introduce compatibility views/aliases during the transition?
-- Should namespace counters become one `num_packages` counter, separate `num_tools` and `num_agents` counters, or both? - For stats we want to know the number of packages. However we want to know how many there are of each and also have separate trending tools vs agents.
-- Should agent packages go through the same scan pipeline as tools, or only a lightweight artifact validation plus malware scan? - same pipeline to where it makes sense
 
 ## References
 - Existing AgentPM manifest schema / `agent.json` contract.

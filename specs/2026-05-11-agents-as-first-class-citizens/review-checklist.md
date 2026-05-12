@@ -13,6 +13,11 @@
 - Confirm lockfile v2 includes kind, name, version, integrity, and dependency relationships.
 - Confirm lockfile v2 can represent multiple versions of the same package.
 - Confirm docs were updated for any user-facing behavior changes.
+- Confirm `agentpm install` without a spec still uses the local `kind: "agent"` manifest as the dependency source.
+- Confirm `agentpm install <spec>` supports both tool specs and agent specs.
+- Confirm direct agent installs write agent packages under `.agentpm/agents`.
+- Confirm local manifest-driven installs do not write the local manifest under `.agentpm/agents`.
+- Confirm lockfile v2 distinguishes local manifest roots from registry-installed agent package roots.
 
 ## Package migration
 - Check that tool-specific database concepts were migrated to package-oriented concepts in small, understandable changes.
@@ -36,6 +41,10 @@
 - Check install does not vendor tools under each installed agent.
 - Check install output wording is package-aware where appropriate.
 - Check `--frozen`, `--refresh`, `--update-range`, `--require_attestation`, `--quiet`, and `--token` still behave correctly.
+- Check that direct agent install performs the expected two-stage flow: install agent package first, then resolve/install its tool dependencies.
+- Check that manifest-driven install only installs dependencies from the local manifest.
+- Check that both install workflows install tool dependencies into the shared `.agentpm/tools` layout.
+- Check that multiple versions of the same tool can coexist when required by different agents.
 
 ## Lockfile correctness
 - Confirm v2 lockfile keys or entries cannot collide when two versions of the same package are installed.
@@ -83,6 +92,9 @@
 - Check existing search behavior for tools and namespaces.
 - Check existing docs/examples that mention tools, lockfiles, publish scopes, or install layout.
 - Check package URLs and any redirects/backward-compatible routes.
+- Verify existing direct tool install behavior still works.
+- Verify existing local `agent.json` dependency install behavior still works.
+- Verify existing examples that run `agentpm install` without a spec still work or were intentionally updated.
 
 ## Tests and verification
 - Confirm the work was verified according to `test-plan.md`.
@@ -93,6 +105,11 @@
 - Confirm SDK agent loading has tests.
 - Confirm registry search/detail behavior has tests or documented manual verification.
 - Confirm high-risk behavior changes are not relying only on manual confidence.
+- Confirm tests cover both install roots:
+  - `local:agent`
+  - `agent:@namespace/name@version`
+- Confirm lockfile assertions check relationship shape, not only installed files.
+- Confirm tests cover direct tool install, manifest-driven install, and direct agent install.
 
 ## Pattern adherence
 - Check that existing repo patterns were reused before adding new abstractions.
@@ -109,3 +126,4 @@
 - Pay special attention to agent publish. It should package composition metadata, not require runtime executable files.
 - Pay special attention to registry search pagination after adding agents to mixed `all` search.
 - Pay special attention to docs and examples because lockfile and package terminology changes are user-visible.
+- Pay special attention to install root semantics. A local project `agent.json` and a registry-installed agent package are both `kind: "agent"`, but they are not the same thing. The local manifest should drive dependency installation without being copied into `.agentpm/agents`; only published agent packages installed by spec should live under `.agentpm/agents`.

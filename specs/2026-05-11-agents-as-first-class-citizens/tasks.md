@@ -93,6 +93,10 @@
 - [ ] Ensure `--frozen` fails clearly when a v1 lockfile cannot represent an agent dependency graph.
 - [ ] Add tests for two agents depending on different versions of the same tool.
 - [ ] Add tests proving two versions of the same tool can both be represented in lockfile v2.
+- [ ] Represent local manifest-driven installs with a local root relationship such as `local:agent`.
+- [ ] Represent registry-installed agents with package identity keys such as `agent:@namespace/name@version`.
+- [ ] Ensure lockfile v2 can distinguish local agent dependency relationships from registry-installed agent dependency relationships.
+- [ ] Add tests for lockfile output from `agentpm install` with no spec and from `agentpm install <agent-spec>`.
 
 ## Milestone 9: Generalize backend install resolution
 - [ ] Update install resolve to accept package items and return package kind.
@@ -115,6 +119,11 @@
 - [ ] Ensure install does not duplicate tool artifacts under each installed agent.
 - [ ] Ensure `--refresh`, `--frozen`, `--update-range`, `--require_attestation`, `--quiet`, and `--token` still behave correctly.
 - [ ] Add CLI integration tests for direct tool install, direct agent install, and manifest-driven agent dependency install.
+- [ ] Preserve manifest-driven install behavior for local `kind: "agent"` manifests when running `agentpm install` without a spec.
+- [ ] Add direct package install branching for `agentpm install <spec>` so resolved tool packages install directly and resolved agent packages install the agent artifact before resolving its tool dependencies.
+- [ ] Ensure local manifest-driven installs do not copy the local `agent.json` into `.agentpm/agents`.
+- [ ] Ensure registry-installed agent packages are written under `.agentpm/agents`.
+- [ ] Ensure tool dependencies from both install workflows are installed into `.agentpm/tools`.
 
 ## Milestone 11: Add minimal Node SDK agent loading
 - [ ] Add a Node SDK method for loading installed agents, such as `loadAgent`.
@@ -173,12 +182,20 @@
 - [ ] Update `agentpm-examples` for the latest CLI and lockfile behavior.
 - [ ] Verify existing tool examples still work.
 - [ ] Add an example showing two agents depending on different versions of the same tool.
+- [ ] Document the difference between manifest-driven install and direct package install.
+- [ ] Add docs showing `agentpm install` from a local `kind: "agent"` manifest.
+- [ ] Add docs showing `agentpm install @namespace/agent-name@version`.
+- [ ] Update examples to cover both workflows.
 
 ## Milestone 16: Final regression and release readiness
 - [ ] Run full CLI test suite.
 - [ ] Run backend test suite.
 - [ ] Run SDK test suites.
 - [ ] Run registry UI checks.
+- [ ] Add CLI coverage for `agentpm install` with a local `kind: "agent"` manifest containing tools.
+- [ ] Add CLI coverage for `agentpm install <tool-spec>`.
+- [ ] Add CLI coverage for `agentpm install <agent-spec>`.
+- [ ] Add CLI coverage for an agent package whose tool dependency resolves to a different version than another installed agent's dependency.
 - [ ] Publish a test tool package in a non-production environment.
 - [ ] Publish a test agent package in a non-production environment.
 - [ ] Install the test agent and confirm its tool dependencies are installed.
