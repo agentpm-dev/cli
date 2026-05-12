@@ -235,7 +235,7 @@ For a manifest-driven install, the lockfile should use a local root relationship
       "integrity": "..."
     }
   },
-  "relationships": {
+  "roots": {
     "local:agent": {
       "name": "my-local-agent",
       "version": "0.1.0",
@@ -272,7 +272,7 @@ For a direct registry-installed agent, the relationship should use the installed
       "integrity": "..."
     }
   },
-  "relationships": {
+  "roots": {
     "agent:@zack/support-agent@0.1.0": {
       "tools": [
         "tool:@zack/slack-post-message@0.1.0"
