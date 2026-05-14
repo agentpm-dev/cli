@@ -161,6 +161,27 @@ pub fn validate_manifest_value(
         });
     }
 
+    if value.get("kind").and_then(Value::as_str) == Some("agent") {
+        for field in ["skills", "knowledge", "memory", "profiles"] {
+            if value
+                .get(field)
+                .and_then(Value::as_array)
+                .map(|items| !items.is_empty())
+                .unwrap_or(false)
+            {
+                issues.push(LintIssue {
+                    file: file_label.to_string(),
+                    level: "warning",
+                    message: format!(
+                        "`{field}` is validated and preserved, but not resolved in Phase 3."
+                    ),
+                    instance_path: format!("/{field}"),
+                    schema_path: "".into(),
+                });
+            }
+        }
+    }
+
     if let Some(Value::Object(runtime)) = value.get("runtime")
         && let Some(Value::String(runtime_type)) = runtime.get("type")
         && let Some(Value::Object(entrypoint)) = value.get("entrypoint")
@@ -339,6 +360,7 @@ pub fn read_lock_or_default<P: AsRef<Path>>(dir: P) -> Result<Lock> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn schema_path() -> String {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -358,6 +380,14 @@ mod tests {
             validate_manifest_value(&schema_path(), "agent.json", &mut manifest, false).unwrap();
         assert!(!ok, "expected manifest to fail validation");
         issues
+    }
+
+    fn temp_path(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("agentpm-{label}-{nanos}.json"))
     }
 
     #[test]
@@ -495,6 +525,10 @@ mod tests {
             manifest, original,
             "validation should preserve reserved fields"
         );
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/skills"),
+            "expected reserved-field warning, got: {issues:#?}"
+        );
     }
 
     #[test]
@@ -514,5 +548,69 @@ mod tests {
             issues.iter().any(|issue| issue.instance_path.is_empty()),
             "expected missing-tools validation error, got: {issues:#?}"
         );
+    }
+
+    #[test]
+    fn agent_template_matches_phase_three_shape() {
+        let rendered = include_str!("../assets/templates/agent.json.tpl")
+            .replace("{{AGENT_NAME}}", "support-agent")
+            .replace(
+                "{{AGENT_DESCRIPTION}}",
+                "Triage support requests using installed tools.",
+            );
+        let mut manifest: Value = serde_json::from_str(&rendered).unwrap();
+        let (ok, issues) =
+            validate_manifest_value(&schema_path(), "agent.json", &mut manifest, false).unwrap();
+
+        assert!(
+            ok,
+            "expected rendered template to validate, got: {issues:#?}"
+        );
+        assert_eq!(manifest["kind"], "agent");
+        assert_eq!(manifest["tools"], json!([]));
+        assert_eq!(manifest["skills"], json!([]));
+        assert_eq!(manifest["knowledge"], json!([]));
+        assert_eq!(manifest["memory"], json!([]));
+        assert_eq!(manifest["profiles"], json!([]));
+        assert_eq!(manifest["examples"][0]["title"], "Example prompt");
+        assert!(manifest.get("entrypoint").is_none());
+    }
+
+    #[test]
+    fn lint_fix_can_add_schema_to_agent_template() {
+        let path = temp_path("agent-template");
+        let raw = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "description": "Triage support requests using installed tools.",
+            "tools": [],
+            "skills": [],
+            "knowledge": [],
+            "memory": [],
+            "profiles": [],
+            "examples": [
+                {
+                    "title": "Example prompt",
+                    "prompt": "Describe the user request this agent should handle."
+                }
+            ]
+        });
+
+        write_manifest_pretty(&path, &raw).unwrap();
+        let (mut manifest, _) = load_manifest_value(&path).unwrap();
+        let (ok, issues) =
+            validate_manifest_value(&schema_path(), "agent.json", &mut manifest, true).unwrap();
+
+        assert!(
+            ok,
+            "expected lint fix validation to succeed, got: {issues:#?}"
+        );
+        assert_eq!(
+            manifest.get("$schema").and_then(Value::as_str),
+            Some(schema_path().as_str())
+        );
+
+        let _ = std::fs::remove_file(path);
     }
 }
