@@ -334,3 +334,185 @@ pub fn read_lock_or_default<P: AsRef<Path>>(dir: P) -> Result<Lock> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn schema_path() -> String {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/agentpm.manifest.schema.json")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn assert_manifest_ok(mut manifest: Value) {
+        let (ok, issues) =
+            validate_manifest_value(&schema_path(), "agent.json", &mut manifest, false).unwrap();
+        assert!(ok, "expected manifest to validate, got issues: {issues:#?}");
+    }
+
+    fn assert_manifest_invalid(mut manifest: Value) -> Vec<LintIssue> {
+        let (ok, issues) =
+            validate_manifest_value(&schema_path(), "agent.json", &mut manifest, false).unwrap();
+        assert!(!ok, "expected manifest to fail validation");
+        issues
+    }
+
+    #[test]
+    fn valid_tool_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "tool",
+            "name": "capitalize",
+            "version": "0.1.0",
+            "description": "Uppercase text.",
+            "entrypoint": {
+                "command": "python",
+                "args": ["capitalize.py"]
+            },
+            "inputs": {
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string" }
+                },
+                "required": ["text"]
+            },
+            "outputs": {
+                "type": "object",
+                "properties": {
+                    "upper": { "type": "string" }
+                },
+                "required": ["upper"]
+            },
+            "files": ["capitalize.py"],
+            "runtime": {
+                "type": "python",
+                "version": "3.12"
+            }
+        }));
+    }
+
+    #[test]
+    fn valid_agent_manifest_validates_with_examples_and_reserved_fields() {
+        assert_manifest_ok(json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "description": "Triage support requests using installed tools.",
+            "tools": [
+                "@zack/slack-post-message@0.1.0",
+                {
+                    "name": "@zack/github-issues",
+                    "version": "0.2.3"
+                }
+            ],
+            "skills": ["@zack/support-triage-skill@0.1.0"],
+            "knowledge": [
+                {
+                    "name": "@zack/internal-playbooks",
+                    "version": "0.1.0"
+                }
+            ],
+            "memory": [],
+            "profiles": [],
+            "examples": [
+                {
+                    "title": "Triage an incident",
+                    "prompt": "Summarize this incident and draft a follow-up issue."
+                }
+            ]
+        }));
+    }
+
+    #[test]
+    fn invalid_tool_manifest_missing_single_required_tool_field_fails() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "tool",
+            "name": "broken-tool",
+            "version": "0.1.0",
+            "description": "Missing one required tool-only field.",
+            "entrypoint": {
+                "command": "python",
+                "args": ["capitalize.py"]
+            },
+            "inputs": {
+                "type": "object"
+            },
+            "outputs": {
+                "type": "object"
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.schema_path == "/oneOf"),
+            "expected oneOf failure caused by the remaining missing tool field, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn invalid_agent_manifest_with_tool_only_fields_fails() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "agent",
+            "name": "misclassified-agent",
+            "version": "0.1.0",
+            "description": "Should not carry tool runtime contract.",
+            "tools": ["@zack/slack-post-message@0.1.0"],
+            "entrypoint": {
+                "command": "node",
+                "args": ["dist/index.js"]
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/kind" || issue.instance_path.is_empty()),
+            "expected kind/oneOf validation error, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn reserved_future_fields_validate_and_are_preserved() {
+        let mut manifest = json!({
+            "kind": "agent",
+            "name": "preserved-agent",
+            "version": "0.1.0",
+            "description": "Reserved references should survive lint validation untouched.",
+            "tools": ["@zack/slack-post-message@0.1.0"],
+            "skills": ["@zack/support-triage-skill@0.1.0"],
+            "knowledge": [{"name": "@zack/internal-playbooks", "version": "0.1.0"}],
+            "memory": ["@zack/session-memory@0.1.0"],
+            "profiles": ["@zack/escalation-profile@0.1.0"]
+        });
+        let original = manifest.clone();
+
+        let (ok, issues) =
+            validate_manifest_value(&schema_path(), "agent.json", &mut manifest, false).unwrap();
+
+        assert!(ok, "expected manifest to validate, got issues: {issues:#?}");
+        assert_eq!(
+            manifest, original,
+            "validation should preserve reserved fields"
+        );
+    }
+
+    #[test]
+    fn reserved_future_fields_do_not_replace_required_tools() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "agent",
+            "name": "missing-tools-agent",
+            "version": "0.1.0",
+            "description": "Reserved refs alone must not imply installable tool dependencies.",
+            "skills": ["@zack/support-triage-skill@0.1.0"],
+            "knowledge": ["@zack/internal-playbooks@0.1.0"],
+            "memory": [],
+            "profiles": []
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path.is_empty()),
+            "expected missing-tools validation error, got: {issues:#?}"
+        );
+    }
+}

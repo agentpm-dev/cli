@@ -67,23 +67,35 @@ impl InstallArgs {
             client = client.with_token(tok.clone());
         }
 
-        // 1) Load agent.json (must be kind=agent)
+        // 1) Load local manifest when present. Only manifest-driven installs require kind=agent.
         let manifest_path = PathBuf::from(&self.manifest);
-        let (mut manifest_value, _raw) = load_manifest_value(&manifest_path)
-            .with_context(|| format!("loading {}", manifest_path.display()))?;
-
-        if manifest_value.get("kind").and_then(Value::as_str) != Some("agent") {
-            return Err(anyhow!(
-                "`agentpm install` currently supports kind=agent only."
-            ));
-        }
+        let mut manifest_value =
+            if should_load_manifest_for_install(self.spec.as_deref(), &manifest_path) {
+                Some(
+                    load_manifest_value(&manifest_path)
+                        .with_context(|| format!("loading {}", manifest_path.display()))?
+                        .0,
+                )
+            } else {
+                None
+            };
 
         // 2) Determine desired set
-        let desired = DesiredSet::from_cli_or_agent_json(
-            &manifest_value,
-            self.spec.as_deref(),
-            self.update_range,
-        )?;
+        let desired = if let Some(spec) = self.spec.as_deref() {
+            DesiredSet::from_cli_or_agent_json(&Value::Null, Some(spec), self.update_range)?
+        } else {
+            let manifest_value = manifest_value
+                .as_ref()
+                .ok_or_else(|| anyhow!("agent.json is required for manifest-driven install"))?;
+
+            if manifest_value.get("kind").and_then(Value::as_str) != Some("agent") {
+                return Err(anyhow!(
+                    "`agentpm install` currently supports kind=agent only."
+                ));
+            }
+
+            DesiredSet::from_cli_or_agent_json(manifest_value, None, self.update_range)?
+        };
 
         // 3) If --frozen and lock exists, use it directly; else resolve
         let lock = read_lock_or_default(".")?;
@@ -155,13 +167,41 @@ impl InstallArgs {
 
         // 8) If single-spec and not present in agent.json, append or update range if allowed
         if let Some(spec) = &self.spec
-            && maybe_update_agent_json(&mut manifest_value, spec, self.update_range)?
+            && let Some(manifest_value) = manifest_value.as_mut()
+            && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
+            && maybe_update_agent_json(manifest_value, spec, self.update_range)?
         {
-            write_manifest_pretty_atomic(&manifest_path, &manifest_value)?;
+            write_manifest_pretty_atomic(&manifest_path, manifest_value)?;
         }
 
         Step::final_msg("Installed ✓", quiet);
 
         Ok(())
+    }
+}
+
+fn should_load_manifest_for_install(spec: Option<&str>, manifest_path: &std::path::Path) -> bool {
+    spec.is_none() || manifest_path.exists()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_load_manifest_for_install;
+    use std::path::Path;
+
+    #[test]
+    fn direct_spec_install_without_local_manifest_does_not_require_manifest() {
+        assert!(!should_load_manifest_for_install(
+            Some("@zack/some-tool"),
+            Path::new("/definitely/missing/agent.json")
+        ));
+    }
+
+    #[test]
+    fn manifest_driven_install_requires_manifest() {
+        assert!(should_load_manifest_for_install(
+            None,
+            Path::new("agent.json")
+        ));
     }
 }
