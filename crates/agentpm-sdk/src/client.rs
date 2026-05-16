@@ -101,7 +101,7 @@ impl AgentPmClient {
     /// 1) POST /v1/tools/publish/init (JSON metadata)
     /// 2) PUT bytes to S3 presigned URL with returned headers
     /// 3) POST /v1/tools/publish/finalize (JSON { upload_id })
-    pub async fn publish_tool_from_path(
+    pub async fn publish_package_from_path(
         &self,
         metadata: &Value,
         artifact_path: impl AsRef<Path>,

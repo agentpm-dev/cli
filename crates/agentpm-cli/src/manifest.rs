@@ -69,6 +69,21 @@ pub struct ToolManifest {
     // allow unknowns to pass through
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AgentManifest {
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum PublishManifest {
+    Tool(Box<ToolManifest>),
+    Agent(Box<AgentManifest>),
+}
+
 /// Resolve the schema source (local file if present; else hosted URL)
 pub fn resolve_schema_source(override_opt: Option<String>) -> String {
     if let Some(x) = override_opt {
@@ -332,6 +347,26 @@ pub fn parse_tool_manifest(value: &Value) -> Result<ToolManifest> {
         )));
     }
     Ok(mf)
+}
+
+pub fn parse_publish_manifest(value: &Value) -> Result<PublishManifest> {
+    let kind = value
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("manifest must include kind"))?;
+
+    match kind {
+        "tool" => Ok(PublishManifest::Tool(Box::new(parse_tool_manifest(value)?))),
+        "agent" => {
+            let mf: AgentManifest = serde_json::from_value(value.clone())
+                .context("parsing manifest into AgentManifest")?;
+            Ok(PublishManifest::Agent(Box::new(mf)))
+        }
+        other => Err(anyhow!(format!(
+            "`agentpm publish` supports kind=\"tool\" and kind=\"agent\" (got kind=\"{}\")",
+            other
+        ))),
+    }
 }
 
 /// Lock files
@@ -612,5 +647,70 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn parse_publish_manifest_dispatches_tool_kind() {
+        let manifest = json!({
+            "kind": "tool",
+            "name": "summarize",
+            "version": "1.2.3",
+            "description": "Summarize text.",
+            "runtime": {"type": "python", "version": "3.11"},
+            "entrypoint": {
+                "command": "python",
+                "args": ["main.py"]
+            },
+            "files": ["main.py"],
+            "inputs": {"type": "object"},
+            "outputs": {"type": "object"}
+        });
+
+        match parse_publish_manifest(&manifest).unwrap() {
+            PublishManifest::Tool(mf) => {
+                assert_eq!(mf.kind, "tool");
+                assert_eq!(mf.name, "summarize");
+            }
+            PublishManifest::Agent(_) => panic!("expected tool publish manifest"),
+        }
+    }
+
+    #[test]
+    fn parse_publish_manifest_dispatches_agent_kind() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "description": "Support agent.",
+            "tools": ["@zack/slack-post-message@0.1.0"],
+            "skills": [],
+            "knowledge": [],
+            "memory": [],
+            "profiles": [],
+            "examples": [{"title": "Example", "prompt": "Help the user."}]
+        });
+
+        match parse_publish_manifest(&manifest).unwrap() {
+            PublishManifest::Agent(mf) => {
+                assert_eq!(mf.kind, "agent");
+                assert_eq!(mf.name, "support-agent");
+            }
+            PublishManifest::Tool(_) => panic!("expected agent publish manifest"),
+        }
+    }
+
+    #[test]
+    fn parse_publish_manifest_rejects_unknown_kind() {
+        let manifest = json!({
+            "kind": "template",
+            "name": "starter",
+            "version": "0.1.0"
+        });
+
+        let err = parse_publish_manifest(&manifest).unwrap_err().to_string();
+        assert!(
+            err.contains("supports kind=\"tool\" and kind=\"agent\""),
+            "unexpected error: {err}"
+        );
     }
 }
