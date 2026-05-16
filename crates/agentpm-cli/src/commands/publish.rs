@@ -297,7 +297,7 @@ impl PublishArgs {
 
             // Minimal statement (server checks name/version/digest)
             let statement = serde_json::json!({
-                "type": "agentpm.tool.signature.v1",
+                "type": "agentpm.package.signature.v1",
                 "name": mf.name,
                 "version": mf.version,
                 "artifactDigest": format!("sha256:{sha256_hex}"),
