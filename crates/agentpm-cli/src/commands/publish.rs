@@ -298,6 +298,11 @@ impl PublishArgs {
             // Minimal statement (server checks name/version/digest)
             let statement = serde_json::json!({
                 "type": "agentpm.package.signature.v1",
+                // TODO(milestone-7): include manifest kind once the CLI can
+                // publish/sign agent packages. The backend currently treats
+                // missing kind as "tool" for tool compatibility, but signed
+                // agent publishes will need `"kind": "agent"` here or the
+                // server will reject the author signature during finalize.
                 "name": mf.name,
                 "version": mf.version,
                 "artifactDigest": format!("sha256:{sha256_hex}"),
@@ -321,6 +326,10 @@ impl PublishArgs {
             None
         };
 
+        // TODO(milestone-7): rename/add an SDK entry point once publish can
+        // package both tools and agents. `publish_tool_from_path` is accurate
+        // for the current tool-only CLI packaging flow, but it will become too
+        // narrow once agent artifacts use the same upload path.
         let res = client
             .publish_tool_from_path(&meta, &tar_path, &filename, finalize_extra)
             .await;
