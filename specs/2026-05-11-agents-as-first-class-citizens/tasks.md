@@ -125,6 +125,17 @@
 - [ ] Ensure registry-installed agent packages are written under `.agentpm/agents`.
 - [ ] Ensure tool dependencies from both install workflows are installed into `.agentpm/tools`.
 
+## Milestone 10a: Define workspace install-set and lockfile root accumulation behavior
+- [ ] Merge repeated direct agent installs into the existing registry root set in `agent.lock` instead of replacing prior registry roots with only the latest direct install request.
+- [ ] Keep direct tool installs in a local `kind: "agent"` project represented through the `local:agent` root by mutating `agent.json`, rather than adding separate registry roots for those tools.
+- [ ] Treat manifest-driven installs with no spec as authoritative for the local project and replace the root set with the current `local:agent` intent.
+- [ ] On manifest-driven installs, remove superseded registry roots from `agent.lock` but leave unreferenced installed packages on disk for now.
+- [ ] Treat `agent.lock` as the source of truth for intended installs even when unreferenced packages remain on disk under `.agentpm/agents` or `.agentpm/tools`.
+- [ ] Update lock root construction to preserve multiple registry agent roots instead of assuming a single agent item in the current install plan.
+- [ ] Add a later pruning or cleanup behavior for removing unreferenced installed packages from disk once root accumulation semantics are stable.
+- [ ] Add CLI tests for direct install followed by direct install, direct install followed by manifest-driven install, and manifest-driven install followed by direct install.
+- [ ] Document the chosen behavior for lockfile root accumulation and workspace install semantics.
+
 ## Milestone 11: Add minimal Node SDK agent loading
 - [ ] Add a Node SDK method for loading installed agents, such as `loadAgent`.
 - [ ] Resolve installed agent paths from `.agentpm/agents/...`.

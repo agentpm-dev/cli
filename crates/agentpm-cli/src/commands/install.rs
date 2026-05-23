@@ -155,11 +155,13 @@ impl InstallArgs {
         s.ok("");
 
         // 5) Download + verify + extract (parallel)
-        let mut s = Step::new("Downloading tools", quiet);
+        let mut s = Step::new("Downloading packages", quiet);
         let dl_dir = PathBuf::from(".agentpm/cache");
         let tools_dir = PathBuf::from(".agentpm/tools");
-        fs::ensure_dirs(&[&dl_dir, &tools_dir])?;
-        download_and_extract_all(&init, &dl_dir, &tools_dir, self.refresh, quiet).await?;
+        let agents_dir = PathBuf::from(".agentpm/agents");
+        fs::ensure_dirs(&[&dl_dir, &tools_dir, &agents_dir])?;
+        download_and_extract_all(&init, &dl_dir, &tools_dir, &agents_dir, self.refresh, quiet)
+            .await?;
         s.ok("");
 
         // 6) Finalize (report success for metrics / server-side bookkeeping)
@@ -169,19 +171,29 @@ impl InstallArgs {
 
         // 7) Update lockfile (unless --frozen)
         if !self.frozen {
-            let roots = build_lock_roots(manifest_value.as_ref(), self.spec.as_deref(), &plan);
+            let roots = build_lock_roots(
+                manifest_value.as_ref(),
+                self.spec.as_deref(),
+                &plan,
+                PathBuf::from(".agentpm").as_path(),
+            )?;
+            // TODO(milestone-10a): decide whether repeated direct installs should
+            // merge prior registry roots from the existing lockfile instead of
+            // replacing the root set with only the current install request.
             write_lock(".", &lock_from_plan(&plan, &roots))?;
         }
 
-        // 8) If single-spec and not present in agent.json, append or update range if allowed.
-        //
-        // TODO(milestone-9/10): keep this behavior only for direct tool specs in a
-        // local `kind: "agent"` project. Direct agent package installs should not
-        // mutate the local manifest; they should be represented as registry roots in
-        // lockfile v2 / installed package layout instead.
+        // 8) If a direct tool spec was installed inside a local agent project and
+        // it is not present in agent.json yet, append or update the declared range.
+        // Direct agent package installs intentionally do not mutate the local
+        // manifest; they are represented as registry roots in lockfile v2 instead.
         if let Some(spec) = &self.spec
             && let Some(manifest_value) = manifest_value.as_mut()
             && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
+            && !plan
+                .items
+                .iter()
+                .any(|item| item.kind == PackageKind::Agent)
             && maybe_update_agent_json(manifest_value, spec, self.update_range)?
         {
             write_manifest_pretty_atomic(&manifest_path, manifest_value)?;
@@ -229,7 +241,8 @@ fn build_lock_roots(
     manifest_value: Option<&Value>,
     spec: Option<&str>,
     plan: &ResolvePlan,
-) -> Vec<LockRoot> {
+    install_root: &std::path::Path,
+) -> Result<Vec<LockRoot>> {
     if let Some(manifest_value) = manifest_value
         && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
         && spec.is_none()
@@ -252,15 +265,68 @@ fn build_lock_roots(
             .map(|item| package_key(item.kind, &item.name, &item.version))
             .collect();
 
-        return vec![LockRoot::LocalAgent {
+        return Ok(vec![LockRoot::LocalAgent {
             name,
             version,
             tools,
             reserved: reserved_refs_from_manifest(manifest_value),
-        }];
+        }]);
     }
 
-    Vec::new()
+    if spec.is_some()
+        && let Some(agent_item) = plan
+            .items
+            .iter()
+            .find(|item| item.kind == PackageKind::Agent)
+    {
+        let agent_manifest_path =
+            installed_agent_manifest_path(install_root, &agent_item.name, &agent_item.version)?;
+        let reserved = if agent_manifest_path.exists() {
+            let (manifest_value, _) = load_manifest_value(&agent_manifest_path)?;
+            reserved_refs_from_manifest(&manifest_value)
+        } else {
+            ReservedReferences::default()
+        };
+
+        let tools = plan
+            .items
+            .iter()
+            .filter(|item| item.kind == PackageKind::Tool)
+            .map(|item| package_key(item.kind, &item.name, &item.version))
+            .collect();
+
+        return Ok(vec![LockRoot::RegistryAgent {
+            package_key: package_key(agent_item.kind, &agent_item.name, &agent_item.version),
+            tools,
+            reserved,
+        }]);
+    }
+
+    Ok(Vec::new())
+}
+
+fn installed_agent_manifest_path(
+    install_root: &std::path::Path,
+    package: &str,
+    version: &str,
+) -> Result<PathBuf> {
+    let (owner, name) = split_package_ref(package)?;
+    Ok(install_root
+        .join("agents")
+        .join(owner)
+        .join(name)
+        .join(version)
+        .join("agent.json"))
+}
+
+fn split_package_ref(package: &str) -> Result<(String, String)> {
+    if !package.starts_with('@') {
+        return Err(anyhow!("package must be of form @owner/name"));
+    }
+    let mut parts = package[1..].splitn(2, '/');
+    let owner = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
+    let name = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
+    Ok((owner.to_string(), name.to_string()))
 }
 
 fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {
@@ -283,15 +349,19 @@ fn manifest_array_or_empty(manifest_value: &Value, field: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_lock_roots, should_load_manifest_for_install, validate_frozen_lock_compatibility,
+        build_lock_roots, installed_agent_manifest_path, should_load_manifest_for_install,
+        validate_frozen_lock_compatibility,
     };
     use crate::semver::types::{
-        DesiredSet, Lock, LockV1, LockedDependency, PackageKind, ResolvePlan, ResolvedPackage,
+        DesiredSet, Lock, LockRoot, LockV1, LockedDependency, PackageKind, ResolvePlan,
+        ResolvedPackage,
     };
     use chrono::Utc;
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
-    use std::path::Path;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn direct_spec_install_without_local_manifest_does_not_require_manifest() {
@@ -329,8 +399,7 @@ mod tests {
             "tools": ["@zack/slack-post-message@^0.1"]
         });
 
-        let err = validate_frozen_lock_compatibility(&lock, Some(&manifest), &desired)
-            .unwrap_err();
+        let err = validate_frozen_lock_compatibility(&lock, Some(&manifest), &desired).unwrap_err();
 
         assert!(
             format!("{err:#}").contains("run `agentpm install` without --frozen"),
@@ -382,7 +451,8 @@ mod tests {
             }],
         };
 
-        let roots = build_lock_roots(Some(&manifest), None, &plan);
+        let root = temp_root("local-root");
+        let roots = build_lock_roots(Some(&manifest), None, &plan, &root).unwrap();
 
         assert_eq!(roots.len(), 1);
         let crate::semver::types::LockRoot::LocalAgent {
@@ -404,5 +474,96 @@ mod tests {
             reserved.skills,
             vec![Value::String("@zack/triage-skill@0.1.0".to_string())]
         );
+    }
+
+    #[test]
+    fn direct_agent_install_builds_registry_root_from_installed_agent_manifest() {
+        let root = temp_root("registry-root");
+        let manifest_path =
+            installed_agent_manifest_path(&root, "@zack/support-agent", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0",
+                "skills": ["@zack/triage-skill@0.1.0"],
+                "knowledge": [],
+                "memory": [],
+                "profiles": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let plan = ResolvePlan {
+            items: vec![
+                ResolvedPackage {
+                    kind: PackageKind::Agent,
+                    name: "@zack/support-agent".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-agent".to_string(),
+                },
+                ResolvedPackage {
+                    kind: PackageKind::Tool,
+                    name: "@zack/slack-post-message".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-tool".to_string(),
+                },
+            ],
+        };
+
+        let roots =
+            build_lock_roots(None, Some("@zack/support-agent@0.1.0"), &plan, &root).unwrap();
+
+        assert_eq!(roots.len(), 1);
+        let LockRoot::RegistryAgent {
+            package_key,
+            tools,
+            reserved,
+        } = &roots[0]
+        else {
+            panic!("expected registry agent root");
+        };
+        assert_eq!(package_key, "agent:@zack/support-agent@0.1.0");
+        assert_eq!(
+            tools,
+            &vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
+        );
+        assert_eq!(
+            reserved.skills,
+            vec![Value::String("@zack/triage-skill@0.1.0".to_string())]
+        );
+    }
+
+    #[test]
+    fn direct_agent_install_does_not_require_installed_manifest_for_registry_root_shape() {
+        let root = temp_root("missing-registry-manifest");
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Agent,
+                name: "@zack/support-agent".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-agent".to_string(),
+            }],
+        };
+
+        let roots =
+            build_lock_roots(None, Some("@zack/support-agent@0.1.0"), &plan, &root).unwrap();
+
+        assert_eq!(roots.len(), 1);
+        let LockRoot::RegistryAgent { reserved, .. } = &roots[0] else {
+            panic!("expected registry agent root");
+        };
+        assert!(reserved.skills.is_empty());
+    }
+
+    fn temp_root(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("agentpm-install-{label}-{nanos}"))
     }
 }

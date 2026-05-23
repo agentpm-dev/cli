@@ -670,7 +670,10 @@ mod tests {
         };
 
         let support_root = lock.roots.get("agent:@zack/support-agent@0.1.0").unwrap();
-        let escalation_root = lock.roots.get("agent:@zack/escalation-agent@0.1.0").unwrap();
+        let escalation_root = lock
+            .roots
+            .get("agent:@zack/escalation-agent@0.1.0")
+            .unwrap();
 
         assert_eq!(
             support_root.tools,

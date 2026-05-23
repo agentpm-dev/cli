@@ -26,11 +26,13 @@ pub async fn download_and_extract_all(
     init: &sdkm::InstallInitResponse,
     cache_dir: &Path,
     tools_dir: &Path,
+    agents_dir: &Path,
     refresh: bool,
     quiet: bool,
 ) -> Result<()> {
     fs::create_dir_all(cache_dir).await?;
     fs::create_dir_all(tools_dir).await?;
+    fs::create_dir_all(agents_dir).await?;
 
     let client = Client::new();
     let mut futs = FuturesUnordered::new();
@@ -51,13 +53,13 @@ pub async fn download_and_extract_all(
 
         let cache_name = cache_filename(art);
         let cache_path = cache_dir.join(cache_name);
-        let tool_dir = resolved_tool_dir(tools_dir, &pkg, &ver)?;
+        let install_dir = resolved_package_dir(art.kind, tools_dir, agents_dir, &pkg, &ver)?;
 
         // Short-circuit if cached and already extracted (unless refresh)
         if !refresh
             && try_exists(&cache_path).await?
             && verify_sha256(&cache_path, &integrity).await.is_ok()
-            && dir_has_files(&tool_dir).await?
+            && dir_has_files(&install_dir).await?
         {
             continue;
         }
@@ -77,7 +79,7 @@ pub async fn download_and_extract_all(
                 .with_context(|| format!("integrity check failed for {}", pkg))?;
 
             // Extract
-            extract_tar_gz(&cache_path, &tool_dir)
+            extract_tar_gz(&cache_path, &install_dir)
                 .await
                 .with_context(|| format!("extracting {}@{}", pkg, ver))?;
 
@@ -422,6 +424,24 @@ fn resolved_tool_dir(base: &Path, package: &str, version: &str) -> Result<PathBu
     Ok(base.join(owner).join(name).join(version))
 }
 
+fn resolved_agent_dir(base: &Path, package: &str, version: &str) -> Result<PathBuf> {
+    let (owner, name) = split_package(package)?;
+    Ok(base.join(owner).join(name).join(version))
+}
+
+fn resolved_package_dir(
+    kind: sdkm::PackageKind,
+    tools_base: &Path,
+    agents_base: &Path,
+    package: &str,
+    version: &str,
+) -> Result<PathBuf> {
+    match kind {
+        sdkm::PackageKind::Tool => resolved_tool_dir(tools_base, package, version),
+        sdkm::PackageKind::Agent => resolved_agent_dir(agents_base, package, version),
+    }
+}
+
 /// Split "@owner/name" into (owner, name)
 fn split_package(package: &str) -> Result<(String, String)> {
     if !package.starts_with('@') {
@@ -431,4 +451,58 @@ fn split_package(package: &str) -> Result<(String, String)> {
     let owner = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
     let name = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
     Ok((owner.to_string(), name.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentpm_sdk::models::install::{PackageArtifact, PackageKind};
+
+    #[test]
+    fn resolves_tool_install_dir_under_tools_layout() {
+        let path = resolved_package_dir(
+            PackageKind::Tool,
+            Path::new(".agentpm/tools"),
+            Path::new(".agentpm/agents"),
+            "@zack/capitalize",
+            "0.1.0",
+        )
+        .unwrap();
+
+        assert_eq!(path, PathBuf::from(".agentpm/tools/zack/capitalize/0.1.0"));
+    }
+
+    #[test]
+    fn resolves_agent_install_dir_under_agents_layout() {
+        let path = resolved_package_dir(
+            PackageKind::Agent,
+            Path::new(".agentpm/tools"),
+            Path::new(".agentpm/agents"),
+            "@zack/support-agent",
+            "0.1.0",
+        )
+        .unwrap();
+
+        assert_eq!(
+            path,
+            PathBuf::from(".agentpm/agents/zack/support-agent/0.1.0")
+        );
+    }
+
+    #[test]
+    fn cache_filename_stays_package_name_based() {
+        let art = PackageArtifact {
+            kind: PackageKind::Agent,
+            name: "@zack/support-agent".to_string(),
+            version: "0.1.0".to_string(),
+            integrity: "abc".to_string(),
+            presigned_url: "https://example.test".to_string(),
+            size: None,
+            content_type: None,
+            signing: None,
+            runtime: None,
+        };
+
+        assert_eq!(cache_filename(&art), "zack-support-agent-0.1.0.tgz");
+    }
 }
