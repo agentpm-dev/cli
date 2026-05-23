@@ -3,7 +3,10 @@ use crate::manifest::{
 };
 use crate::prelude::*;
 use crate::semver::adapt::{plan_to_sdk_resolve, to_sdk_request};
-use crate::semver::types::{DesiredSet, ResolvePlan, lock_from_plan};
+use crate::semver::types::{
+    DesiredSet, Lock, LockRoot, PackageKind, ReservedReferences, ResolvePlan, lock_from_plan,
+    package_key,
+};
 use crate::semver::update::maybe_update_agent_json;
 use crate::{io::download::download_and_extract_all, io::fs, ui::Step};
 use anyhow::anyhow;
@@ -106,6 +109,10 @@ impl InstallArgs {
         };
         let mut s = Step::new(steps_label, quiet);
 
+        if self.frozen {
+            validate_frozen_lock_compatibility(&lock, manifest_value.as_ref(), &desired)?;
+        }
+
         let plan = if self.frozen {
             ResolvePlan::from_lock(&desired, &lock)?
         } else {
@@ -162,10 +169,16 @@ impl InstallArgs {
 
         // 7) Update lockfile (unless --frozen)
         if !self.frozen {
-            write_lock(".", &lock_from_plan(&plan))?;
+            let roots = build_lock_roots(manifest_value.as_ref(), self.spec.as_deref(), &plan);
+            write_lock(".", &lock_from_plan(&plan, &roots))?;
         }
 
-        // 8) If single-spec and not present in agent.json, append or update range if allowed
+        // 8) If single-spec and not present in agent.json, append or update range if allowed.
+        //
+        // TODO(milestone-9/10): keep this behavior only for direct tool specs in a
+        // local `kind: "agent"` project. Direct agent package installs should not
+        // mutate the local manifest; they should be represented as registry roots in
+        // lockfile v2 / installed package layout instead.
         if let Some(spec) = &self.spec
             && let Some(manifest_value) = manifest_value.as_mut()
             && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
@@ -184,9 +197,100 @@ fn should_load_manifest_for_install(spec: Option<&str>, manifest_path: &std::pat
     spec.is_none() || manifest_path.exists()
 }
 
+fn validate_frozen_lock_compatibility(
+    lock: &Lock,
+    manifest_value: Option<&Value>,
+    desired: &DesiredSet,
+) -> Result<()> {
+    if !lock.is_v1() {
+        return Ok(());
+    }
+
+    let manifest_is_agent = manifest_value
+        .and_then(|value| value.get("kind"))
+        .and_then(Value::as_str)
+        == Some("agent");
+
+    let desired_has_agent = desired
+        .items
+        .iter()
+        .any(|item| item.kind == PackageKind::Agent);
+
+    if manifest_is_agent || desired_has_agent {
+        return Err(anyhow!(
+            "--frozen cannot use lockfile v1 for agent dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v2"
+        ));
+    }
+
+    Ok(())
+}
+
+fn build_lock_roots(
+    manifest_value: Option<&Value>,
+    spec: Option<&str>,
+    plan: &ResolvePlan,
+) -> Vec<LockRoot> {
+    if let Some(manifest_value) = manifest_value
+        && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
+        && spec.is_none()
+    {
+        let name = manifest_value
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("local-agent")
+            .to_string();
+        let version = manifest_value
+            .get("version")
+            .and_then(Value::as_str)
+            .unwrap_or("0.0.0")
+            .to_string();
+
+        let tools = plan
+            .items
+            .iter()
+            .filter(|item| item.kind == PackageKind::Tool)
+            .map(|item| package_key(item.kind, &item.name, &item.version))
+            .collect();
+
+        return vec![LockRoot::LocalAgent {
+            name,
+            version,
+            tools,
+            reserved: reserved_refs_from_manifest(manifest_value),
+        }];
+    }
+
+    Vec::new()
+}
+
+fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {
+    ReservedReferences {
+        skills: manifest_array_or_empty(manifest_value, "skills"),
+        knowledge: manifest_array_or_empty(manifest_value, "knowledge"),
+        memory: manifest_array_or_empty(manifest_value, "memory"),
+        profiles: manifest_array_or_empty(manifest_value, "profiles"),
+    }
+}
+
+fn manifest_array_or_empty(manifest_value: &Value, field: &str) -> Vec<Value> {
+    manifest_value
+        .get(field)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::should_load_manifest_for_install;
+    use super::{
+        build_lock_roots, should_load_manifest_for_install, validate_frozen_lock_compatibility,
+    };
+    use crate::semver::types::{
+        DesiredSet, Lock, LockV1, LockedDependency, PackageKind, ResolvePlan, ResolvedPackage,
+    };
+    use chrono::Utc;
+    use serde_json::{Value, json};
+    use std::collections::BTreeMap;
     use std::path::Path;
 
     #[test]
@@ -203,5 +307,102 @@ mod tests {
             None,
             Path::new("agent.json")
         ));
+    }
+
+    #[test]
+    fn frozen_v1_lockfile_rejects_local_agent_graphs() {
+        let lock = Lock::V1(LockV1 {
+            lockfile_version: 1,
+            generated: Utc::now(),
+            dependencies: BTreeMap::new(),
+        });
+        let desired = DesiredSet {
+            items: vec![crate::semver::types::PackageRequirement::tool(
+                "@zack/slack-post-message",
+                "^0.1",
+            )],
+        };
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "tools": ["@zack/slack-post-message@^0.1"]
+        });
+
+        let err = validate_frozen_lock_compatibility(&lock, Some(&manifest), &desired)
+            .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("run `agentpm install` without --frozen"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn frozen_v1_lockfile_allows_tool_only_graphs() {
+        let lock = Lock::V1(LockV1 {
+            lockfile_version: 1,
+            generated: Utc::now(),
+            dependencies: BTreeMap::from([(
+                "@zack/echo".to_string(),
+                LockedDependency {
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-echo".to_string(),
+                },
+            )]),
+        });
+        let desired = DesiredSet {
+            items: vec![crate::semver::types::PackageRequirement::tool(
+                "@zack/echo",
+                "^0.1",
+            )],
+        };
+
+        validate_frozen_lock_compatibility(&lock, None, &desired).unwrap();
+    }
+
+    #[test]
+    fn manifest_driven_agent_install_builds_local_root_metadata() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "skills": ["@zack/triage-skill@0.1.0"],
+            "knowledge": [],
+            "memory": [],
+            "profiles": [],
+            "tools": ["@zack/slack-post-message@0.1.0"]
+        });
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Tool,
+                name: "@zack/slack-post-message".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-tool".to_string(),
+            }],
+        };
+
+        let roots = build_lock_roots(Some(&manifest), None, &plan);
+
+        assert_eq!(roots.len(), 1);
+        let crate::semver::types::LockRoot::LocalAgent {
+            name,
+            version,
+            tools,
+            reserved,
+        } = &roots[0]
+        else {
+            panic!("expected local agent root");
+        };
+        assert_eq!(name, "support-agent");
+        assert_eq!(version, "0.1.0");
+        assert_eq!(
+            tools,
+            &vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
+        );
+        assert_eq!(
+            reserved.skills,
+            vec![Value::String("@zack/triage-skill@0.1.0".to_string())]
+        );
     }
 }

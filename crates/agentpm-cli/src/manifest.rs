@@ -383,11 +383,7 @@ pub fn read_lock_or_default<P: AsRef<Path>>(dir: P) -> Result<Lock> {
         let lock: Lock = serde_json::from_slice(&data)?;
         Ok(lock)
     } else {
-        Ok(Lock {
-            lockfile_version: 1,
-            generated: chrono::Utc::now(), // or to_rfc3339() if using String
-            dependencies: Default::default(),
-        })
+        Ok(Lock::empty_v2())
     }
 }
 
