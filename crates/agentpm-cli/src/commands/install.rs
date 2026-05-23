@@ -4,13 +4,16 @@ use crate::manifest::{
 use crate::prelude::*;
 use crate::semver::adapt::{plan_to_sdk_resolve, to_sdk_request};
 use crate::semver::types::{
-    DesiredSet, Lock, LockRoot, PackageKind, ReservedReferences, ResolvePlan, lock_from_plan,
-    package_key,
+    DesiredSet, Lock, LockRoot, LockedRoot, PackageKind, ReservedReferences, ResolvePlan,
+    lock_from_plan, package_key, parse_package_spec,
 };
 use crate::semver::update::maybe_update_agent_json;
 use crate::{io::download::download_and_extract_all, io::fs, ui::Step};
 use anyhow::anyhow;
+use chrono::Utc;
+use semver::{Version, VersionReq};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
@@ -169,24 +172,11 @@ impl InstallArgs {
         client.install_finalize(&init.session_id).await?;
         s.ok("");
 
-        // 7) Update lockfile (unless --frozen)
-        if !self.frozen {
-            let roots = build_lock_roots(
-                manifest_value.as_ref(),
-                self.spec.as_deref(),
-                &plan,
-                PathBuf::from(".agentpm").as_path(),
-            )?;
-            // TODO(milestone-10a): decide whether repeated direct installs should
-            // merge prior registry roots from the existing lockfile instead of
-            // replacing the root set with only the current install request.
-            write_lock(".", &lock_from_plan(&plan, &roots))?;
-        }
-
-        // 8) If a direct tool spec was installed inside a local agent project and
+        // 7) If a direct tool spec was installed inside a local agent project and
         // it is not present in agent.json yet, append or update the declared range.
         // Direct agent package installs intentionally do not mutate the local
         // manifest; they are represented as registry roots in lockfile v2 instead.
+        let mut should_write_manifest = false;
         if let Some(spec) = &self.spec
             && let Some(manifest_value) = manifest_value.as_mut()
             && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
@@ -196,6 +186,22 @@ impl InstallArgs {
                 .any(|item| item.kind == PackageKind::Agent)
             && maybe_update_agent_json(manifest_value, spec, self.update_range)?
         {
+            should_write_manifest = true;
+        }
+
+        // 8) Update lockfile (unless --frozen)
+        if !self.frozen {
+            let next_lock = build_updated_lock(
+                &lock,
+                manifest_value.as_ref(),
+                self.spec.as_deref(),
+                &plan,
+                PathBuf::from(".agentpm").as_path(),
+            )?;
+            write_lock(".", &next_lock)?;
+        }
+
+        if should_write_manifest && let Some(manifest_value) = manifest_value.as_ref() {
             write_manifest_pretty_atomic(&manifest_path, manifest_value)?;
         }
 
@@ -237,6 +243,82 @@ fn validate_frozen_lock_compatibility(
     Ok(())
 }
 
+fn build_updated_lock(
+    existing_lock: &Lock,
+    manifest_value: Option<&Value>,
+    spec: Option<&str>,
+    plan: &ResolvePlan,
+    install_root: &std::path::Path,
+) -> Result<Lock> {
+    if spec.is_none() {
+        let roots = build_lock_roots(manifest_value, None, plan, install_root)?;
+        return Ok(lock_from_plan(plan, &roots));
+    }
+
+    let mut next = match existing_lock {
+        Lock::V2(lock) => lock.clone(),
+        Lock::V1(_) => match Lock::empty_v2() {
+            // Direct installs now accumulate roots in v2 lockfiles. When starting
+            // from a legacy v1 lock, we upgrade in place to an empty v2 structure
+            // and then add the current request/package state.
+            Lock::V2(lock) => lock,
+            Lock::V1(_) => unreachable!(),
+        },
+    };
+    next.generated = Utc::now();
+
+    for item in &plan.items {
+        // Current scope: direct installs may leave unreachable package entries in
+        // the v2 lockfile after roots change. Root reachability is authoritative
+        // for intent; lockfile package compaction is deferred to a later cleanup
+        // decision instead of being coupled to Milestone 10a root semantics.
+        // TODO: add lockfile/package compaction and on-disk prune behavior for
+        // packages that are no longer reachable from any root.
+        next.packages.insert(
+            package_key(item.kind, &item.name, &item.version),
+            crate::semver::types::LockedPackage {
+                kind: item.kind,
+                name: item.name.clone(),
+                version: item.version.clone(),
+                integrity: item.integrity.clone(),
+            },
+        );
+    }
+
+    if let Some(manifest_value) = manifest_value
+        && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
+        && !plan
+            .items
+            .iter()
+            .any(|item| item.kind == PackageKind::Agent)
+    {
+        let local_root = build_local_root_from_manifest(manifest_value, &next.packages)?;
+        next.roots.insert("local:agent".to_string(), local_root);
+    }
+
+    for root in build_registry_agent_roots(spec, plan, install_root)? {
+        let LockRoot::RegistryAgent {
+            package_key,
+            tools,
+            reserved,
+        } = root
+        else {
+            unreachable!("registry root builder only yields registry agent roots");
+        };
+        next.roots.insert(
+            package_key,
+            LockedRoot {
+                name: None,
+                version: None,
+                tools,
+                reserved,
+            },
+        );
+    }
+
+    Ok(Lock::V2(next))
+}
+
 fn build_lock_roots(
     manifest_value: Option<&Value>,
     spec: Option<&str>,
@@ -273,36 +355,7 @@ fn build_lock_roots(
         }]);
     }
 
-    if spec.is_some()
-        && let Some(agent_item) = plan
-            .items
-            .iter()
-            .find(|item| item.kind == PackageKind::Agent)
-    {
-        let agent_manifest_path =
-            installed_agent_manifest_path(install_root, &agent_item.name, &agent_item.version)?;
-        let reserved = if agent_manifest_path.exists() {
-            let (manifest_value, _) = load_manifest_value(&agent_manifest_path)?;
-            reserved_refs_from_manifest(&manifest_value)
-        } else {
-            ReservedReferences::default()
-        };
-
-        let tools = plan
-            .items
-            .iter()
-            .filter(|item| item.kind == PackageKind::Tool)
-            .map(|item| package_key(item.kind, &item.name, &item.version))
-            .collect();
-
-        return Ok(vec![LockRoot::RegistryAgent {
-            package_key: package_key(agent_item.kind, &agent_item.name, &agent_item.version),
-            tools,
-            reserved,
-        }]);
-    }
-
-    Ok(Vec::new())
+    build_registry_agent_roots(spec, plan, install_root)
 }
 
 fn installed_agent_manifest_path(
@@ -317,6 +370,122 @@ fn installed_agent_manifest_path(
         .join(name)
         .join(version)
         .join("agent.json"))
+}
+
+fn build_registry_agent_roots(
+    spec: Option<&str>,
+    plan: &ResolvePlan,
+    install_root: &std::path::Path,
+) -> Result<Vec<LockRoot>> {
+    let Some(spec) = spec else {
+        return Ok(Vec::new());
+    };
+    let requested = parse_package_spec(spec)?;
+
+    let tools: Vec<String> = plan
+        .items
+        .iter()
+        .filter(|item| item.kind == PackageKind::Tool)
+        .map(|item| package_key(item.kind, &item.name, &item.version))
+        .collect();
+
+    let mut roots = Vec::new();
+    for agent_item in plan
+        .items
+        .iter()
+        .filter(|item| item.kind == PackageKind::Agent && item.name == requested.name)
+    {
+        let agent_manifest_path =
+            installed_agent_manifest_path(install_root, &agent_item.name, &agent_item.version)?;
+        let reserved = if agent_manifest_path.exists() {
+            let (manifest_value, _) = load_manifest_value(&agent_manifest_path)?;
+            reserved_refs_from_manifest(&manifest_value)
+        } else {
+            crate::semver::types::ReservedReferences::default()
+        };
+
+        roots.push(LockRoot::RegistryAgent {
+            package_key: package_key(agent_item.kind, &agent_item.name, &agent_item.version),
+            tools: tools.clone(),
+            reserved,
+        });
+    }
+
+    Ok(roots)
+}
+
+fn build_local_root_from_manifest(
+    manifest_value: &Value,
+    packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
+) -> Result<LockedRoot> {
+    let desired = DesiredSet::from_cli_or_agent_json(manifest_value, None, false)?;
+    let mut tools = Vec::new();
+
+    for item in desired.items {
+        if item.kind != PackageKind::Tool {
+            continue;
+        }
+        if let Some(pkg) = resolve_declared_tool_from_packages(packages, &item.name, &item.range)? {
+            tools.push(package_key(pkg.kind, &pkg.name, &pkg.version));
+        }
+    }
+
+    Ok(LockedRoot {
+        name: manifest_value
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        version: manifest_value
+            .get("version")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        tools,
+        reserved: reserved_refs_from_manifest(manifest_value),
+    })
+}
+
+fn resolve_declared_tool_from_packages(
+    packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
+    name: &str,
+    range: &str,
+) -> Result<Option<crate::semver::types::LockedPackage>> {
+    let exact = if range == "*" {
+        None
+    } else {
+        Version::parse(range).ok()
+    };
+    let req = if exact.is_none() && range != "*" {
+        Some(
+            VersionReq::parse(range)
+                .with_context(|| format!("declared tool range for {} is not valid semver", name))?,
+        )
+    } else {
+        None
+    };
+
+    let mut matches: Vec<(Version, crate::semver::types::LockedPackage)> = Vec::new();
+    for pkg in packages
+        .values()
+        .filter(|pkg| pkg.kind == PackageKind::Tool && pkg.name == name)
+    {
+        let version = match Version::parse(&pkg.version) {
+            Ok(version) => version,
+            Err(_) => continue,
+        };
+        let is_match = if let Some(exact) = &exact {
+            &version == exact
+        } else if let Some(req) = &req {
+            req.matches(&version)
+        } else {
+            true
+        };
+        if is_match {
+            matches.push((version, pkg.clone()));
+        }
+    }
+
+    matches.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(matches.pop().map(|(_, pkg)| pkg))
 }
 
 fn split_package_ref(package: &str) -> Result<(String, String)> {
@@ -349,12 +518,12 @@ fn manifest_array_or_empty(manifest_value: &Value, field: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_lock_roots, installed_agent_manifest_path, should_load_manifest_for_install,
-        validate_frozen_lock_compatibility,
+        build_lock_roots, build_updated_lock, installed_agent_manifest_path,
+        should_load_manifest_for_install, validate_frozen_lock_compatibility,
     };
     use crate::semver::types::{
-        DesiredSet, Lock, LockRoot, LockV1, LockedDependency, PackageKind, ResolvePlan,
-        ResolvedPackage,
+        DesiredSet, Lock, LockRoot, LockV1, LockV2, LockedDependency, LockedPackage, LockedRoot,
+        PackageKind, ResolvePlan, ResolvedPackage,
     };
     use chrono::Utc;
     use serde_json::{Value, json};
@@ -557,6 +726,380 @@ mod tests {
             panic!("expected registry agent root");
         };
         assert!(reserved.skills.is_empty());
+    }
+
+    #[test]
+    fn direct_agent_install_merges_existing_registry_roots() {
+        let root = temp_root("merge-registry-roots");
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::from([(
+                "agent:@zack/support-agent@0.1.0".to_string(),
+                LockedPackage {
+                    kind: PackageKind::Agent,
+                    name: "@zack/support-agent".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-old-agent".to_string(),
+                },
+            )]),
+            roots: BTreeMap::from([(
+                "agent:@zack/support-agent@0.1.0".to_string(),
+                LockedRoot {
+                    name: None,
+                    version: None,
+                    tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                    reserved: Default::default(),
+                },
+            )]),
+        });
+
+        let manifest_path =
+            installed_agent_manifest_path(&root, "@zack/escalation-agent", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "agent",
+                "name": "escalation-agent",
+                "version": "0.1.0"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let plan = ResolvePlan {
+            items: vec![
+                ResolvedPackage {
+                    kind: PackageKind::Agent,
+                    name: "@zack/escalation-agent".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-new-agent".to_string(),
+                },
+                ResolvedPackage {
+                    kind: PackageKind::Tool,
+                    name: "@zack/capitalize".to_string(),
+                    version: "0.2.0".to_string(),
+                    integrity: "sha256-tool".to_string(),
+                },
+            ],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            None,
+            Some("@zack/escalation-agent@0.1.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert!(lock.roots.contains_key("agent:@zack/support-agent@0.1.0"));
+        assert!(
+            lock.roots
+                .contains_key("agent:@zack/escalation-agent@0.1.0")
+        );
+        assert!(
+            lock.packages
+                .contains_key("agent:@zack/support-agent@0.1.0")
+        );
+        assert!(
+            lock.packages
+                .contains_key("agent:@zack/escalation-agent@0.1.0")
+        );
+    }
+
+    #[test]
+    fn manifest_driven_install_replaces_registry_roots_with_local_root() {
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::from([(
+                "agent:@zack/support-agent@0.1.0".to_string(),
+                LockedPackage {
+                    kind: PackageKind::Agent,
+                    name: "@zack/support-agent".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-agent".to_string(),
+                },
+            )]),
+            roots: BTreeMap::from([(
+                "agent:@zack/support-agent@0.1.0".to_string(),
+                LockedRoot {
+                    name: None,
+                    version: None,
+                    tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                    reserved: Default::default(),
+                },
+            )]),
+        });
+        let manifest = json!({
+            "kind": "agent",
+            "name": "local-support-agent",
+            "version": "0.1.0",
+            "tools": ["@zack/capitalize@0.2.0"],
+            "skills": ["@zack/triage-skill@0.1.0"]
+        });
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Tool,
+                name: "@zack/capitalize".to_string(),
+                version: "0.2.0".to_string(),
+                integrity: "sha256-tool".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            Some(&manifest),
+            None,
+            &plan,
+            Path::new(".agentpm"),
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(lock.roots.len(), 1);
+        let local = lock.roots.get("local:agent").expect("local root missing");
+        assert_eq!(local.name.as_deref(), Some("local-support-agent"));
+        assert_eq!(local.version.as_deref(), Some("0.1.0"));
+        assert_eq!(local.tools, vec!["tool:@zack/capitalize@0.2.0".to_string()]);
+        assert!(!lock.roots.contains_key("agent:@zack/support-agent@0.1.0"));
+        assert!(
+            !lock
+                .packages
+                .contains_key("agent:@zack/support-agent@0.1.0")
+        );
+    }
+
+    #[test]
+    fn direct_agent_install_preserves_existing_local_root() {
+        let root = temp_root("preserve-local-root");
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::from([(
+                "tool:@zack/capitalize@0.1.0".to_string(),
+                LockedPackage {
+                    kind: PackageKind::Tool,
+                    name: "@zack/capitalize".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-tool".to_string(),
+                },
+            )]),
+            roots: BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("local-support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                    reserved: Default::default(),
+                },
+            )]),
+        });
+        let manifest_path =
+            installed_agent_manifest_path(&root, "@zack/support-agent", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let manifest = json!({
+            "kind": "agent",
+            "name": "local-support-agent",
+            "version": "0.1.0",
+            "tools": ["@zack/capitalize@0.1.0"]
+        });
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Agent,
+                name: "@zack/support-agent".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-agent".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            Some(&manifest),
+            Some("@zack/support-agent@0.1.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert!(lock.roots.contains_key("local:agent"));
+        assert!(lock.roots.contains_key("agent:@zack/support-agent@0.1.0"));
+    }
+
+    #[test]
+    fn direct_tool_install_updates_local_root_and_preserves_registry_roots() {
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::from([
+                (
+                    "tool:@zack/capitalize@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/capitalize".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-cap".to_string(),
+                    },
+                ),
+                (
+                    "agent:@zack/support-agent@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Agent,
+                        name: "@zack/support-agent".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-agent".to_string(),
+                    },
+                ),
+            ]),
+            roots: BTreeMap::from([
+                (
+                    "local:agent".to_string(),
+                    LockedRoot {
+                        name: Some("local-support-agent".to_string()),
+                        version: Some("0.1.0".to_string()),
+                        tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                        reserved: Default::default(),
+                    },
+                ),
+                (
+                    "agent:@zack/support-agent@0.1.0".to_string(),
+                    LockedRoot {
+                        name: None,
+                        version: None,
+                        tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                        reserved: Default::default(),
+                    },
+                ),
+            ]),
+        });
+        let manifest = json!({
+            "kind": "agent",
+            "name": "local-support-agent",
+            "version": "0.1.0",
+            "tools": ["@zack/capitalize@0.1.0", "@zack/summarize@0.2.0"]
+        });
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Tool,
+                name: "@zack/summarize".to_string(),
+                version: "0.2.0".to_string(),
+                integrity: "sha256-summarize".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            Some(&manifest),
+            Some("@zack/summarize@0.2.0"),
+            &plan,
+            Path::new(".agentpm"),
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        let local = lock.roots.get("local:agent").expect("local root missing");
+        assert!(
+            local
+                .tools
+                .contains(&"tool:@zack/capitalize@0.1.0".to_string())
+        );
+        assert!(
+            local
+                .tools
+                .contains(&"tool:@zack/summarize@0.2.0".to_string())
+        );
+        assert!(lock.roots.contains_key("agent:@zack/support-agent@0.1.0"));
+    }
+
+    #[test]
+    fn direct_tool_install_rebuilds_local_root_from_declared_manifest_tools() {
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::from([
+                (
+                    "tool:@zack/capitalize@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/capitalize".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-cap".to_string(),
+                    },
+                ),
+                (
+                    "tool:@zack/translate@0.3.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/translate".to_string(),
+                        version: "0.3.0".to_string(),
+                        integrity: "sha256-trans".to_string(),
+                    },
+                ),
+            ]),
+            roots: BTreeMap::new(),
+        });
+        let manifest = json!({
+            "kind": "agent",
+            "name": "local-support-agent",
+            "version": "0.1.0",
+            "tools": [
+                "@zack/capitalize@0.1.0",
+                "@zack/translate@^0.3",
+                "@zack/summarize@0.2.0"
+            ]
+        });
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Tool,
+                name: "@zack/summarize".to_string(),
+                version: "0.2.0".to_string(),
+                integrity: "sha256-summarize".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            Some(&manifest),
+            Some("@zack/summarize@0.2.0"),
+            &plan,
+            Path::new(".agentpm"),
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        let local = lock.roots.get("local:agent").expect("local root missing");
+        assert_eq!(
+            local.tools,
+            vec![
+                "tool:@zack/capitalize@0.1.0".to_string(),
+                "tool:@zack/translate@0.3.0".to_string(),
+                "tool:@zack/summarize@0.2.0".to_string()
+            ]
+        );
     }
 
     fn temp_root(label: &str) -> PathBuf {

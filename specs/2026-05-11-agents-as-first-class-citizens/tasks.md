@@ -128,6 +128,7 @@
 ## Milestone 10a: Define workspace install-set and lockfile root accumulation behavior
 - [ ] Merge repeated direct agent installs into the existing registry root set in `agent.lock` instead of replacing prior registry roots with only the latest direct install request.
 - [ ] Keep direct tool installs in a local `kind: "agent"` project represented through the `local:agent` root by mutating `agent.json`, rather than adding separate registry roots for those tools.
+- [ ] Rebuild `local:agent` roots from the manifest's declared `tools` during direct tool installs instead of only appending to the prior root state.
 - [ ] Treat manifest-driven installs with no spec as authoritative for the local project and replace the root set with the current `local:agent` intent.
 - [ ] On manifest-driven installs, remove superseded registry roots from `agent.lock` but leave unreferenced installed packages on disk for now.
 - [ ] Treat `agent.lock` as the source of truth for intended installs even when unreferenced packages remain on disk under `.agentpm/agents` or `.agentpm/tools`.
