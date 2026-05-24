@@ -179,6 +179,8 @@
 - [ ] Show reserved future references when present, marked as future/reserved.
 - [ ] Keep existing tool detail pages working.
 - [ ] Optionally add a tool-page “used by agents” count/list if the data is cheap after the package migration.
+- [ ] Break up landing/home page up into different sections by kind (tools, agents). Each section should describe that piece's role in the agent ecosystem, show example usage, and have their own trending list.
+- [ ] Ensure both tool and agent cards show correct number of installs/week.
 - [ ] Add UI tests or manual verification steps for tool search, agent search, and agent detail pages.
 
 ## Milestone 15: Update docs and examples
