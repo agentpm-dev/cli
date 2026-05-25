@@ -194,13 +194,14 @@
 - [ ] Document lockfile v2 at a high level.
 - [ ] Update CLI docs for `agentpm init --kind agent`, `agentpm publish`, and `agentpm install`.
 - [ ] Update PAT/auth docs to use `packages:publish`.
-- [ ] Add a sample agent package.
-- [ ] Update `agentpm-examples` for the latest CLI and lockfile behavior.
 - [ ] Verify existing tool examples still work.
 - [ ] Add an example showing two agents depending on different versions of the same tool.
 - [ ] Document the difference between manifest-driven install and direct package install.
 - [ ] Add docs showing `agentpm install` from a local `kind: "agent"` manifest.
 - [ ] Add docs showing `agentpm install @namespace/agent-name@version`.
+- [ ] Scan the remainder of the agentpm repos and verify no new documentation is missing
+- [ ] Add a sample agent package.
+- [ ] Update `agentpm-examples` for the latest CLI and lockfile behavior.
 - [ ] Update examples to cover both workflows.
 
 ## Milestone 16: Final regression and release readiness
@@ -219,4 +220,14 @@
 - [ ] Confirm existing tool-only install flow still works.
 - [ ] Confirm existing tool run flow still works.
 - [ ] Confirm search and detail pages work for both tools and agents.
-- [ ] Confirm release notes mention the lockfile change and package terminology migration.
+- [ ] Confirm release notes mention the lockfile change and package terminology migration.A
+
+## Milestone 17: Publish example agents and add installed-agent example apps
+- [ ] Publish the current recommended example agents from `agentpm-examples`.
+- [ ] Verify the published example agents can be installed directly with `agentpm install @namespace/agent-name@version`.
+- [ ] Add at least one example app that installs a published agent package and loads its resolved tools through the SDK.
+- [ ] Add a concrete example showing two published agents depending on different versions of the same tool, including an example `agent.lock` that shows both tool versions coexisting.
+- [ ] Keep the example clear that the SDK is loading an installed agent artifact plus its resolved tool refs, not executing the agent package directly.
+- [ ] Update `agentpm-examples` READMEs so manifest-driven local examples and direct published-agent examples are clearly separated.
+- [ ] Add manual verification steps showing a published example agent install under `.agentpm/agents/...` plus its tools under `.agentpm/tools/...`.
+- [ ] Verify the new example app works with the released CLI and released SDK versions required for the flow.
