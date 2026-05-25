@@ -50,8 +50,16 @@ agentpm init --kind agent --name research-assistant --description "Assistant com
   "name": "research-assistant",
   "version": "0.1.0",
   "description": "Assistant composed of multiple tools",
-  "tools": [
-    { "name": "@test/summarize", "version": "0.1.0" }
+  "tools": [],
+  "skills": [],
+  "knowledge": [],
+  "memory": [],
+  "profiles": [],
+  "examples": [
+    {
+      "title": "Example prompt",
+      "prompt": "Describe the user request this agent should handle."
+    }
   ]
 }
 ```
@@ -95,6 +103,11 @@ agentpm lint path/to/agent.json
 | `version`     | semver   | **yes**  | both      | SemVer string (supports pre/metadata)                                               |
 | `description` | string   | **yes**  | both      | Free text                                                                           |
 | `tools`       | array    | **yes**¹ | **agent** | Array of tool refs: string or `{name, version}`                                     |
+| `skills`      | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
+| `knowledge`   | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
+| `memory`      | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
+| `profiles`    | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
+| `examples`    | array    | no       | **agent** | Inline prompt examples `{ title, prompt }`.                                         |
 | `entrypoint`  | string   | **yes**² | **tool**  | Execution ref `{command, args, cwd, timeout_ms, env}`                               |
 | `inputs`      | object   | **yes**² | **tool**  | JSON Schema (or shape) for inputs                                                   |
 | `outputs`     | object   | **yes**² | **tool**  | JSON Schema (or shape) for outputs                                                  |
@@ -109,7 +122,7 @@ agentpm lint path/to/agent.json
 
 **Kind-specific rules** are enforced via schema constraints:
 - `entrypoint`, `inputs`, `outputs`, `files`, `runtime` ⇒ **only valid on tools**
-- `tools` ⇒ **only valid on agents**
+- `tools`, `skills`, `knowledge`, `memory`, `profiles`, `examples` ⇒ **only valid on agents**
 
 ---
 
@@ -140,8 +153,18 @@ agentpm lint path/to/agent.json
   "version": "0.1.0",
   "description": "Assistant composed of multiple tools",
   "tools": [
-    "tool://acme/summarize@1.2.0",
-    { "name": "translate", "version": "1.0.0" }
+    "@acme/summarize@1.2.0",
+    { "name": "@acme/translate", "version": "1.0.0" }
+  ],
+  "skills": [],
+  "knowledge": [],
+  "memory": [],
+  "profiles": [],
+  "examples": [
+    {
+      "title": "Research a topic",
+      "prompt": "Read these sources and summarize the main tradeoffs."
+    }
   ]
 }
 ```

@@ -5,6 +5,40 @@
   "additionalProperties": false,
 
   "$defs": {
+    "packageRef": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^@[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}(?:@(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:\\.(0|[1-9]\\d*))?(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)?$"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^@[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}$"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:\\.(0|[1-9]\\d*))?(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+            }
+          }
+        }
+      ]
+    },
+    "promptExample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "prompt"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string", "minLength": 1 }
+      }
+    },
     "runtime": {
       "type": "object",
       "additionalProperties": false,
@@ -32,6 +66,11 @@
 
   "dependentSchemas": {
     "tools":      { "properties": { "kind": { "const": "agent" } } },
+    "examples":   { "properties": { "kind": { "const": "agent" } } },
+    "skills":     { "properties": { "kind": { "const": "agent" } } },
+    "knowledge":  { "properties": { "kind": { "const": "agent" } } },
+    "memory":     { "properties": { "kind": { "const": "agent" } } },
+    "profiles":   { "properties": { "kind": { "const": "agent" } } },
     "entrypoint": {
       "properties": { "kind": { "const": "tool" } }
     },
@@ -52,27 +91,27 @@
     "description": { "type": "string" },
     "tools": {
       "type": "array",
-      "items": {
-        "oneOf": [
-          {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "^@[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}(?:@(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:\\.(0|[1-9]\\d*))?(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)?$"
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["name"],
-            "properties": {
-              "name": { "type": "string", "minLength": 1, "pattern": "^@[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}$" },
-              "version": {
-                "type": "string",
-                "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:\\.(0|[1-9]\\d*))?(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
-              }
-            }
-          }
-        ]
-      }
+      "items": { "$ref": "#/$defs/packageRef" }
+    },
+    "skills": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/packageRef" }
+    },
+    "knowledge": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/packageRef" }
+    },
+    "memory": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/packageRef" }
+    },
+    "profiles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/packageRef" }
+    },
+    "examples": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/promptExample" }
     },
     "files": {
       "type": "array",

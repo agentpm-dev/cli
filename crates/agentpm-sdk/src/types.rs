@@ -1,9 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::models::install::PackageKind;
+
 #[derive(Debug, Deserialize)]
 pub struct PublishReceipt {
     pub id: String,
+    #[serde(default)]
+    pub kind: PackageKind,
     pub name: String,
     pub version: String,
     pub url: String,
@@ -14,6 +18,8 @@ pub struct PublishReceipt {
 #[derive(Debug, Deserialize)]
 pub struct InitPublish {
     pub upload_id: String,
+    #[serde(default)]
+    pub kind: PackageKind,
     pub put_url: String,
     pub headers: HashMap<String, String>,
     #[serde(default)]

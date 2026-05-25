@@ -401,8 +401,7 @@ fn resolve_locked_version(project_dir: &Path, package: &str) -> Result<Version> 
 
     let lock = read_lock_or_default(project_dir)?;
     let dep = lock
-        .dependencies
-        .get(package)
+        .find_unique_locked_package(package, crate::semver::types::PackageKind::Tool)?
         .ok_or_else(|| anyhow!("{} {}", package, ERR_LOCKFILE_DEPENDENCY_MISSING))?;
 
     Version::parse(&dep.version)

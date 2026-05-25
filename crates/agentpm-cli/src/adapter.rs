@@ -40,19 +40,19 @@ pub struct AdapterEnvRequirement {
 #[allow(dead_code)]
 pub fn list_locked_tool_descriptors(project_dir: &Path) -> Result<Vec<AdapterToolDescriptor>> {
     let lock = read_lock_or_default(project_dir)?;
-    lock.dependencies
+    lock.locked_tool_packages()
         .iter()
-        .map(|(package_ref, dependency)| {
+        .map(|dependency| {
             let version = Version::parse(&dependency.version).with_context(|| {
-                format!("locked version for {} is not valid semver", package_ref)
+                format!("locked version for {} is not valid semver", dependency.name)
             })?;
             let spec = ToolSpec {
-                package: package_ref.clone(),
+                package: dependency.name.clone(),
                 selector: ToolSelector::Exact(version),
             };
             let resolved = resolve_installed_tool(project_dir, &spec)?;
             Ok(descriptor_from_manifest(
-                package_ref,
+                &dependency.name,
                 &dependency.version,
                 &resolved.manifest,
             ))

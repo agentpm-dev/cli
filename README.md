@@ -1,6 +1,13 @@
 # AgentPM™ CLI
 
-Command-line tool for building AgentPM tools and agents.
+Command-line tool for building, publishing, installing, and validating AgentPM packages.
+
+AgentPM currently supports two package kinds:
+
+- **tools**: executable capabilities with entrypoints, runtime requirements, inputs, and outputs
+- **agents**: composition artifacts that declare tool dependencies, examples, and future reserved references
+
+Agent packages are not runnable app bundles. They install as portable composition metadata plus resolved tool dependencies.
 
 [![CI](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml)
 [![Homebrew tap](https://img.shields.io/badge/homebrew-agentpm--dev%2Ftap-blue)](https://github.com/agentpm-dev/homebrew-tap)
@@ -129,12 +136,48 @@ Tip: different terminals (Terminal.app, iTerm, VS Code) may read different start
 
 ## Quick start
 
-Create a new AgentPM tool package:
+Create a new AgentPM tool or agent package:
 
 ```bash
 agentpm --help
 agentpm init --kind tool --name demo --description "My first tool"
+agentpm init --kind agent --name support-agent --description "My first agent"
 ```
+
+### Manifest-driven local agent install
+
+When a local `agent.json` has `kind: "agent"`, run:
+
+```bash
+agentpm install
+```
+
+That:
+
+- resolves the tools declared in the local manifest
+- installs tools under `.agentpm/tools/<namespace>/<name>/<version>/`
+- writes `agent.lock` v2
+- keeps the local `agent.json` as the source of truth
+
+### Direct package install
+
+Install a tool directly:
+
+```bash
+agentpm install @zack/capitalize@0.1.0
+```
+
+Install an agent package directly:
+
+```bash
+agentpm install @zack/support-agent@0.1.0
+```
+
+Direct agent install writes:
+
+- the installed agent under `.agentpm/agents/<namespace>/<name>/<version>/`
+- the agent’s resolved tools under `.agentpm/tools/<namespace>/<name>/<version>/`
+- an `agent:@namespace/name@version` root in `agent.lock`
 
 Once a tool is installed, AgentPM can expose the same packaged artifact through the shell, MCP, and Skill scaffolds:
 
@@ -146,6 +189,20 @@ agentpm export --skill @zack/capitalize
 ```
 
 That interoperability flow keeps AgentPM as the source of truth for packaging and execution while making installed tools usable from other ecosystems.
+
+### Publishing
+
+Use:
+
+```bash
+agentpm publish
+```
+
+The preferred publish scope is:
+
+- `packages:publish`
+
+That scope can publish both tools and agents.
 
 ### Manifest schema
 

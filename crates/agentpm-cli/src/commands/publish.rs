@@ -4,8 +4,8 @@ use crate::keys::signing::{
     StoredKeyV1, decrypt_private, keystore_dir, prompt_passphrase_with_fallback,
 };
 use crate::manifest::{
-    Entrypoint, ToolManifest, load_manifest_value, parse_tool_manifest, resolve_schema_source,
-    validate_manifest_value,
+    AgentManifest, Entrypoint, PublishManifest, ToolManifest, load_manifest_value,
+    parse_publish_manifest, resolve_schema_source, validate_manifest_value,
 };
 use crate::prelude::*;
 use crate::ui::Step;
@@ -129,12 +129,19 @@ impl PublishArgs {
         }
         s.ok("schema + semantics");
 
-        // 3) Strongly typed and kind enforcement (shared)
-        let mf = parse_tool_manifest(&manifest_value)?;
+        // 3) Strongly typed manifest split
+        let publish_manifest = parse_publish_manifest(&manifest_value)?;
 
-        // 4) Package files: agent.json + entrypoint + declared files
+        // 4) Package files by artifact kind
         let mut s = Step::new("Packaging files", quiet);
-        let tar_path = package_tool(&mf, &manifest_path).context("packaging files into tar.gz")?;
+        let tar_path = match &publish_manifest {
+            PublishManifest::Tool(mf) => {
+                package_tool(mf, &manifest_path).context("packaging tool into tar.gz")?
+            }
+            PublishManifest::Agent(mf) => {
+                package_agent(mf, &manifest_path).context("packaging agent into tar.gz")?
+            }
+        };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
         if size_bytes > MAX_ARTIFACT_BYTES {
             bail!(
@@ -254,7 +261,7 @@ impl PublishArgs {
         }
 
         if self.dry_run {
-            println!("Dry-run: package created at {}", tar_path.display());
+            println!("Dry-run: artifact created at {}", tar_path.display());
             return Ok(());
         }
 
@@ -281,7 +288,12 @@ impl PublishArgs {
                 "arch": std::env::consts::ARCH,
             }
         });
-        let filename = artifact_filename(&mf.name, &mf.version, &mf.runtime);
+        let filename = match &publish_manifest {
+            PublishManifest::Tool(mf) => {
+                artifact_filename(&mf.name, &mf.version, Some(&mf.runtime))
+            }
+            PublishManifest::Agent(mf) => artifact_filename(&mf.name, &mf.version, None),
+        };
 
         // Build optional finalize_extra
         let finalize_extra: Option<serde_json::Value> = if self.sign {
@@ -297,9 +309,10 @@ impl PublishArgs {
 
             // Minimal statement (server checks name/version/digest)
             let statement = serde_json::json!({
-                "type": "agentpm.tool.signature.v1",
-                "name": mf.name,
-                "version": mf.version,
+                "type": "agentpm.package.signature.v1",
+                "kind": manifest_kind(&publish_manifest),
+                "name": manifest_name(&publish_manifest),
+                "version": manifest_version(&publish_manifest),
                 "artifactDigest": format!("sha256:{sha256_hex}"),
                 "createdAt": chrono::Utc::now().to_rfc3339(),
             });
@@ -322,7 +335,7 @@ impl PublishArgs {
         };
 
         let res = client
-            .publish_tool_from_path(&meta, &tar_path, &filename, finalize_extra)
+            .publish_package_from_path(&meta, &tar_path, &filename, finalize_extra)
             .await;
 
         let receipt = match res {
@@ -360,7 +373,11 @@ fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf
     let out_dir = root.join("target").join("agentpm");
     fs::create_dir_all(&out_dir).ok();
 
-    let out_path = out_dir.join(format!("{}-{}.tar.gz", manifest.name, manifest.version));
+    let out_path = out_dir.join(artifact_filename(
+        &manifest.name,
+        &manifest.version,
+        Some(&manifest.runtime),
+    ));
     let f =
         fs::File::create(&out_path).with_context(|| format!("creating {}", out_path.display()))?;
     let enc = GzEncoder::new(f, Compression::default());
@@ -437,6 +454,30 @@ fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf
     }
 
     tar.finish()?;
+    Ok(out_path)
+}
+
+fn package_agent(manifest: &AgentManifest, manifest_path: &Path) -> Result<PathBuf> {
+    let root = manifest_path.parent().unwrap_or(Path::new("."));
+    let out_dir = root.join("target").join("agentpm");
+    fs::create_dir_all(&out_dir).ok();
+
+    let out_path = out_dir.join(artifact_filename(&manifest.name, &manifest.version, None));
+    let f =
+        fs::File::create(&out_path).with_context(|| format!("creating {}", out_path.display()))?;
+    let enc = GzEncoder::new(f, Compression::default());
+    let mut tar = TarBuilder::new(enc);
+
+    let manifest_bytes = fs::read(manifest_path)?;
+    let mut header = tar::Header::new_gnu();
+    header.set_size(manifest_bytes.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+
+    ensure_safe_tar_name("agent.json")?;
+    tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+    tar.finish()?;
+
     Ok(out_path)
 }
 
@@ -708,8 +749,30 @@ fn runtime_suffix(runtime: &serde_json::Value) -> String {
     }
 }
 
-fn artifact_filename(name: &str, version: &str, runtime: &serde_json::Value) -> String {
-    format!("{}-{}{}.tar.gz", name, version, runtime_suffix(runtime))
+fn artifact_filename(name: &str, version: &str, runtime: Option<&serde_json::Value>) -> String {
+    let suffix = runtime.map(runtime_suffix).unwrap_or_default();
+    format!("{}-{}{}.tar.gz", name, version, suffix)
+}
+
+fn manifest_kind(manifest: &PublishManifest) -> &str {
+    match manifest {
+        PublishManifest::Tool(mf) => &mf.kind,
+        PublishManifest::Agent(mf) => &mf.kind,
+    }
+}
+
+fn manifest_name(manifest: &PublishManifest) -> &str {
+    match manifest {
+        PublishManifest::Tool(mf) => &mf.name,
+        PublishManifest::Agent(mf) => &mf.name,
+    }
+}
+
+fn manifest_version(manifest: &PublishManifest) -> &str {
+    match manifest {
+        PublishManifest::Tool(mf) => &mf.version,
+        PublishManifest::Agent(mf) => &mf.version,
+    }
 }
 
 fn select_local_key(key_id_flag: Option<&str>) -> Result<(String, StoredKeyV1)> {
@@ -762,6 +825,140 @@ fn select_local_key(key_id_flag: Option<&str>) -> Result<(String, StoredKeyV1)> 
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("agentpm-{prefix}-{unique}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn tar_entries(path: &Path) -> Vec<String> {
+        let f = File::open(path).unwrap();
+        let gz = flate2::read::GzDecoder::new(f);
+        let mut ar = tar::Archive::new(gz);
+        let mut out = Vec::new();
+        for entry in ar.entries().unwrap() {
+            let entry = entry.unwrap();
+            out.push(entry.path().unwrap().to_string_lossy().into_owned());
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_tool_manifest() {
+        let dir = temp_dir("publish-tool");
+        let manifest_path = dir.join("agent.json");
+        let script_path = dir.join("main.py");
+        let asset_path = dir.join("data.txt");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "tool",
+                "name": "tool-pub-test",
+                "version": "0.1.0",
+                "description": "test tool",
+                "runtime": { "type": "python", "version": "3.11" },
+                "entrypoint": {
+                    "command": "python",
+                    "args": ["main.py"]
+                },
+                "files": ["data.txt"],
+                "inputs": { "type": "object" },
+                "outputs": { "type": "object" }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        fs::write(&script_path, "print('hi')\n").unwrap();
+        fs::write(&asset_path, "hello\n").unwrap();
+
+        let args = PublishArgs {
+            manifest: manifest_path.to_string_lossy().into_owned(),
+            schema: Some(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../schemas/agentpm.manifest.schema.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            strict: false,
+            dry_run: true,
+            quiet: true,
+            sign: false,
+            key_id: None,
+            token: Some("dummy-token".into()),
+        };
+
+        args.run("https://example.com".into()).await.unwrap();
+
+        let tar_path = dir.join("target/agentpm/tool-pub-test-0.1.0-python311.tar.gz");
+        assert!(tar_path.exists(), "expected {}", tar_path.display());
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"main.py".to_string()));
+        assert!(entries.contains(&"data.txt".to_string()));
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_agent_manifest() {
+        let dir = temp_dir("publish-agent");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "agent",
+                "name": "agent-pub-test",
+                "version": "0.2.0",
+                "description": "test agent",
+                "tools": ["@zack/slack-post-message@0.1.0"],
+                "skills": [],
+                "knowledge": [],
+                "memory": [],
+                "profiles": [],
+                "examples": [
+                    { "title": "Example", "prompt": "Do the thing." }
+                ]
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        let args = PublishArgs {
+            manifest: manifest_path.to_string_lossy().into_owned(),
+            schema: Some(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../schemas/agentpm.manifest.schema.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            strict: false,
+            dry_run: true,
+            quiet: true,
+            sign: false,
+            key_id: None,
+            token: Some("dummy-token".into()),
+        };
+
+        args.run("https://example.com".into()).await.unwrap();
+
+        let tar_path = dir.join("target/agentpm/agent-pub-test-0.2.0.tar.gz");
+        assert!(tar_path.exists(), "expected {}", tar_path.display());
+        let entries = tar_entries(&tar_path);
+        assert_eq!(entries, vec!["agent.json".to_string()]);
     }
 }
 
