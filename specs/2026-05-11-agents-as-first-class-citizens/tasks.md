@@ -213,7 +213,7 @@
 - [ ] Add CLI coverage for `agentpm install <tool-spec>`.
 - [ ] Add CLI coverage for `agentpm install <agent-spec>`.
 - [ ] Add CLI coverage for an agent package whose tool dependency resolves to a different version than another installed agent's dependency.
-- [] Publish a test tool package in a non-production environment.
+- [ ] Publish a test tool package in a non-production environment.
 - [ ] Publish a test agent package in a non-production environment.
 - [ ] Install the test agent and confirm its tool dependencies are installed.
 - [ ] Confirm lockfile v2 is written and contains the expected package graph.
