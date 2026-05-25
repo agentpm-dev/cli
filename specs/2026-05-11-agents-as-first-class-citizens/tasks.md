@@ -213,14 +213,15 @@
 - [ ] Add CLI coverage for `agentpm install <tool-spec>`.
 - [ ] Add CLI coverage for `agentpm install <agent-spec>`.
 - [ ] Add CLI coverage for an agent package whose tool dependency resolves to a different version than another installed agent's dependency.
-- [ ] Publish a test tool package in a non-production environment.
+- [] Publish a test tool package in a non-production environment.
 - [ ] Publish a test agent package in a non-production environment.
 - [ ] Install the test agent and confirm its tool dependencies are installed.
 - [ ] Confirm lockfile v2 is written and contains the expected package graph.
 - [ ] Confirm existing tool-only install flow still works.
 - [ ] Confirm existing tool run flow still works.
 - [ ] Confirm search and detail pages work for both tools and agents.
-- [ ] Confirm release notes mention the lockfile change and package terminology migration.A
+- [ ] Confirm release notes mention the lockfile change and package terminology migration.
+- [ ] When everything is signed off, release new cli version, new sdk versions, new registry version, and new website version.
 
 ## Milestone 17: Publish example agents and add installed-agent example apps
 - [ ] Publish the current recommended example agents from `agentpm-examples`.
