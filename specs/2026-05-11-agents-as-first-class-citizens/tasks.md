@@ -167,11 +167,13 @@
 - [ ] Update search serializers to return `itemType: "tool"`, `itemType: "agent"`, or `itemType: "namespace"`.
 - [ ] Update `totals_by_type` to include agents.
 - [ ] Update cursor logic as needed so mixed package search pagination remains stable.
+- [ ] Ensure install columns are properly populated for both tools and agents.
 - [ ] Add backend search tests for tools, agents, namespaces, and all.
 
 ## Milestone 14: Add registry UI support for agents
-- [ ] Add visual differentiation for tool and agent package cards.
+- [ ] Add visual differentiation for tool and agent package cards. Badge using kind is enough. Consider how ToolBox could be different too.
 - [ ] Add an agents filter/search tab or equivalent UI control.
+- [ ] Update public search/detail DTO usage and UI consumers so agent results no longer depend on tool-named public fields like `tool_id`, `tool_slug`, and `tool_version_id`; migrate to package-oriented field names.
 - [ ] Add agent detail pages.
 - [ ] Show agent description, README, license, version, namespace, and install command.
 - [ ] Show inline examples from `agent.json`.
