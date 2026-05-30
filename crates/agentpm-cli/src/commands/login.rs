@@ -196,10 +196,15 @@ impl LoginArgs {
             "arch": std::env::consts::ARCH,
             "cli_version": env!("CARGO_PKG_VERSION"),
         });
+        let requested_scopes = if self.scopes.is_empty() {
+            vec!["packages:publish".to_string()]
+        } else {
+            self.scopes.clone()
+        };
 
         // Start
         let start = match client
-            .cli_device_start(&self.scopes, "agentpm-cli", device_meta)
+            .cli_device_start(&requested_scopes, "agentpm-cli", device_meta)
             .await
         {
             Ok(res) => res,
