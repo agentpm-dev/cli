@@ -27,6 +27,8 @@
 - [ ] Ensure template packages are stored in the shared package/package-version model with `kind = template`.
 - [ ] Ensure final S3 key generation and upload/finalize behavior works for template artifacts.
 - [ ] Ensure template packages go through artifact validation, registry attestation, signing checks, and scan enqueueing where the existing package pipeline supports it.
+- [ ] Ensure templates are considered in package install counts globally, as part of namespaces, and as part of search results.
+- [ ] Ensure templates are considered for trending search index.
 - [ ] Update package detail URL generation for template packages.
 - [ ] Avoid returning tool-specific URLs for template publish receipts.
 - [ ] Review tool-specific fields in publish receipts, such as `tool_id`, and either preserve for compatibility or add package-kind-appropriate fields without breaking existing clients.
@@ -50,6 +52,8 @@
 - [ ] Update CLI install/download code paths so a template artifact can be downloaded and extracted to a temporary generation location.
 - [ ] Ensure downloaded template artifacts are integrity-checked before use.
 - [ ] Ensure template artifact extraction uses safe path checks and rejects path traversal.
+- [ ] Ensure templates are considered in package install counts globally, as part of namespaces, and as part of search results.
+- [ ] Ensure templates are considered for trending search index.
 - [ ] Decide whether normal `agentpm install` should reject template roots or allow them without expansion; document and test the chosen behavior.
 - [ ] Ensure generated project dependency installation installs `template.dependencies.tools` and `template.dependencies.agents` as workspace roots.
 - [ ] Ensure generated project dependency installation writes a lockfile for runnable dependencies only.
@@ -110,6 +114,7 @@
 - [ ] Display entrypoint/next-step commands from `template.entrypoints`.
 - [ ] Display scan/signing/attestation status using existing package metadata where available.
 - [ ] Ensure tool and agent detail pages do not regress.
+- [ ] Add a dedicated “Start with a workflow template” section near the top of the registry landing page, directly below the hero, showing approximately four trending templates. Keep this section visually and conceptually separate from the existing tools/agents discovery sections so users who want the fastest path to a working agent see templates immediately, while users who want to build from lower-level packages can continue into the tools and agents areas.
 - [ ] Add frontend tests or component tests for template cards/detail rendering where the project has test infrastructure.
 - [ ] Add backend/API tests for search responses including template package kinds.
 - [ ] Ensure templates do not appear as tools in tool-only views unless intentionally included in all-package search.
