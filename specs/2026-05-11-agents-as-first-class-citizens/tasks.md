@@ -227,7 +227,6 @@
 - [ ] Publish the current recommended example agents from `agentpm-examples`.
 - [ ] Verify the published example agents can be installed directly with `agentpm install @namespace/agent-name@version`.
 - [ ] Add at least one example app that installs a published agent package and loads its resolved tools through the SDK.
-- [ ] Add a concrete example showing two published agents depending on different versions of the same tool, including an example `agent.lock` that shows both tool versions coexisting.
 - [ ] Keep the example clear that the SDK is loading an installed agent artifact plus its resolved tool refs, not executing the agent package directly.
 - [ ] Update `agentpm-examples` READMEs so manifest-driven local examples and direct published-agent examples are clearly separated.
 - [ ] Add manual verification steps showing a published example agent install under `.agentpm/agents/...` plus its tools under `.agentpm/tools/...`.
