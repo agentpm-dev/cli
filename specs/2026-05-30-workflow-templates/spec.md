@@ -121,7 +121,7 @@ Supported `template.execution_surfaces` values for this phase:
 - `node-sdk`
 - `agentpm-run`
 - `agentpm-serve-mcp`
-- `workspace`
+- `multi-agent-workspace`
 
 Supported `template.dependencies` values for this phase:
 

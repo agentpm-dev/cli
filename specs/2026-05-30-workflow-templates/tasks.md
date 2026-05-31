@@ -33,11 +33,12 @@
   - Include the required top-level fields: `kind`, `name`, `version`, and `description`.
   - Include a minimal valid `template` object with `display_name`, `use_case`, `execution_surfaces`, `files_root`, `variables`, `dependencies`, and `entrypoints`.
   - Create the default template files root directory, such as `template/`, when initializing a template package.
-  - Include a minimal generated scaffold under the files root, such as `template/agent.json` and `template/README.md`, so the initialized template can be linted and evolved.
+  - Include only authoring-shell scaffold files under the files root, such as `template/README.md` and optionally `.env.example`.
+  - Do not create `template/agent.json` during `agentpm init --kind template`; that file represents consumer output and should be created later by `agentpm new`.
   - Preserve existing `agentpm init --kind tool` and `agentpm init --kind agent` behavior.
 - [ ] Add CLI tests for `agentpm init --kind template`.
 - [ ] Verify initialized template packages lint successfully.
-- [ ] Verify initialized template packages include both the template package `agent.json` and a starter generated-project scaffold under `template/`.
+- [ ] Verify initialized template packages include the template package `agent.json` plus authoring-shell scaffold files under `template/`, without pre-creating a generated-project `template/agent.json`.
 - [ ] Verify existing `agentpm init --kind tool` and `agentpm init --kind agent` tests still pass.
 - [ ] Define allowed `template.execution_surfaces[]` values for the MMP:
     - `python-sdk`
@@ -121,7 +122,16 @@
 - [ ] Avoid corrupting binary files during rendering.
 - [ ] Ensure copied file paths cannot escape the target directory.
 - [ ] Ensure generated executable bits are preserved where possible, especially for shell scripts.
-- [ ] Generate or preserve the root `agent.json` from the template files.
+- [ ] Synthesize the generated project's root `agent.json` during `agentpm new` rather than requiring the template artifact to ship one under `template.files_root`.
+- [ ] Define exactly which fields `agentpm new` synthesizes into the generated root `agent.json`, including:
+    - `kind: "agent"`
+    - generated project `name`
+    - `version`
+    - generated project `description`
+    - `tools` derived from `template.dependencies.tools`
+    - reserved placeholder arrays (`skills`, `knowledge`, `memory`, `profiles`) as supported by the current manifest contract
+    - no recursive `agents` field
+- [ ] If the template author provides extra scaffold files, ensure those files are copied/rendered normally, but keep ownership of the root generated-project `agent.json` in `agentpm new`.
 - [ ] Validate that the generated root `agent.json` is schema-valid.
 - [ ] Ensure generated root `agent.json` does not include recursive `agents` dependencies.
 - [ ] Install declared `template.dependencies.tools` and `template.dependencies.agents` into the generated project as runnable workspace dependencies.

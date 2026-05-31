@@ -3,7 +3,7 @@
 This folder contains the JSON Schema that defines `agent.json` for AgentPM.
 
 - **File:** `agentpm.manifest.schema.json`
-- **Kinds:** `agent` (composed of tools) and `tool` (single tool package)
+- **Kinds:** `tool` (single tool package), `agent` (composed of tools), and `template` (workflow starter package)
 - **Strictness:** `additionalProperties: false` (unknown fields are rejected)
 
 ---
@@ -64,6 +64,44 @@ agentpm init --kind agent --name research-assistant --description "Assistant com
 }
 ```
 
+```bash
+agentpm init --kind template --name research-assistant-python --description "Python SDK starter for a local research assistant"
+```
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "kind": "template",
+  "name": "research-assistant-python",
+  "version": "0.1.0",
+  "description": "Python SDK starter for a local research assistant",
+  "template": {
+    "display_name": "Research Assistant Python",
+    "use_case": "starter",
+    "execution_surfaces": ["agentpm-run"],
+    "files_root": "template",
+    "variables": [
+      {
+        "name": "project_name",
+        "description": "Generated project name. Generation-time only; do not use for secrets.",
+        "required": true,
+        "default": "research-assistant-python"
+      }
+    ],
+    "dependencies": {
+      "tools": [],
+      "agents": []
+    },
+    "entrypoints": [
+      {
+        "label": "Review generated scaffold",
+        "command": "cat README.md"
+      }
+    ]
+  }
+}
+```
+
 > For fully reproducible validation, **pin to a tag or commit**:
 >
 > ```
@@ -97,32 +135,35 @@ agentpm lint path/to/agent.json
 
 | Field         | Type     | Required | Allowed on | Notes                                                                               |
 |---------------|----------|----------|-----------|-------------------------------------------------------------------------------------|
-| `$schema`     | string   | no       | both      | URI to this schema (optional but recommended)                                       |
-| `kind`        | enum     | **yes**  | both      | `"agent"` or `"tool"` (discriminator)                                               |
-| `name`        | string   | **yes**  | both      | `^[a-z][a-z0-9-]{0,63}$`                                                            |
-| `version`     | semver   | **yes**  | both      | SemVer string (supports pre/metadata)                                               |
-| `description` | string   | **yes**  | both      | Free text                                                                           |
+| `$schema`     | string   | no       | all       | URI to this schema (optional but recommended)                                       |
+| `kind`        | enum     | **yes**  | all       | `"tool"`, `"agent"`, or `"template"` (discriminator)                                |
+| `name`        | string   | **yes**  | all       | `^[a-z][a-z0-9-]{0,63}$`                                                            |
+| `version`     | semver   | **yes**  | all       | SemVer string (supports pre/metadata)                                               |
+| `description` | string   | **yes**  | all       | Free text                                                                           |
 | `tools`       | array    | **yes**¹ | **agent** | Array of tool refs: string or `{name, version}`                                     |
 | `skills`      | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
 | `knowledge`   | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
 | `memory`      | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
 | `profiles`    | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
 | `examples`    | array    | no       | **agent** | Inline prompt examples `{ title, prompt }`.                                         |
+| `template`    | object   | **yes**³ | **template** | Template metadata including files root, dependencies, variables, and entrypoints |
 | `entrypoint`  | string   | **yes**² | **tool**  | Execution ref `{command, args, cwd, timeout_ms, env}`                               |
 | `inputs`      | object   | **yes**² | **tool**  | JSON Schema (or shape) for inputs                                                   |
 | `outputs`     | object   | **yes**² | **tool**  | JSON Schema (or shape) for outputs                                                  |
 | `files`       | string[] | **yes**² | **tool**  | Non-empty list of paths/globs to package                                            |
 | `runtime`     | object   | no       | **tool**  | `{ type: "python or node", version: "MAJOR[.MINOR[.PATCH]]" }`                      | 
-| `environment` | object   | no       | both      | Dictionary of required or optional env variables `{required, description, default}` | 
-| `readme`      | string   | no       | both      | Path to README file. Will automatically look for README.md if not specified.         | 
-| `license`     | object   | no       | both      | `{ spdx: "license spdx", file: "Path to LICENSE file" }`                            | 
+| `environment` | object   | no       | all       | Dictionary of required or optional env variables `{required, description, default}` | 
+| `readme`      | string   | no       | all       | Path to README file. Will automatically look for README.md if not specified.         | 
+| `license`     | object   | no       | all       | `{ spdx: "license spdx", file: "Path to LICENSE file" }`                            | 
 
 ¹ required only when `kind = "agent"`  
 ² required only when `kind = "tool"`
+³ required only when `kind = "template"`
 
 **Kind-specific rules** are enforced via schema constraints:
 - `entrypoint`, `inputs`, `outputs`, `files`, `runtime` ⇒ **only valid on tools**
 - `tools`, `skills`, `knowledge`, `memory`, `profiles`, `examples` ⇒ **only valid on agents**
+- `template` ⇒ **only valid on templates**
 
 ---
 
@@ -168,6 +209,63 @@ agentpm lint path/to/agent.json
   ]
 }
 ```
+
+### Template (workflow starter package)
+
+```json
+{
+  "kind": "template",
+  "name": "research-assistant-python",
+  "version": "0.1.0",
+  "description": "Python SDK starter for a local research assistant",
+  "template": {
+    "display_name": "Python Research Assistant",
+    "use_case": "research",
+    "execution_surfaces": ["python-sdk"],
+    "files_root": "template",
+    "variables": [
+      {
+        "name": "project_name",
+        "description": "Generated project name. Generation-time only; do not use for secrets.",
+        "required": true,
+        "default": "research-assistant"
+      }
+    ],
+    "dependencies": {
+      "tools": [
+        { "name": "@zack/web-page-extract", "version": "0.1.2" }
+      ],
+      "agents": []
+    },
+    "entrypoints": [
+      {
+        "label": "Run locally",
+        "command": "python main.py \"AgentPM\""
+      }
+    ]
+  }
+}
+```
+
+## Template fields
+
+Template manifests use a top-level `template` object. It defines:
+
+- `display_name`
+- `use_case`
+- `execution_surfaces`
+- `stack`
+- `files_root`
+- `variables`
+- `dependencies.tools`
+- `dependencies.agents`
+- `entrypoints`
+
+`template.variables` are generation-time scaffold values only. Use them for things like project names and starter copy. Do **not** use them for API keys, tokens, passwords, or runtime secrets. Runtime configuration belongs in `.env.example` and manifest `environment.vars` where applicable.
+
+`template.stack` is enum-constrained in the MMP to: `python`, `node`, `shell`, `mcp`, and `workspace`.
+
+`template.files_root` must be a relative path inside the template artifact. Absolute paths, empty paths, and `..` traversal are rejected.
 
 ## Defining `inputs` and `outputs`
 

@@ -61,6 +61,103 @@
         "description": { "type": "string" },
         "default": { "type": "string" }
       }
+    },
+    "templateVariable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "description", "required"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Generation-time scaffold variable name. Use only for non-secret template values."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Describe how the scaffold value is used. Do not use template variables for API keys, tokens, passwords, or runtime secrets."
+        },
+        "required": { "type": "boolean" },
+        "default": { "type": "string" }
+      }
+    },
+    "templateDependencyGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tools", "agents"],
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "agents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        }
+      }
+    },
+    "templateEntrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "command"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 }
+      }
+    },
+    "templateMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "display_name",
+        "use_case",
+        "execution_surfaces",
+        "files_root",
+        "dependencies",
+        "entrypoints"
+      ],
+      "properties": {
+        "display_name": { "type": "string", "minLength": 1 },
+        "use_case": { "type": "string", "minLength": 1 },
+        "stack": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["python", "node", "shell", "mcp", "workspace"]
+          }
+        },
+        "execution_surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "python-sdk",
+              "node-sdk",
+              "agentpm-run",
+              "agentpm-serve-mcp",
+              "multi-agent-workspace"
+            ]
+          }
+        },
+        "files_root": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!\\\\\\\\)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$",
+          "description": "Relative directory inside the template artifact that is copied into the generated project. Template text rendering uses {{ variable_name }} placeholders."
+        },
+        "variables": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/templateVariable" },
+          "description": "Generation-time scaffold variables only. Do not use for API keys, tokens, passwords, or runtime secrets."
+        },
+        "dependencies": { "$ref": "#/$defs/templateDependencyGroup" },
+        "entrypoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/templateEntrypoint" }
+        }
+      }
     }
   },
 
@@ -77,12 +174,13 @@
     "inputs":     { "properties": { "kind": { "const": "tool" } } },
     "outputs":    { "properties": { "kind": { "const": "tool" } } },
     "files":      { "properties": { "kind": { "const": "tool" } } },
-    "runtime":    { "properties": { "kind": { "const": "tool" } } }
+    "runtime":    { "properties": { "kind": { "const": "tool" } } },
+    "template":   { "properties": { "kind": { "const": "template" } } }
   },
 
   "properties": {
     "$schema": { "type": "string", "format": "uri" },
-    "kind": { "type": "string", "enum": ["agent", "tool"] },
+    "kind": { "type": "string", "enum": ["agent", "tool", "template"] },
     "name": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,63}$" },
     "version": {
       "type": "string",
@@ -154,6 +252,7 @@
     },
 
     "readme": { "type": "string", "minLength": 1 },
+    "template": { "$ref": "#/$defs/templateMetadata" },
 
     "license": {
       "type": "object",
@@ -179,6 +278,10 @@
     {
       "properties": { "kind": { "const": "tool" } },
       "required": ["entrypoint", "inputs", "outputs", "files"]
+    },
+    {
+      "properties": { "kind": { "const": "template" } },
+      "required": ["template"]
     }
   ]
 }
