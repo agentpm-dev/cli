@@ -91,6 +91,7 @@
 - [ ] Ensure install init can return presigned artifacts for template packages when called by `agentpm new`.
 - [ ] Ensure install init still returns runtime/signing/integrity data without assuming the artifact is a tool.
 - [ ] Ensure install init returns enough metadata for the CLI to integrity-check downloaded template artifacts before use.
+- [ ] Ensure template packages participate in shared package stats/metrics tables where package-kind-neutral metrics already exist (stats, trending, etc.).
 - [ ] Decide whether normal `agentpm install` should reject template roots or allow them without expansion; document and test the chosen behavior.
 - [ ] Add tests proving template install roots do not expand `template.dependencies` through normal install resolution.
 - [ ] Add tests proving agent install roots still expand tool dependencies.
@@ -191,6 +192,7 @@
 - [ ] Position templates in registry copy as the fastest path to a working agent/workflow, while tools and agents remain the lower-level building blocks for users who want to assemble their own system.
 - [ ] Add frontend tests or component tests for template cards/detail rendering where the project has test infrastructure.
 - [ ] Add backend/API tests for search responses including template package kinds.
+- [ ] Remove any temporary Milestone 2 search guards that hide template packages from current tool/agent search serialization, and replace them with first-class template search items once template discovery ships.
 - [ ] Ensure templates do not appear as tools in tool-only views unless intentionally included in all-package search.
 - [ ] Handle templates with empty `template.dependencies.tools` or empty `template.dependencies.agents` without rendering broken sections.
 - [ ] Handle templates with no README gracefully using existing package fallback behavior.

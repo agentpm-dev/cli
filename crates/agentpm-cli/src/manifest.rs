@@ -79,19 +79,25 @@ pub struct AgentManifest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+pub struct TemplateMetadata {
+    pub files_root: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TemplateManifest {
     pub kind: String,
     pub name: String,
     pub version: String,
+    #[allow(dead_code)]
     pub description: Option<String>,
-    pub template: Value,
+    pub template: TemplateMetadata,
 }
 
 #[derive(Debug)]
 pub enum PublishManifest {
     Tool(Box<ToolManifest>),
     Agent(Box<AgentManifest>),
+    Template(Box<TemplateManifest>),
 }
 
 /// Resolve the schema source (local file if present; else hosted URL)
@@ -392,8 +398,11 @@ pub fn parse_publish_manifest(value: &Value) -> Result<PublishManifest> {
                 .context("parsing manifest into AgentManifest")?;
             Ok(PublishManifest::Agent(Box::new(mf)))
         }
+        "template" => Ok(PublishManifest::Template(Box::new(
+            parse_template_manifest(value)?,
+        ))),
         other => Err(anyhow!(format!(
-            "`agentpm publish` supports kind=\"tool\" and kind=\"agent\" (got kind=\"{}\")",
+            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", and kind=\"template\" (got kind=\"{}\")",
             other
         ))),
     }
@@ -1013,7 +1022,9 @@ mod tests {
                 assert_eq!(mf.kind, "tool");
                 assert_eq!(mf.name, "summarize");
             }
-            PublishManifest::Agent(_) => panic!("expected tool publish manifest"),
+            PublishManifest::Agent(_) | PublishManifest::Template(_) => {
+                panic!("expected tool publish manifest")
+            }
         }
     }
 
@@ -1037,7 +1048,47 @@ mod tests {
                 assert_eq!(mf.kind, "agent");
                 assert_eq!(mf.name, "support-agent");
             }
-            PublishManifest::Tool(_) => panic!("expected agent publish manifest"),
+            PublishManifest::Tool(_) | PublishManifest::Template(_) => {
+                panic!("expected agent publish manifest")
+            }
+        }
+    }
+
+    #[test]
+    fn parse_publish_manifest_dispatches_template_kind() {
+        let manifest = json!({
+            "kind": "template",
+            "name": "research-assistant",
+            "version": "0.1.0",
+            "description": "Research starter template.",
+            "template": {
+                "display_name": "Research Assistant",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        });
+
+        match parse_publish_manifest(&manifest).unwrap() {
+            PublishManifest::Template(mf) => {
+                assert_eq!(mf.kind, "template");
+                assert_eq!(mf.name, "research-assistant");
+                assert_eq!(mf.template.files_root, "template");
+            }
+            PublishManifest::Tool(_) | PublishManifest::Agent(_) => {
+                panic!("expected template publish manifest")
+            }
         }
     }
 
@@ -1051,7 +1102,7 @@ mod tests {
 
         let err = parse_publish_manifest(&manifest).unwrap_err().to_string();
         assert!(
-            err.contains("supports kind=\"tool\" and kind=\"agent\""),
+            err.contains("supports kind=\"tool\", kind=\"agent\", and kind=\"template\""),
             "unexpected error: {err}"
         );
     }

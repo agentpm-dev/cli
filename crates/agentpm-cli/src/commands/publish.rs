@@ -4,8 +4,8 @@ use crate::keys::signing::{
     StoredKeyV1, decrypt_private, keystore_dir, prompt_passphrase_with_fallback,
 };
 use crate::manifest::{
-    AgentManifest, Entrypoint, PublishManifest, ToolManifest, load_manifest_value,
-    parse_publish_manifest, resolve_schema_source, validate_manifest_value,
+    AgentManifest, Entrypoint, PublishManifest, TemplateManifest, ToolManifest,
+    load_manifest_value, parse_publish_manifest, resolve_schema_source, validate_manifest_value,
 };
 use crate::prelude::*;
 use crate::ui::Step;
@@ -140,6 +140,9 @@ impl PublishArgs {
             }
             PublishManifest::Agent(mf) => {
                 package_agent(mf, &manifest_path).context("packaging agent into tar.gz")?
+            }
+            PublishManifest::Template(mf) => {
+                package_template(mf, &manifest_path).context("packaging template into tar.gz")?
             }
         };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
@@ -293,6 +296,7 @@ impl PublishArgs {
                 artifact_filename(&mf.name, &mf.version, Some(&mf.runtime))
             }
             PublishManifest::Agent(mf) => artifact_filename(&mf.name, &mf.version, None),
+            PublishManifest::Template(mf) => artifact_filename(&mf.name, &mf.version, None),
         };
 
         // Build optional finalize_extra
@@ -478,6 +482,65 @@ fn package_agent(manifest: &AgentManifest, manifest_path: &Path) -> Result<PathB
     tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
     tar.finish()?;
 
+    Ok(out_path)
+}
+
+fn package_template(manifest: &TemplateManifest, manifest_path: &Path) -> Result<PathBuf> {
+    let root = manifest_path.parent().unwrap_or(Path::new("."));
+    let out_dir = root.join("target").join("agentpm");
+    fs::create_dir_all(&out_dir).ok();
+
+    let out_path = out_dir.join(artifact_filename(&manifest.name, &manifest.version, None));
+    let f =
+        fs::File::create(&out_path).with_context(|| format!("creating {}", out_path.display()))?;
+    let enc = GzEncoder::new(f, Compression::default());
+    let mut tar = TarBuilder::new(enc);
+
+    let mut member_count: usize = 0;
+
+    let manifest_bytes = fs::read(manifest_path)?;
+    let mut header = tar::Header::new_gnu();
+    header.set_size(manifest_bytes.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    ensure_safe_tar_name("agent.json")?;
+    member_count += 1;
+    tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+
+    let files_root = Path::new(&manifest.template.files_root);
+    let files_root_abs = root.join(files_root);
+    if !files_root_abs.exists() {
+        bail!(
+            "template.files_root does not exist: {}",
+            files_root_abs.display()
+        );
+    }
+
+    for entry in WalkDir::new(&files_root_abs)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path_abs = entry.path();
+        if path_abs.is_dir() {
+            continue;
+        }
+
+        let rel_path = path_abs.strip_prefix(root).with_context(|| {
+            format!(
+                "template file must stay within project root: {}",
+                path_abs.display()
+            )
+        })?;
+        let tar_name = rel_to_tar_name(rel_path);
+
+        if tar_name.starts_with("target/agentpm/") {
+            continue;
+        }
+
+        append_checked(&mut tar, path_abs, &tar_name, &mut member_count)?;
+    }
+
+    tar.finish()?;
     Ok(out_path)
 }
 
@@ -758,6 +821,7 @@ fn manifest_kind(manifest: &PublishManifest) -> &str {
     match manifest {
         PublishManifest::Tool(mf) => &mf.kind,
         PublishManifest::Agent(mf) => &mf.kind,
+        PublishManifest::Template(mf) => &mf.kind,
     }
 }
 
@@ -765,6 +829,7 @@ fn manifest_name(manifest: &PublishManifest) -> &str {
     match manifest {
         PublishManifest::Tool(mf) => &mf.name,
         PublishManifest::Agent(mf) => &mf.name,
+        PublishManifest::Template(mf) => &mf.name,
     }
 }
 
@@ -772,6 +837,7 @@ fn manifest_version(manifest: &PublishManifest) -> &str {
     match manifest {
         PublishManifest::Tool(mf) => &mf.version,
         PublishManifest::Agent(mf) => &mf.version,
+        PublishManifest::Template(mf) => &mf.version,
     }
 }
 
@@ -959,6 +1025,71 @@ mod tests {
         assert!(tar_path.exists(), "expected {}", tar_path.display());
         let entries = tar_entries(&tar_path);
         assert_eq!(entries, vec!["agent.json".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_template_manifest() {
+        let dir = temp_dir("publish-template");
+        let manifest_path = dir.join("agent.json");
+        let scaffold_dir = dir.join("template");
+        let scaffold_readme = scaffold_dir.join("README.md");
+        let scaffold_env = scaffold_dir.join(".env.example");
+        fs::create_dir_all(&scaffold_dir).unwrap();
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "template",
+                "name": "template-pub-test",
+                "version": "0.3.0",
+                "description": "test template",
+                "template": {
+                    "display_name": "Template Pub Test",
+                    "use_case": "research",
+                    "execution_surfaces": ["python-sdk"],
+                    "stack": ["python"],
+                    "files_root": "template",
+                    "variables": [],
+                    "dependencies": {
+                        "tools": [],
+                        "agents": []
+                    },
+                    "entrypoints": [
+                        { "label": "Run", "command": "python main.py" }
+                    ]
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        fs::write(&scaffold_readme, "# {{ project_name }}\n").unwrap();
+        fs::write(&scaffold_env, "OPENAI_API_KEY=\n").unwrap();
+
+        let args = PublishArgs {
+            manifest: manifest_path.to_string_lossy().into_owned(),
+            schema: Some(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../schemas/agentpm.manifest.schema.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            strict: false,
+            dry_run: true,
+            quiet: true,
+            sign: false,
+            key_id: None,
+            token: Some("dummy-token".into()),
+        };
+
+        args.run("https://example.com".into()).await.unwrap();
+
+        let tar_path = dir.join("target/agentpm/template-pub-test-0.3.0.tar.gz");
+        assert!(tar_path.exists(), "expected {}", tar_path.display());
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"template/README.md".to_string()));
+        assert!(entries.contains(&"template/.env.example".to_string()));
     }
 }
 
