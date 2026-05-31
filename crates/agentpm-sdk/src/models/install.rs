@@ -6,6 +6,7 @@ pub enum PackageKind {
     #[default]
     Tool,
     Agent,
+    Template,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -95,6 +96,17 @@ mod tests {
 
         assert_eq!(parsed.kind, PackageKind::Agent);
         assert_eq!(parsed.range, "^0.1");
+    }
+
+    #[test]
+    fn install_dto_supports_explicit_template_kind() {
+        let parsed: ResolvedPackage = serde_json::from_str(
+            r#"{"kind":"template","name":"@zack/research-template","version":"0.1.0","integrity":"abc"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.kind, PackageKind::Template);
+        assert_eq!(parsed.version, "0.1.0");
     }
 }
 

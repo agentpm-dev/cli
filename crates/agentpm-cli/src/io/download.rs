@@ -439,6 +439,9 @@ fn resolved_package_dir(
     match kind {
         sdkm::PackageKind::Tool => resolved_tool_dir(tools_base, package, version),
         sdkm::PackageKind::Agent => resolved_agent_dir(agents_base, package, version),
+        sdkm::PackageKind::Template => {
+            bail!("template artifacts are not installable through this path yet")
+        }
     }
 }
 
