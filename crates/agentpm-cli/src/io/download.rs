@@ -505,7 +505,7 @@ mod tests {
 
         assert!(
             err.to_string()
-                .contains("template artifacts are not installable through this path yet"),
+                .contains("template packages are not installable with"),
             "{err:#}"
         );
     }
