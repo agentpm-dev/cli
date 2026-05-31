@@ -91,7 +91,7 @@
 - [ ] Ensure install init can return presigned artifacts for template packages when called by `agentpm new`.
 - [ ] Ensure install init still returns runtime/signing/integrity data without assuming the artifact is a tool.
 - [ ] Ensure install init returns enough metadata for the CLI to integrity-check downloaded template artifacts before use.
-- [ ] Ensure template packages participate in shared package stats/metrics tables where package-kind-neutral metrics already exist (stats, trending, etc.).
+- [ ] Ensure template packages participate in shared package stats/metrics tables where package-kind-neutral metrics already exist (stats, trending, etc.) by ensuring they are included in install triggers.
 - [ ] Decide whether normal `agentpm install` should reject template roots or allow them without expansion; document and test the chosen behavior.
 - [ ] Add tests proving template install roots do not expand `template.dependencies` through normal install resolution.
 - [ ] Add tests proving agent install roots still expand tool dependencies.
