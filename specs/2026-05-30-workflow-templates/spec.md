@@ -294,7 +294,9 @@ These examples should be real templates using `kind: "template"`, not just docum
 - The generated root `agent.json` is schema-valid as `kind: "agent"` and does not include `agents` dependencies.
 - Registry search supports template artifacts.
 - Registry template detail pages show use case, stack, execution surfaces, dependencies, and bootstrap command.
-- The examples repo contains official workflow templates for Python SDK, Node SDK, `agentpm run`, `agentpm serve --mcp`, and multi-agent workspace scaffolding.
+- Official examples exist for the Python SDK, Node SDK, `agentpm run`, `agentpm serve --mcp`, and a multi-agent workspace scaffold.
+- Each official example must be runnable or manually verifiable using the commands documented in its README.
+- The multi-agent example must use template-level agent dependencies only; `kind: "agent"` manifests must not gain recursive `agents[]` dependencies.
 - At least one generated example project can be smoke-tested through each relevant execution surface.
 
 ## Risks / edge cases

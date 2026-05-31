@@ -3,13 +3,23 @@
 ## Milestone 1: Template Manifest Contract
 - [ ] Update the JSON schema to include `template` as a valid top-level `kind` alongside `agent` and `tool`.
 - [ ] Add a top-level `template` property that is only valid when `kind` is `template`.
-- [ ] Define the required fields for `template`, including `display_name`, `use_case`, `execution_surfaces`, `files_root`, `dependencies`, and `entrypoints` as appropriate for the MMP.
+- [ ] Update the manifest schema `oneOf` rules so `kind: "template"` requires the top-level `template` object and does not require tool-only or agent-only fields.
+- [ ] Update dependent schema rules so `template` is only valid for `kind: "template"` and template-only fields cannot appear on `kind: "tool"` or `kind: "agent"` manifests.
+- [ ] Define the required fields for `template`, including `display_name`, `use_case`, `execution_surfaces`, `files_root`, `dependencies`, and `entrypoints`.
 - [ ] Define `template.variables[]` with at least `name`, `description`, `required`, and `default` support.
+- [ ] Define valid `template.variables[].name` format, such as lowercase snake_case matching `^[a-z][a-z0-9_]*$`.
+- [ ] Add schema tests for invalid variable names and duplicate variable names.
+- [ ] Document that `template.variables` are generation-time scaffold values only and must not be used for API keys, tokens, passwords, or runtime secrets. Runtime configuration belongs in `.env.example` and manifest `environment.vars` where applicable.
 - [ ] Define `template.dependencies.tools[]` using the same package reference shape already used by agents for tools.
-- [ ] Define `template.dependencies.agents[]` as install roots for generated workspaces.
+- [ ] Define `template.dependencies.agents[]` using the same package reference shape as `template.dependencies.tools[]`, but treating each agent as an independent generated workspace install root.
 - [ ] Ensure `template.dependencies.agents[]` does not imply or add `agents[]` support to normal `kind: "agent"` manifests.
 - [ ] Ensure `kind: "agent"` manifests still require `tools` and continue to support top-level `skills`, `knowledge`, `memory`, and `profiles` placeholders.
 - [ ] Ensure `kind: "tool"` manifests remain unchanged.
+- [ ] Define `template.entrypoints[]` with at least `label` and `command` fields so `agentpm new` can print clear next-step commands after generation.
+- [ ] Define `template.files_root` as a relative path within the template artifact.
+- [ ] Define the supported template variable placeholder format for rendered text files, for example `{{ variable_name }}`.
+- [ ] Define behavior for unknown placeholders, either fail generation with a clear error or leave them unchanged; prefer fail-fast for declared template rendering.
+- [ ] Reject absolute paths, empty paths, `..` traversal, and paths that would escape the extracted template artifact.
 - [ ] Add schema tests for valid template manifests.
 - [ ] Add schema tests proving existing valid tool and agent manifests still pass.
 - [ ] Add schema tests proving an agent manifest with recursive `agents` dependencies fails.
@@ -17,6 +27,24 @@
 - [ ] Update CLI manifest parsing/types to understand `kind: "template"`.
 - [ ] Update any Rust manifest enums/structs so template manifests can be deserialized and validated.
 - [ ] Update lint behavior so `agentpm lint` validates template manifests and gives clear errors.
+- [ ] Update `agentpm init` to support template manifests:
+  - Extend `--kind` to accept `template` in addition to `tool` and `agent`.
+  - Generate a valid starter `agent.json` with `kind: "template"`.
+  - Include the required top-level fields: `kind`, `name`, `version`, and `description`.
+  - Include a minimal valid `template` object with `display_name`, `use_case`, `execution_surfaces`, `files_root`, `variables`, `dependencies`, and `entrypoints`.
+  - Create the default template files root directory, such as `template/`, when initializing a template package.
+  - Include a minimal generated scaffold under the files root, such as `template/agent.json` and `template/README.md`, so the initialized template can be linted and evolved.
+  - Preserve existing `agentpm init --kind tool` and `agentpm init --kind agent` behavior.
+- [ ] Add CLI tests for `agentpm init --kind template`.
+- [ ] Verify initialized template packages lint successfully.
+- [ ] Verify initialized template packages include both the template package `agent.json` and a starter generated-project scaffold under `template/`.
+- [ ] Verify existing `agentpm init --kind tool` and `agentpm init --kind agent` tests still pass.
+- [ ] Define allowed `template.execution_surfaces[]` values for the MMP:
+    - `python-sdk`
+    - `node-sdk`
+    - `agentpm-run`
+    - `agentpm-serve-mcp`
+    - `multi-agent-workspace`
 
 ## Milestone 2: Publish and Package API Support
 - [ ] Update publish kind detection so `template` is recognized instead of defaulting to `tool`.
@@ -27,12 +55,23 @@
 - [ ] Ensure template packages are stored in the shared package/package-version model with `kind = template`.
 - [ ] Ensure final S3 key generation and upload/finalize behavior works for template artifacts.
 - [ ] Ensure template packages go through artifact validation, registry attestation, signing checks, and scan enqueueing where the existing package pipeline supports it.
-- [ ] Ensure templates are considered in package install counts globally, as part of namespaces, and as part of search results.
-- [ ] Ensure templates are considered for trending search index.
+- [ ] Ensure registry attestation statements record `kind: "template"` for template packages.
+- [ ] Ensure author signature statement validation accepts `kind: "template"` and still rejects mismatched kind values.
+- [ ] Ensure template packages participate in shared package stats/metrics tables where package-kind-neutral metrics already exist (stats, trending, etc.).
 - [ ] Update package detail URL generation for template packages.
 - [ ] Avoid returning tool-specific URLs for template publish receipts.
-- [ ] Review tool-specific fields in publish receipts, such as `tool_id`, and either preserve for compatibility or add package-kind-appropriate fields without breaking existing clients.
+- [ ] Audit package API response shapes touched by publish/finalize so template packages return `kind: "template"` consistently.
+- [ ] Ensure publish init/finalize responses include package-kind-neutral identifiers such as `package_id`, `id`, `namespace`, `name`, `version`, `kind`, and `url`.
+- [ ] Preserve existing `tool_id` fields only where needed for backwards compatibility, but do not make new template behavior depend on `tool_id`.
+- [ ] Add template package detail URL generation, for example `/templates/<package_id>/v<version>/overview`, matching the registry route pattern chosen for templates.
+- [ ] Ensure publish receipts, conflict responses, and idempotent finalize receipts use the template URL for template packages.
 - [ ] Update cache invalidation and search index refresh paths so publishing templates does not rely on tool-only assumptions.
+- [ ] Ensure database/model constraints allow `Package.kind = template` anywhere package kinds are validated or constrained.
+- [ ] Add or update migrations only if the database currently restricts package kind values to `tool` or `agent`.
+- [ ] Ensure pending upload reservations preserve template manifests without coercing kind to `tool`.
+- [ ] Ensure resumed publish init returns `kind: "template"` for template uploads.
+- [ ] Ensure artifact validation accepts template artifacts that contain a root `agent.json` plus a declared `template.files_root` directory.
+- [ ] Ensure artifact validation rejects template artifacts missing the declared files root.
 - [ ] Add backend tests for publishing template packages.
 - [ ] Add backend tests for publishing templates with insufficient PAT scopes.
 - [ ] Add backend tests for kind conflict between existing tools/agents and new templates.
@@ -44,21 +83,17 @@
 - [ ] Ensure `_resolve_install_graph` does not treat templates like agents.
 - [ ] Ensure template packages do not recursively expand dependencies during normal install graph resolution.
 - [ ] Preserve existing behavior where agent package install roots expand their tool dependencies from the agent manifest.
+- [ ] Define backend/API behavior for multiple agent install roots:
+    - Multiple agent packages may be requested as independent install roots.
+    - Each agent root may expand its own tool dependencies.
+    - No agent package may expand or imply another agent package dependency.
+- [ ] Ensure install init can return presigned artifacts for template packages when called by `agentpm new`.
+- [ ] Ensure install init still returns runtime/signing/integrity data without assuming the artifact is a tool.
+- [ ] Ensure install init returns enough metadata for the CLI to integrity-check downloaded template artifacts before use.
+- [ ] Decide whether normal `agentpm install` should reject template roots or allow them without expansion; document and test the chosen behavior.
 - [ ] Add tests proving template install roots do not expand `template.dependencies` through normal install resolution.
 - [ ] Add tests proving agent install roots still expand tool dependencies.
 - [ ] Add tests proving multiple agent package roots can be resolved in one install operation.
-- [ ] Ensure install init can return presigned artifacts for template packages when called by `agentpm new`.
-- [ ] Ensure install init still returns runtime/signing/integrity data without assuming the artifact is a tool.
-- [ ] Update CLI install/download code paths so a template artifact can be downloaded and extracted to a temporary generation location.
-- [ ] Ensure downloaded template artifacts are integrity-checked before use.
-- [ ] Ensure template artifact extraction uses safe path checks and rejects path traversal.
-- [ ] Ensure templates are considered in package install counts globally, as part of namespaces, and as part of search results.
-- [ ] Ensure templates are considered for trending search index.
-- [ ] Decide whether normal `agentpm install` should reject template roots or allow them without expansion; document and test the chosen behavior.
-- [ ] Ensure generated project dependency installation installs `template.dependencies.tools` and `template.dependencies.agents` as workspace roots.
-- [ ] Ensure generated project dependency installation writes a lockfile for runnable dependencies only.
-- [ ] Ensure generated project lockfile includes transitive tools from installed agent package roots.
-- [ ] Ensure generated project lockfile does not permanently list the template artifact unless a deliberate generated metadata file is added outside the lockfile.
 
 ## Milestone 4: `agentpm new` CLI Command
 - [ ] Add `New` to the CLI command enum and dispatch it from `main`.
@@ -68,18 +103,20 @@
 - [ ] Resolve and download exactly one template package artifact from the registry.
 - [ ] Validate that the downloaded artifact manifest has `kind: "template"`.
 - [ ] Validate the `template` object before writing files.
+- [ ] Update CLI install/download code paths so a template artifact can be downloaded and extracted to a temporary generation location.
+- [ ] Ensure downloaded template artifacts are integrity-checked before use.
+- [ ] Ensure template artifact extraction uses safe path checks and rejects path traversal.
 - [ ] Determine target directory from explicit `[target-dir]`, `project_name`, or template package name.
 - [ ] Fail if the target directory exists and is non-empty.
 - [ ] Create the target directory when safe.
 - [ ] Copy files from `template.files_root` into the target directory.
-- [ ] Render variables into copied text files using a documented placeholder format.
 - [ ] Read `template.variables[]` from the template manifest.
-- [ ] Accept non-interactive overrides via repeated `--var key=value`.
+- [ ] Support repeated `--var key=value` flags for non-interactive template variable overrides.
 - [ ] Use each variable's `default` when no value is provided.
 - [ ] Prompt interactively for required variables when possible.
 - [ ] Fail clearly in non-interactive mode when a required variable has no value/default.
 - [ ] Always provide `project_name`/target directory as an available render variable.
-- [ ] Render supported template files by replacing declared placeholders with resolved variable values.
+- [ ] Render supported text files by replacing declared placeholders with resolved variable values using a documented placeholder format.
 - [ ] Do not treat variables as secrets; runtime secrets belong in `.env.example` / `environment.vars`.
 - [ ] Avoid corrupting binary files during rendering.
 - [ ] Ensure copied file paths cannot escape the target directory.
@@ -87,18 +124,41 @@
 - [ ] Generate or preserve the root `agent.json` from the template files.
 - [ ] Validate that the generated root `agent.json` is schema-valid.
 - [ ] Ensure generated root `agent.json` does not include recursive `agents` dependencies.
-- [ ] Install declared template tool and agent dependencies into the generated project.
-- [ ] Write/update the generated project `agent.lock` using existing lockfile behavior where possible.
+- [ ] Install declared `template.dependencies.tools` and `template.dependencies.agents` into the generated project as runnable workspace dependencies.
+- [ ] Write/update the generated project `agent.lock` for runnable dependencies only.
+- [ ] Ensure the generated `agent.lock` includes transitive tools from installed agent package roots.
+- [ ] Ensure the generated `agent.lock` does not permanently list the template artifact.
 - [ ] Print a success message with target path and next-step commands from `template.entrypoints`.
 - [ ] Ensure `agentpm new` does not execute template-provided code, generated code, package manager commands, or shell scripts.
+- [ ] Implement multi-agent workspace dependency handling for `agentpm new`:
+    - Read multiple agent packages from `template.dependencies.agents`.
+    - Install each as an independent generated workspace/root dependency.
+    - Preserve transitive tool expansion for each installed agent package.
+    - Do not add `agents[]` to normal `kind: "agent"` manifests.
+    - Do not represent one agent package as depending on another agent package.
+    - Do not add runtime orchestration or agent-to-agent execution semantics.
+- [ ] Write scaffold-origin metadata for generated projects:
+    - Create `.agentpm/template.json` during `agentpm new`.
+    - Record the source template package name, version, kind, integrity, and generation timestamp.
+    - Record resolved generation-time variables only when they are non-secret.
+    - Do not write API keys, tokens, passwords, or runtime secrets to `.agentpm/template.json`.
+    - Do not include the template artifact as a permanent dependency in `agent.lock`.
+    - Keep `agent.lock` focused on runnable generated-project dependencies only.
+    - Mention the source template in the generated README/description for humans, but treat `.agentpm/template.json` as the structured source of truth.
 - [ ] Add CLI unit tests for variable parsing.
 - [ ] Add CLI unit tests for target directory safety.
 - [ ] Add CLI unit tests for refusing non-template packages.
 - [ ] Add CLI integration-style tests for generating a project from a local or mocked template artifact.
 - [ ] Add CLI tests proving no hook/script execution occurs during scaffolding.
 - [ ] Add CLI tests proving `agentpm new` renders template variables into generated files using defaults, `--var` overrides, and target directory/project name.
+- [ ] Add CLI tests for `.agentpm/template.json` generation:
+    - Verify `agentpm new` writes `.agentpm/template.json`.
+    - Verify the file includes template name, version, integrity, generated timestamp, and resolved non-secret variables.
+    - Verify the generated `agent.lock` does not include the template artifact as a project dependency.
+    - Verify runtime secret placeholders belong in `.env.example` or `environment.vars`, not `template.variables`.
+- [ ] Add CLI tests proving `.agentpm/template.json` is written only inside the generated target directory.
 
-## Milestone 5: Registry Search and Template Detail UX
+## Milestone 5: Registry Discovery and Template Detail UX
 - [ ] Update package search/indexing so templates are indexed as first-class package kinds.
 - [ ] Add template filtering to registry search, such as type/template filters.
 - [ ] Add template result cards with use case, stack, execution surfaces, and bootstrap command.
@@ -113,39 +173,55 @@
 - [ ] Display bootstrap command, for example `agentpm new @namespace/name my-project`.
 - [ ] Display entrypoint/next-step commands from `template.entrypoints`.
 - [ ] Display scan/signing/attestation status using existing package metadata where available.
+- [ ] Generate bootstrap commands using the package reference, not the package ID, for example `agentpm new @namespace/name my-project`.
+- [ ] Add a copy-to-clipboard affordance for the `agentpm new` bootstrap command on template cards and/or detail pages (this should be done for agents and tools as well while we're at it).
+- [ ] Link declared tool and agent dependencies to their registry detail pages where package metadata is available, similar to how we do agents detail page.
 - [ ] Ensure tool and agent detail pages do not regress.
 - [ ] Add a dedicated “Start with a workflow template” section near the top of the registry landing page, directly below the hero, showing approximately four trending templates. Keep this section visually and conceptually separate from the existing tools/agents discovery sections so users who want the fastest path to a working agent see templates immediately, while users who want to build from lower-level packages can continue into the tools and agents areas.
+- [ ] Position templates in registry copy as the fastest path to a working agent/workflow, while tools and agents remain the lower-level building blocks for users who want to assemble their own system.
 - [ ] Add frontend tests or component tests for template cards/detail rendering where the project has test infrastructure.
 - [ ] Add backend/API tests for search responses including template package kinds.
 - [ ] Ensure templates do not appear as tools in tool-only views unless intentionally included in all-package search.
+- [ ] Handle templates with empty `template.dependencies.tools` or empty `template.dependencies.agents` without rendering broken sections.
+- [ ] Handle templates with no README gracefully using existing package fallback behavior.
+- [ ] Ensure all-package search can return tools, agents, and templates with clear kind labels.
+- [ ] Ensure tool-only, agent-only, and template-only filters return only the selected kind.
+- [ ] Give template cards a distinct visual treatment from tool/agent cards that emphasizes use case, execution surface, and quick-start command over low-level package runtime details.
+- [ ] Add template detail page metadata/title/description using template display name, use case, and package description where the frontend supports page metadata.
 
 ## Milestone 6: Official Workflow Templates in `agentpm-examples`
-- [ ] Add an examples repo directory for workflow templates, such as `templates/` or `workflow-templates/`.
-- [ ] Add documentation explaining that these are publishable `kind: "template"` artifacts.
-- [ ] Add `research-assistant-python` template.
-- [ ] Ensure `research-assistant-python` demonstrates the Python SDK execution surface.
-- [ ] Include generated starter files for `research-assistant-python`, such as `agent.json`, `README.md`, `.env.example`, `requirements.txt`, and `main.py`.
-- [ ] Ensure `research-assistant-python` uses real published or seedable AgentPM tools.
-- [ ] Add `node-triage-worker` template.
-- [ ] Ensure `node-triage-worker` demonstrates the Node SDK execution surface.
-- [ ] Keep credential friction reasonable; prefer a generic content triage worker if Slack dependencies are not reliably available.
-- [ ] Include generated starter files for `node-triage-worker`, such as `agent.json`, `package.json`, `tsconfig.json`, `README.md`, `.env.example`, and `src/index.ts`.
-- [ ] Add `cli-automation-worker` template.
-- [ ] Ensure `cli-automation-worker` demonstrates `agentpm run`.
-- [ ] Use `--input-file` or stdin examples instead of complex inline JSON escaping.
-- [ ] Include generated starter files such as `agent.json`, `README.md`, `.env.example`, `scripts/run.sh`, and `inputs/*.json`.
-- [ ] Add `mcp-tool-server` template.
-- [ ] Ensure `mcp-tool-server` demonstrates `agentpm serve --mcp` over HTTP MCP.
-- [ ] Document that the server exposes every tool pinned in `agent.lock` by default.
-- [ ] Include curl examples for `initialize`, `tools/list`, and `tools/call` against `/` or `/mcp`.
-- [ ] Add `multi-agent-support-workspace` template.
-- [ ] Ensure `multi-agent-support-workspace` declares multiple agent package dependencies under `template.dependencies.agents` where real packages are available.
-- [ ] Ensure `multi-agent-support-workspace` does not add `agents` dependencies to the generated root `agent.json`.
-- [ ] Include docs explaining that multi-agent means workspace scaffolding and dependency installation, not recursive agent orchestration.
-- [ ] Ensure all example template manifests pass schema validation.
-- [ ] Ensure each example includes a README with publish, bootstrap, and run instructions.
-- [ ] Ensure examples document required environment variables.
-- [ ] Ensure examples are aligned with existing example repo conventions for Node/Python package structure.
+- [ ] Add official workflow templates to `agentpm-examples` covering the main AgentPM execution surfaces.
+- [ ] Add a Python SDK research assistant template:
+  - Generates a Python project that calls AgentPM-installed tools through the Python SDK.
+  - Includes `agent.json`, `.env.example`, README, starter source code, and a runnable command.
+  - Demonstrates a simple flow such as fetch/extract content → summarize → write a markdown report.
+- [ ] Add a Node SDK triage worker template:
+  - Generates a Node/TypeScript project that calls AgentPM-installed tools through the Node SDK.
+  - Includes `agent.json`, `.env.example`, README, `package.json`, and starter source code.
+  - Demonstrates a simple triage/classification/summarization workflow.
+  - Prefer low credential friction for the default example; Slack-specific behavior may be documented as an advanced variant if needed.
+- [ ] Add a CLI automation worker template:
+  - Generates a project that uses `agentpm run` from shell scripts or GitHub Actions.
+  - Uses `--input-file` or stdin for JSON payloads instead of fragile inline JSON escaping.
+  - Demonstrates a cron-style or scheduled workflow.
+- [ ] Add an MCP tool server template:
+  - Generates a project that installs a curated set of tools and runs them through `agentpm serve --mcp`.
+  - Documents that the current MCP surface is HTTP-only.
+  - Includes example curl commands for `initialize`, `tools/list`, and `tools/call`.
+  - Explains that the server exposes tools pinned in `agent.lock`.
+- [ ] Add a multi-agent support workspace template:
+  - Generates a workspace-style project with multiple agent package dependencies declared at the template level.
+  - Does not add `agents[]` dependencies to normal `kind: "agent"` manifests.
+  - Demonstrates that templates can scaffold multi-agent project structure without adding recursive agent orchestration.
+  - Includes README guidance explaining which agent/package is responsible for which role.
+- [ ] Ensure every official template includes:
+  - a `kind: "template"` manifest,
+  - at least one generated `agent.json`,
+  - a README with setup and run instructions,
+  - `.env.example` where runtime configuration is needed,
+  - declared `template.entrypoints`,
+  - declared `template.execution_surfaces`,
+  - no template-provided hooks or scripts executed by `agentpm new`.
 
 ## Milestone 7: Documentation and Developer Guidance
 - [ ] Add user docs for discovering workflow templates.
