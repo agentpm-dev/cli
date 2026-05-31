@@ -440,7 +440,7 @@ fn resolved_package_dir(
         sdkm::PackageKind::Tool => resolved_tool_dir(tools_base, package, version),
         sdkm::PackageKind::Agent => resolved_agent_dir(agents_base, package, version),
         sdkm::PackageKind::Template => {
-            bail!("template artifacts are not installable through this path yet")
+            bail!("template packages are not installable with `agentpm install`; use `agentpm new`")
         }
     }
 }
@@ -489,6 +489,24 @@ mod tests {
         assert_eq!(
             path,
             PathBuf::from(".agentpm/agents/zack/support-agent/0.1.0")
+        );
+    }
+
+    #[test]
+    fn rejects_template_artifacts_in_normal_install_path() {
+        let err = resolved_package_dir(
+            PackageKind::Template,
+            Path::new(".agentpm/tools"),
+            Path::new(".agentpm/agents"),
+            "@zack/research-template",
+            "0.1.0",
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("template artifacts are not installable through this path yet"),
+            "{err:#}"
         );
     }
 

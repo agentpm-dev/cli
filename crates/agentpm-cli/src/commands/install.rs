@@ -121,6 +121,7 @@ impl InstallArgs {
         } else {
             let sdk_req = to_sdk_request(&desired);
             let sdk_resp = client.resolve_install(&sdk_req).await?; // network call → concrete versions + integrity
+            ensure_supported_install_kinds(&sdk_resp)?;
             let plan: ResolvePlan = sdk_resp.into();
             plan
         };
@@ -213,6 +214,22 @@ impl InstallArgs {
 
 fn should_load_manifest_for_install(spec: Option<&str>, manifest_path: &std::path::Path) -> bool {
     spec.is_none() || manifest_path.exists()
+}
+
+fn ensure_supported_install_kinds(
+    resp: &agentpm_sdk::models::install::ResolveResponse,
+) -> Result<()> {
+    if resp
+        .items
+        .iter()
+        .any(|item| item.kind == agentpm_sdk::models::install::PackageKind::Template)
+    {
+        return Err(anyhow!(
+            "`agentpm install` does not support template packages; use `agentpm new` to generate a project from a template"
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_frozen_lock_compatibility(
@@ -518,13 +535,15 @@ fn manifest_array_or_empty(manifest_value: &Value, field: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_lock_roots, build_updated_lock, installed_agent_manifest_path,
-        should_load_manifest_for_install, validate_frozen_lock_compatibility,
+        build_lock_roots, build_updated_lock, ensure_supported_install_kinds,
+        installed_agent_manifest_path, should_load_manifest_for_install,
+        validate_frozen_lock_compatibility,
     };
     use crate::semver::types::{
         DesiredSet, Lock, LockRoot, LockV1, LockV2, LockedDependency, LockedPackage, LockedRoot,
         PackageKind, ResolvePlan, ResolvedPackage,
     };
+    use agentpm_sdk::models::install as sdkm;
     use chrono::Utc;
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
@@ -546,6 +565,24 @@ mod tests {
             None,
             Path::new("agent.json")
         ));
+    }
+
+    #[test]
+    fn direct_install_rejects_template_packages_until_new_exists() {
+        let err = ensure_supported_install_kinds(&sdkm::ResolveResponse {
+            items: vec![sdkm::ResolvedPackage {
+                kind: sdkm::PackageKind::Template,
+                name: "@zack/research-template".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-template".to_string(),
+            }],
+        })
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("does not support template packages"),
+            "{err:#}"
+        );
     }
 
     #[test]
