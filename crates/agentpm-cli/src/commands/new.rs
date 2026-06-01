@@ -140,12 +140,17 @@ impl NewArgs {
             let template_source_root = template_extract.join(files_root);
 
             let mut step = crate::ui::Step::new("Rendering template files", quiet);
-            copy_and_render_template(&template_source_root, &target_dir, &resolved_vars)?;
+            copy_and_render_template(&template_source_root, &target_dir, &resolved_vars, quiet)?;
             validate_scaffold_agent_manifest_locations(&target_dir)?;
+            let extra_local_manifests = scan_generated_local_manifests(&target_dir)?;
             step.ok("");
 
             let mut step = crate::ui::Step::new("Resolving workspace dependencies", quiet);
-            let dependency_request = build_dependency_request(&downloaded_manifest)?;
+            let dependency_request = build_dependency_request(
+                &downloaded_manifest,
+                &target_dir,
+                &extra_local_manifests,
+            )?;
             let dependency_response = if dependency_request.items.is_empty() {
                 agentpm_sdk::models::install::ResolveResponse { items: Vec::new() }
             } else {
@@ -182,7 +187,6 @@ impl NewArgs {
             )?;
             write_manifest_pretty_atomic(&target_dir.join("agent.json"), &root_manifest)?;
 
-            let extra_local_manifests = scan_generated_local_manifests(&target_dir)?;
             let workspace_metadata = WorkspaceMetadata {
                 schema_version: 1,
                 manifests: std::iter::once("agent.json".to_string())
@@ -251,20 +255,29 @@ fn parse_var_overrides(entries: &[String]) -> Result<BTreeMap<String, String>> {
 
 fn parse_template_ref(spec: &str) -> Result<agentpm_sdk::models::install::PackageRequirement> {
     let s = spec.trim();
-    let Some(last_at) = s.rfind('@') else {
-        return Err(anyhow!("template ref must be '@owner/name@version'"));
-    };
-    if last_at == 0 || !s[..last_at].starts_with('@') || !s[..last_at].contains('/') {
-        return Err(anyhow!("template ref must be '@owner/name@version'"));
+    if !s.starts_with('@') || !s[1..].contains('/') {
+        return Err(anyhow!(
+            "template ref must be '@owner/name' or '@owner/name@version'"
+        ));
     }
-    let range = if last_at == s.len() - 1 {
-        "*".to_string()
-    } else {
-        s[last_at + 1..].to_string()
+
+    let (name, range) = match s.rfind('@') {
+        Some(last_at)
+            if last_at > 0 && s[..last_at].starts_with('@') && s[..last_at].contains('/') =>
+        {
+            let range = if last_at == s.len() - 1 {
+                "*".to_string()
+            } else {
+                s[last_at + 1..].to_string()
+            };
+            (s[..last_at].to_string(), range)
+        }
+        _ => (s.to_string(), "*".to_string()),
     };
+
     Ok(agentpm_sdk::models::install::PackageRequirement {
         kind: agentpm_sdk::models::install::PackageKind::Template,
-        name: s[..last_at].to_string(),
+        name,
         range,
     })
 }
@@ -434,6 +447,7 @@ fn copy_and_render_template(
     source_root: &Path,
     target_dir: &Path,
     vars: &BTreeMap<String, String>,
+    quiet: bool,
 ) -> Result<()> {
     for entry in WalkDir::new(source_root) {
         let entry = entry?;
@@ -456,7 +470,14 @@ fn copy_and_render_template(
         match String::from_utf8(data.clone()) {
             Ok(text) => {
                 let rendered = render_template_text(&text, vars)?;
-                std::fs::write(&dest, rendered.as_bytes())?;
+                if !quiet && !rendered.preserved_placeholders.is_empty() {
+                    eprintln!(
+                        "Warning: preserved unknown template placeholder(s) {} in {}",
+                        rendered.preserved_placeholders.join(", "),
+                        rel.display()
+                    );
+                }
+                std::fs::write(&dest, rendered.text.as_bytes())?;
             }
             Err(_) => {
                 std::fs::write(&dest, data)?;
@@ -469,8 +490,17 @@ fn copy_and_render_template(
     Ok(())
 }
 
-fn render_template_text(text: &str, vars: &BTreeMap<String, String>) -> Result<String> {
+struct RenderedTemplateText {
+    text: String,
+    preserved_placeholders: Vec<String>,
+}
+
+fn render_template_text(
+    text: &str,
+    vars: &BTreeMap<String, String>,
+) -> Result<RenderedTemplateText> {
     let mut out = String::with_capacity(text.len());
+    let mut preserved_placeholders = Vec::new();
     let mut idx = 0usize;
 
     while let Some(start) = text[idx..].find("{{") {
@@ -482,18 +512,28 @@ fn render_template_text(text: &str, vars: &BTreeMap<String, String>) -> Result<S
         };
         let end_idx = after_start + end_rel;
         let key = text[after_start..end_idx].trim();
-        let Some(value) = vars.get(key) else {
-            return Err(anyhow!("unknown template placeholder {{{{{}}}}}", key));
-        };
-        out.push_str(value);
+        // `agentpm new` only substitutes variables declared by the template
+        // manifest. Other `{{ ... }}` text is preserved so authors can include
+        // docs, examples, or other templating syntax without escaping it.
+        if let Some(value) = vars.get(key) {
+            out.push_str(value);
+        } else {
+            preserved_placeholders.push(format!("{{{{ {} }}}}", key));
+            out.push_str(&text[start_idx..end_idx + 2]);
+        }
         idx = end_idx + 2;
     }
     out.push_str(&text[idx..]);
-    Ok(out)
+    Ok(RenderedTemplateText {
+        text: out,
+        preserved_placeholders,
+    })
 }
 
 fn build_dependency_request(
     manifest: &TemplateManifest,
+    target_dir: &Path,
+    extra_local_manifests: &[String],
 ) -> Result<agentpm_sdk::models::install::ResolveRequest> {
     let mut items = Vec::new();
 
@@ -514,7 +554,40 @@ fn build_dependency_request(
         });
     }
 
+    for item in local_manifest_dependency_items(target_dir, extra_local_manifests)? {
+        items.push(item);
+    }
+
     Ok(agentpm_sdk::models::install::ResolveRequest { items })
+}
+
+fn local_manifest_dependency_items(
+    target_dir: &Path,
+    extra_local_manifests: &[String],
+) -> Result<Vec<agentpm_sdk::models::install::PackageRequirement>> {
+    let mut items = Vec::new();
+    for rel_path in extra_local_manifests {
+        let manifest_path = target_dir.join(rel_path);
+        let (manifest_value, _) = load_manifest_value(&manifest_path).with_context(|| {
+            format!(
+                "loading generated local manifest {}",
+                manifest_path.display()
+            )
+        })?;
+        let desired =
+            crate::semver::types::DesiredSet::from_cli_or_agent_json(&manifest_value, None, false)?;
+        for item in desired.items {
+            items.push(agentpm_sdk::models::install::PackageRequirement {
+                kind: match item.kind {
+                    PackageKind::Tool => agentpm_sdk::models::install::PackageKind::Tool,
+                    PackageKind::Agent => agentpm_sdk::models::install::PackageKind::Agent,
+                },
+                name: item.name,
+                range: item.range,
+            });
+        }
+    }
+    Ok(items)
 }
 
 fn package_ref_parts(reference: &PackageReference) -> Result<(String, String)> {
@@ -827,9 +900,21 @@ mod tests {
     }
 
     #[test]
-    fn render_template_text_rejects_unknown_placeholders() {
-        let err = render_template_text("hello {{ missing }}", &BTreeMap::new()).unwrap_err();
-        assert!(format!("{err:#}").contains("unknown template placeholder"));
+    fn parse_template_ref_allows_unversioned_package_name() {
+        let req = parse_template_ref("@zack/research-template").unwrap();
+        assert_eq!(req.name, "@zack/research-template");
+        assert_eq!(req.range, "*");
+        assert_eq!(
+            req.kind,
+            agentpm_sdk::models::install::PackageKind::Template
+        );
+    }
+
+    #[test]
+    fn render_template_text_preserves_unknown_placeholders() {
+        let rendered = render_template_text("hello {{ missing }}", &BTreeMap::new()).unwrap();
+        assert_eq!(rendered.text, "hello {{ missing }}");
+        assert_eq!(rendered.preserved_placeholders, vec!["{{ missing }}"]);
     }
 
     #[test]
@@ -1015,7 +1100,10 @@ mod tests {
                         "name":"reviewer",
                         "version":"0.1.0",
                         "description":"Reviewer",
-                        "tools":[{"name":"@zack/echo","version":"0.1.0"}],
+                        "tools":[
+                            {"name":"@zack/echo","version":"0.1.0"},
+                            {"name":"@zack/summarize","version":"0.1.0"}
+                        ],
                         "skills":[],
                         "knowledge":[],
                         "memory":[],
@@ -1113,6 +1201,7 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(target.join("agent.lock")).unwrap())
                 .unwrap();
         assert!(lock["packages"].get("tool:@zack/echo@0.1.0").is_some());
+        assert!(lock["packages"].get("tool:@zack/summarize@0.1.0").is_some());
         assert!(
             lock["roots"]
                 .get("agent:@zack/support-agent@0.1.0")
@@ -1124,10 +1213,22 @@ mod tests {
                 .get("local:agent:agents/reviewer.agent.json")
                 .is_some()
         );
+        assert_eq!(
+            lock["roots"]["local:agent:agents/reviewer.agent.json"]["tools"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
         assert!(
             lock["packages"]
                 .get("template:@zack/research-template@0.1.0")
                 .is_none()
+        );
+        assert!(
+            target
+                .join(".agentpm/tools/zack/summarize/0.1.0/agent.json")
+                .exists()
         );
 
         let template_meta: Value = serde_json::from_str(
@@ -1175,7 +1276,7 @@ mod tests {
                         "kind":"agent",
                         "name":"reviewer",
                         "version":"0.1.0",
-                        "description":"Reviewer"
+                        "tools":[]
                     }))
                     .unwrap(),
                 ),
@@ -1220,7 +1321,11 @@ mod tests {
         };
 
         let err = args.run(base_url).await.unwrap_err();
-        assert!(format!("{err:#}").contains("generated manifest"));
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("generated manifest agents/reviewer.agent.json"),
+            "{err_text}"
+        );
         assert!(!target.exists() || std::fs::read_dir(&target).unwrap().next().is_none());
 
         server.abort();

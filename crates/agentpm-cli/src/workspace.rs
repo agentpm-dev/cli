@@ -174,7 +174,11 @@ pub fn build_workspace_lock(
                 .and_then(Value::as_str)
                 .unwrap_or("0.0.0")
                 .to_string(),
-            tools: resolve_tools_for_manifest(&manifest.manifest_value, &packages)?,
+            tools: resolve_tools_for_manifest(
+                &manifest.manifest_value,
+                &format!("workspace manifest {}", manifest.rel_path),
+                &packages,
+            )?,
             reserved: reserved_refs_from_manifest(&manifest.manifest_value),
         });
     }
@@ -331,13 +335,18 @@ fn build_registry_agent_root(
 
     Ok(LockRoot::RegistryAgent {
         package_key: package_key(PackageKind::Agent, package, version),
-        tools: resolve_tools_for_manifest(&manifest_value, packages)?,
+        tools: resolve_tools_for_manifest(
+            &manifest_value,
+            &format!("registry agent {}@{}", package, version),
+            packages,
+        )?,
         reserved: reserved_refs_from_manifest(&manifest_value),
     })
 }
 
 fn resolve_tools_for_manifest(
     manifest_value: &Value,
+    manifest_label: &str,
     packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
 ) -> Result<Vec<String>> {
     let desired = DesiredSet::from_cli_or_agent_json(manifest_value, None, false)?;
@@ -347,9 +356,16 @@ fn resolve_tools_for_manifest(
         if item.kind != PackageKind::Tool {
             continue;
         }
-        if let Some(pkg) = resolve_declared_tool_from_packages(packages, &item.name, &item.range)? {
-            tools.push(package_key(pkg.kind, &pkg.name, &pkg.version));
-        }
+        let pkg = resolve_declared_tool_from_packages(packages, &item.name, &item.range)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "declared tool dependency {}@{} from {} is missing from the resolved package set",
+                    item.name,
+                    item.range,
+                    manifest_label
+                )
+            })?;
+        tools.push(package_key(pkg.kind, &pkg.name, &pkg.version));
     }
 
     Ok(tools)
@@ -532,6 +548,40 @@ mod tests {
         assert!(
             lock.roots
                 .contains_key("local:agent:agents/triage.agent.json")
+        );
+    }
+
+    #[test]
+    fn build_workspace_lock_rejects_missing_local_manifest_tool_from_plan() {
+        let root = temp_root("missing-tool");
+        let manifests = vec![LocalManifestRoot {
+            rel_path: "agents/reviewer.agent.json".to_string(),
+            manifest_value: json!({
+                "kind": "agent",
+                "name": "reviewer",
+                "version": "0.1.0",
+                "tools": [{"name":"@zack/summarize","version":"0.2.0"}]
+            }),
+        }];
+
+        let err = build_workspace_lock(
+            &manifests,
+            &WorkspacePackageRoots::default(),
+            &ResolvePlan {
+                items: vec![crate::semver::types::ResolvedPackage {
+                    kind: PackageKind::Tool,
+                    name: "@zack/echo".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-echo".to_string(),
+                }],
+            },
+            &root,
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("declared tool dependency @zack/summarize@0.2.0"),
+            "{err:#}"
         );
     }
 

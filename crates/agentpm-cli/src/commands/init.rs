@@ -193,8 +193,8 @@ mod tests {
 
         let scaffold_readme_text = std::fs::read_to_string(&scaffold_readme).unwrap();
         assert!(
-            scaffold_readme_text.contains("{{ project_name }}"),
-            "expected scaffold README to demonstrate render-time project_name placeholder"
+            scaffold_readme_text.contains("{ { project_name } }"),
+            "expected scaffold README to demonstrate render-time project_name placeholder syntax"
         );
 
         let _ = std::fs::remove_dir_all(out);
