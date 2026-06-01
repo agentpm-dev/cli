@@ -124,6 +124,12 @@
 - [ ] Ensure copied file paths cannot escape the target directory.
 - [ ] Ensure generated executable bits are preserved where possible, especially for shell scripts.
 - [ ] Synthesize the generated project's root `agent.json` during `agentpm new` rather than requiring the template artifact to ship one under `template.files_root`.
+- [ ] Define the generated workspace layout for template output, including:
+    - a primary root `agent.json`
+    - an optional `agents/` directory for additional local agent manifests
+    - `.agentpm/template.json` for scaffold-origin metadata
+    - `.agentpm/workspace.json` for operational workspace/install metadata
+    - a single workspace-level `agent.lock`
 - [ ] Define exactly which fields `agentpm new` synthesizes into the generated root `agent.json`, including:
     - `kind: "agent"`
     - generated project `name`
@@ -132,15 +138,33 @@
     - `tools` derived from `template.dependencies.tools`
     - reserved placeholder arrays (`skills`, `knowledge`, `memory`, `profiles`) as supported by the current manifest contract
     - no recursive `agents` field
+- [ ] Define the role of the root generated `agent.json` as the primary/default local agent for the workspace, not as a container manifest for other generated agents.
 - [ ] If the template author provides extra scaffold files, ensure those files are copied/rendered normally, but keep ownership of the root generated-project `agent.json` in `agentpm new`.
 - [ ] Validate that the generated root `agent.json` is schema-valid.
 - [ ] Ensure generated root `agent.json` does not include recursive `agents` dependencies.
-- [ ] Ensure the generated `agent.json` file(s) are valid and consistent with the generated `agent.lock` file
-  - The `agent.lock` file should, in fact, be generated based on the install commands that are run as part of `agentpm new`, like a normal installw would
-  - Note this may involve multiple `agent.json` files generated from `agentpm new` due to agents not allow nested agents
-- [ ] Ensure that after `agentpm new` is run, a user can make changes to one or multiple `agent.json` files, run agentpm install, and generate a valid `agent.lock`
-  - The `agent.lock` should contain everything that the `agentpm new`-generated version did, minus whatever has changed
-  - This could involve agentpm install having an understanding of multiple `agent.json` files
+- [ ] Generate additional local `agents/*.agent.json` manifests when the template/workspace structure requires multiple local agents rather than recursive `agents[]` dependencies.
+- [ ] Ensure every generated local `agent.json` file is schema-valid.
+- [ ] Ensure every generated local `agent.json` file omits recursive `agents[]` dependencies.
+- [ ] Define `.agentpm/workspace.json` as the operational source of truth for generated multi-agent workspaces.
+- [ ] Define `.agentpm/workspace.json` schema/fields for the MMP, including:
+    - `schema_version`
+    - `manifests` as workspace-root-relative local manifest paths
+    - `package_roots.tools[]`
+    - `package_roots.agents[]`
+- [ ] Define the `package_roots.tools[]` / `package_roots.agents[]` entry shape for the MMP, including the exact package reference fields needed for deterministic reinstall, such as package `name` and concrete `version`.
+- [ ] Reject invalid `.agentpm/workspace.json` path entries, including absolute paths, empty paths, and `..` traversal.
+- [ ] Reject duplicate local manifest entries or duplicate package-root entries in `.agentpm/workspace.json`.
+- [ ] Define `manifests` in `.agentpm/workspace.json` as the authoritative list of local editable agent manifest roots in the workspace.
+- [ ] Define `package_roots` in `.agentpm/workspace.json` as direct registry package roots that are part of the workspace but are not represented by local editable manifests.
+- [ ] Ensure local manifests and registry package roots can coexist in one generated workspace and contribute to a single workspace-level `agent.lock`.
+- [ ] Ensure the generated `agent.json` file(s) are valid and consistent with the generated workspace-level `agent.lock` file.
+- [ ] Ensure the generated workspace-level `agent.lock` is produced from the same install resolution behavior that normal `agentpm install` uses, rather than from a one-off lock writer unique to `agentpm new`.
+- [ ] Ensure that after `agentpm new` is run, a user can edit one or more generated local `agent.json` files, run `agentpm install`, and regenerate a valid workspace-level `agent.lock`.
+- [ ] Update `agentpm install` so that:
+    - if `.agentpm/workspace.json` is absent, existing single-manifest behavior remains unchanged
+    - if `.agentpm/workspace.json` is present, install resolution uses the listed local manifests plus listed registry package roots as workspace roots
+- [ ] Ensure `agentpm install` treats `.agentpm/workspace.json` as workspace topology input and does not rewrite it unless an explicit future command is introduced for workspace topology edits.
+- [ ] Ensure regenerated `agent.lock` contents after `agentpm install` preserve the original `agentpm new`-generated runnable graph except for intentional user changes to workspace manifests/package roots.
 - [ ] Install declared `template.dependencies.tools` and `template.dependencies.agents` into the generated project as runnable workspace dependencies.
 - [ ] Write/update the generated project `agent.lock` for runnable dependencies only.
 - [ ] Ensure the generated `agent.lock` includes transitive tools from installed agent package roots.
@@ -151,6 +175,7 @@
     - Read multiple agent packages from `template.dependencies.agents`.
     - Install each as an independent generated workspace/root dependency.
     - Preserve transitive tool expansion for each installed agent package.
+    - Represent workspace composition through `.agentpm/workspace.json`, not through recursive `agents[]` fields.
     - Do not add `agents[]` to normal `kind: "agent"` manifests.
     - Do not represent one agent package as depending on another agent package.
     - Do not add runtime orchestration or agent-to-agent execution semantics.
@@ -168,6 +193,18 @@
 - [ ] Add CLI integration-style tests for generating a project from a local or mocked template artifact.
 - [ ] Add CLI tests proving no hook/script execution occurs during scaffolding.
 - [ ] Add CLI tests proving `agentpm new` renders template variables into generated files using defaults, `--var` overrides, and target directory/project name.
+- [ ] Add CLI tests for `.agentpm/workspace.json` generation:
+    - Verify `agentpm new` writes `.agentpm/workspace.json` for workspace-style templates.
+    - Verify listed `manifests` are relative paths rooted in the generated workspace.
+    - Verify listed `package_roots` match the generated workspace dependency model.
+    - Verify duplicate or invalid workspace topology entries are rejected.
+- [ ] Add CLI tests for workspace-aware `agentpm install`:
+    - Verify `agentpm install` still works for the existing single-manifest case without `.agentpm/workspace.json`.
+    - Verify `agentpm install` reads multiple local manifests from `.agentpm/workspace.json`.
+    - Verify `agentpm install` includes registry package roots from `.agentpm/workspace.json`.
+    - Verify regenerated `agent.lock` includes transitive tools from agent package roots.
+    - Verify regenerated `agent.lock` does not include the template artifact.
+    - Verify `agentpm install` does not rewrite `.agentpm/workspace.json` during ordinary lock regeneration.
 - [ ] Add CLI tests for `.agentpm/template.json` generation:
     - Verify `agentpm new` writes `.agentpm/template.json`.
     - Verify the file includes template name, version, integrity, generated timestamp, and resolved non-secret variables.
