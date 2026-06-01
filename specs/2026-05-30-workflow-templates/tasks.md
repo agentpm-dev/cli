@@ -212,6 +212,35 @@
     - Verify runtime secret placeholders belong in `.env.example` or `environment.vars`, not `template.variables`.
 - [ ] Add CLI tests proving `.agentpm/template.json` is written only inside the generated target directory.
 
+## Milestone 4a: Local Template Authoring/Test Flow
+- [ ] Support local template sources for template authors, for example `agentpm new ./path/to/template-package my-test-project`.
+- [ ] When the template ref is a local path, read and validate the local `agent.json` with `kind: "template"` instead of resolving the template artifact from the registry.
+- [ ] Reuse the same generation pipeline as registry-backed templates:
+  - validate the `template` object,
+  - resolve variables,
+  - copy/render files from `template.files_root`,
+  - create the target directory safely,
+  - install declared `template.dependencies.tools` and `template.dependencies.agents`,
+  - write `agent.lock`,
+  - write `.agentpm/template.json`,
+  - print `template.entrypoints`.
+- [ ] Ensure local template generation still installs declared dependencies from the registry into the generated project.
+- [ ] Ensure `.agentpm/template.json` records local source metadata, such as `source: "local"` and the source path, without pretending the local template has registry integrity metadata.
+- [ ] Ensure local template generation follows the same safety rules as registry-backed templates:
+  - no template-provided script execution,
+  - no package-manager command execution,
+  - safe path checks,
+  - no writes outside the target directory.
+- [ ] Add CLI tests for generating a project from a local template path.
+- [ ] Add CLI tests proving local template generation rejects a path whose `agent.json` is missing or not `kind: "template"`.
+- [ ] Add CLI tests proving local template generation writes local-source `.agentpm/template.json` metadata.
+- [ ] Add docs showing the template author workflow:
+  - `agentpm init --kind template --name my-template`
+  - edit `agent.json` and files under `template/`
+  - `agentpm new . ../my-template-test`
+  - run the generated project’s entrypoint
+  - publish after local verification.
+
 ## Milestone 5: Registry Discovery and Template Detail UX
 - [ ] Update package search/indexing so templates are indexed as first-class package kinds.
 - [ ] Add template filtering to registry search, such as type/template filters.
