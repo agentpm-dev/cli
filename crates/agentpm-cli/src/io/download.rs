@@ -4,6 +4,7 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use hex::FromHex;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -36,8 +37,14 @@ pub async fn download_and_extract_all(
 
     let client = Client::new();
     let mut futs = FuturesUnordered::new();
+    let mut scheduled = BTreeSet::new();
 
     for art in &init.artifacts {
+        let artifact_key = format!("{:?}:{}@{}", art.kind, art.name, art.version);
+        if !scheduled.insert(artifact_key) {
+            continue;
+        }
+
         let pkg = art.name.clone();
         let ver = art.version.clone();
         let integrity = art.integrity.clone();

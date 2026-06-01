@@ -8,6 +8,10 @@ use crate::semver::types::{
     lock_from_plan, package_key, parse_package_spec,
 };
 use crate::semver::update::maybe_update_agent_json;
+use crate::workspace::{
+    build_workspace_lock, desired_from_workspace, load_workspace_local_manifests,
+    read_workspace_metadata,
+};
 use crate::{io::download::download_and_extract_all, io::fs, ui::Step};
 use anyhow::anyhow;
 use chrono::Utc;
@@ -15,7 +19,7 @@ use semver::{Version, VersionReq};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(clap::Parser, Debug, Clone)]
 pub struct InstallArgs {
@@ -75,6 +79,18 @@ impl InstallArgs {
 
         // 1) Load local manifest when present. Only manifest-driven installs require kind=agent.
         let manifest_path = PathBuf::from(&self.manifest);
+        let project_root = manifest_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        let workspace_metadata = read_workspace_metadata(&project_root)?;
+        if workspace_metadata.is_some() && self.spec.is_some() {
+            return Err(anyhow!(
+                "`agentpm install <spec>` is not supported for workspace projects; update the workspace manifests or agentpm.workspace.json and run `agentpm install`"
+            ));
+        }
+
         let mut manifest_value =
             if should_load_manifest_for_install(self.spec.as_deref(), &manifest_path) {
                 Some(
@@ -85,10 +101,24 @@ impl InstallArgs {
             } else {
                 None
             };
+        let workspace_manifests = if self.spec.is_none() {
+            if let Some(metadata) = workspace_metadata.as_ref() {
+                Some(load_workspace_local_manifests(&project_root, metadata)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // 2) Determine desired set
         let desired = if let Some(spec) = self.spec.as_deref() {
             DesiredSet::from_cli_or_agent_json(&Value::Null, Some(spec), self.update_range)?
+        } else if let Some(metadata) = workspace_metadata.as_ref() {
+            let manifests = workspace_manifests
+                .as_ref()
+                .ok_or_else(|| anyhow!("workspace manifests failed to load"))?;
+            desired_from_workspace(manifests, &metadata.package_roots)?
         } else {
             let manifest_value = manifest_value
                 .as_ref()
@@ -104,7 +134,7 @@ impl InstallArgs {
         };
 
         // 3) If --frozen and lock exists, use it directly; else resolve
-        let lock = read_lock_or_default(".")?;
+        let lock = read_lock_or_default(&project_root)?;
         let steps_label = if self.frozen {
             "Validating lockfile"
         } else {
@@ -160,9 +190,9 @@ impl InstallArgs {
 
         // 5) Download + verify + extract (parallel)
         let mut s = Step::new("Downloading packages", quiet);
-        let dl_dir = PathBuf::from(".agentpm/cache");
-        let tools_dir = PathBuf::from(".agentpm/tools");
-        let agents_dir = PathBuf::from(".agentpm/agents");
+        let dl_dir = project_root.join(".agentpm/cache");
+        let tools_dir = project_root.join(".agentpm/tools");
+        let agents_dir = project_root.join(".agentpm/agents");
         fs::ensure_dirs(&[&dl_dir, &tools_dir, &agents_dir])?;
         download_and_extract_all(&init, &dl_dir, &tools_dir, &agents_dir, self.refresh, quiet)
             .await?;
@@ -192,14 +222,21 @@ impl InstallArgs {
 
         // 8) Update lockfile (unless --frozen)
         if !self.frozen {
-            let next_lock = build_updated_lock(
-                &lock,
-                manifest_value.as_ref(),
-                self.spec.as_deref(),
-                &plan,
-                PathBuf::from(".agentpm").as_path(),
-            )?;
-            write_lock(".", &next_lock)?;
+            let next_lock = if let Some(metadata) = workspace_metadata.as_ref() {
+                let manifests = workspace_manifests
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("workspace manifests failed to load"))?;
+                build_workspace_lock(manifests, &metadata.package_roots, &plan, &project_root)?
+            } else {
+                build_updated_lock(
+                    &lock,
+                    manifest_value.as_ref(),
+                    self.spec.as_deref(),
+                    &plan,
+                    project_root.join(".agentpm").as_path(),
+                )?
+            };
+            write_lock(&project_root, &next_lock)?;
         }
 
         if should_write_manifest && let Some(manifest_value) = manifest_value.as_ref() {
@@ -365,6 +402,7 @@ fn build_lock_roots(
             .collect();
 
         return Ok(vec![LockRoot::LocalAgent {
+            key: "local:agent".to_string(),
             name,
             version,
             tools,
@@ -535,7 +573,7 @@ fn manifest_array_or_empty(manifest_value: &Value, field: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_lock_roots, build_updated_lock, ensure_supported_install_kinds,
+        InstallArgs, build_lock_roots, build_updated_lock, ensure_supported_install_kinds,
         installed_agent_manifest_path, should_load_manifest_for_install,
         validate_frozen_lock_compatibility,
     };
@@ -543,12 +581,20 @@ mod tests {
         DesiredSet, Lock, LockRoot, LockV1, LockV2, LockedDependency, LockedPackage, LockedRoot,
         PackageKind, ResolvePlan, ResolvedPackage,
     };
+    use crate::workspace::{WorkspaceMetadata, WorkspacePackageRoot, WorkspacePackageRoots};
     use agentpm_sdk::models::install as sdkm;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::extract::State;
+    use axum::http::{Response, StatusCode};
+    use axum::routing::{get, post};
     use chrono::Utc;
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
     use std::fs;
+    use std::net::SocketAddr;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -662,6 +708,7 @@ mod tests {
 
         assert_eq!(roots.len(), 1);
         let crate::semver::types::LockRoot::LocalAgent {
+            key,
             name,
             version,
             tools,
@@ -670,6 +717,7 @@ mod tests {
         else {
             panic!("expected local agent root");
         };
+        assert_eq!(key, "local:agent");
         assert_eq!(name, "support-agent");
         assert_eq!(version, "0.1.0");
         assert_eq!(
@@ -1139,11 +1187,370 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn workspace_install_rebuilds_lock_without_rewriting_workspace_file() {
+        let root = temp_root("workspace-install");
+        fs::create_dir_all(root.join("agents")).unwrap();
+        crate::manifest::write_manifest_pretty_atomic(
+            &root.join("agent.json"),
+            &json!({
+                "kind": "agent",
+                "name": "primary",
+                "version": "0.1.0",
+                "description": "Primary",
+                "tools": [{"name":"@zack/echo","version":"0.1.0"}],
+                "skills": [],
+                "knowledge": [],
+                "memory": [],
+                "profiles": []
+            }),
+        )
+        .unwrap();
+        crate::manifest::write_manifest_pretty_atomic(
+            &root.join("agents/reviewer.agent.json"),
+            &json!({
+                "kind": "agent",
+                "name": "reviewer",
+                "version": "0.1.0",
+                "description": "Reviewer",
+                "tools": [{"name":"@zack/review","version":"0.2.0"}],
+                "skills": [],
+                "knowledge": [],
+                "memory": [],
+                "profiles": []
+            }),
+        )
+        .unwrap();
+
+        let workspace = WorkspaceMetadata {
+            schema_version: 1,
+            manifests: vec![
+                "agent.json".to_string(),
+                "agents/reviewer.agent.json".to_string(),
+            ],
+            package_roots: WorkspacePackageRoots {
+                tools: Vec::new(),
+                agents: vec![WorkspacePackageRoot {
+                    name: "@zack/support-agent".to_string(),
+                    version: "0.1.0".to_string(),
+                }],
+            },
+        };
+        crate::workspace::write_workspace_metadata(&root, &workspace).unwrap();
+        let workspace_before = fs::read_to_string(root.join("agentpm.workspace.json")).unwrap();
+
+        crate::manifest::write_lock(
+            &root,
+            &Lock::V2(LockV2 {
+                lockfile_version: 2,
+                generated: Utc::now(),
+                packages: BTreeMap::new(),
+                roots: BTreeMap::new(),
+            }),
+        )
+        .unwrap();
+
+        let tool_echo_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"tool",
+                "name":"echo",
+                "version":"0.1.0",
+                "description":"Echo",
+                "entrypoint":{"command":"python","args":["echo.py"]},
+                "runtime":{"type":"python","version":"3.12"},
+                "inputs":{},
+                "outputs":{},
+                "files":["echo.py"]
+            }))
+            .unwrap(),
+        )]);
+        let tool_review_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"tool",
+                "name":"review",
+                "version":"0.2.0",
+                "description":"Review",
+                "entrypoint":{"command":"python","args":["review.py"]},
+                "runtime":{"type":"python","version":"3.12"},
+                "inputs":{},
+                "outputs":{},
+                "files":["review.py"]
+            }))
+            .unwrap(),
+        )]);
+        let tool_translate_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"tool",
+                "name":"translate",
+                "version":"0.3.0",
+                "description":"Translate",
+                "entrypoint":{"command":"python","args":["translate.py"]},
+                "runtime":{"type":"python","version":"3.12"},
+                "inputs":{},
+                "outputs":{},
+                "files":["translate.py"]
+            }))
+            .unwrap(),
+        )]);
+        let agent_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"agent",
+                "name":"support-agent",
+                "version":"0.1.0",
+                "description":"Support Agent",
+                "tools":[{"name":"@zack/translate","version":"0.3.0"}],
+                "skills":[],
+                "knowledge":[],
+                "memory":[],
+                "profiles":[]
+            }))
+            .unwrap(),
+        )]);
+
+        let initial_state = InstallTestState {
+            base_url: String::new(),
+            echo_tar: tool_echo_tar.clone(),
+            echo_sha: sha_hex(&tool_echo_tar),
+            review_tar: tool_review_tar.clone(),
+            review_sha: sha_hex(&tool_review_tar),
+            translate_tar: tool_translate_tar.clone(),
+            translate_sha: sha_hex(&tool_translate_tar),
+            agent_tar: agent_tar.clone(),
+            agent_sha: sha_hex(&agent_tar),
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(InstallTestState {
+            base_url: base_url.clone(),
+            ..initial_state
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(test_resolve))
+            .route("/v1/tools/install/init", post(test_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/echo", get(get_echo))
+            .route("/artifact/review", get(get_review))
+            .route("/artifact/translate", get(get_translate))
+            .route("/artifact/agent", get(get_agent))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let args = InstallArgs {
+            manifest: root.join("agent.json").to_string_lossy().into_owned(),
+            spec: None,
+            frozen: false,
+            refresh: false,
+            update_range: false,
+            quiet: true,
+            require_attestation: false,
+            token: None,
+        };
+
+        args.run(base_url).await.unwrap();
+
+        let workspace_after = fs::read_to_string(root.join("agentpm.workspace.json")).unwrap();
+        assert_eq!(workspace_after, workspace_before);
+
+        let lock: Value =
+            serde_json::from_str(&fs::read_to_string(root.join("agent.lock")).unwrap()).unwrap();
+        assert!(lock["roots"].get("local:agent").is_some());
+        assert!(
+            lock["roots"]
+                .get("local:agent:agents/reviewer.agent.json")
+                .is_some()
+        );
+        assert!(
+            lock["roots"]
+                .get("agent:@zack/support-agent@0.1.0")
+                .is_some()
+        );
+        assert!(lock["packages"].get("tool:@zack/echo@0.1.0").is_some());
+        assert!(lock["packages"].get("tool:@zack/review@0.2.0").is_some());
+        assert!(lock["packages"].get("tool:@zack/translate@0.3.0").is_some());
+        assert!(
+            lock["packages"]
+                .get("template:@zack/research-template@0.1.0")
+                .is_none()
+        );
+
+        server.abort();
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn temp_root(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("agentpm-install-{label}-{nanos}"))
+    }
+
+    #[derive(Clone)]
+    struct InstallTestState {
+        base_url: String,
+        echo_tar: Vec<u8>,
+        echo_sha: String,
+        review_tar: Vec<u8>,
+        review_sha: String,
+        translate_tar: Vec<u8>,
+        translate_sha: String,
+        agent_tar: Vec<u8>,
+        agent_sha: String,
+    }
+
+    async fn test_resolve(
+        State(state): State<Arc<InstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let mut items = Vec::new();
+        let empty = Vec::new();
+        for item in req["items"].as_array().unwrap_or(&empty) {
+            let kind = item["kind"].as_str().unwrap();
+            let name = item["name"].as_str().unwrap();
+            match (kind, name) {
+                ("tool", "@zack/echo") => items.push(json!({
+                    "kind":"tool","name":name,"version":"0.1.0","integrity":state.echo_sha
+                })),
+                ("tool", "@zack/review") => items.push(json!({
+                    "kind":"tool","name":name,"version":"0.2.0","integrity":state.review_sha
+                })),
+                ("agent", "@zack/support-agent") => {
+                    items.push(json!({
+                        "kind":"agent","name":name,"version":"0.1.0","integrity":state.agent_sha
+                    }));
+                    items.push(json!({
+                        "kind":"tool","name":"@zack/translate","version":"0.3.0","integrity":state.translate_sha
+                    }));
+                }
+                _ => return Err(StatusCode::BAD_REQUEST),
+            }
+        }
+        let response = json!({ "items": items });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
+    async fn test_init(
+        State(state): State<Arc<InstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let mut artifacts = Vec::new();
+        let empty = Vec::new();
+        for item in req["items"].as_array().unwrap_or(&empty) {
+            let kind = item["kind"].as_str().unwrap();
+            let name = item["name"].as_str().unwrap();
+            let (url, integrity) = match (kind, name) {
+                ("tool", "@zack/echo") => (
+                    format!("{}/artifact/echo", state.base_url),
+                    state.echo_sha.as_str(),
+                ),
+                ("tool", "@zack/review") => (
+                    format!("{}/artifact/review", state.base_url),
+                    state.review_sha.as_str(),
+                ),
+                ("tool", "@zack/translate") => (
+                    format!("{}/artifact/translate", state.base_url),
+                    state.translate_sha.as_str(),
+                ),
+                ("agent", "@zack/support-agent") => (
+                    format!("{}/artifact/agent", state.base_url),
+                    state.agent_sha.as_str(),
+                ),
+                _ => return Err(StatusCode::BAD_REQUEST),
+            };
+            artifacts.push(json!({
+                "kind":kind,
+                "name":name,
+                "version":item["version"],
+                "integrity":integrity,
+                "presigned_url":url,
+                "size":12,
+                "content_type":"application/gzip"
+            }));
+        }
+        let response = json!({
+            "session_id":"session-1",
+            "expires_at":"2026-06-01T00:00:00Z",
+            "artifacts":artifacts
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
+    async fn test_finalize() -> StatusCode {
+        StatusCode::NO_CONTENT
+    }
+
+    async fn get_echo(State(state): State<Arc<InstallTestState>>) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.echo_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_review(State(state): State<Arc<InstallTestState>>) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.review_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_translate(State(state): State<Arc<InstallTestState>>) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.translate_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_agent(State(state): State<Arc<InstallTestState>>) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.agent_tar.clone()))
+            .unwrap()
+    }
+
+    fn build_tarball(files: &[(&str, String)]) -> Vec<u8> {
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+            for (path, contents) in files {
+                let bytes = contents.as_bytes();
+                let mut header = tar::Header::new_gnu();
+                header.set_size(bytes.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder.append_data(&mut header, *path, bytes).unwrap();
+            }
+            builder.finish().unwrap();
+        }
+
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        use std::io::Write;
+        encoder.write_all(&tar_bytes).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn sha_hex(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        hex::encode(hasher.finalize())
     }
 }

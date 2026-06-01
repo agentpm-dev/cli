@@ -176,6 +176,7 @@ A generated project should generally contain:
 ```text
 project-name/
   agent.json
+  agentpm.workspace.json
   agent.lock
   .agentpm/
   README.md
@@ -184,6 +185,8 @@ project-name/
 ```
 
 The generated root `agent.json` must be valid under the normal `kind: "agent"` schema. It should use `tools`, `skills`, `knowledge`, `memory`, and `profiles` fields as supported by the current manifest schema. It must not include an `agents` array.
+
+When a generated project is a multi-agent or multi-root workspace, the committed workspace topology should live in a repo-root `agentpm.workspace.json` file rather than under `.agentpm/`. The `.agentpm/` directory remains the home for install/runtime state and optional generation metadata such as `.agentpm/template.json`.
 
 Example generated root manifest:
 

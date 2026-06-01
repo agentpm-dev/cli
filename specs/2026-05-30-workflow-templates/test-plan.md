@@ -125,6 +125,7 @@ agentpm new @namespace/template-name my-generated-project
 - Confirm `my-generated-project/` is created.
 - Confirm expected scaffold files are present.
 - Confirm `agent.json` is generated or copied correctly.
+- Confirm `agentpm.workspace.json` is present for generated workspace-style templates and is treated as committed workspace topology.
 - Confirm `agent.lock` is written after dependency installation.
 - Confirm `.agentpm/` contains installed runnable dependencies.
 - Confirm template origin is documented in README or optional generated metadata if implemented.

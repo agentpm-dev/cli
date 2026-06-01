@@ -80,7 +80,61 @@ pub struct AgentManifest {
 
 #[derive(Debug, Deserialize)]
 pub struct TemplateMetadata {
+    #[allow(dead_code)]
+    pub display_name: Option<String>,
+    #[allow(dead_code)]
+    pub use_case: Option<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub execution_surfaces: Vec<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub stack: Vec<String>,
     pub files_root: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub variables: Vec<TemplateVariable>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub dependencies: TemplateDependencies,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub entrypoints: Vec<TemplateEntrypoint>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct TemplateVariable {
+    pub name: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub default: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum PackageReference {
+    String(String),
+    Object {
+        name: String,
+        #[serde(default)]
+        version: Option<String>,
+    },
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct TemplateDependencies {
+    pub tools: Vec<PackageReference>,
+    pub agents: Vec<PackageReference>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct TemplateEntrypoint {
+    pub label: String,
+    pub command: String,
 }
 
 #[derive(Debug, Deserialize)]

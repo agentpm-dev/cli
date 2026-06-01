@@ -6,6 +6,7 @@ pub mod keys;
 pub mod lint;
 pub mod login;
 pub mod namespace;
+pub mod new;
 pub mod publish;
 pub mod run;
 pub mod serve;
@@ -30,6 +31,9 @@ pub enum Commands {
 
     /// Install tool(s) from the registry
     Install(install::InstallArgs),
+
+    /// Generate a project from a published workflow template
+    New(new::NewArgs),
 
     /// Execute an installed tool with JSON input
     Run(run::RunArgs),

@@ -14,6 +14,7 @@ mod prelude;
 mod runner;
 mod semver;
 mod ui;
+mod workspace;
 /*
 TODO:
 Try: AGENTPM_BASE_URL=http://127.0.0.1:8080 (or whatever you’ll run locally), or
@@ -63,6 +64,7 @@ async fn main() -> Result<()> {
         commands::Commands::Lint(args) => args.run().await,
         commands::Commands::Publish(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Install(arg) => arg.run(cli.base_url.clone()).await,
+        commands::Commands::New(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Run(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Serve(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Export(arg) => arg.run(cli.base_url.clone()).await,

@@ -116,6 +116,7 @@ pub struct ReservedReferences {
 #[allow(dead_code)]
 pub enum LockRoot {
     LocalAgent {
+        key: String,
         name: String,
         version: String,
         tools: Vec<String>,
@@ -280,13 +281,14 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
     for root in roots {
         match root {
             LockRoot::LocalAgent {
+                key,
                 name,
                 version,
                 tools,
                 reserved,
             } => {
                 root_map.insert(
-                    "local:agent".to_string(),
+                    key.clone(),
                     LockedRoot {
                         name: Some(name.clone()),
                         version: Some(version.clone()),
@@ -522,6 +524,7 @@ mod tests {
                 }],
             },
             &[LockRoot::LocalAgent {
+                key: "local:agent".to_string(),
                 name: "support-agent".to_string(),
                 version: "0.1.0".to_string(),
                 tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],

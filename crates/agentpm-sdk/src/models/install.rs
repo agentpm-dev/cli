@@ -9,7 +9,7 @@ pub enum PackageKind {
     Template,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageRequirement {
     #[serde(default)]
     pub kind: PackageKind,
@@ -17,7 +17,7 @@ pub struct PackageRequirement {
     pub range: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedPackage {
     #[serde(default)]
     pub kind: PackageKind,
@@ -27,17 +27,17 @@ pub struct ResolvedPackage {
     pub integrity: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolveRequest {
     pub items: Vec<PackageRequirement>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolveResponse {
     pub items: Vec<ResolvedPackage>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallInitResponse {
     pub session_id: String,
     /// When the presigned URLs expire (RFC3339 string for simplicity)
@@ -45,7 +45,7 @@ pub struct InstallInitResponse {
     pub artifacts: Vec<PackageArtifact>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageArtifact {
     #[serde(default)]
     pub kind: PackageKind,
@@ -110,7 +110,7 @@ mod tests {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SigningSummary {
     /// "off" | "optional" | "required"
     pub mode: String,
@@ -119,7 +119,7 @@ pub struct SigningSummary {
     pub registry_attested: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Runtime {
     pub r#type: String,
     pub version: String,
