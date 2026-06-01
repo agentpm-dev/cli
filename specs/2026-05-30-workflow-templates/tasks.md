@@ -135,6 +135,12 @@
 - [ ] If the template author provides extra scaffold files, ensure those files are copied/rendered normally, but keep ownership of the root generated-project `agent.json` in `agentpm new`.
 - [ ] Validate that the generated root `agent.json` is schema-valid.
 - [ ] Ensure generated root `agent.json` does not include recursive `agents` dependencies.
+- [ ] Ensure the generated `agent.json` file(s) are valid and consistent with the generated `agent.lock` file
+  - The `agent.lock` file should, in fact, be generated based on the install commands that are run as part of `agentpm new`, like a normal installw would
+  - Note this may involve multiple `agent.json` files generated from `agentpm new` due to agents not allow nested agents
+- [ ] Ensure that after `agentpm new` is run, a user can make changes to one or multiple `agent.json` files, run agentpm install, and generate a valid `agent.lock`
+  - The `agent.lock` should contain everything that the `agentpm new`-generated version did, minus whatever has changed
+  - This could involve agentpm install having an understanding of multiple `agent.json` files
 - [ ] Install declared `template.dependencies.tools` and `template.dependencies.agents` into the generated project as runnable workspace dependencies.
 - [ ] Write/update the generated project `agent.lock` for runnable dependencies only.
 - [ ] Ensure the generated `agent.lock` includes transitive tools from installed agent package roots.
