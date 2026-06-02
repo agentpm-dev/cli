@@ -41,7 +41,10 @@ pub struct TemplateOriginMetadata {
     pub kind: String,
     pub name: String,
     pub version: String,
-    pub integrity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     pub generated_at: String,
     #[serde(default)]
     pub variables: BTreeMap<String, String>,

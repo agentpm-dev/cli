@@ -32,7 +32,7 @@ pub enum Commands {
     /// Install tool(s) from the registry
     Install(install::InstallArgs),
 
-    /// Generate a project from a published workflow template
+    /// Generate a project from a published or local workflow template
     New(new::NewArgs),
 
     /// Execute an installed tool with JSON input

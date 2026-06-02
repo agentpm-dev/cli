@@ -6,6 +6,7 @@ AgentPM currently supports two package kinds:
 
 - **tools**: executable capabilities with entrypoints, runtime requirements, inputs, and outputs
 - **agents**: composition artifacts that declare tool dependencies, examples, and future reserved references
+- **templates**: workflow scaffolds that generate editable AgentPM workspaces
 
 Agent packages are not runnable app bundles. They install as portable composition metadata plus resolved tool dependencies.
 
@@ -136,13 +137,34 @@ Tip: different terminals (Terminal.app, iTerm, VS Code) may read different start
 
 ## Quick start
 
-Create a new AgentPM tool or agent package:
+Create a new AgentPM package:
 
 ```bash
 agentpm --help
 agentpm init --kind tool --name demo --description "My first tool"
 agentpm init --kind agent --name support-agent --description "My first agent"
+agentpm init --kind template --name research-template --description "My workflow template"
 ```
+
+### Workflow templates
+
+Templates are publishable scaffold packages that generate editable AgentPM workspaces.
+
+Generate a project from a published template:
+
+```bash
+agentpm new @zack/research-template my-project
+cd my-project
+agentpm install --frozen
+# run the generated project's documented entrypoint
+```
+
+`agentpm new`:
+
+- copies and renders scaffold files from the template
+- installs declared tool and agent dependencies into the generated workspace
+- writes `agent.json`, `agentpm.workspace.json` when needed, `agent.lock`, and `.agentpm/template.json`
+- does not execute template-provided scripts or generated app code during scaffolding
 
 ### Manifest-driven local agent install
 
@@ -202,11 +224,29 @@ The preferred publish scope is:
 
 - `packages:publish`
 
-That scope can publish both tools and agents.
+That scope can publish tools, agents, and templates.
 
 ### Manifest schema
 
 See the [schema docs](./schemas/README.md) for `agent.json` format, validation, and examples.
+
+### Local template authoring
+
+For template authoring and local verification:
+
+```bash
+agentpm init --kind template --name my-template --description "My workflow template"
+cd my-template
+# edit agent.json and files under template/
+agentpm new . ../my-template-test
+cd ../my-template-test
+agentpm install --frozen
+# run the generated project's documented entrypoint
+cd ../my-template
+agentpm publish
+```
+
+That flow lets template authors verify scaffold rendering and dependency installation locally before publishing.
 
 ## Contributing
 

@@ -23,7 +23,7 @@ use walkdir::WalkDir;
 
 #[derive(clap::Parser, Debug, Clone)]
 pub struct NewArgs {
-    /// Published template package reference, e.g. @owner/name@0.1.0
+    /// Published template package reference or local template path
     pub template_ref: String,
 
     /// Optional target directory for the generated project
@@ -40,6 +40,14 @@ pub struct NewArgs {
     /// Personal Access Token for headless auth (overrides env/file)
     #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
     pub token: Option<String>,
+}
+
+struct LoadedTemplate {
+    manifest: TemplateManifest,
+    extract_root: PathBuf,
+    origin_source: String,
+    origin_integrity: Option<String>,
+    origin_path: Option<String>,
 }
 
 impl NewArgs {
@@ -70,49 +78,10 @@ impl NewArgs {
 
         let overrides = parse_var_overrides(&self.vars)?;
 
-        let mut step = crate::ui::Step::new("Resolving template", quiet);
-        let template_req = parse_template_ref(&self.template_ref)?;
-        let template_resolved = client
-            .resolve_install(&agentpm_sdk::models::install::ResolveRequest {
-                items: vec![template_req],
-            })
-            .await?;
-        let template_item = template_resolved
-            .items
-            .first()
-            .ok_or_else(|| anyhow!("template resolution returned no items"))?;
-        if template_resolved.items.len() != 1
-            || template_item.kind != agentpm_sdk::models::install::PackageKind::Template
-        {
-            return Err(anyhow!(
-                "`agentpm new` expected a single template package, got {:?}",
-                template_resolved.items
-            ));
-        }
-        step.ok("");
-
-        let mut step = crate::ui::Step::new("Downloading template", quiet);
-        let template_init = client.install_init(&template_resolved).await?;
-        let template_artifact = template_init
-            .artifacts
-            .first()
-            .ok_or_else(|| anyhow!("template init returned no artifacts"))?;
-        let template_cache = template_work.join("template.tgz");
-        let template_extract = template_work.join("extracted");
-        download_to(
-            &reqwest::Client::new(),
-            &template_artifact.presigned_url,
-            &template_cache,
-        )
-        .await?;
-        ensure_sha256(&template_cache, &template_artifact.integrity).await?;
-        extract_tar_gz(&template_cache, &template_extract).await?;
-        client.install_finalize(&template_init.session_id).await?;
-
-        let downloaded_manifest_path = template_extract.join("agent.json");
-        let (downloaded_manifest_value, _) = load_manifest_value(&downloaded_manifest_path)?;
-        let downloaded_manifest = parse_template_manifest(&downloaded_manifest_value)?;
-        step.ok("");
+        let loaded_template =
+            load_template_source(&self.template_ref, &mut client, template_work, quiet).await?;
+        let downloaded_manifest = loaded_template.manifest;
+        let template_extract = loaded_template.extract_root;
 
         let target_dir =
             determine_target_dir(self.target_dir.clone(), &downloaded_manifest, &overrides)?;
@@ -213,11 +182,12 @@ impl NewArgs {
                 &target_dir,
                 &TemplateOriginMetadata {
                     schema_version: 1,
-                    source: "registry".to_string(),
+                    source: loaded_template.origin_source.clone(),
                     kind: "template".to_string(),
                     name: downloaded_manifest.name.clone(),
                     version: downloaded_manifest.version.clone(),
-                    integrity: template_artifact.integrity.clone(),
+                    integrity: loaded_template.origin_integrity.clone(),
+                    path: loaded_template.origin_path.clone(),
                     generated_at: Utc::now().to_rfc3339(),
                     variables: resolved_vars.clone(),
                 },
@@ -251,6 +221,152 @@ fn parse_var_overrides(entries: &[String]) -> Result<BTreeMap<String, String>> {
         vars.insert(key.trim().to_string(), value.to_string());
     }
     Ok(vars)
+}
+
+async fn load_template_source(
+    template_ref: &str,
+    client: &mut AgentPmClient,
+    template_work: &Path,
+    quiet: bool,
+) -> Result<LoadedTemplate> {
+    if is_local_template_ref(template_ref) {
+        load_local_template_source(template_ref, quiet)
+    } else {
+        load_registry_template_source(template_ref, client, template_work, quiet).await
+    }
+}
+
+fn is_local_template_ref(spec: &str) -> bool {
+    let trimmed = spec.trim();
+    !trimmed.starts_with('@')
+}
+
+async fn load_registry_template_source(
+    template_ref: &str,
+    client: &mut AgentPmClient,
+    template_work: &Path,
+    quiet: bool,
+) -> Result<LoadedTemplate> {
+    let mut step = crate::ui::Step::new("Resolving template", quiet);
+    let template_req = parse_template_ref(template_ref)?;
+    let template_resolved = client
+        .resolve_install(&agentpm_sdk::models::install::ResolveRequest {
+            items: vec![template_req],
+        })
+        .await?;
+    let template_item = template_resolved
+        .items
+        .first()
+        .ok_or_else(|| anyhow!("template resolution returned no items"))?;
+    if template_resolved.items.len() != 1
+        || template_item.kind != agentpm_sdk::models::install::PackageKind::Template
+    {
+        return Err(anyhow!(
+            "`agentpm new` expected a single template package, got {:?}",
+            template_resolved.items
+        ));
+    }
+    step.ok("");
+
+    let mut step = crate::ui::Step::new("Downloading template", quiet);
+    let template_init = client.install_init(&template_resolved).await?;
+    let template_artifact = template_init
+        .artifacts
+        .first()
+        .ok_or_else(|| anyhow!("template init returned no artifacts"))?;
+    let template_cache = template_work.join("template.tgz");
+    let template_extract = template_work.join("extracted");
+    download_to(
+        &reqwest::Client::new(),
+        &template_artifact.presigned_url,
+        &template_cache,
+    )
+    .await?;
+    ensure_sha256(&template_cache, &template_artifact.integrity).await?;
+    extract_tar_gz(&template_cache, &template_extract).await?;
+    client.install_finalize(&template_init.session_id).await?;
+
+    let downloaded_manifest_path = template_extract.join("agent.json");
+    let (downloaded_manifest_value, _) = load_manifest_value(&downloaded_manifest_path)?;
+    let downloaded_manifest = parse_template_manifest(&downloaded_manifest_value)?;
+    step.ok("");
+
+    Ok(LoadedTemplate {
+        manifest: downloaded_manifest,
+        extract_root: template_extract,
+        origin_source: "registry".to_string(),
+        origin_integrity: Some(template_artifact.integrity.clone()),
+        origin_path: None,
+    })
+}
+
+fn load_local_template_source(template_ref: &str, quiet: bool) -> Result<LoadedTemplate> {
+    let mut step = crate::ui::Step::new("Loading local template", quiet);
+    let input_path = PathBuf::from(template_ref);
+    let package_root = if input_path.file_name().and_then(|s| s.to_str()) == Some("agent.json") {
+        input_path
+            .parent()
+            .ok_or_else(|| {
+                anyhow!(
+                    "local template path {} has no parent directory",
+                    input_path.display()
+                )
+            })?
+            .to_path_buf()
+    } else {
+        input_path
+    };
+    let package_root = package_root
+        .canonicalize()
+        .with_context(|| format!("resolving local template path {}", package_root.display()))?;
+    let manifest_path = package_root.join("agent.json");
+    if !manifest_path.exists() {
+        return Err(anyhow!(
+            "local template path {} is missing agent.json",
+            package_root.display()
+        ));
+    }
+    let (mut manifest_value, _) = load_manifest_value(&manifest_path)?;
+    let schema_source = local_validation_schema_source();
+    let (ok, issues) = validate_manifest_value(
+        &schema_source,
+        &manifest_path.to_string_lossy(),
+        &mut manifest_value,
+        false,
+    )?;
+    if !ok {
+        return Err(anyhow!(
+            "local template manifest {} is invalid: {issues:#?}",
+            manifest_path.display()
+        ));
+    }
+    let manifest_kind = manifest_value.get("kind").and_then(Value::as_str);
+    if manifest_kind != Some("template") {
+        return Err(anyhow!(
+            "local template {} must have kind=\"template\"",
+            manifest_path.display()
+        ));
+    }
+    let manifest = parse_template_manifest(&manifest_value)?;
+    step.ok("");
+
+    Ok(LoadedTemplate {
+        manifest,
+        extract_root: package_root.clone(),
+        origin_source: "local".to_string(),
+        origin_integrity: None,
+        origin_path: Some(package_root.display().to_string()),
+    })
+}
+
+fn local_validation_schema_source() -> String {
+    let repo_schema =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/agentpm.manifest.schema.json");
+    if repo_schema.exists() {
+        repo_schema.to_string_lossy().into_owned()
+    } else {
+        resolve_schema_source(None)
+    }
 }
 
 fn parse_template_ref(spec: &str) -> Result<agentpm_sdk::models::install::PackageRequirement> {
@@ -1143,9 +1259,10 @@ mod tests {
             }))
             .unwrap(),
         )]);
+        let template_sha = sha_hex(&template_tar);
         let initial_state = TestState {
             base_url: String::new(),
-            template_sha: sha_hex(&template_tar),
+            template_sha: template_sha.clone(),
             template_tar,
             tool_sha: sha_hex(&tool_tar),
             tool_tar,
@@ -1239,9 +1356,352 @@ mod tests {
         assert_eq!(template_meta["kind"], "template");
         assert_eq!(template_meta["name"], "research-template");
         assert_eq!(template_meta["version"], "0.1.0");
+        assert_eq!(template_meta["integrity"], Value::String(template_sha));
+        assert!(template_meta.get("path").is_none());
         assert_eq!(template_meta["variables"]["project_name"], "generated");
 
         server.abort();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn generates_workspace_from_local_template_path() {
+        let root = temp_dir("local-template");
+        let template_root = root.join("my-template");
+        std::fs::create_dir_all(template_root.join("template")).unwrap();
+        std::fs::write(
+            template_root.join("agent.json"),
+            serde_json::to_string_pretty(&json!({
+                "kind":"template",
+                "name":"local-template",
+                "version":"0.1.0",
+                "description":"A local template.",
+                "template":{
+                    "display_name":"Local Template",
+                    "use_case":"research",
+                    "execution_surfaces":["python-sdk"],
+                    "stack":["python"],
+                    "files_root":"template",
+                    "variables":[{"name":"project_name","description":"Generated project name","required":true,"default":"local-generated"}],
+                    "dependencies":{
+                        "tools":[{"name":"@zack/echo","version":"0.1.0"}],
+                        "agents":[]
+                    },
+                    "entrypoints":[{"label":"Run","command":"python main.py"}]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            template_root.join("template/README.md"),
+            "# {{ project_name }}\n",
+        )
+        .unwrap();
+
+        let tool_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"tool",
+                "name":"echo",
+                "version":"0.1.0",
+                "description":"Echo",
+                "entrypoint":{"command":"python","args":["echo.py"]},
+                "runtime":{"type":"python","version":"3.12"},
+                "inputs":{},
+                "outputs":{},
+                "files":["echo.py"]
+            }))
+            .unwrap(),
+        )]);
+        let state = Arc::new(TestState {
+            base_url: String::new(),
+            template_tar: Vec::new(),
+            template_sha: "0".repeat(64),
+            tool_sha: sha_hex(&tool_tar),
+            tool_tar,
+            agent_sha: "2".repeat(64),
+            agent_tar: Vec::new(),
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(TestState {
+            base_url: base_url.clone(),
+            ..(*state).clone()
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(test_resolve))
+            .route("/v1/tools/install/init", post(test_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/tool", get(get_tool))
+            .route("/artifact/agent", get(get_agent))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let target = root.join("generated");
+        let args = NewArgs {
+            template_ref: template_root.display().to_string(),
+            target_dir: Some(target.clone()),
+            vars: Vec::new(),
+            quiet: true,
+            token: None,
+        };
+
+        args.run(base_url).await.unwrap();
+
+        assert!(target.join("README.md").exists());
+        assert!(target.join("agent.lock").exists());
+        assert!(
+            target
+                .join(".agentpm/tools/zack/echo/0.1.0/agent.json")
+                .exists()
+        );
+
+        let template_meta: Value = serde_json::from_str(
+            &std::fs::read_to_string(target.join(".agentpm/template.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(template_meta["source"], "local");
+        assert_eq!(template_meta["kind"], "template");
+        assert_eq!(template_meta["name"], "local-template");
+        assert_eq!(template_meta["version"], "0.1.0");
+        assert_eq!(
+            template_meta["path"],
+            Value::String(template_root.canonicalize().unwrap().display().to_string())
+        );
+        assert!(template_meta.get("integrity").is_none());
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn generates_workspace_from_local_template_manifest_path() {
+        let root = temp_dir("local-template-manifest-path");
+        let template_root = root.join("my-template");
+        std::fs::create_dir_all(template_root.join("template")).unwrap();
+        std::fs::write(
+            template_root.join("agent.json"),
+            serde_json::to_string_pretty(&json!({
+                "kind":"template",
+                "name":"local-template",
+                "version":"0.1.0",
+                "description":"A local template.",
+                "template":{
+                    "display_name":"Local Template",
+                    "use_case":"research",
+                    "execution_surfaces":["python-sdk"],
+                    "stack":["python"],
+                    "files_root":"template",
+                    "variables":[{"name":"project_name","description":"Generated project name","required":true,"default":"local-generated"}],
+                    "dependencies":{
+                        "tools":[{"name":"@zack/echo","version":"0.1.0"}],
+                        "agents":[]
+                    },
+                    "entrypoints":[{"label":"Run","command":"python main.py"}]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            template_root.join("template/README.md"),
+            "# {{ project_name }}\n",
+        )
+        .unwrap();
+
+        let tool_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"tool",
+                "name":"echo",
+                "version":"0.1.0",
+                "description":"Echo",
+                "entrypoint":{"command":"python","args":["echo.py"]},
+                "runtime":{"type":"python","version":"3.12"},
+                "inputs":{},
+                "outputs":{},
+                "files":["echo.py"]
+            }))
+            .unwrap(),
+        )]);
+        let state = Arc::new(TestState {
+            base_url: String::new(),
+            template_tar: Vec::new(),
+            template_sha: "0".repeat(64),
+            tool_sha: sha_hex(&tool_tar),
+            tool_tar,
+            agent_sha: "2".repeat(64),
+            agent_tar: Vec::new(),
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(TestState {
+            base_url: base_url.clone(),
+            ..(*state).clone()
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(test_resolve))
+            .route("/v1/tools/install/init", post(test_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/tool", get(get_tool))
+            .route("/artifact/agent", get(get_agent))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let target = root.join("generated");
+        let args = NewArgs {
+            template_ref: template_root.join("agent.json").display().to_string(),
+            target_dir: Some(target.clone()),
+            vars: Vec::new(),
+            quiet: true,
+            token: None,
+        };
+
+        args.run(base_url).await.unwrap();
+
+        assert!(target.join("README.md").exists());
+        assert!(target.join("agent.lock").exists());
+        assert!(
+            target
+                .join(".agentpm/tools/zack/echo/0.1.0/agent.json")
+                .exists()
+        );
+
+        let template_meta: Value = serde_json::from_str(
+            &std::fs::read_to_string(target.join(".agentpm/template.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(template_meta["source"], "local");
+        assert_eq!(template_meta["kind"], "template");
+        assert_eq!(template_meta["name"], "local-template");
+        assert_eq!(template_meta["version"], "0.1.0");
+        assert_eq!(
+            template_meta["path"],
+            Value::String(template_root.canonicalize().unwrap().display().to_string())
+        );
+        assert!(template_meta.get("integrity").is_none());
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn rejects_local_template_path_missing_agent_json() {
+        let root = temp_dir("missing-local-template-manifest");
+        let template_root = root.join("my-template");
+        std::fs::create_dir_all(&template_root).unwrap();
+
+        let args = NewArgs {
+            template_ref: template_root.display().to_string(),
+            target_dir: Some(root.join("generated")),
+            vars: Vec::new(),
+            quiet: true,
+            token: None,
+        };
+
+        let err = args
+            .run("http://localhost:5000".to_string())
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("is missing agent.json"),
+            "{err:#}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn rejects_local_template_path_with_non_template_manifest() {
+        let root = temp_dir("wrong-kind-local-template");
+        let template_root = root.join("my-template");
+        std::fs::create_dir_all(&template_root).unwrap();
+        std::fs::write(
+            template_root.join("agent.json"),
+            serde_json::to_string_pretty(&json!({
+                "kind":"tool",
+                "name":"not-a-template",
+                "version":"0.1.0",
+                "description":"nope",
+                "entrypoint":{"command":"python","args":["main.py"]},
+                "runtime":{"type":"python","version":"3.12"},
+                "inputs":{},
+                "outputs":{},
+                "files":["main.py"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let args = NewArgs {
+            template_ref: template_root.display().to_string(),
+            target_dir: Some(root.join("generated")),
+            vars: Vec::new(),
+            quiet: true,
+            token: None,
+        };
+
+        let err = args
+            .run("http://localhost:5000".to_string())
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("must have kind=\"template\""),
+            "{err:#}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn rejects_local_template_path_with_schema_invalid_manifest() {
+        let root = temp_dir("invalid-local-template");
+        let template_root = root.join("my-template");
+        std::fs::create_dir_all(&template_root).unwrap();
+        std::fs::write(
+            template_root.join("agent.json"),
+            serde_json::to_string_pretty(&json!({
+                "kind":"template",
+                "name":"bad-template",
+                "version":"0.1.0",
+                "description":"invalid",
+                "template":{
+                    "display_name":"Bad Template",
+                    "use_case":"research",
+                    "execution_surfaces":["python-sdk"],
+                    "variables":[{"name":"BadVar","required":true}]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let args = NewArgs {
+            template_ref: template_root.display().to_string(),
+            target_dir: Some(root.join("generated")),
+            vars: Vec::new(),
+            quiet: true,
+            token: None,
+        };
+
+        let err = args
+            .run("http://localhost:5000".to_string())
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("local template manifest"),
+            "{err:#}"
+        );
+
         let _ = std::fs::remove_dir_all(root);
     }
 
