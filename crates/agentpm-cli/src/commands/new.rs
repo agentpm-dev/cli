@@ -15,7 +15,7 @@ use anyhow::anyhow;
 use chrono::Utc;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::io::IsTerminal;
+use std::io::{self, IsTerminal, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::task;
@@ -62,6 +62,7 @@ impl NewArgs {
         let cfg = Config::load(base_url.clone())?;
         let auto_quiet = !std::io::stderr().is_terminal();
         let quiet = self.quiet || auto_quiet;
+        let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
 
         let mut step = crate::ui::Step::new("Reading credentials", quiet);
         let token = resolve_token(&cfg, self.token.clone())?;
@@ -86,7 +87,7 @@ impl NewArgs {
         let target_dir =
             determine_target_dir(self.target_dir.clone(), &downloaded_manifest, &overrides)?;
         let mut resolved_vars =
-            resolve_template_variables(&downloaded_manifest, &overrides, &target_dir, false)?;
+            resolve_template_variables(&downloaded_manifest, &overrides, &target_dir, interactive)?;
         if !resolved_vars.contains_key("project_name") {
             resolved_vars.insert(
                 "project_name".to_string(),
@@ -430,18 +431,30 @@ fn resolve_template_variables(
     target_dir: &Path,
     interactive: bool,
 ) -> Result<BTreeMap<String, String>> {
-    // Milestone 4 intentionally ships a deterministic non-interactive path:
-    // required variables must come from `--var` or manifest defaults. Prompting
-    // is deferred to Milestone 4b so the initial `agentpm new` scope stays
-    // focused on safe generation, workspace topology, and lock correctness.
-    if interactive {
-        return Err(anyhow!("interactive template prompts are not implemented"));
-    }
+    resolve_template_variables_with_prompter(
+        manifest,
+        overrides,
+        target_dir,
+        interactive,
+        prompt_for_template_variable,
+    )
+}
 
+fn resolve_template_variables_with_prompter<F>(
+    manifest: &TemplateManifest,
+    overrides: &BTreeMap<String, String>,
+    target_dir: &Path,
+    interactive: bool,
+    mut prompter: F,
+) -> Result<BTreeMap<String, String>>
+where
+    F: FnMut(&crate::manifest::TemplateVariable, &str) -> Result<String>,
+{
     let target_name = target_dir
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or(&manifest.name);
+    let default_project_name = sanitized_project_name(target_name);
 
     let mut resolved = BTreeMap::new();
     for variable in &manifest.template.variables {
@@ -450,7 +463,7 @@ fn resolve_template_variables(
             .cloned()
             .or_else(|| {
                 if variable.name == "project_name" {
-                    Some(sanitized_project_name(target_name))
+                    Some(default_project_name.clone())
                 } else {
                     None
                 }
@@ -462,24 +475,69 @@ fn resolve_template_variables(
                 resolved.insert(variable.name.clone(), value);
             }
             None if variable.required => {
-                return Err(anyhow!(
-                    "required template variable {} has no value; pass --var {}=...",
-                    variable.name,
-                    variable.name
-                ));
+                if interactive {
+                    let prompt_project_name = resolved
+                        .get("project_name")
+                        .map(String::as_str)
+                        .unwrap_or(&default_project_name);
+                    resolved.insert(
+                        variable.name.clone(),
+                        prompter(variable, prompt_project_name)?,
+                    );
+                } else {
+                    return Err(anyhow!(
+                        "required template variable {} has no value; pass --var {}=...",
+                        variable.name,
+                        variable.name
+                    ));
+                }
             }
             None => {}
         }
     }
 
     if !resolved.contains_key("project_name") {
-        resolved.insert(
-            "project_name".to_string(),
-            sanitized_project_name(target_name),
-        );
+        resolved.insert("project_name".to_string(), default_project_name);
     }
 
     Ok(resolved)
+}
+
+fn prompt_for_template_variable(
+    variable: &crate::manifest::TemplateVariable,
+    project_name: &str,
+) -> Result<String> {
+    let mut stderr = io::stderr().lock();
+    write!(
+        stderr,
+        "Enter value for template variable {}",
+        variable.name
+    )?;
+    if variable.name != "project_name" {
+        write!(stderr, " (project_name: {project_name})")?;
+    }
+    if let Some(description) = &variable.description {
+        write!(stderr, " - {description}")?;
+    }
+    write!(stderr, ": ")?;
+    stderr.flush()?;
+
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .context("failed to read interactive template variable input")?;
+    validate_interactive_template_value(&variable.name, &input)
+}
+
+fn validate_interactive_template_value(variable_name: &str, raw_input: &str) -> Result<String> {
+    let value = raw_input.trim().to_string();
+    if value.is_empty() {
+        return Err(anyhow!(
+            "no value entered for required template variable {}",
+            variable_name
+        ));
+    }
+    Ok(value)
 }
 
 fn sanitized_project_name(raw: &str) -> String {
@@ -1055,6 +1113,220 @@ mod tests {
 
         let target = determine_target_dir(None, &manifest, &BTreeMap::new()).unwrap();
         assert_eq!(target, PathBuf::from("my-agent"));
+    }
+
+    #[test]
+    fn prompts_interactively_for_required_variable_without_default() {
+        let manifest = parse_template_manifest(&json!({
+            "kind": "template",
+            "name": "research-assistant",
+            "version": "0.1.0",
+            "description": "Template",
+            "template": {
+                "display_name": "Research Assistant",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "stack": ["python"],
+                "files_root": "template",
+                "variables": [
+                    {
+                        "name":"project_name",
+                        "description":"Generated project name",
+                        "required":true,
+                        "default":"my-agent"
+                    },
+                    {
+                        "name":"topic",
+                        "description":"Research topic",
+                        "required":true
+                    }
+                ],
+                "dependencies": {"tools":[],"agents":[]},
+                "entrypoints": []
+            }
+        }))
+        .unwrap();
+
+        let mut prompted = Vec::new();
+        let resolved = resolve_template_variables_with_prompter(
+            &manifest,
+            &BTreeMap::new(),
+            Path::new("my-agent"),
+            true,
+            |variable, project_name| {
+                prompted.push((variable.name.clone(), project_name.to_string()));
+                Ok("AgentPM".to_string())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(resolved["project_name"], "my-agent");
+        assert_eq!(resolved["topic"], "AgentPM");
+        assert_eq!(
+            prompted,
+            vec![("topic".to_string(), "my-agent".to_string())]
+        );
+    }
+
+    #[test]
+    fn interactive_prompt_is_bypassed_when_var_override_is_present() {
+        let manifest = parse_template_manifest(&json!({
+            "kind": "template",
+            "name": "research-assistant",
+            "version": "0.1.0",
+            "description": "Template",
+            "template": {
+                "display_name": "Research Assistant",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "stack": ["python"],
+                "files_root": "template",
+                "variables": [
+                    {
+                        "name":"project_name",
+                        "description":"Generated project name",
+                        "required":true,
+                        "default":"my-agent"
+                    },
+                    {
+                        "name":"topic",
+                        "description":"Research topic",
+                        "required":true
+                    }
+                ],
+                "dependencies": {"tools":[],"agents":[]},
+                "entrypoints": []
+            }
+        }))
+        .unwrap();
+
+        let overrides = BTreeMap::from([("topic".to_string(), "OpenAI".to_string())]);
+        let mut prompt_calls = 0usize;
+        let resolved = resolve_template_variables_with_prompter(
+            &manifest,
+            &overrides,
+            Path::new("my-agent"),
+            true,
+            |_variable, _project_name| {
+                prompt_calls += 1;
+                Ok("should-not-be-used".to_string())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(resolved["topic"], "OpenAI");
+        assert_eq!(prompt_calls, 0);
+    }
+
+    #[test]
+    fn interactive_prompt_uses_resolved_project_name_override_as_context() {
+        let manifest = parse_template_manifest(&json!({
+            "kind": "template",
+            "name": "research-assistant",
+            "version": "0.1.0",
+            "description": "Template",
+            "template": {
+                "display_name": "Research Assistant",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "stack": ["python"],
+                "files_root": "template",
+                "variables": [
+                    {
+                        "name":"project_name",
+                        "description":"Generated project name",
+                        "required":true,
+                        "default":"my-agent"
+                    },
+                    {
+                        "name":"topic",
+                        "description":"Research topic",
+                        "required":true
+                    }
+                ],
+                "dependencies": {"tools":[],"agents":[]},
+                "entrypoints": []
+            }
+        }))
+        .unwrap();
+
+        let overrides = BTreeMap::from([("project_name".to_string(), "custom-name".to_string())]);
+        let mut prompted = Vec::new();
+        let resolved = resolve_template_variables_with_prompter(
+            &manifest,
+            &overrides,
+            Path::new("my-project"),
+            true,
+            |variable, project_name| {
+                prompted.push((variable.name.clone(), project_name.to_string()));
+                Ok("AgentPM".to_string())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(resolved["project_name"], "custom-name");
+        assert_eq!(resolved["topic"], "AgentPM");
+        assert_eq!(
+            prompted,
+            vec![("topic".to_string(), "custom-name".to_string())]
+        );
+    }
+
+    #[test]
+    fn non_interactive_required_variable_failure_is_unchanged() {
+        let manifest = parse_template_manifest(&json!({
+            "kind": "template",
+            "name": "research-assistant",
+            "version": "0.1.0",
+            "description": "Template",
+            "template": {
+                "display_name": "Research Assistant",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "stack": ["python"],
+                "files_root": "template",
+                "variables": [
+                    {
+                        "name":"project_name",
+                        "description":"Generated project name",
+                        "required":true,
+                        "default":"my-agent"
+                    },
+                    {
+                        "name":"topic",
+                        "description":"Research topic",
+                        "required":true
+                    }
+                ],
+                "dependencies": {"tools":[],"agents":[]},
+                "entrypoints": []
+            }
+        }))
+        .unwrap();
+
+        let err = resolve_template_variables_with_prompter(
+            &manifest,
+            &BTreeMap::new(),
+            Path::new("my-agent"),
+            false,
+            |_variable, _project_name| Ok("ignored".to_string()),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("required template variable topic has no value"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn interactive_empty_input_has_interactive_specific_error() {
+        let err = validate_interactive_template_value("topic", "").unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("no value entered for required template variable topic"),
+            "{err:#}"
+        );
     }
 
     #[test]

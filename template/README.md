@@ -14,3 +14,6 @@ When this template is used with `agentpm new`, files in the scaffold can referen
 ## Security note
 
 Template variables are for generation-time scaffold values only. Do not use them for API keys, tokens, passwords, or runtime secrets. Put runtime configuration in `.env.example` and manifest `environment.vars` where applicable.
+
+This is a test for: {{test_variable}}
+And another for: {{test_variable2}}
