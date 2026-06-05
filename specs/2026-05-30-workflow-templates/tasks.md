@@ -320,6 +320,9 @@
 - [ ] Verify agent-only install/publish workflows still work.
 - [ ] Verify registry search and detail pages for tools and agents still work.
 - [ ] Fix any UI language that incorrectly calls templates tools.
+- [ ] Document the template authoring README split clearly:
+  - root `README.md` describes the template package in the registry
+  - `template.files_root/README.md` describes the generated project and may include render variables
 - [ ] Capture evidence for implementation handoff and review.
 
 ## Milestone 8: Official Workflow Templates in `agentpm-examples`
