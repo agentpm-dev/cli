@@ -287,16 +287,32 @@
 - [ ] Add template detail page metadata/title/description using template display name, use case, and package description where the frontend supports page metadata.
 
 ## Milestone 6: Documentation and Developer Guidance
-- [ ] Add user docs for discovering workflow templates.
-- [ ] Add user docs for `agentpm new`.
-- [ ] Add user docs for template variables and `--var` usage if implemented.
-- [ ] Add user docs for the security boundary: templates copy/render code but do not execute code during scaffolding.
-- [ ] Add author docs for creating a template package.
-- [ ] Add author docs for publishing a template package.
-- [ ] Add author docs for `template.files_root` and generated project layout.
-- [ ] Add author docs for declaring tool and agent dependencies.
-- [ ] Add author docs explaining that templates may depend on multiple agents, but agents themselves cannot depend on agents.
-- [ ] Add author docs explaining how to design generated `agent.json` files that users can edit later.
+- [ ] Add docs for discovering workflow templates.
+- [ ] Add docs for `agentpm new`.
+- [ ] Add docs for both `agentpm new @namespace/name ...` and `agentpm new ./local-template ...` flows.
+- [ ] Add docs explaining that `agentpm new` accepts either a template package ref, a local template directory, or a direct local `agent.json` path.
+- [ ] Add docs for template variables and `--var` usage if implemented.
+- [ ] Add docs for interactive variable prompting behavior in terminal sessions and the non-interactive failure mode when required variables are still missing.
+- [ ] Add docs for the security boundary: templates copy/render code but do not execute code during scaffolding.
+- [ ] Add docs for creating a template package.
+- [ ] Add docs for publishing a template package.
+- [ ] Add docs for `template.files_root` and generated project layout.
+- [ ] Add docs explaining that `agentpm new` synthesizes the generated root `agent.json`; template authors should not place a root `agent.json` inside `template.files_root`.
+- [ ] Add docs for declaring tool and agent dependencies.
+- [ ] Add docs explaining that templates may depend on multiple agents, but agents themselves cannot depend on agents.
+- [ ] Add docs for the `agents/` convention for additional local generated agent manifests.
+- [ ] Add docs for workspace generation outputs:
+  - `agentpm.workspace.json` as committed workspace topology
+  - `.agentpm/template.json` as template-origin metadata
+  - `agent.lock` as the runnable workspace lockfile
+- [ ] Add docs explaining when `agentpm.workspace.json` is generated and how it differs from normal single-manifest projects.
+- [ ] Add docs explaining how generated local manifests and registry package roots are represented together in workspace projects.
+- [ ] Add docs for post-generation workflow:
+  - edit generated manifest files
+  - rerun `agentpm install`
+  - expect `agent.lock` to be regenerated without rewriting workspace topology
+- [ ] Add docs explaining that `agentpm install <spec>` is not supported inside workspace projects produced by `agentpm new`; topology changes are made by editing manifests/workspace metadata and rerunning `agentpm install`.
+- [ ] Add docs explaining how to design generated `agent.json` files that users can edit later.
 - [ ] Add docs explaining how templates relate to future Skills, Knowledge, Memory, and Profiles.
 - [ ] Add docs for each official template and what execution surface it demonstrates.
 - [ ] Update CLI help text for `agentpm new`.
