@@ -301,6 +301,9 @@
 - [ ] Add docs for each official template and what execution surface it demonstrates.
 - [ ] Update CLI help text for `agentpm new`.
 - [ ] Update registry docs or package kind docs to include templates.
+- [ ] Document the template authoring README split clearly:
+  - root `README.md` describes the template package in the registry
+  - `template.files_root/README.md` describes the generated project and may include render variables
 
 ## Milestone 7: End-to-End Verification and Hardening
 - [ ] Run schema validation across existing examples and new templates.
@@ -320,9 +323,6 @@
 - [ ] Verify agent-only install/publish workflows still work.
 - [ ] Verify registry search and detail pages for tools and agents still work.
 - [ ] Fix any UI language that incorrectly calls templates tools.
-- [ ] Document the template authoring README split clearly:
-  - root `README.md` describes the template package in the registry
-  - `template.files_root/README.md` describes the generated project and may include render variables
 - [ ] Capture evidence for implementation handoff and review.
 
 ## Milestone 8: Official Workflow Templates in `agentpm-examples`
