@@ -286,7 +286,43 @@
 - [ ] Give template cards a distinct visual treatment from tool/agent cards that emphasizes use case, execution surface, and quick-start command over low-level package runtime details.
 - [ ] Add template detail page metadata/title/description using template display name, use case, and package description where the frontend supports page metadata.
 
-## Milestone 6: Official Workflow Templates in `agentpm-examples`
+## Milestone 6: Documentation and Developer Guidance
+- [ ] Add user docs for discovering workflow templates.
+- [ ] Add user docs for `agentpm new`.
+- [ ] Add user docs for template variables and `--var` usage if implemented.
+- [ ] Add user docs for the security boundary: templates copy/render code but do not execute code during scaffolding.
+- [ ] Add author docs for creating a template package.
+- [ ] Add author docs for publishing a template package.
+- [ ] Add author docs for `template.files_root` and generated project layout.
+- [ ] Add author docs for declaring tool and agent dependencies.
+- [ ] Add author docs explaining that templates may depend on multiple agents, but agents themselves cannot depend on agents.
+- [ ] Add author docs explaining how to design generated `agent.json` files that users can edit later.
+- [ ] Add docs explaining how templates relate to future Skills, Knowledge, Memory, and Profiles.
+- [ ] Add docs for each official template and what execution surface it demonstrates.
+- [ ] Update CLI help text for `agentpm new`.
+- [ ] Update registry docs or package kind docs to include templates.
+
+## Milestone 7: End-to-End Verification and Hardening
+- [ ] Run schema validation across existing examples and new templates.
+- [ ] Publish a template package to a local/dev registry.
+- [ ] Bootstrap a generated project from the published template with `agentpm new`.
+- [ ] Verify the generated project contains expected files.
+- [ ] Verify generated `agent.json` is valid.
+- [ ] Verify generated `agent.lock` includes runnable dependencies.
+- [ ] Verify the template artifact itself is not treated as a permanent generated-project dependency.
+- [ ] Verify `agentpm new` does not execute generated scripts by adding a harmless sentinel script and confirming it is not run.
+- [ ] Verify Python SDK template run path.
+- [ ] Verify Node SDK template run path.
+- [ ] Verify CLI automation template using `agentpm run --input-file` or stdin.
+- [ ] Verify MCP server template starts with `agentpm serve --mcp` and responds to `initialize` and `tools/list`.
+- [ ] Verify multi-agent workspace template installs multiple agent roots and their transitive tool dependencies.
+- [ ] Verify tool-only install/publish workflows still work.
+- [ ] Verify agent-only install/publish workflows still work.
+- [ ] Verify registry search and detail pages for tools and agents still work.
+- [ ] Fix any UI language that incorrectly calls templates tools.
+- [ ] Capture evidence for implementation handoff and review.
+
+## Milestone 8: Official Workflow Templates in `agentpm-examples`
 - [ ] Add official workflow templates to `agentpm-examples` covering the main AgentPM execution surfaces.
 - [ ] IMPORTANT: Ask me for examples from Chat GPT project before continuing. Code to follow is defined there. Starting with "1. Python SDK Template: Research Assistant".
 - [ ] Add a Python SDK research assistant template:
@@ -320,39 +356,3 @@
   - declared `template.entrypoints`,
   - declared `template.execution_surfaces`,
   - no template-provided hooks or scripts executed by `agentpm new`.
-
-## Milestone 7: Documentation and Developer Guidance
-- [ ] Add user docs for discovering workflow templates.
-- [ ] Add user docs for `agentpm new`.
-- [ ] Add user docs for template variables and `--var` usage if implemented.
-- [ ] Add user docs for the security boundary: templates copy/render code but do not execute code during scaffolding.
-- [ ] Add author docs for creating a template package.
-- [ ] Add author docs for publishing a template package.
-- [ ] Add author docs for `template.files_root` and generated project layout.
-- [ ] Add author docs for declaring tool and agent dependencies.
-- [ ] Add author docs explaining that templates may depend on multiple agents, but agents themselves cannot depend on agents.
-- [ ] Add author docs explaining how to design generated `agent.json` files that users can edit later.
-- [ ] Add docs explaining how templates relate to future Skills, Knowledge, Memory, and Profiles.
-- [ ] Add docs for each official template and what execution surface it demonstrates.
-- [ ] Update CLI help text for `agentpm new`.
-- [ ] Update registry docs or package kind docs to include templates.
-
-## Milestone 8: End-to-End Verification and Hardening
-- [ ] Run schema validation across existing examples and new templates.
-- [ ] Publish a template package to a local/dev registry.
-- [ ] Bootstrap a generated project from the published template with `agentpm new`.
-- [ ] Verify the generated project contains expected files.
-- [ ] Verify generated `agent.json` is valid.
-- [ ] Verify generated `agent.lock` includes runnable dependencies.
-- [ ] Verify the template artifact itself is not treated as a permanent generated-project dependency.
-- [ ] Verify `agentpm new` does not execute generated scripts by adding a harmless sentinel script and confirming it is not run.
-- [ ] Verify Python SDK template run path.
-- [ ] Verify Node SDK template run path.
-- [ ] Verify CLI automation template using `agentpm run --input-file` or stdin.
-- [ ] Verify MCP server template starts with `agentpm serve --mcp` and responds to `initialize` and `tools/list`.
-- [ ] Verify multi-agent workspace template installs multiple agent roots and their transitive tool dependencies.
-- [ ] Verify tool-only install/publish workflows still work.
-- [ ] Verify agent-only install/publish workflows still work.
-- [ ] Verify registry search and detail pages for tools and agents still work.
-- [ ] Fix any UI language that incorrectly calls templates tools.
-- [ ] Capture evidence for implementation handoff and review.
