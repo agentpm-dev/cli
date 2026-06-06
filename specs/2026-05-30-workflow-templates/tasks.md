@@ -342,11 +342,11 @@
 ## Milestone 8: Official Workflow Templates in `agentpm-examples`
 - [ ] Add official workflow templates to `agentpm-examples` covering the main AgentPM execution surfaces.
 - [ ] IMPORTANT: Ask me for examples from Chat GPT project before continuing. Code to follow is defined there. Starting with "1. Python SDK Template: Research Assistant".
-- [ ] Add a Python SDK research assistant template:
+- [ ] Add a Node SDK research assistant template:
   - Generates a Python project that calls AgentPM-installed tools through the Python SDK.
   - Includes `agent.json`, `.env.example`, README, starter source code, and a runnable command.
   - Demonstrates a simple flow such as fetch/extract content → summarize → write a markdown report.
-- [ ] Add a Node SDK triage worker template:
+- [ ] Add a Python SDK triage worker template:
   - Generates a Node/TypeScript project that calls AgentPM-installed tools through the Node SDK.
   - Includes `agent.json`, `.env.example`, README, `package.json`, and starter source code.
   - Demonstrates a simple triage/classification/summarization workflow.
