@@ -321,8 +321,8 @@
   - root `README.md` describes the template package in the registry
   - `template.files_root/README.md` describes the generated project and may include render variables
 
-## Milestone 7: End-to-End Verification and Hardening
-- [ ] Run schema validation across existing examples and new templates.
+## Milestone 7: Release Verification and Hardening
+- [ ] Run a final release-readiness pass across CLI, backend, frontend, and docs for the shipped template workflow features.
 - [ ] Publish a template package to a local/dev registry.
 - [ ] Bootstrap a generated project from the published template with `agentpm new`.
 - [ ] Verify the generated project contains expected files.
@@ -330,16 +330,14 @@
 - [ ] Verify generated `agent.lock` includes runnable dependencies.
 - [ ] Verify the template artifact itself is not treated as a permanent generated-project dependency.
 - [ ] Verify `agentpm new` does not execute generated scripts by adding a harmless sentinel script and confirming it is not run.
-- [ ] Verify Python SDK template run path.
-- [ ] Verify Node SDK template run path.
-- [ ] Verify CLI automation template using `agentpm run --input-file` or stdin.
-- [ ] Verify MCP server template starts with `agentpm serve --mcp` and responds to `initialize` and `tools/list`.
-- [ ] Verify multi-agent workspace template installs multiple agent roots and their transitive tool dependencies.
+- [ ] Verify multi-agent workspace generation/install behavior, including multiple agent roots and their transitive tool dependencies.
+- [ ] Verify local-template generation still works (`agentpm new ./template-dir ...` and direct local `agent.json` path).
 - [ ] Verify tool-only install/publish workflows still work.
 - [ ] Verify agent-only install/publish workflows still work.
-- [ ] Verify registry search and detail pages for tools and agents still work.
+- [ ] Verify registry search, namespace views, and detail pages for tools, agents, and templates still work.
 - [ ] Fix any UI language that incorrectly calls templates tools.
-- [ ] Capture evidence for implementation handoff and review.
+- [ ] Prepare CLI, backend, and frontend release surfaces needed before Milestone 8 example updates.
+- [ ] Capture evidence for implementation handoff, release notes, and review.
 
 ## Milestone 8: Official Workflow Templates in `agentpm-examples`
 - [ ] Add official workflow templates to `agentpm-examples` covering the main AgentPM execution surfaces.
