@@ -343,18 +343,138 @@
 - [ ] Add official workflow templates to `agentpm-examples` covering the main AgentPM execution surfaces.
 - [ ] IMPORTANT: Ask me for examples from Chat GPT project before continuing. Code to follow is defined there. Starting with "1. Python SDK Template: Research Assistant".
 - [ ] Add a Node SDK research assistant template:
-  - Generates a Python project that calls AgentPM-installed tools through the Python SDK.
-  - Includes `agent.json`, `.env.example`, README, starter source code, and a runnable command.
+  - Create a new `template-packages/` area in `agentpm-examples` for published workflow template sources.
+  - Add the template source under `template-packages/` using a Node/TypeScript project shape derived from the current research-node example.
+  - Reuse the existing research-node example and package as reference material, but make the template package the new source of truth for this official example.
+  - Define a real `kind: "template"` manifest with:
+    - `use_case: "research"`
+    - `execution_surfaces` appropriate for the Node SDK flow
+    - `stack` appropriate for the Node/TypeScript flow
+    - `files_root`
+    - `variables`
+    - `template.dependencies.tools`
+    - `template.entrypoints`
+  - Keep `template.dependencies.agents` empty for this first template unless the agreed design explicitly needs registry agent roots.
+  - Ensure the template scaffold includes the generated app files it needs, such as:
+    - `README.md`
+    - `.env.example`
+    - `package.json`
+    - `tsconfig.json` if needed
+    - starter source files
+    - any other placeholder directories only if the app actually uses them
+  - Ensure the generated project calls AgentPM-installed tools through the Node SDK rather than relying on template-time script execution.
+  - Ensure the generated root `agent.json` produced by `agentpm new` ends up as a normal editable runtime manifest for the project.
   - Demonstrates a simple flow such as fetch/extract content → summarize → write a markdown report.
+  - Author/publish handoff:
+    - I prepare the template package source and docs.
+    - You publish the template package.
+    - You run `agentpm new ...` into a fresh temporary app directory.
+    - I update that generated app directory into the final checked-in `agent-app-research-node` example shape.
+  - Replace the existing `agent-app-research-node` with the generated-template-based version once the new directory is in good shape.
+  - Update the example README/docs so `agent-app-research-node` is clearly presented as the generated consumer app for the official template.
+  - Add or update tests/verification for:
+    - template package lint/validation
+    - local or published generation flow as appropriate for the example repo
+    - generated app install/run docs staying coherent
 - [ ] Add a Python SDK triage worker template:
-  - Generates a Node/TypeScript project that calls AgentPM-installed tools through the Node SDK.
-  - Includes `agent.json`, `.env.example`, README, `package.json`, and starter source code.
+  - Add the template source under `template-packages/` using a Python project shape derived from the current ops-python example.
+  - Reuse the existing Python app/package examples as reference material, but make the template package the new source of truth for this official example.
+  - Define a real `kind: "template"` manifest with:
+    - `use_case` appropriate for triage/team-ops
+    - `execution_surfaces` appropriate for the Python SDK flow
+    - `stack` appropriate for the Python flow
+    - `files_root`
+    - multiple `variables`
+    - `template.dependencies.agents`
+    - optional `template.dependencies.tools`
+    - `template.entrypoints`
+  - Keep this template low-friction by default:
+    - avoid making Slack or other high-credential integrations the primary runtime path
+    - prefer local/sample input or otherwise low-setup triage behavior
+    - document any Slack-like integration only as a later or advanced variant if needed
+  - Ensure the generated app demonstrates the published-agent pattern this time:
+    - load the published agent package through the Python SDK
+    - read tool refs from the agent’s `resolvedTools`
+    - load those resolved tools for runtime use
+    - if the template also declares a direct tool dependency, load that direct tool separately as an additional example path
+  - Ensure the generated project includes the files it needs, such as:
+    - `README.md`
+    - `.env.example`
+    - Python project metadata/config
+    - starter source files
+    - sample local input fixtures if the workflow uses them
+  - Add additional non-secret scaffold variables beyond `project_name`, such as:
+    - worker label / display wording
+    - sample input path
+    - sample output path
+    - team/work queue wording where useful
+  - Ensure those variables are actually rendered into the scaffold in meaningful places like:
+    - README instructions
+    - code defaults / banner text
+    - sample command paths
   - Demonstrates a simple triage/classification/summarization workflow.
-  - Prefer low credential friction for the default example; Slack-specific behavior may be documented as an advanced variant if needed.
+  - Author/publish handoff:
+    - I prepare the template package source and docs.
+    - You publish the template package.
+    - You run `agentpm new ...` into a fresh temporary app directory.
+    - I update that generated app directory into the final checked-in Python example shape.
+  - Decide whether the generated-template-based app should replace `agent-app-ops-python`, or whether it should land as a new current example with a separate app directory.
+  - Update the example README/docs so the final checked-in app is clearly presented as the generated consumer app for the official template.
+  - Add or update tests/verification for:
+    - template package lint/validation
+    - local or published generation flow as appropriate for the example repo
+    - generated app install/run docs staying coherent
 - [ ] Add a CLI automation worker template:
-  - Generates a project that uses `agentpm run` from shell scripts or GitHub Actions.
-  - Uses `--input-file` or stdin for JSON payloads instead of fragile inline JSON escaping.
-  - Demonstrates a cron-style or scheduled workflow.
+  - Add the template source under `template-packages/` as a shell-first workflow template rather than an SDK app.
+  - Define a real `kind: "template"` manifest with:
+    - `use_case` appropriate for automation
+    - `execution_surfaces: ["agentpm-run"]`
+    - `stack` appropriate for shell/CLI usage
+    - `files_root`
+    - multiple `variables`
+    - `template.dependencies.tools`
+    - `template.entrypoints`
+  - Keep this template low-friction by default:
+    - prefer local sample input and local output files
+    - avoid making Slack, GitHub Actions, or other credentialed integrations the primary happy path
+    - explain cron / launchd / systemd / GitHub Actions as natural extensions in the generated README
+  - Use real existing AgentPM tools from this repo, not imaginary tools from earlier brainstorming.
+  - Make `agentpm run --input-file` the primary execution pattern rather than inline JSON strings.
+  - Scaffold a small file-based automation chain using shell scripts and temp files, such as:
+    - read a local input file description from JSON
+    - run one or more real tools with `agentpm run --input-file`
+    - write a final local output artifact like a markdown brief
+  - Prefer a simple low-friction document/content automation flow for the first version, for example:
+    - `document-convert`
+    - optional `markdown-chunk` if it clearly improves the workflow
+    - `summarize-text`
+  - Ensure the generated project includes the files it needs, such as:
+    - `README.md`
+    - `.env.example`
+    - `scripts/run-daily-brief.sh`
+    - sample input JSON files
+    - a sample local source document
+    - output directory placeholders only if the workflow actually uses them
+  - Add multiple meaningful non-secret scaffold variables beyond `project_name`, such as:
+    - workflow label
+    - source path
+    - output path
+  - Ensure those variables are actually rendered into the scaffold in meaningful places like:
+    - README instructions
+    - script defaults
+    - sample file paths
+  - Demonstrates a cron-style or scheduled automation workflow without requiring a scheduler to prove the template locally.
+  - Author/publish handoff:
+    - I prepare the template package source and docs.
+    - You publish the template package.
+    - You run `agentpm new ...` into a fresh temporary app directory.
+    - I update that generated directory into the final checked-in example shape.
+  - Decide whether the generated-template-based app should replace an older CLI-oriented example or land as a new current example directory.
+  - Update the example README/docs so the final checked-in app is clearly presented as the generated consumer app for the official template.
+  - Add or update tests/verification for:
+    - template package lint/validation
+    - local or published generation flow as appropriate for the example repo
+    - generated script/readme flow staying coherent
 - [ ] Add an MCP tool server template:
   - Generates a project that installs a curated set of tools and runs them through `agentpm serve --mcp`.
   - Documents that the current MCP surface is HTTP-only.
@@ -374,3 +494,9 @@
   - declared `template.execution_surfaces`,
   - no template-provided hooks or scripts executed by `agentpm new`.
 - [ ] Revisit the “Example Project” docs page after the official templates land and update any stale language or structure so template-generated projects are explained coherently alongside older example project flows.
+
+## Milestone 9: Cleanup
+- [ ] Make template display name and description on template card in landing page show ellipsis when run out of room
+- [ ] On Template detail page make sure the agent.json properties are always displayed in a consistent order, like Toools.
+  - Ensure that Agent detail page does the same thing
+- [ ] Make sure on larger screens where template cards on the landing page are showing as a grid that all boxes get the same height
