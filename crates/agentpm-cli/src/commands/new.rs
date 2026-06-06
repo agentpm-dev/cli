@@ -23,13 +23,13 @@ use walkdir::WalkDir;
 
 #[derive(clap::Parser, Debug, Clone)]
 pub struct NewArgs {
-    /// Published template package reference or local template path
+    /// Template source: @namespace/name[@version], a local template directory, or a local agent.json path
     pub template_ref: String,
 
     /// Optional target directory for the generated project
     pub target_dir: Option<PathBuf>,
 
-    /// Generation-time variable overrides (repeatable)
+    /// Generation-time variable overrides (repeatable, KEY=VALUE)
     #[arg(long = "var", value_name = "KEY=VALUE")]
     pub vars: Vec<String>,
 
@@ -37,7 +37,7 @@ pub struct NewArgs {
     #[clap(long)]
     pub quiet: bool,
 
-    /// Personal Access Token for headless auth (overrides env/file)
+    /// Personal Access Token for registry-backed templates (overrides env/file)
     #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
     pub token: Option<String>,
 }

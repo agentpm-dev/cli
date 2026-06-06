@@ -375,3 +375,4 @@
   - declared `template.entrypoints`,
   - declared `template.execution_surfaces`,
   - no template-provided hooks or scripts executed by `agentpm new`.
+- [ ] Revisit the “Example Project” docs page after the official templates land and update any stale language or structure so template-generated projects are explained coherently alongside older example project flows.
