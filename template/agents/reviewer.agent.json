@@ -1,0 +1,14 @@
+{
+  "kind": "agent",
+  "name": "reviewer-agent",
+  "version": "0.1.0",
+  "description": "Local generated reviewer agent.",
+  "tools": [
+    "@zack/capitalize",
+    "@zack/summarize"
+  ],
+  "skills": [],
+  "knowledge": [],
+  "memory": [],
+  "profiles": []
+}

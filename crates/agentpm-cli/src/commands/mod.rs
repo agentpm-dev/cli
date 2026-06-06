@@ -6,6 +6,7 @@ pub mod keys;
 pub mod lint;
 pub mod login;
 pub mod namespace;
+pub mod new;
 pub mod publish;
 pub mod run;
 pub mod serve;
@@ -19,10 +20,10 @@ pub enum Commands {
     /// Log in and cache credentials
     Login(login::LoginArgs),
 
-    /// Scaffold agent.json (tool or agent)
+    /// Scaffold agent.json (tool, agent, or template)
     Init(init::InitArgs),
 
-    /// Lint agent.json (tool or agent)
+    /// Lint agent.json (tool, agent, or template)
     Lint(lint::LintArgs),
 
     /// Publish a tool to the registry
@@ -30,6 +31,9 @@ pub enum Commands {
 
     /// Install tool(s) from the registry
     Install(install::InstallArgs),
+
+    /// Generate a project from a published or local workflow template
+    New(new::NewArgs),
 
     /// Execute an installed tool with JSON input
     Run(run::RunArgs),

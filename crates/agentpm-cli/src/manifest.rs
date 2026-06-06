@@ -3,7 +3,7 @@ use anyhow::{Context, Result, anyhow};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::{
     fs,
     io::Write,
@@ -78,10 +78,80 @@ pub struct AgentManifest {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TemplateMetadata {
+    #[allow(dead_code)]
+    pub display_name: Option<String>,
+    #[allow(dead_code)]
+    pub use_case: Option<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub execution_surfaces: Vec<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub stack: Vec<String>,
+    pub files_root: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub variables: Vec<TemplateVariable>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub dependencies: TemplateDependencies,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub entrypoints: Vec<TemplateEntrypoint>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct TemplateVariable {
+    pub name: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub default: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum PackageReference {
+    String(String),
+    Object {
+        name: String,
+        #[serde(default)]
+        version: Option<String>,
+    },
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct TemplateDependencies {
+    pub tools: Vec<PackageReference>,
+    pub agents: Vec<PackageReference>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct TemplateEntrypoint {
+    pub label: String,
+    pub command: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TemplateManifest {
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+    pub template: TemplateMetadata,
+}
+
 #[derive(Debug)]
 pub enum PublishManifest {
     Tool(Box<ToolManifest>),
     Agent(Box<AgentManifest>),
+    Template(Box<TemplateManifest>),
 }
 
 /// Resolve the schema source (local file if present; else hosted URL)
@@ -191,6 +261,26 @@ pub fn validate_manifest_value(
                         "`{field}` is validated and preserved, but not resolved in Phase 3."
                     ),
                     instance_path: format!("/{field}"),
+                    schema_path: "".into(),
+                });
+            }
+        }
+    }
+
+    if value.get("kind").and_then(Value::as_str) == Some("template")
+        && let Some(Value::Object(template)) = value.get("template")
+        && let Some(Value::Array(variables)) = template.get("variables")
+    {
+        let mut seen = HashSet::new();
+        for (idx, variable) in variables.iter().enumerate() {
+            if let Some(name) = variable.get("name").and_then(Value::as_str)
+                && !seen.insert(name.to_string())
+            {
+                issues.push(LintIssue {
+                    file: file_label.to_string(),
+                    level: "error",
+                    message: format!("duplicate template variable name `{name}`"),
+                    instance_path: format!("/template/variables/{idx}/name"),
                     schema_path: "".into(),
                 });
             }
@@ -362,11 +452,27 @@ pub fn parse_publish_manifest(value: &Value) -> Result<PublishManifest> {
                 .context("parsing manifest into AgentManifest")?;
             Ok(PublishManifest::Agent(Box::new(mf)))
         }
+        "template" => Ok(PublishManifest::Template(Box::new(
+            parse_template_manifest(value)?,
+        ))),
         other => Err(anyhow!(format!(
-            "`agentpm publish` supports kind=\"tool\" and kind=\"agent\" (got kind=\"{}\")",
+            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", and kind=\"template\" (got kind=\"{}\")",
             other
         ))),
     }
+}
+
+#[allow(dead_code)]
+pub fn parse_template_manifest(value: &Value) -> Result<TemplateManifest> {
+    let mf: TemplateManifest =
+        serde_json::from_value(value.clone()).context("parsing manifest into TemplateManifest")?;
+    if mf.kind != "template" {
+        return Err(anyhow!(format!(
+            "expected kind=\"template\" manifest (got kind=\"{}\")",
+            mf.kind
+        )));
+    }
+    Ok(mf)
 }
 
 /// Lock files
@@ -487,6 +593,46 @@ mod tests {
     }
 
     #[test]
+    fn valid_template_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "template",
+            "name": "research-assistant-python",
+            "version": "0.1.0",
+            "description": "Python SDK starter for a local research assistant.",
+            "template": {
+                "display_name": "Python Research Assistant",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "stack": ["python"],
+                "files_root": "template",
+                "variables": [
+                    {
+                        "name": "project_name",
+                        "description": "Generated project name. Do not use for secrets.",
+                        "required": true,
+                        "default": "research-assistant"
+                    }
+                ],
+                "dependencies": {
+                    "tools": [
+                        {
+                            "name": "@zack/web-page-extract",
+                            "version": "0.1.2"
+                        }
+                    ],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run locally",
+                        "command": "python main.py \"AgentPM\""
+                    }
+                ]
+            }
+        }));
+    }
+
+    #[test]
     fn invalid_tool_manifest_missing_single_required_tool_field_fails() {
         let issues = assert_manifest_invalid(json!({
             "kind": "tool",
@@ -530,6 +676,26 @@ mod tests {
                 .iter()
                 .any(|issue| issue.instance_path == "/kind" || issue.instance_path.is_empty()),
             "expected kind/oneOf validation error, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn agent_manifest_with_recursive_agents_dependencies_fails() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "agent",
+            "name": "recursive-agent",
+            "version": "0.1.0",
+            "description": "Should not accept recursive agent dependencies.",
+            "tools": ["@zack/web-page-extract@0.1.0"],
+            "agents": ["@zack/another-agent@0.1.0"]
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue
+                .message
+                .contains("Additional properties are not allowed")
+                || issue.instance_path.is_empty()),
+            "expected recursive agents dependency failure, got: {issues:#?}"
         );
     }
 
@@ -578,6 +744,249 @@ mod tests {
         assert!(
             issues.iter().any(|issue| issue.instance_path.is_empty()),
             "expected missing-tools validation error, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn template_manifest_rejects_invalid_variable_name() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "bad-variable-template",
+            "version": "0.1.0",
+            "description": "Invalid variable name should fail schema validation.",
+            "template": {
+                "display_name": "Bad Variable Template",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [
+                    {
+                        "name": "ProjectName",
+                        "description": "Bad variable name.",
+                        "required": true
+                    }
+                ],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/template/variables/0/name"),
+            "expected invalid template variable name error, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn template_manifest_rejects_invalid_stack_value() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "bad-stack-template",
+            "version": "0.1.0",
+            "description": "Invalid stack values should fail schema validation.",
+            "template": {
+                "display_name": "Bad Stack Template",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "stack": ["cobol"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/template/stack/0"),
+            "expected invalid stack enum error, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn template_manifest_rejects_duplicate_variable_names() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "duplicate-variables-template",
+            "version": "0.1.0",
+            "description": "Duplicate variable names should fail validation.",
+            "template": {
+                "display_name": "Duplicate Variables Template",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [
+                    {
+                        "name": "project_name",
+                        "description": "Project name.",
+                        "required": true
+                    },
+                    {
+                        "name": "project_name",
+                        "description": "Duplicate project name.",
+                        "required": false,
+                        "default": "duplicate"
+                    }
+                ],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.message.contains("duplicate template variable name")),
+            "expected duplicate template variable name error, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn template_manifest_requires_template_object() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "missing-template-object",
+            "version": "0.1.0",
+            "description": "Missing template metadata should fail."
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.schema_path == "/oneOf"
+                || issue.message.contains("required property")),
+            "expected missing template object failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn template_manifest_rejects_missing_files_root() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "missing-files-root",
+            "version": "0.1.0",
+            "description": "Missing files_root should fail.",
+            "template": {
+                "display_name": "Missing Files Root",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.message.contains("files_root")),
+            "expected missing files_root validation error, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn template_manifest_rejects_invalid_dependency_shape() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "invalid-dependency-shape",
+            "version": "0.1.0",
+            "description": "Template dependency refs must match packageRef shape.",
+            "template": {
+                "display_name": "Invalid Dependency Shape",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [
+                        {
+                            "version": "0.1.0"
+                        }
+                    ],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue
+                .instance_path
+                .starts_with("/template/dependencies/tools/0")),
+            "expected invalid dependency shape failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn template_manifest_rejects_unsupported_extra_properties() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "extra-properties-template",
+            "version": "0.1.0",
+            "description": "Unsupported template properties should fail.",
+            "template": {
+                "display_name": "Extra Properties Template",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ],
+                "hooks": ["pre_generate"]
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue
+                .message
+                .contains("Additional properties are not allowed")),
+            "expected unsupported extra properties failure, got: {issues:#?}"
         );
     }
 
@@ -667,7 +1076,9 @@ mod tests {
                 assert_eq!(mf.kind, "tool");
                 assert_eq!(mf.name, "summarize");
             }
-            PublishManifest::Agent(_) => panic!("expected tool publish manifest"),
+            PublishManifest::Agent(_) | PublishManifest::Template(_) => {
+                panic!("expected tool publish manifest")
+            }
         }
     }
 
@@ -691,22 +1102,93 @@ mod tests {
                 assert_eq!(mf.kind, "agent");
                 assert_eq!(mf.name, "support-agent");
             }
-            PublishManifest::Tool(_) => panic!("expected agent publish manifest"),
+            PublishManifest::Tool(_) | PublishManifest::Template(_) => {
+                panic!("expected agent publish manifest")
+            }
+        }
+    }
+
+    #[test]
+    fn parse_publish_manifest_dispatches_template_kind() {
+        let manifest = json!({
+            "kind": "template",
+            "name": "research-assistant",
+            "version": "0.1.0",
+            "description": "Research starter template.",
+            "template": {
+                "display_name": "Research Assistant",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        });
+
+        match parse_publish_manifest(&manifest).unwrap() {
+            PublishManifest::Template(mf) => {
+                assert_eq!(mf.kind, "template");
+                assert_eq!(mf.name, "research-assistant");
+                assert_eq!(mf.template.files_root, "template");
+            }
+            PublishManifest::Tool(_) | PublishManifest::Agent(_) => {
+                panic!("expected template publish manifest")
+            }
         }
     }
 
     #[test]
     fn parse_publish_manifest_rejects_unknown_kind() {
         let manifest = json!({
-            "kind": "template",
+            "kind": "workflow",
             "name": "starter",
             "version": "0.1.0"
         });
 
         let err = parse_publish_manifest(&manifest).unwrap_err().to_string();
         assert!(
-            err.contains("supports kind=\"tool\" and kind=\"agent\""),
+            err.contains("supports kind=\"tool\", kind=\"agent\", and kind=\"template\""),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn parse_template_manifest_accepts_template_kind() {
+        let manifest = json!({
+            "kind": "template",
+            "name": "starter-template",
+            "version": "0.1.0",
+            "description": "Starter template.",
+            "template": {
+                "display_name": "Starter Template",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        });
+
+        let parsed = parse_template_manifest(&manifest).unwrap();
+        assert_eq!(parsed.kind, "template");
+        assert_eq!(parsed.name, "starter-template");
     }
 }

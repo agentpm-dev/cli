@@ -60,5 +60,8 @@ fn from_sdk_kind(kind: sdkm::PackageKind) -> PackageKind {
     match kind {
         sdkm::PackageKind::Tool => PackageKind::Tool,
         sdkm::PackageKind::Agent => PackageKind::Agent,
+        sdkm::PackageKind::Template => {
+            panic!("template packages are not supported in install resolution yet")
+        }
     }
 }

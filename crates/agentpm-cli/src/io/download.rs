@@ -4,6 +4,7 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use hex::FromHex;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -36,8 +37,14 @@ pub async fn download_and_extract_all(
 
     let client = Client::new();
     let mut futs = FuturesUnordered::new();
+    let mut scheduled = BTreeSet::new();
 
     for art in &init.artifacts {
+        let artifact_key = format!("{:?}:{}@{}", art.kind, art.name, art.version);
+        if !scheduled.insert(artifact_key) {
+            continue;
+        }
+
         let pkg = art.name.clone();
         let ver = art.version.clone();
         let integrity = art.integrity.clone();
@@ -439,6 +446,9 @@ fn resolved_package_dir(
     match kind {
         sdkm::PackageKind::Tool => resolved_tool_dir(tools_base, package, version),
         sdkm::PackageKind::Agent => resolved_agent_dir(agents_base, package, version),
+        sdkm::PackageKind::Template => {
+            bail!("template packages are not installable with `agentpm install`; use `agentpm new`")
+        }
     }
 }
 
@@ -486,6 +496,24 @@ mod tests {
         assert_eq!(
             path,
             PathBuf::from(".agentpm/agents/zack/support-agent/0.1.0")
+        );
+    }
+
+    #[test]
+    fn rejects_template_artifacts_in_normal_install_path() {
+        let err = resolved_package_dir(
+            PackageKind::Template,
+            Path::new(".agentpm/tools"),
+            Path::new(".agentpm/agents"),
+            "@zack/research-template",
+            "0.1.0",
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("template packages are not installable with"),
+            "{err:#}"
         );
     }
 

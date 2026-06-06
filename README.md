@@ -6,6 +6,7 @@ AgentPM currently supports two package kinds:
 
 - **tools**: executable capabilities with entrypoints, runtime requirements, inputs, and outputs
 - **agents**: composition artifacts that declare tool dependencies, examples, and future reserved references
+- **templates**: workflow scaffolds that generate editable AgentPM workspaces
 
 Agent packages are not runnable app bundles. They install as portable composition metadata plus resolved tool dependencies.
 
@@ -136,13 +137,63 @@ Tip: different terminals (Terminal.app, iTerm, VS Code) may read different start
 
 ## Quick start
 
-Create a new AgentPM tool or agent package:
+Create a new AgentPM package:
 
 ```bash
 agentpm --help
 agentpm init --kind tool --name demo --description "My first tool"
 agentpm init --kind agent --name support-agent --description "My first agent"
+agentpm init --kind template --name research-template --description "My workflow template"
 ```
+
+### Workflow templates
+
+Templates are publishable scaffold packages that generate editable AgentPM workspaces.
+
+Generate a project from a published template:
+
+```bash
+agentpm new @zack/research-template my-project
+cd my-project
+# run the generated project's documented entrypoint
+```
+
+`agentpm new`:
+
+- copies and renders scaffold files from the template
+- installs declared tool and agent dependencies into the generated workspace
+- writes `agent.json`, `agentpm.workspace.json`, `agent.lock`, and `.agentpm/template.json`
+- does not execute template-provided scripts or generated app code during scaffolding
+
+You can also generate from a local template package while authoring:
+
+```bash
+agentpm new ./my-template ./my-template-test
+agentpm new ./my-template/agent.json ./my-template-test
+```
+
+Variable resolution works like this:
+
+- `--var key=value` overrides everything else
+- template defaults apply next
+- `project_name` is inferred from `target-dir` when possible
+- interactive terminals prompt for any remaining required variables
+- non-interactive runs fail clearly if required values are still missing
+
+Generated workspace notes:
+
+- `agentpm.workspace.json` is committed workspace topology for multi-root generated projects
+- `.agentpm/template.json` records where the scaffold came from
+- additional local generated agents belong under `agents/`
+- the generated root `agent.json` is synthesized by `agentpm new`, not copied from `template.files_root`
+
+After generation, edit the generated manifests and rerun:
+
+```bash
+agentpm install
+```
+
+For generated workspace projects, `agentpm install` rebuilds `agent.lock` from the manifests and workspace metadata. `agentpm install <spec>` is not supported inside those workspace projects.
 
 ### Manifest-driven local agent install
 
@@ -202,11 +253,33 @@ The preferred publish scope is:
 
 - `packages:publish`
 
-That scope can publish both tools and agents.
+That scope can publish tools, agents, and templates.
 
 ### Manifest schema
 
 See the [schema docs](./schemas/README.md) for `agent.json` format, validation, and examples.
+
+### Local template authoring
+
+For template authoring and local verification:
+
+```bash
+agentpm init --kind template --name my-template --description "My workflow template"
+cd my-template
+# edit root agent.json and files under template/
+agentpm new . ../my-template-test
+cd ../my-template-test
+# run the generated project's documented entrypoint
+cd ../my-template
+agentpm publish
+```
+
+That flow lets template authors verify scaffold rendering and dependency installation locally before publishing.
+
+Keep two READMEs:
+
+- root `README.md` for the template package shown in the registry
+- `template/README.md` for the generated project shown to scaffold consumers
 
 ## Contributing
 
