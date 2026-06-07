@@ -523,10 +523,58 @@
     - local or published generation flow as appropriate for the example repo
     - generated MCP README / curl guidance staying coherent
 - [ ] Add a multi-agent support workspace template:
-  - Generates a workspace-style project with multiple agent package dependencies declared at the template level.
-  - Does not add `agents[]` dependencies to normal `kind: "agent"` manifests.
-  - Demonstrates that templates can scaffold multi-agent project structure without adding recursive agent orchestration.
-  - Includes README guidance explaining which agent/package is responsible for which role.
+  - Add the template source under `template-packages/` as a workspace-shape example rather than a runtime orchestration feature demo.
+  - Define a real `kind: "template"` manifest with:
+    - `use_case` appropriate for internal support / team ops
+    - `execution_surfaces` appropriate for the chosen runtime example
+    - `stack` appropriate for the chosen language/workspace shape
+    - `files_root`
+    - multiple `variables`
+    - `template.dependencies.agents`
+    - optional `template.dependencies.tools`
+    - `template.entrypoints`
+  - Ensure the workspace includes at least:
+    - one published agent root via `template.dependencies.agents`
+    - one or more local generated agent manifests under `template/agents/*.agent.json`
+    - a normal generated root `agent.json`
+  - Use at least one real existing published agent package from this repo for the published-agent side of the workspace, such as `@zack/ops-console`.
+  - Use local generated agent manifests for the additional unpublished roles, such as:
+    - `agents/answer-drafter.agent.json`
+    - `agents/escalation-reviewer.agent.json`
+  - Keep the runtime code intentionally minimal:
+    - do not invent new built-in multi-agent orchestration semantics
+    - instead use small illustrative app code plus strong README guidance
+    - add a few high-signal comments in the generated code explaining how the workspace can be extended later
+  - Ensure the generated workspace shape is the real AgentPM workspace model:
+    - root `agent.json`
+    - local `agents/*.agent.json`
+    - `agentpm.workspace.json`
+    - `agent.lock`
+  - Do not add recursive `agents[]` dependencies to normal `kind: "agent"` manifests.
+  - Include sample local input if useful for the illustrative code path.
+  - Add multiple meaningful non-secret scaffold variables beyond `project_name`, such as:
+    - workspace label
+    - sample thread/input path
+  - Ensure those variables are rendered into meaningful places like:
+    - README instructions
+    - sample input references
+    - code banner/comments
+  - Includes README guidance explaining:
+    - which role each local/published agent represents
+    - which parts are published roots vs local manifests
+    - how `agentpm.workspace.json` ties the workspace together
+    - that the workspace is structured for future app-level orchestration, not built-in AgentPM recursive orchestration today
+  - Author/publish handoff:
+    - I prepare the template package source and docs.
+    - You publish the template package.
+    - You run `agentpm new ...` into a fresh temporary app directory.
+    - I update that generated directory into the final checked-in example shape.
+  - Decide whether the generated-template-based app should replace an older example or land as a new current example directory.
+  - Update the example README/docs so the final checked-in app is clearly presented as the generated consumer app for the official template.
+  - Add or update tests/verification for:
+    - template package lint/validation
+    - local or published generation flow as appropriate for the example repo
+    - generated workspace/README/code-comment story staying coherent
 - [ ] Ensure every official template includes:
   - a `kind: "template"` manifest,
   - at least one generated `agent.json`,
