@@ -476,10 +476,52 @@
     - local or published generation flow as appropriate for the example repo
     - generated script/readme flow staying coherent
 - [ ] Add an MCP tool server template:
-  - Generates a project that installs a curated set of tools and runs them through `agentpm serve --mcp`.
-  - Documents that the current MCP surface is HTTP-only.
-  - Includes example curl commands for `initialize`, `tools/list`, and `tools/call`.
-  - Explains that the server exposes tools pinned in `agent.lock`.
+  - Add the template source under `template-packages/` as a curated MCP workspace rather than an SDK or shell app.
+  - Define a real `kind: "template"` manifest with:
+    - `use_case` appropriate for MCP / tool serving
+    - `execution_surfaces: ["agentpm-serve-mcp"]`
+    - `stack` appropriate for AgentPM CLI / MCP usage
+    - `files_root`
+    - multiple `variables`
+    - `template.dependencies.tools`
+    - `template.entrypoints`
+  - Keep `template.dependencies.agents` empty for this template unless a later agreed design explicitly needs them.
+  - Keep the template low-friction by default:
+    - prefer a local curated tool set that can be demonstrated without extra app code
+    - avoid adding fake config files like `mcp.json` that do not match the real AgentPM serve surface
+  - Use a real existing tool set from this repo that makes a good MCP demo, for example:
+    - `document-convert`
+    - `summarize-text`
+    - `translate-text`
+  - Generate a project that installs the curated tools and serves them through `agentpm serve --mcp`.
+  - Ensure the generated project includes the files it needs, such as:
+    - `README.md`
+    - `.env.example`
+    - sample local input files if useful for demoing `tools/call`
+  - Add multiple meaningful non-secret scaffold variables beyond `project_name`, such as:
+    - server label
+    - sample document path if included
+  - Ensure those variables are rendered into meaningful places like:
+    - README instructions
+    - example curl bodies
+    - sample file references
+  - Document that the current MCP surface is HTTP-only.
+  - Include example curl commands for:
+    - `initialize`
+    - `tools/list`
+    - `tools/call`
+  - Explain that the served tools come from the generated project’s pinned `agent.lock`.
+  - Author/publish handoff:
+    - I prepare the template package source and docs.
+    - You publish the template package.
+    - You run `agentpm new ...` into a fresh temporary app directory.
+    - I update that generated directory into the final checked-in example shape.
+  - Decide whether the generated-template-based app should replace an older MCP-adjacent example or land as a new current example directory.
+  - Update the example README/docs so the final checked-in app is clearly presented as the generated consumer app for the official template.
+  - Add or update tests/verification for:
+    - template package lint/validation
+    - local or published generation flow as appropriate for the example repo
+    - generated MCP README / curl guidance staying coherent
 - [ ] Add a multi-agent support workspace template:
   - Generates a workspace-style project with multiple agent package dependencies declared at the template level.
   - Does not add `agents[]` dependencies to normal `kind: "agent"` manifests.
@@ -496,7 +538,6 @@
 - [ ] Revisit the “Example Project” docs page after the official templates land and update any stale language or structure so template-generated projects are explained coherently alongside older example project flows.
 
 ## Milestone 9: Cleanup
-- [ ] Make template display name and description on template card in landing page show ellipsis when run out of room
 - [ ] On Template detail page make sure the agent.json properties are always displayed in a consistent order, like Toools.
   - Ensure that Agent detail page does the same thing
 - [ ] Make sure on larger screens where template cards on the landing page are showing as a grid that all boxes get the same height
