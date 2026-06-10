@@ -1,0 +1,223 @@
+# Tasks
+
+## Milestone 1: Namespace authorization and membership foundation
+- [ ] Add a `namespace_members` table/model for org namespaces with at least `namespace_id`, `user_sub`, `role`, `created_at`, and `created_by_user_sub`.
+- [ ] Add database constraints/indexes for `namespace_members`: unique `(namespace_id, user_sub)`, foreign keys to `namespaces` and `users`, and a role check constraint.
+- [ ] Add role validation for `owner`, `admin`, and `member`.
+- [ ] Ensure `namespace_members` rows are only valid for `kind=org` namespaces, either through service-level validation or database guardrails where practical.
+- [ ] Ensure org namespace owners are represented consistently, either through `owner_user_sub` plus helper logic or through an owner membership row.
+- [ ] Define whether org owners are persisted as `namespace_members.role = owner`; prefer persisting owner membership rows unless existing patterns make helper-only ownership safer.
+- [ ] Ensure org namespace creation creates or recognizes an owner role.
+- [ ] Add guardrails so an org namespace cannot lose its last owner.
+- [ ] Prevent removing the last owner or demoting the last owner to a non-owner role.
+- [ ] Replace narrow owner-only helpers with shared namespace authorization helpers.
+- [ ] Ensure namespace authorization helpers accept nullable/anonymous user context where needed for public reads.
+- [ ] Implement `can_view_namespace` for public/private namespaces.
+- [ ] Ensure private namespace unauthorized reads return not-found-style behavior through the helper/service layer.
+- [ ] Implement `can_publish_to_namespace` for user namespaces and org owner/admin/member roles.
+- [ ] Implement `can_yank_from_namespace` for user owner and org owner/admin roles only.
+- [ ] Implement `can_manage_namespace_metadata` for user owner and org owner/admin roles.
+- [ ] Implement `can_manage_namespace_members` for org owner/admin roles.
+- [ ] Implement `can_manage_namespace_billing` for owners only.
+- [ ] Implement `can_manage_namespace_visibility` as false for all existing namespaces in Phase 5 because namespace visibility is immutable after creation.
+- [ ] Update `NamespacesService.create_namespace` to accept and validate requested `kind` and `visibility`.
+- [ ] Remove the backend restriction that allows only one user namespace per account.
+- [ ] Allow multiple user namespaces per user.
+- [ ] Ensure user namespaces cannot have additional members in Phase 5.
+- [ ] Add tests for namespace creation combinations: user/public, user/private, org/public, org/private.
+- [ ] Add tests for role permission helpers.
+- [ ] Add tests for anonymous, owner, admin, member, and unrelated authenticated user access.
+
+## Milestone 2: Private access control across namespace and package APIs
+- [ ] Update namespace detail routes to use optional auth or equivalent user context.
+- [ ] Ensure anonymous users can view public namespace detail.
+- [ ] Ensure authorized users can view private namespace detail.
+- [ ] Ensure unauthorized users receive safe not-found behavior for private namespace detail.
+- [ ] Update namespace package-list route to enforce namespace access.
+- [ ] Update namespace activity route to enforce namespace access.
+- [ ] Disable shared public caching for private namespace detail responses.
+- [ ] Disable shared public caching for private namespace package-list responses.
+- [ ] Disable shared public caching for private namespace activity responses.
+- [ ] Update package detail routes for tools/agents/templates to enforce namespace visibility/access.
+- [ ] Apply package access checks to all package route aliases/backing routes used by `/tools`, `/agents`, and `/templates`, even if they share the same physical `tools` table.
+- [ ] Update package versions route to enforce namespace visibility/access.
+- [ ] Update package readme route to enforce namespace visibility/access.
+- [ ] Update package security route to enforce namespace visibility/access.
+- [ ] Ensure service methods fetch package namespace before returning DTOs so access is enforced below the route layer where practical.
+- [ ] Ensure unauthorized private package responses do not include package name, namespace handle, version, readme, security scan, signing metadata, or other metadata.
+- [ ] Ensure not-found behavior is consistent for private namespace/package reads across namespace detail, package detail, versions, readme, security, package-list, and activity routes.
+- [ ] Disable shared public caching for private package detail, versions, readme, and security responses.
+- [ ] Ensure public package routes retain existing caching behavior.
+- [ ] Add regression tests confirming public package detail/readme/security/versions still work anonymously.
+- [ ] Add tests confirming authorized private namespace members can view private package detail/readme/security/versions.
+- [ ] Add tests confirming private package detail/readme/security/versions do not leak to anonymous or unauthorized users.
+- [ ] Do not treat this milestone as complete private package security; install resolve/init and search are covered in separate milestones.
+
+## Milestone 3: Auth-aware search and search index visibility
+- [ ] Add `namespace_visibility` to `tool_search_index` materialized view.
+- [ ] Add `namespace_visibility` to `namespace_search_index` materialized view.
+- [ ] Add an index on `(namespace_visibility, namespace_id)` for `tool_search_index`.
+- [ ] Add an index on `(namespace_visibility, namespace_id)` for `namespace_search_index`.
+- [ ] Update any materialized-view refresh/migration code to account for the new columns.
+- [ ] Add optional auth to the search route.
+- [ ] Pass `current_user_sub` into `SearchService.search`.
+- [ ] Add helper/query support for resolving the namespace IDs visible to a user.
+- [ ] Ensure the access predicate handles anonymous users and users with no private namespace memberships without generating invalid SQL.
+- [ ] Update strict relevance package search SQL to filter by public visibility or authorized namespace IDs.
+- [ ] Update relaxed relevance package search SQL to filter by public visibility or authorized namespace IDs.
+- [ ] Update newest package search SQL to filter by public visibility or authorized namespace IDs.
+- [ ] Update most-downloaded package search SQL to filter by public visibility or authorized namespace IDs.
+- [ ] Update trending package search SQL to filter by public visibility or authorized namespace IDs.
+- [ ] Update package kind totals SQL to use the same access predicate.
+- [ ] Update strict relevance namespace search SQL to filter by public visibility or authorized namespace IDs.
+- [ ] Update relaxed relevance namespace search SQL to filter by public visibility or authorized namespace IDs.
+- [ ] Update newest namespace search SQL to filter by public visibility or authorized namespace IDs.
+- [ ] Ensure `type=all` merged search applies access filtering to both package and namespace streams.
+- [ ] Ensure package and namespace search DTOs expose visibility/private status where needed by the UI without leaking private results to unauthorized users.
+- [ ] Add private/public badges or fields in search results for authorized users where the frontend needs them.
+- [ ] Ensure `total`, `totals_by_type`, and `next_cursor` behavior is based on filtered/authorized results, not unfiltered materialized-view rows.
+- [ ] Ensure cursor pagination re-applies access filtering on every page.
+- [ ] Reset cursor history or include a viewer/access marker when auth identity changes so cursors cannot paginate across authorization contexts.
+- [ ] Add tests for anonymous search hiding private namespaces/packages.
+- [ ] Add tests for authenticated non-member search hiding private namespaces/packages.
+- [ ] Add tests for authorized member search returning private namespaces/packages.
+- [ ] Add tests for `totals_by_type` not counting unauthorized private packages.
+- [ ] Add tests for relaxed fallback not leaking private packages.
+- [ ] Add tests for cursor pagination across private/public mixed result sets.
+- [ ] Add tests for `type=all` totals and cursors when one stream has private results and the other does not.
+
+## Milestone 4: Secure publish and install flows
+- [ ] Update publish init to use shared namespace publish authorization helper.
+- [ ] Update publish finalize to re-check shared namespace publish authorization helper.
+- [ ] Ensure publish init blocks private namespace publishing when entitlement is missing/expired/canceled.
+- [ ] Ensure publish finalize blocks private namespace publishing when entitlement is missing/expired/canceled.
+- [ ] Ensure private namespace entitlement checks distinguish trial-expired behavior from past-due paid behavior: expired trials block publish and install; past-due paid accounts block publish but allow install for now.
+- [ ] Ensure publish init/finalize preserve existing PAT scope behavior, including temporary `tools:publish` compatibility for tool packages.
+- [ ] Add optional auth to `/install/resolve`.
+- [ ] Pass `current_user_sub` into `CliService.install_resolve`.
+- [ ] Update requirement resolution to enforce namespace visibility/access.
+- [ ] Update exact version resolution to enforce namespace visibility/access.
+- [ ] Ensure agent transitive dependency expansion enforces private namespace access.
+- [ ] Ensure template root resolution behavior remains non-recursive as currently intended.
+- [ ] Ensure install resolve does not include private package names, versions, integrity hashes, dependency relationships, or available-version lists for unauthorized users.
+- [ ] Ensure `no_satisfying_version` responses do not reveal available private versions to unauthorized users.
+- [ ] Ensure install init never generates private package presigned URLs for unauthorized users.
+- [ ] Ensure install sessions/metrics can record authenticated user context for private installs without requiring auth for public installs.
+- [ ] Ensure PAT-authenticated installs use the PAT owner’s namespace memberships/entitlements.
+- [ ] Confirm private install works with both JWT and PAT auth where supported by existing CLI/auth patterns.
+- [ ] Add safe CLI/API error messages for unauthorized private packages.
+- [ ] Confirm public install resolve/init/finalize behavior remains backward compatible.
+- [ ] Add tests for public package install without auth.
+- [ ] Add tests for private package install without auth failing safely.
+- [ ] Add tests for private package install with unauthorized auth failing safely.
+- [ ] Add tests for private package install with authorized user/PAT succeeding.
+- [ ] Add tests for private agent install where the agent is accessible but a transitive private tool dependency is not accessible.
+- [ ] Add tests for private install when trial is expired.
+- [ ] Add tests for private install when paid account is past due and should still be allowed.
+- [ ] Add tests proving `agent.lock` does not bypass private access checks.
+
+## Milestone 5: Entitlements, trials, and configurable limits
+- [ ] Add internal plan/status fields or tables for provider-neutral billing/entitlement state.
+- [ ] Define entitlement ownership clearly: Pro applies to a user account; Team applies to an org namespace or billing account associated with an org namespace.
+- [ ] Support plans: `free`, `pro`, `team`.
+- [ ] Support billing statuses: `none`, `trialing`, `active`, `past_due`, `canceled`, `manually_granted` or equivalent.
+- [ ] Add support for `trial_ends_at`.
+- [ ] Add provider-neutral storage for `billing_provider`, `billing_customer_id`, `billing_subscription_id`, and provider metadata where needed.
+- [ ] Implement entitlement helpers for private user namespace creation/use.
+- [ ] Implement entitlement helpers for private org namespace creation/use.
+- [ ] Ensure entitlement checks distinguish namespace creation permission from private namespace usage permission.
+- [ ] Implement entitlement helpers for private publish and private install.
+- [ ] Implement one private user namespace trial per user.
+- [ ] Make trial duration configurable, defaulting to 14 days unless changed.
+- [ ] Ensure expired trial blocks private publish and private install.
+- [ ] Ensure past-due paid subscription blocks private publish but allows private install.
+- [ ] Ensure canceled subscription blocks private publish and private install unless manual grant applies.
+- [ ] Ensure private namespaces/packages are not deleted or made public when an entitlement expires or is canceled.
+- [ ] Add configurable default values for `PRIVATE_NAMESPACE_TRIAL_DAYS`, `PRO_MAX_PRIVATE_USER_NAMESPACES`, `TEAM_MAX_PRIVATE_ORG_NAMESPACES`, and `TEAM_MAX_ORG_MEMBERS`.
+- [ ] Add configurable fair-use defaults for Pro private user namespaces.
+- [ ] Add configurable fair-use defaults for Team private org namespaces.
+- [ ] Add configurable fair-use defaults for Team org members.
+- [ ] Ensure Team member limits are enforced internally but not exposed as a hard cap in pricing copy.
+- [ ] Add manual override/grant support for early customers, pilots, and open-source grants.
+- [ ] Support per-user and/or per-namespace manual overrides for limits and private access where practical.
+- [ ] Ensure manual grants can be revoked or expired.
+- [ ] Add tests for Free, trial, Pro, Team, past-due, canceled, and manual grant entitlement behavior.
+- [ ] Add tests for crossing trial expiration boundaries using controlled time/freezing where available.
+- [ ] Add tests proving entitlement checks are enforced server-side, not only in frontend/UI flows.
+
+## Milestone 6: Lemon Squeezy billing integration
+- [ ] Add Lemon Squeezy configuration variables for API key, store ID, webhook secret, checkout return URLs, and portal/manage URLs as needed.
+- [ ] Add explicit Lemon Squeezy product/variant configuration for Pro monthly and Team monthly.
+- [ ] Isolate provider-specific code behind a billing provider boundary.
+- [ ] Define checkout target ownership: Pro checkout applies to the signed-in user account; Team checkout applies to a selected org namespace or org billing account.
+- [ ] Require JWT auth for create-checkout and manage-billing flows; do not allow PATs to initiate billing.
+- [ ] Validate that the requester can manage billing for the target user/org namespace before creating checkout or portal sessions.
+- [ ] Implement create-checkout flow for Pro.
+- [ ] Implement create-checkout flow for Team.
+- [ ] Include enough metadata in Lemon Squeezy checkout requests to map webhook events back to the internal user/org namespace/billing account.
+- [ ] Implement manage-billing/customer-portal flow if Lemon Squeezy support is available for the selected product setup.
+- [ ] Implement Lemon Squeezy webhook endpoint.
+- [ ] Verify webhook signatures.
+- [ ] Make webhook processing idempotent.
+- [ ] Persist received webhook event IDs or payload hashes to prevent duplicate processing.
+- [ ] Store raw or summarized webhook payloads where practical for debugging/audit.
+- [ ] Map Lemon Squeezy subscription/order events to internal plan and billing status.
+- [ ] Store provider customer/subscription identifiers.
+- [ ] Handle subscription active, canceled, expired, past-due/payment-failed, and resumed/updated states as supported by events.
+- [ ] Handle unknown or unsupported Lemon Squeezy events safely without failing the endpoint.
+- [ ] Add a manual sync/reconcile path or admin/dev command where practical to repair billing state if a webhook is missed.
+- [ ] Add local/dev test path for webhook handling.
+- [ ] Ensure app authorization depends on internal billing state, not direct provider calls in unrelated services.
+- [ ] Ensure checkout and portal URLs are never trusted as proof of payment; only internal billing state updated from verified webhook/manual grant controls entitlements.
+- [ ] Add tests for webhook status mapping and idempotency.
+- [ ] Add tests for invalid webhook signatures.
+- [ ] Add tests for checkout authorization: non-owner cannot create Team checkout/manage billing for an org namespace.
+
+## Milestone 7: Web UX for namespaces, members, and pricing
+- [ ] Implement the `/pricing` page.
+- [ ] Add Free, Pro, and Team pricing cards.
+- [ ] Show Free at `$0`.
+- [ ] Show Pro at `$7/month`.
+- [ ] Show Team at `$19/month`.
+- [ ] Add a tier comparison table.
+- [ ] Do not advertise a hard Team member cap.
+- [ ] Add private trial messaging.
+- [ ] Add upgrade CTAs that account for signed-in/signed-out state where practical.
+- [ ] Update profile namespace panel to always allow creating another namespace when authorized.
+- [ ] Enable `kind=user` and `kind=org` choices in the namespace creation UI.
+- [ ] Enable `visibility=public` and `visibility=private` choices in the namespace creation UI.
+- [ ] Add upgrade/trial messaging when private visibility is selected.
+- [ ] Add clear private/public badges for namespaces and packages.
+- [ ] Update namespace detail page to support private namespaces for authorized users.
+- [ ] Ensure unauthorized users cannot view private namespace detail pages and receive the intended not-found/unauthorized state.
+- [ ] Show namespace visibility badge on namespace detail pages.
+- [ ] Show owner/admin/member management or settings entry points only when the current user has the required role.
+- [ ] Ensure package lists on namespace detail pages respect private namespace access.
+- [ ] Ensure private namespace detail/package-list responses bypass shared public caching.
+- [ ] Add namespace settings UI for display metadata and signing mode.
+- [ ] Ensure namespace settings UI does not allow visibility changes after creation.
+- [ ] Add org member management UI.
+- [ ] Add role display and role update UI.
+- [ ] Add member removal UI with last-owner protection.
+- [ ] Add add/invite-member flow.
+- [ ] Add owner-only billing/manage-plan UI entry point.
+- [ ] Add expired trial and past-due UI states for namespace owners.
+- [ ] Remove web UI for adding signing keys.
+- [ ] Keep signing key list and revoke UI.
+- [ ] Add copy directing users to CLI for signing key creation/registration.
+
+## Milestone 8: Documentation and launch polish
+- [ ] Document namespace kinds: user vs org.
+- [ ] Document public vs private namespace behavior.
+- [ ] Document that package visibility is inherited from namespace visibility.
+- [ ] Document that namespace visibility cannot be changed after creation in Phase 5.
+- [ ] Document org roles and permissions.
+- [ ] Document private package install flow through CLI auth/PATs.
+- [ ] Document that `agent.lock` records reproducibility but does not grant access.
+- [ ] Document private namespace trial behavior.
+- [ ] Document Pro and Team plan behavior.
+- [ ] Document public ecosystem usage remains free.
+- [ ] Document signing key creation/registration through the CLI, not the web UI.
+- [ ] Update any docs that refer to only one user namespace per account.
+- [ ] Update docs/screenshots if namespace creation UI changes substantially.
+- [ ] Add release notes/migration notes for Phase 5.
