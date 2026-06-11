@@ -198,6 +198,8 @@
 - [ ] Add tests for checkout authorization: non-owner cannot create Team checkout/manage billing for an org namespace.
 
 ## Milestone 7: Web UX for namespaces, members, and pricing
+> Scope note: this milestone wires the backend namespace/membership/billing primitives into user-facing web flows. The membership foundation may exist earlier, but this milestone is responsible for making namespace creation, namespace detail, namespace settings, member management, and pricing/upgrade UX usable end-to-end in the web app.
+- [ ] Wire namespace creation UI to the updated backend behavior for multiple user namespaces, org namespaces, and private visibility.
 - [ ] Implement the `/pricing` page.
 - [ ] Add Free, Pro, and Team pricing cards.
 - [ ] Show Free at `$0`.
@@ -223,6 +225,12 @@
 - [ ] Add org member management UI.
 - [ ] Add role display and role update UI.
 - [ ] Add member removal UI with last-owner protection.
+- [ ] Wire org member management UI to the backend membership APIs created from the Milestone 1 foundation.
+- [ ] Ensure owner/admin/member UI controls match backend authorization helpers rather than duplicating independent frontend-only permission logic.
+- [ ] Hide or disable member-management actions when the current user lacks permission, while still relying on backend enforcement.
+- [ ] Show clear errors for member add/update/remove failures, including last-owner guardrail failures.
+- [ ] Ensure user namespaces do not show member-management UI in Phase 5.
+- [ ] Ensure org namespace owners/admins can access member management from the profile namespace panel and/or namespace detail/settings page.
 - [ ] Add add/invite-member flow.
 - [ ] Add owner-only billing/manage-plan UI entry point.
 - [ ] Add expired trial and past-due UI states for namespace owners.
