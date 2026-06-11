@@ -95,6 +95,7 @@ The existing manifest schema already supports `kind: agent | tool | template` an
 - Private org/team usage is paid via Team, trial, or manual grant.
 - Public org namespaces are allowed.
 - Visibility is selected at namespace creation and cannot be changed through UI or API in Phase 5.
+  Global aggregate stats may include private namespace/package activity only when the output is coarse platform-level data and does not expose private package names, namespace names, package-specific counts, or namespace-specific counts to unauthorized users.
 
 ### Security invariants
 - UI hiding is not authorization.

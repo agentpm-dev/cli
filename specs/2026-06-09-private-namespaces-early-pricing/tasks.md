@@ -62,6 +62,7 @@
 - [ ] Add optional auth to the search route.
 - [ ] Pass `current_user_sub` into `SearchService.search`.
 - [ ] Define global search visibility by sort: `Relevance` and `Newest` may include authorized private namespace results, while `Trending` and `Most downloaded` are public-only in Phase 5.
+- [ ] Define global aggregate stats behavior: platform-level counts such as total packages, total namespaces, and installs over the past week may include private namespace/package data, but package-level discovery surfaces such as Trending must remain public-only in Phase 5.
 - [ ] Add helper/query support for resolving the namespace IDs visible to a user.
 - [ ] Ensure the access predicate handles anonymous users and users with no private namespace memberships without generating invalid SQL.
 - [ ] Update strict relevance package search SQL to filter by public visibility or authorized namespace IDs.
