@@ -93,12 +93,20 @@
 - [ ] Ensure publish finalize blocks private namespace publishing when entitlement is missing/expired/canceled.
 - [ ] Ensure private namespace entitlement checks distinguish trial-expired behavior from past-due paid behavior: expired trials block publish and install; past-due paid accounts block publish but allow install for now.
 - [ ] Ensure publish init/finalize preserve existing PAT scope behavior, including temporary `tools:publish` compatibility for tool packages.
+- [ ] During publish finalize, validate direct package dependencies declared by the trusted stored upload manifest against the publishing user’s namespace access; optionally also validate during publish init for faster feedback.
+- [ ] Implement dependency access validation with request-scoped caching or batched lookups so publish/install performance does not degrade linearly with repeated namespace checks.
+- [ ] Ensure install/new dependency resolution performs access checks during graph expansion and uses request-scoped caching for namespace access/package resolution where practical.
+- [ ] Prevent publish finalize from completing for agents, templates, or future package kinds that reference private dependencies the publishing user cannot access.
+- [ ] Ensure dependency validation covers direct manifest dependency fields for the package kind being published, including agent tool dependencies and template dependency groups.
+- [ ] Ensure dependency validation returns safe errors that do not reveal whether an inaccessible private dependency exists.
 - [ ] Add optional auth to `/install/resolve`.
 - [ ] Pass `current_user_sub` into `CliService.install_resolve`.
 - [ ] Update requirement resolution to enforce namespace visibility/access.
 - [ ] Update exact version resolution to enforce namespace visibility/access.
 - [ ] Ensure agent transitive dependency expansion enforces private namespace access.
 - [ ] Ensure template root resolution behavior remains non-recursive as currently intended.
+- [ ] Ensure install/new dependency resolution validates access for every resolved dependency before returning metadata or download URLs.
+- [ ] Ensure local/unpublished template manifests used by `agentpm new` cannot pull inaccessible private dependencies.
 - [ ] Ensure install resolve does not include private package names, versions, integrity hashes, dependency relationships, or available-version lists for unauthorized users.
 - [ ] Ensure `no_satisfying_version` responses do not reveal available private versions to unauthorized users.
 - [ ] Ensure install init never generates private package presigned URLs for unauthorized users.
@@ -111,7 +119,10 @@
 - [ ] Add tests for private package install without auth failing safely.
 - [ ] Add tests for private package install with unauthorized auth failing safely.
 - [ ] Add tests for private package install with authorized user/PAT succeeding.
+- [ ] Add tests for publishing an agent that references an inaccessible private tool.
+- [ ] Add tests for publishing a template that references inaccessible private tool/agent dependencies.
 - [ ] Add tests for private agent install where the agent is accessible but a transitive private tool dependency is not accessible.
+- [ ] Add tests for `agentpm new`/template dependency resolution with inaccessible private dependencies.
 - [ ] Add tests for private install when trial is expired.
 - [ ] Add tests for private install when paid account is past due and should still be allowed.
 - [ ] Add tests proving `agent.lock` does not bypass private access checks.
