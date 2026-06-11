@@ -61,6 +61,7 @@
 - [ ] Update any materialized-view refresh/migration code to account for the new columns.
 - [ ] Add optional auth to the search route.
 - [ ] Pass `current_user_sub` into `SearchService.search`.
+- [ ] Define global search visibility by sort: `Relevance` and `Newest` may include authorized private namespace results, while `Trending` and `Most downloaded` are public-only in Phase 5.
 - [ ] Add helper/query support for resolving the namespace IDs visible to a user.
 - [ ] Ensure the access predicate handles anonymous users and users with no private namespace memberships without generating invalid SQL.
 - [ ] Update strict relevance package search SQL to filter by public visibility or authorized namespace IDs.
@@ -85,6 +86,17 @@
 - [ ] Add tests for relaxed fallback not leaking private packages.
 - [ ] Add tests for cursor pagination across private/public mixed result sets.
 - [ ] Add tests for `type=all` totals and cursors when one stream has private results and the other does not.
+- [ ] Exclude private namespace packages from global trending calculations and public trending views.
+- [ ] Ensure `trending_tools` or equivalent trending/materialized views only include packages from public namespaces for global discovery.
+- [ ] Ensure global search sort `Trending` does not rank or count private packages, even for authorized users, unless an explicitly scoped private/internal search mode is added later.
+- [ ] Keep private package install/activity metrics available only in authorized namespace-scoped views where applicable.
+- [ ] Add tests confirming private package installs do not cause private packages to appear in global trending.
+- [ ] Add tests confirming public package trending behavior remains unchanged.
+- [ ] Ensure `Trending` package search filters to public namespace packages only, even for authenticated users with private namespace access.
+- [ ] Ensure `Most downloaded` package search filters to public namespace packages only, even for authenticated users with private namespace access.
+- [ ] Ensure `Relevance` and `Newest` package/namespace search can include private results only when the requester is authorized.
+- [ ] Add tests confirming authorized private packages can appear in `Relevance`/`Newest` search but not in global `Trending`/`Most downloaded` search.
+- [ ] Ensure global trending calculations/materialized views exclude private namespace packages.
 
 ## Milestone 4: Secure publish and install flows
 - [ ] Update publish init to use shared namespace publish authorization helper.
