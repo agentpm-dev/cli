@@ -1,19 +1,19 @@
 # Tasks
 
 ## Milestone 1: Namespace authorization and membership foundation
+> Scope note: this milestone is backend foundation work. It should add the data model, namespace creation behavior, reusable authorization helpers, and unit/service tests. Full route enforcement, search filtering, CLI install/publish enforcement, billing gates, and frontend member-management UX are covered by later milestones.
 - [ ] Add a `namespace_members` table/model for org namespaces with at least `namespace_id`, `user_sub`, `role`, `created_at`, and `created_by_user_sub`.
 - [ ] Add database constraints/indexes for `namespace_members`: unique `(namespace_id, user_sub)`, foreign keys to `namespaces` and `users`, and a role check constraint.
 - [ ] Add role validation for `owner`, `admin`, and `member`.
 - [ ] Ensure `namespace_members` rows are only valid for `kind=org` namespaces, either through service-level validation or database guardrails where practical.
 - [ ] Ensure org namespace owners are represented consistently, either through `owner_user_sub` plus helper logic or through an owner membership row.
 - [ ] Define whether org owners are persisted as `namespace_members.role = owner`; prefer persisting owner membership rows unless existing patterns make helper-only ownership safer.
-- [ ] Ensure org namespace creation creates or recognizes an owner role.
-- [ ] Add guardrails so an org namespace cannot lose its last owner.
+- [ ] Add backend service-level guardrails so org membership update/remove operations cannot remove or demote the last owner.
 - [ ] Prevent removing the last owner or demoting the last owner to a non-owner role.
 - [ ] Replace narrow owner-only helpers with shared namespace authorization helpers.
 - [ ] Ensure namespace authorization helpers accept nullable/anonymous user context where needed for public reads.
 - [ ] Implement `can_view_namespace` for public/private namespaces.
-- [ ] Ensure private namespace unauthorized reads return not-found-style behavior through the helper/service layer.
+- [ ] Add helper/service behavior that allows later routes to return safe not-found responses for unauthorized private namespace reads.
 - [ ] Implement `can_publish_to_namespace` for user namespaces and org owner/admin/member roles.
 - [ ] Implement `can_yank_from_namespace` for user owner and org owner/admin roles only.
 - [ ] Implement `can_manage_namespace_metadata` for user owner and org owner/admin roles.
