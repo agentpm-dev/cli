@@ -169,36 +169,8 @@
 - [ ] Add tests for crossing trial expiration boundaries using controlled time/freezing where available.
 - [ ] Add tests proving entitlement checks are enforced server-side, not only in frontend/UI flows.
 
-## Milestone 6: Lemon Squeezy billing integration
-- [ ] Add Lemon Squeezy configuration variables for API key, store ID, webhook secret, checkout return URLs, and portal/manage URLs as needed.
-- [ ] Add explicit Lemon Squeezy product/variant configuration for Pro monthly and Team monthly.
-- [ ] Isolate provider-specific code behind a billing provider boundary.
-- [ ] Define checkout target ownership: Pro checkout applies to the signed-in user account; Team checkout applies to a selected org namespace or org billing account.
-- [ ] Require JWT auth for create-checkout and manage-billing flows; do not allow PATs to initiate billing.
-- [ ] Validate that the requester can manage billing for the target user/org namespace before creating checkout or portal sessions.
-- [ ] Implement create-checkout flow for Pro.
-- [ ] Implement create-checkout flow for Team.
-- [ ] Include enough metadata in Lemon Squeezy checkout requests to map webhook events back to the internal user/org namespace/billing account.
-- [ ] Implement manage-billing/customer-portal flow if Lemon Squeezy support is available for the selected product setup.
-- [ ] Implement Lemon Squeezy webhook endpoint.
-- [ ] Verify webhook signatures.
-- [ ] Make webhook processing idempotent.
-- [ ] Persist received webhook event IDs or payload hashes to prevent duplicate processing.
-- [ ] Store raw or summarized webhook payloads where practical for debugging/audit.
-- [ ] Map Lemon Squeezy subscription/order events to internal plan and billing status.
-- [ ] Store provider customer/subscription identifiers.
-- [ ] Handle subscription active, canceled, expired, past-due/payment-failed, and resumed/updated states as supported by events.
-- [ ] Handle unknown or unsupported Lemon Squeezy events safely without failing the endpoint.
-- [ ] Add a manual sync/reconcile path or admin/dev command where practical to repair billing state if a webhook is missed.
-- [ ] Add local/dev test path for webhook handling.
-- [ ] Ensure app authorization depends on internal billing state, not direct provider calls in unrelated services.
-- [ ] Ensure checkout and portal URLs are never trusted as proof of payment; only internal billing state updated from verified webhook/manual grant controls entitlements.
-- [ ] Add tests for webhook status mapping and idempotency.
-- [ ] Add tests for invalid webhook signatures.
-- [ ] Add tests for checkout authorization: non-owner cannot create Team checkout/manage billing for an org namespace.
-
-## Milestone 7: Web UX for namespaces, members, and pricing
-> Scope note: this milestone wires the backend namespace/membership/billing primitives into user-facing web flows. The membership foundation may exist earlier, but this milestone is responsible for making namespace creation, namespace detail, namespace settings, member management, and pricing/upgrade UX usable end-to-end in the web app.
+## Milestone 6: Web UX for namespaces, members, and pricing
+> Scope note: this milestone wires the backend namespace/membership/entitlement primitives into user-facing web flows and prepares pricing/upgrade UX ahead of provider-backed checkout integration. The membership foundation may exist earlier, but this milestone is responsible for making namespace creation, namespace detail, namespace settings, member management, and pricing/upgrade UX usable end-to-end in the web app.
 - [ ] Wire namespace creation UI to the updated backend behavior for multiple user namespaces, org namespaces, and private visibility.
 - [ ] Implement the `/pricing` page.
 - [ ] Add Free, Pro, and Team pricing cards.
@@ -209,6 +181,7 @@
 - [ ] Do not advertise a hard Team member cap.
 - [ ] Add private trial messaging.
 - [ ] Add upgrade CTAs that account for signed-in/signed-out state where practical.
+- [ ] If provider-backed checkout/manage-plan flows are not live yet, allow pricing/upgrade UI to use placeholder or temporarily disabled actions that are clearly labeled and can be wired to live billing in Milestone 7.
 - [ ] Update profile namespace panel to always allow creating another namespace when authorized.
 - [ ] Enable `kind=user` and `kind=org` choices in the namespace creation UI.
 - [ ] Enable `visibility=public` and `visibility=private` choices in the namespace creation UI.
@@ -237,6 +210,34 @@
 - [ ] Remove web UI for adding signing keys.
 - [ ] Keep signing key list and revoke UI.
 - [ ] Add copy directing users to CLI for signing key creation/registration.
+
+## Milestone 7: Lemon Squeezy billing integration
+- [ ] Add Lemon Squeezy configuration variables for API key, store ID, webhook secret, checkout return URLs, and portal/manage URLs as needed.
+- [ ] Add explicit Lemon Squeezy product/variant configuration for Pro monthly and Team monthly.
+- [ ] Isolate provider-specific code behind a billing provider boundary.
+- [ ] Define checkout target ownership: Pro checkout applies to the signed-in user account; Team checkout applies to a selected org namespace or org billing account.
+- [ ] Require JWT auth for create-checkout and manage-billing flows; do not allow PATs to initiate billing.
+- [ ] Validate that the requester can manage billing for the target user/org namespace before creating checkout or portal sessions.
+- [ ] Implement create-checkout flow for Pro.
+- [ ] Implement create-checkout flow for Team.
+- [ ] Include enough metadata in Lemon Squeezy checkout requests to map webhook events back to the internal user/org namespace/billing account.
+- [ ] Implement manage-billing/customer-portal flow if Lemon Squeezy support is available for the selected product setup.
+- [ ] Implement Lemon Squeezy webhook endpoint.
+- [ ] Verify webhook signatures.
+- [ ] Make webhook processing idempotent.
+- [ ] Persist received webhook event IDs or payload hashes to prevent duplicate processing.
+- [ ] Store raw or summarized webhook payloads where practical for debugging/audit.
+- [ ] Map Lemon Squeezy subscription/order events to internal plan and billing status.
+- [ ] Store provider customer/subscription identifiers.
+- [ ] Handle subscription active, canceled, expired, past-due/payment-failed, and resumed/updated states as supported by events.
+- [ ] Handle unknown or unsupported Lemon Squeezy events safely without failing the endpoint.
+- [ ] Add a manual sync/reconcile path or admin/dev command where practical to repair billing state if a webhook is missed.
+- [ ] Add local/dev test path for webhook handling.
+- [ ] Ensure app authorization depends on internal billing state, not direct provider calls in unrelated services.
+- [ ] Ensure checkout and portal URLs are never trusted as proof of payment; only internal billing state updated from verified webhook/manual grant controls entitlements.
+- [ ] Add tests for webhook status mapping and idempotency.
+- [ ] Add tests for invalid webhook signatures.
+- [ ] Add tests for checkout authorization: non-owner cannot create Team checkout/manage billing for an org namespace.
 
 ## Milestone 8: Documentation and launch polish
 - [ ] Document namespace kinds: user vs org.
