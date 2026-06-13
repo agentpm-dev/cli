@@ -586,7 +586,8 @@ mod tests {
     use axum::Router;
     use axum::body::Body;
     use axum::extract::State;
-    use axum::http::{Response, StatusCode};
+    use axum::http::header::AUTHORIZATION;
+    use axum::http::{HeaderMap, Response, StatusCode};
     use axum::routing::{get, post};
     use chrono::Utc;
     use serde_json::{Value, json};
@@ -1385,6 +1386,102 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[tokio::test]
+    async fn direct_install_sends_bearer_token_to_resolve_endpoint() {
+        let root = temp_root("install-auth-ok");
+        fs::create_dir_all(&root).unwrap();
+
+        let tool_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"tool",
+                "name":"private-tool",
+                "version":"0.1.0",
+                "description":"Private",
+                "entrypoint":{"command":"python","args":["tool.py"]},
+                "runtime":{"type":"python","version":"3.12"},
+                "inputs":{},
+                "outputs":{},
+                "files":["tool.py"]
+            }))
+            .unwrap(),
+        )]);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(AuthInstallTestState {
+            base_url: base_url.clone(),
+            expected_auth: "Bearer secret-token".to_string(),
+            tool_tar: tool_tar.clone(),
+            tool_sha: sha_hex(&tool_tar),
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(auth_test_resolve))
+            .route("/v1/tools/install/init", post(auth_test_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/private-tool", get(get_auth_tool))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let args = InstallArgs {
+            manifest: root.join("agent.json").to_string_lossy().into_owned(),
+            spec: Some("@zack/private-tool@0.1.0".to_string()),
+            frozen: false,
+            refresh: false,
+            update_range: false,
+            quiet: true,
+            require_attestation: false,
+            token: Some("secret-token".to_string()),
+        };
+
+        args.run(base_url).await.unwrap();
+
+        server.abort();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn direct_install_surfaces_unauthorized_when_private_resolve_rejects() {
+        let root = temp_root("install-auth-401");
+        fs::create_dir_all(&root).unwrap();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(AuthInstallTestState {
+            base_url: base_url.clone(),
+            expected_auth: "Bearer secret-token".to_string(),
+            tool_tar: Vec::new(),
+            tool_sha: String::new(),
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(auth_test_resolve))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let args = InstallArgs {
+            manifest: root.join("agent.json").to_string_lossy().into_owned(),
+            spec: Some("@zack/private-tool@0.1.0".to_string()),
+            frozen: false,
+            refresh: false,
+            update_range: false,
+            quiet: true,
+            require_attestation: false,
+            token: None,
+        };
+
+        let err = args.run(base_url).await.unwrap_err().to_string();
+        assert!(err.contains("unauthorized"));
+
+        server.abort();
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn temp_root(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1404,6 +1501,14 @@ mod tests {
         translate_sha: String,
         agent_tar: Vec<u8>,
         agent_sha: String,
+    }
+
+    #[derive(Clone)]
+    struct AuthInstallTestState {
+        base_url: String,
+        expected_auth: String,
+        tool_tar: Vec<u8>,
+        tool_sha: String,
     }
 
     async fn test_resolve(
@@ -1493,6 +1598,64 @@ mod tests {
             .unwrap())
     }
 
+    async fn auth_test_resolve(
+        State(state): State<Arc<AuthInstallTestState>>,
+        headers: HeaderMap,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let auth = headers
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok());
+        if auth != Some(state.expected_auth.as_str()) {
+            return Ok(Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Body::empty())
+                .unwrap());
+        }
+
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "items": [{
+                "kind": item["kind"],
+                "name": item["name"],
+                "version": "0.1.0",
+                "integrity": state.tool_sha,
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
+    async fn auth_test_init(
+        State(state): State<Arc<AuthInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "session_id":"session-1",
+            "expires_at":"2026-06-01T00:00:00Z",
+            "artifacts": [{
+                "kind": item["kind"],
+                "name": item["name"],
+                "version": item["version"],
+                "integrity": state.tool_sha,
+                "presigned_url": format!("{}/artifact/private-tool", state.base_url),
+                "size": 12,
+                "content_type":"application/gzip"
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
     async fn test_finalize() -> StatusCode {
         StatusCode::NO_CONTENT
     }
@@ -1522,6 +1685,13 @@ mod tests {
         Response::builder()
             .status(StatusCode::OK)
             .body(Body::from(state.agent_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_auth_tool(State(state): State<Arc<AuthInstallTestState>>) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.tool_tar.clone()))
             .unwrap()
     }
 

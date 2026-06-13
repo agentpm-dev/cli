@@ -32,6 +32,8 @@ rpassword = "7"
 sha2 = "0.10"
 semver = "1.0.26"
 serde = { version = "1", features = ["derive"] }
+# Keep serde_json without preserve_order here: publish author signatures rely
+# on default sorted object-key serialization to match server-side verification.
 serde_json = "1"
 tar = "0.4"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }

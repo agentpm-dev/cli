@@ -136,9 +136,6 @@
 - [ ] Add tests for publishing a template that references inaccessible private tool/agent dependencies.
 - [ ] Add tests for private agent install where the agent is accessible but a transitive private tool dependency is not accessible.
 - [ ] Add tests for `agentpm new`/template dependency resolution with inaccessible private dependencies.
-- [ ] Add tests for private install when trial is expired.
-- [ ] Add tests for private install when paid account is past due and should still be allowed.
-- [ ] Add tests proving `agent.lock` does not bypass private access checks.
 
 ## Milestone 5: Entitlements, trials, and configurable limits
 - [ ] Add internal plan/status fields or tables for provider-neutral billing/entitlement state.
@@ -165,6 +162,9 @@
 - [ ] Add manual override/grant support for early customers, pilots, and open-source grants.
 - [ ] Support per-user and/or per-namespace manual overrides for limits and private access where practical.
 - [ ] Ensure manual grants can be revoked or expired.
+- [ ] Add tests for private install when trial is expired.
+- [ ] Add tests for private install when paid account is past due and should still be allowed.
+- [ ] Add tests proving `agent.lock` does not bypass private namespace entitlement/access checks.
 - [ ] Add tests for Free, trial, Pro, Team, past-due, canceled, and manual grant entitlement behavior.
 - [ ] Add tests for crossing trial expiration boundaries using controlled time/freezing where available.
 - [ ] Add tests proving entitlement checks are enforced server-side, not only in frontend/UI flows.
