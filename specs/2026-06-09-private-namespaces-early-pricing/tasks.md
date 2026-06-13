@@ -210,6 +210,43 @@
 - [ ] Remove web UI for adding signing keys.
 - [ ] Keep signing key list and revoke UI.
 - [ ] Add copy directing users to CLI for signing key creation/registration.
+- [ ] Allow the org member add flow to accept an existing AgentPM user by email or user sub, with clear UI text that this is not yet a full invitation flow.
+
+## Milestone 6a: Clerk identity compatibility helpers
+> Scope note: this milestone keeps Clerk `sub` as the canonical identity when Clerk has already linked accounts, but adds compatibility helpers so same-email identities behave coherently if duplicate local rows already exist. This milestone is for compatibility in access, discovery, and membership flows. It is not a full canonical-person/account migration, and it does not redefine entitlement ownership or billing semantics.
+- [ ] Add a shared helper for resolving same-person identity aliases from a Clerk `sub`, using same-email local `users` rows as the compatibility signal.
+- [ ] Use the shared same-person helper in namespace role resolution.
+- [ ] Ensure user namespace owner checks treat same-email alias identities as the same owner where compatibility logic is intended to apply.
+- [ ] Ensure org membership checks treat same-email alias identities as the same member/admin/owner where compatibility logic is intended to apply.
+- [ ] Update namespace authorization helpers to use same-person compatibility where appropriate:
+- [ ] `can_view_namespace`
+- [ ] `can_publish_to_namespace`
+- [ ] `can_yank_from_namespace`
+- [ ] `can_manage_namespace_metadata`
+- [ ] `can_manage_namespace_members`
+- [ ] `can_manage_namespace_billing`
+- [ ] Update profile/session namespace discovery so the current user sees owned and member namespaces across same-email alias identities.
+- [ ] Review namespace detail/current-user-role DTO population so same-email alias identities receive the expected owner/admin/member role in API responses.
+- [ ] Update private namespace/package read access checks that depend on membership or ownership so same-email alias identities do not lose access:
+- [ ] namespace detail
+- [ ] namespace package list
+- [ ] namespace activity
+- [ ] package detail
+- [ ] package versions
+- [ ] package readme
+- [ ] package security
+- [ ] Update private search visibility predicates so same-email alias identities can see authorized private namespace/package results consistently.
+- [ ] Update install/resolve private access checks so same-email alias identities can install from private namespaces they should already be able to access.
+- [ ] Update publish private access checks so same-email alias identities can publish into namespaces they should already be able to manage.
+- [ ] Ensure PAT-authenticated private access remains coherent if the PAT owner has same-email alias identities in local storage.
+- [ ] Keep entitlement ownership, trial counting, and private namespace creation limits explicitly keyed to the current canonical model for now; do not silently broaden those semantics in this milestone.
+- [ ] Add focused tests for same-email alias compatibility in:
+- [ ] namespace role resolution
+- [ ] session/profile namespace listing
+- [ ] private namespace/package read access
+- [ ] private search visibility
+- [ ] private install/publish authorization
+- [ ] Document that add-member email handling is already part of Milestone 6 and should not be re-scoped into this milestone.
 
 ## Milestone 7: Lemon Squeezy billing integration
 - [ ] Add Lemon Squeezy configuration variables for API key, store ID, webhook secret, checkout return URLs, and portal/manage URLs as needed.

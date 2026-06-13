@@ -135,6 +135,16 @@ Billing/webhook:
 - Revoke an existing signer and confirm it works.
 - Confirm UI copy points users to CLI for adding/registering signing keys.
 
+### Clerk identity compatibility
+- Create or simulate same-email local identities with different Clerk `sub` values.
+- Confirm profile/session namespace listing still shows the expected owned and member namespaces.
+- Confirm same-email alias identity can view a private namespace/package it should already have access to.
+- Confirm same-email alias identity can search for authorized private namespace/package results in the expected search modes.
+- Confirm same-email alias identity can install from a private namespace it should already be able to access.
+- Confirm same-email alias identity can publish into a namespace it should already be able to manage.
+- Confirm member add by email resolves an existing AgentPM user without requiring the raw user sub.
+- Confirm entitlement/trial semantics do not silently change just because same-email compatibility helpers exist.
+
 ## Expected evidence
 Report back with:
 
