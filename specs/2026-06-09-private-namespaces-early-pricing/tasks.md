@@ -281,9 +281,26 @@
 - [ ] Make webhook processing idempotent.
 - [ ] Persist received webhook event IDs or payload hashes to prevent duplicate processing.
 - [ ] Store raw or summarized webhook payloads where practical for debugging/audit.
+- [ ] Handle the configured non-subscription webhook events needed for billing state and reconciliation:
+  - [ ] `order_created`
+  - [ ] `order_refunded`
+  - [ ] `customer_updated`
 - [ ] Map Lemon Squeezy subscription/order events to internal plan and billing status.
 - [ ] Store provider customer/subscription identifiers.
 - [ ] Handle subscription active, canceled, expired, past-due/payment-failed, and resumed/updated states as supported by events.
+- [ ] Explicitly handle the configured subscription lifecycle/payment webhook events:
+  - [ ] `subscription_created`
+  - [ ] `subscription_updated`
+  - [ ] `subscription_cancelled`
+  - [ ] `subscription_resumed`
+  - [ ] `subscription_expired`
+  - [ ] `subscription_paused`
+  - [ ] `subscription_unpaused`
+  - [ ] `subscription_payment_failed`
+  - [ ] `subscription_payment_success`
+  - [ ] `subscription_payment_recovered`
+  - [ ] `subscription_payment_refunded`
+  - [ ] `subscription_plan_changed`
 - [ ] Handle unknown or unsupported Lemon Squeezy events safely without failing the endpoint.
 - [ ] Add a manual sync/reconcile path or admin/dev command where practical to repair billing state if a webhook is missed.
 - [ ] Add local/dev test path for webhook handling.
