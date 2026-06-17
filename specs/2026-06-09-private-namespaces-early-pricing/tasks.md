@@ -249,6 +249,23 @@
 - [ ] Document that add-member email handling is already part of Milestone 6 and should not be re-scoped into this milestone.
 
 ## Milestone 7: Lemon Squeezy billing integration
+> Preflight note: before implementation starts, the Lemon Squeezy account/product setup needs to exist so the integration can be wired against real store/product/variant IDs and realistic return/webhook URLs.
+- [ ] Create or finish the Lemon Squeezy account setup needed for production app billing.
+- [ ] Complete any Lemon Squeezy business/store onboarding requirements needed before products and checkout links can be used.
+- [ ] Create the AgentPM Lemon Squeezy store that will own the billing products.
+- [ ] Decide the production Lemon Squeezy store/domain branding details that should appear in checkout and portal flows.
+- [ ] Create the initial `Pro monthly` product and variant in Lemon Squeezy.
+- [ ] Create the initial `Team monthly` product and variant in Lemon Squeezy.
+- [ ] Capture and record the Lemon Squeezy IDs/values the app will need:
+  - [ ] store ID
+  - [ ] product IDs
+  - [ ] variant IDs
+  - [ ] API key
+  - [ ] webhook signing secret
+- [ ] Confirm the production return URLs/callback URLs that Lemon Squeezy should send users back to after checkout or portal actions.
+- [ ] Confirm the production webhook endpoint URL that Lemon Squeezy should call.
+- [ ] Decide whether Lemon Squeezy customer-portal/manage-subscription support will be used directly in Milestone 7, or whether the first version should ship with checkout only and a narrower manage-billing experience.
+- [ ] Decide what customer/support email and billing contact details should be shown in the provider-managed billing surfaces.
 - [ ] Add Lemon Squeezy configuration variables for API key, store ID, webhook secret, checkout return URLs, and portal/manage URLs as needed.
 - [ ] Add explicit Lemon Squeezy product/variant configuration for Pro monthly and Team monthly.
 - [ ] Isolate provider-specific code behind a billing provider boundary.
