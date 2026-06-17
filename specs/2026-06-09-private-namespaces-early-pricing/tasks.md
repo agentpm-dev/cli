@@ -263,7 +263,7 @@
   - [ ] API key
   - [ ] webhook signing secret
 - [ ] Confirm the production return URLs/callback URLs that Lemon Squeezy should send users back to after checkout or portal actions.
-- [ ] Confirm the production webhook endpoint URL that Lemon Squeezy should call.
+- [ ] Confirm the production webhook endpoint URL that Lemon Squeezy should call. The expected application path should be `/billing/webhooks/lemonsqueezy`.
 - [ ] Decide whether Lemon Squeezy customer-portal/manage-subscription support will be used directly in Milestone 7, or whether the first version should ship with checkout only and a narrower manage-billing experience.
 - [ ] Decide what customer/support email and billing contact details should be shown in the provider-managed billing surfaces.
 - [ ] Add Lemon Squeezy configuration variables for API key, store ID, webhook secret, checkout return URLs, and portal/manage URLs as needed.
@@ -276,7 +276,7 @@
 - [ ] Implement create-checkout flow for Team.
 - [ ] Include enough metadata in Lemon Squeezy checkout requests to map webhook events back to the internal user/org namespace/billing account.
 - [ ] Implement manage-billing/customer-portal flow if Lemon Squeezy support is available for the selected product setup.
-- [ ] Implement Lemon Squeezy webhook endpoint.
+- [ ] Implement Lemon Squeezy webhook endpoint at `/billing/webhooks/lemonsqueezy`.
 - [ ] Verify webhook signatures.
 - [ ] Make webhook processing idempotent.
 - [ ] Persist received webhook event IDs or payload hashes to prevent duplicate processing.
@@ -289,6 +289,8 @@
 - [ ] Add local/dev test path for webhook handling.
 - [ ] Ensure app authorization depends on internal billing state, not direct provider calls in unrelated services.
 - [ ] Ensure checkout and portal URLs are never trusted as proof of payment; only internal billing state updated from verified webhook/manual grant controls entitlements.
+- [ ] Add a billing section to the web profile page below the namespaces section.
+- [ ] Use the new profile billing section as the main web entry point for account-level billing state, checkout, and manage-plan actions.
 - [ ] Add tests for webhook status mapping and idempotency.
 - [ ] Add tests for invalid webhook signatures.
 - [ ] Add tests for checkout authorization: non-owner cannot create Team checkout/manage billing for an org namespace.
