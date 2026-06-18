@@ -269,7 +269,7 @@
 - [ ] Add Lemon Squeezy configuration variables for API key, store ID, webhook secret, checkout return URLs, and portal/manage URLs as needed.
 - [ ] Add explicit Lemon Squeezy product/variant configuration for Pro monthly and Team monthly.
 - [ ] Isolate provider-specific code behind a billing provider boundary.
-- [ ] Define checkout target ownership: Pro checkout applies to the signed-in user account; Team checkout applies to a selected org namespace or org billing account.
+- [ ] Define checkout target ownership: Pro checkout applies to the signed-in user account; Team checkout also applies to the signed-in user account and then unlocks private org namespace creation/use for that account.
 - [ ] Require JWT auth for create-checkout and manage-billing flows; do not allow PATs to initiate billing.
 - [ ] Validate that the requester can manage billing for the target user/org namespace before creating checkout or portal sessions.
 - [ ] Implement create-checkout flow for Pro.
