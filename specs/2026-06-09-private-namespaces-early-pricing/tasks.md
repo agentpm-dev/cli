@@ -327,3 +327,23 @@
 - [ ] Update any docs that refer to only one user namespace per account.
 - [ ] Update docs/screenshots if namespace creation UI changes substantially.
 - [ ] Add release notes/migration notes for Phase 5.
+
+## Milestone 9: Launch flag for private namespaces and billing
+- [ ] Add one backend-authoritative launch flag for the private rollout, exposed through environment configuration.
+- [ ] Add one matching frontend environment flag for launch-state UX.
+- [ ] Ensure the app remains healthy when Lemon Squeezy production environment variables are entirely absent and the launch flag is off.
+- [ ] Gate private namespace creation on the backend so public namespace creation remains available while private user and private org namespace creation stay disabled until launch.
+- [ ] Ensure the gated backend path also prevents starting a private namespace trial while the launch flag is off.
+- [ ] Gate Lemon Squeezy checkout initiation on the backend while the launch flag is off, even if provider credentials are configured.
+- [ ] Do not require Lemon Squeezy API key, store ID, product IDs, variant IDs, webhook secret, or return URLs to be present until the rollout is actually enabled.
+- [ ] Keep public namespace capabilities from this phase available while the launch flag is off, including multiple public namespaces, public org namespaces, and public org membership management.
+- [ ] Update the profile namespace creation UI so private namespace choices are clearly shown as coming soon or unavailable when the launch flag is off, without blocking public namespace creation.
+- [ ] Update the profile billing UI so Pro and Team billing are clearly shown as coming soon or unavailable when the launch flag is off, without exposing a live checkout flow.
+- [ ] Update pricing CTAs and supporting copy as needed so the web app points users toward the coming-soon state instead of a live private rollout while the launch flag is off.
+- [ ] Add focused tests for backend enforcement when the launch flag is off.
+- [ ] Add focused tests proving billing/profile/private-namespace surfaces still load cleanly when Lemon Squeezy environment variables are missing and the launch flag is off.
+- [ ] Add focused tests for frontend launch-state UX when the launch flag is off.
+- [ ] Document the intended production rollout procedure:
+- [ ] set Lemon Squeezy production values
+- [ ] flip the backend and frontend launch flags from `false` to `true`
+- [ ] do not rely on the presence of provider credentials alone to enable the rollout
