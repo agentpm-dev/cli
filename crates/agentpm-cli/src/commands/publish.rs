@@ -68,6 +68,10 @@ pub struct PublishArgs {
     /// Personal Access Token for headless auth (overrides env/file)
     #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
     pub token: Option<String>,
+
+    /// Namespace handle to publish into
+    #[arg(long, value_name = "HANDLE")]
+    pub namespace: Option<String>,
 }
 
 impl PublishArgs {
@@ -277,20 +281,14 @@ impl PublishArgs {
         let mut s = Step::new("Uploading artifact", quiet);
         let client = AgentPmClient::new(cfg.base_url.clone())?.with_token(token);
 
-        let meta = serde_json::json!({
-            "manifest": manifest_value,
-            "sha256": sha256_hex,
-            "size": size_bytes,
-            "readme": readme_payload,
-            "license": license_payload,
-            // TODO: namespace_handle eventually when a user can have more than one (orgs + user)
-            "client": {
-                "product": "agentpm-cli",
-                "version": env!("CARGO_PKG_VERSION"),
-                "os": std::env::consts::OS,
-                "arch": std::env::consts::ARCH,
-            }
-        });
+        let meta = build_publish_metadata(
+            manifest_value,
+            &sha256_hex,
+            size_bytes,
+            readme_payload,
+            license_payload,
+            self.namespace.as_deref(),
+        );
         let filename = match &publish_manifest {
             PublishManifest::Tool(mf) => {
                 artifact_filename(&mf.name, &mf.version, Some(&mf.runtime))
@@ -321,7 +319,9 @@ impl PublishArgs {
                 "createdAt": chrono::Utc::now().to_rfc3339(),
             });
 
-            // Canonical-ish JSON (stable enough for our purpose)
+            // The server verifies against sorted-key JSON bytes. This matches
+            // serde_json's default map serialization in this crate as long as
+            // we do not enable serde_json's preserve_order feature.
             let statement_bytes = serde_json::to_vec(&statement)?;
             let sig = signing_key.sign(&statement_bytes);
             let signature_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
@@ -366,6 +366,38 @@ impl PublishArgs {
 }
 
 // === Helpers ===
+
+fn build_publish_metadata(
+    manifest: JsonValue,
+    sha256_hex: &str,
+    size_bytes: u64,
+    readme_payload: Option<JsonValue>,
+    license_payload: Option<JsonValue>,
+    namespace_handle: Option<&str>,
+) -> JsonValue {
+    let mut meta = serde_json::json!({
+        "manifest": manifest,
+        "sha256": sha256_hex,
+        "size": size_bytes,
+        "readme": readme_payload,
+        "license": license_payload,
+        "client": {
+            "product": "agentpm-cli",
+            "version": env!("CARGO_PKG_VERSION"),
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+        }
+    });
+    if let Some(handle) = namespace_handle
+        && let Some(obj) = meta.as_object_mut()
+    {
+        obj.insert(
+            "namespace_handle".into(),
+            JsonValue::String(handle.to_owned()),
+        );
+    }
+    meta
+}
 
 /// Create a .tar.gz containing:
 /// - agent.json (as root/agent.json)
@@ -921,6 +953,37 @@ mod tests {
         out
     }
 
+    #[test]
+    fn publish_metadata_includes_namespace_handle_when_provided() {
+        let meta = build_publish_metadata(
+            serde_json::json!({"kind": "tool", "name": "demo", "version": "0.1.0"}),
+            "abc123",
+            42,
+            None,
+            None,
+            Some("zack"),
+        );
+
+        assert_eq!(
+            meta.get("namespace_handle").and_then(|v| v.as_str()),
+            Some("zack")
+        );
+    }
+
+    #[test]
+    fn publish_metadata_omits_namespace_handle_when_not_provided() {
+        let meta = build_publish_metadata(
+            serde_json::json!({"kind": "tool", "name": "demo", "version": "0.1.0"}),
+            "abc123",
+            42,
+            None,
+            None,
+            None,
+        );
+
+        assert!(meta.get("namespace_handle").is_none());
+    }
+
     #[tokio::test]
     async fn publish_dry_run_succeeds_for_tool_manifest() {
         let dir = temp_dir("publish-tool");
@@ -965,6 +1028,7 @@ mod tests {
             sign: false,
             key_id: None,
             token: Some("dummy-token".into()),
+            namespace: None,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -1017,6 +1081,7 @@ mod tests {
             sign: false,
             key_id: None,
             token: Some("dummy-token".into()),
+            namespace: None,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -1080,6 +1145,7 @@ mod tests {
             sign: false,
             key_id: None,
             token: Some("dummy-token".into()),
+            namespace: None,
         };
 
         args.run("https://example.com".into()).await.unwrap();
