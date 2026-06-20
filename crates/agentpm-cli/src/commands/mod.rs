@@ -20,10 +20,10 @@ pub enum Commands {
     /// Log in and cache credentials
     Login(login::LoginArgs),
 
-    /// Scaffold agent.json (tool, agent, or template)
+    /// Scaffold agent.json (tool, agent, template, or skill)
     Init(init::InitArgs),
 
-    /// Lint agent.json (tool, agent, or template)
+    /// Lint agent.json (tool, agent, template, or skill)
     Lint(lint::LintArgs),
 
     /// Publish a tool to the registry
