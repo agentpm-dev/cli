@@ -148,6 +148,12 @@ impl PublishArgs {
             PublishManifest::Template(mf) => {
                 package_template(mf, &manifest_path).context("packaging template into tar.gz")?
             }
+            PublishManifest::Skill(_) => {
+                s.err("unsupported");
+                return Err(anyhow!(
+                    "`agentpm publish` does not package kind=\"skill\" yet"
+                ));
+            }
         };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
         if size_bytes > MAX_ARTIFACT_BYTES {
@@ -295,6 +301,7 @@ impl PublishArgs {
             }
             PublishManifest::Agent(mf) => artifact_filename(&mf.name, &mf.version, None),
             PublishManifest::Template(mf) => artifact_filename(&mf.name, &mf.version, None),
+            PublishManifest::Skill(mf) => artifact_filename(&mf.name, &mf.version, None),
         };
 
         // Build optional finalize_extra
@@ -854,6 +861,7 @@ fn manifest_kind(manifest: &PublishManifest) -> &str {
         PublishManifest::Tool(mf) => &mf.kind,
         PublishManifest::Agent(mf) => &mf.kind,
         PublishManifest::Template(mf) => &mf.kind,
+        PublishManifest::Skill(mf) => &mf.kind,
     }
 }
 
@@ -862,6 +870,7 @@ fn manifest_name(manifest: &PublishManifest) -> &str {
         PublishManifest::Tool(mf) => &mf.name,
         PublishManifest::Agent(mf) => &mf.name,
         PublishManifest::Template(mf) => &mf.name,
+        PublishManifest::Skill(mf) => &mf.name,
     }
 }
 
@@ -870,6 +879,7 @@ fn manifest_version(manifest: &PublishManifest) -> &str {
         PublishManifest::Tool(mf) => &mf.version,
         PublishManifest::Agent(mf) => &mf.version,
         PublishManifest::Template(mf) => &mf.version,
+        PublishManifest::Skill(mf) => &mf.version,
     }
 }
 

@@ -81,6 +81,62 @@
         "default": { "type": "string" }
       }
     },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!\\\\\\\\)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    },
+    "skillCompatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Descriptive compatibility metadata for a Skill. These values are informational and not runtime-enforced.",
+      "properties": {
+        "model_families": {
+          "type": "array",
+          "description": "Optional open-ended model family labels the Skill was authored or reviewed against.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "runtimes": {
+          "type": "array",
+          "description": "Optional known runtimes or execution surfaces this Skill is intended to work well with.",
+          "items": {
+            "type": "string",
+            "enum": ["agentpm-run", "shell", "python-sdk", "node-sdk", "markdown"]
+          }
+        },
+        "environments": {
+          "type": "array",
+          "description": "Optional open-ended operating system, shell, or workspace environment labels assumed by the Skill.",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "skillMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entrypoint"],
+      "description": "Skill-specific metadata describing the primary authored instructions and any supporting files packaged with the Skill.",
+      "properties": {
+        "entrypoint": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required relative path to the main Skill instructions file, typically SKILL.md."
+        },
+        "references": {
+          "type": "array",
+          "description": "Optional additional authored reference files that support the Skill instructions.",
+          "items": { "$ref": "#/$defs/safeRelativePath" }
+        },
+        "scripts": {
+          "type": "array",
+          "description": "Optional helper scripts packaged with the Skill for local execution or demonstration.",
+          "items": { "$ref": "#/$defs/safeRelativePath" }
+        },
+        "compatibility": {
+          "$ref": "#/$defs/skillCompatibility",
+          "description": "Optional descriptive compatibility hints for models, runtimes, environments, or export targets."
+        }
+      }
+    },
     "templateDependencyGroup": {
       "type": "object",
       "additionalProperties": false,
@@ -91,6 +147,10 @@
           "items": { "$ref": "#/$defs/packageRef" }
         },
         "agents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "skills": {
           "type": "array",
           "items": { "$ref": "#/$defs/packageRef" }
         }
@@ -141,9 +201,7 @@
           }
         },
         "files_root": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "^(?!/)(?!\\\\\\\\)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$",
+          "$ref": "#/$defs/safeRelativePath",
           "description": "Relative directory inside the template artifact that is copied into the generated project. Template text rendering uses {{ variable_name }} placeholders."
         },
         "variables": {
@@ -162,7 +220,7 @@
   },
 
   "dependentSchemas": {
-    "tools":      { "properties": { "kind": { "const": "agent" } } },
+    "tools":      { "properties": { "kind": { "enum": ["agent", "skill"] } } },
     "examples":   { "properties": { "kind": { "const": "agent" } } },
     "skills":     { "properties": { "kind": { "const": "agent" } } },
     "knowledge":  { "properties": { "kind": { "const": "agent" } } },
@@ -175,12 +233,13 @@
     "outputs":    { "properties": { "kind": { "const": "tool" } } },
     "files":      { "properties": { "kind": { "const": "tool" } } },
     "runtime":    { "properties": { "kind": { "const": "tool" } } },
+    "skill":      { "properties": { "kind": { "const": "skill" } } },
     "template":   { "properties": { "kind": { "const": "template" } } }
   },
 
   "properties": {
     "$schema": { "type": "string", "format": "uri" },
-    "kind": { "type": "string", "enum": ["agent", "tool", "template"] },
+    "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill"] },
     "name": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,63}$" },
     "version": {
       "type": "string",
@@ -252,6 +311,7 @@
     },
 
     "readme": { "type": "string", "minLength": 1 },
+    "skill": { "$ref": "#/$defs/skillMetadata" },
     "template": { "$ref": "#/$defs/templateMetadata" },
 
     "license": {
@@ -282,6 +342,10 @@
     {
       "properties": { "kind": { "const": "template" } },
       "required": ["template"]
+    },
+    {
+      "properties": { "kind": { "const": "skill" } },
+      "required": ["skill"]
     }
   ]
 }
