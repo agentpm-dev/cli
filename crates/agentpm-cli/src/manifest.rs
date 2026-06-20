@@ -10,6 +10,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const DEFAULT_MANIFEST_SCHEMA_URL: &str = "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json";
+const EMBEDDED_MANIFEST_SCHEMA_JSON: &str =
+    include_str!("../../../schemas/agentpm.manifest.schema.json");
+
 #[derive(Serialize, Debug, Clone)]
 pub struct LintIssue {
     pub file: String,
@@ -199,12 +203,15 @@ pub fn resolve_schema_source(override_opt: Option<String>) -> String {
     if local_path.exists() {
         local_path.to_string_lossy().into_owned()
     } else {
-        "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json".to_string()
+        DEFAULT_MANIFEST_SCHEMA_URL.to_string()
     }
 }
 
 /// Load a JSON schema from a file or URL.
 pub fn load_schema_value(source: &str) -> Result<Value> {
+    if source == DEFAULT_MANIFEST_SCHEMA_URL {
+        return Ok(serde_json::from_str(EMBEDDED_MANIFEST_SCHEMA_JSON)?);
+    }
     if source.starts_with("http://") || source.starts_with("https://") {
         let resp = reqwest::blocking::get(source)
             .with_context(|| format!("fetching schema from {source}"))?;
@@ -555,6 +562,25 @@ mod tests {
             .join("../../schemas/agentpm.manifest.schema.json")
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn load_schema_value_uses_embedded_default_schema_for_hosted_url() {
+        let schema = load_schema_value(DEFAULT_MANIFEST_SCHEMA_URL).unwrap();
+        assert_eq!(
+            schema.get("$schema").and_then(Value::as_str),
+            Some("https://json-schema.org/draft/2020-12/schema")
+        );
+        assert_eq!(
+            schema
+                .get("properties")
+                .and_then(|props| props.get("kind"))
+                .and_then(|kind| kind.get("enum"))
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                .unwrap(),
+            vec!["agent", "tool", "template", "skill"]
+        );
     }
 
     fn assert_manifest_ok(mut manifest: Value) {
