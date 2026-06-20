@@ -5,7 +5,6 @@
 - [ ] Add `skill` to the manifest `kind` enum in `schemas/agentpm.manifest.schema.json`.
 - [ ] Add `$defs.skillMetadata` with required `entrypoint` and optional `references`, `scripts`, and `compatibility` fields.
 - [ ] Add a reusable safe-relative-path definition for Skill file paths, matching existing template path safety rules where possible.
-- [ ] Ensure Skill file paths reject absolute paths, parent traversal, Windows drive roots, UNC paths, empty strings, and paths that escape the manifest root.
 - [ ] Add top-level `skill` property referencing `$defs.skillMetadata`.
 - [ ] Add a `oneOf` branch requiring `skill` when `kind` is `skill`.
 - [ ] Update dependent schemas so `tools` is allowed for `agent` and `skill`.
