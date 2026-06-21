@@ -99,7 +99,7 @@ pub struct LockedRoot {
     pub tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "ReservedReferences::is_empty")]
     pub reserved: ReservedReferences,
 }
 
@@ -113,6 +113,15 @@ pub struct ReservedReferences {
     pub memory: Vec<Value>,
     #[serde(default)]
     pub profiles: Vec<Value>,
+}
+
+impl ReservedReferences {
+    pub fn is_empty(&self) -> bool {
+        self.skills.is_empty()
+            && self.knowledge.is_empty()
+            && self.memory.is_empty()
+            && self.profiles.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,13 +272,13 @@ impl ResolvePlan {
 pub fn parse_package_spec(spec: &str) -> Result<PackageRequirement> {
     let s = spec.trim();
 
-    // Direct CLI specs still default to kind=tool in this milestone.
+    // Direct CLI specs still default to kind=tool in the outbound request.
     //
-    // Today, `agentpm install @namespace/name` remains a tool-oriented surface,
-    // and the backend explicitly rejects non-tool resolution/init requests.
-    // When agent packages become directly installable, this path should stop
-    // asserting `tool` up front and allow the registry/backend to resolve the
-    // package kind authoritatively.
+    // The backend resolves by package name and returns the authoritative kind
+    // in the response plan, which is how direct Skill installs work today even
+    // though the initial CLI request is tool-shaped. If direct specs later
+    // become explicitly kind-aware on the CLI side, this parser is the place
+    // to stop defaulting to `tool`.
 
     // Find the last '@'
     if let Some(i) = s.rfind('@') {

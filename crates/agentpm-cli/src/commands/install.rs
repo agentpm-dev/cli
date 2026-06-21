@@ -8,7 +8,7 @@ use crate::semver::types::{
     lock_from_packages_and_roots, lock_from_plan, package_key, parse_package_spec,
     resolve_declared_package_from_packages,
 };
-use crate::semver::update::maybe_update_agent_json;
+use crate::semver::update::{maybe_update_agent_json, maybe_update_manifest_dependency};
 use crate::workspace::{
     build_workspace_lock, desired_from_workspace, load_workspace_local_manifests,
     read_workspace_metadata,
@@ -214,21 +214,28 @@ impl InstallArgs {
 
         // 7) If a direct tool spec was installed inside a local agent project and
         // it is not present in agent.json yet, append or update the declared range.
+        // Direct skill installs follow the same pattern, but write into the
+        // top-level `skills` field instead of `tools`.
         // Direct agent package installs intentionally do not mutate the local
-        // manifest; they are represented as registry roots in lockfile v2 instead.
+        // manifest; they are represented as registry roots in the lockfile.
         let mut should_write_manifest = false;
         if let Some(spec) = &self.spec
             && let Some(manifest_value) = manifest_value.as_mut()
             && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
-            && !plan
-                .items
-                .iter()
-                .any(|item| item.kind == PackageKind::Agent)
-            && !plan
-                .items
-                .iter()
-                .any(|item| item.kind == PackageKind::Skill)
-            && maybe_update_agent_json(manifest_value, spec, self.update_range)?
+            && let Some(kind) = direct_declared_dependency_kind(spec, &plan)?
+            && match kind {
+                PackageKind::Tool => {
+                    maybe_update_agent_json(manifest_value, spec, self.update_range)?
+                }
+                PackageKind::Skill => maybe_update_manifest_dependency(
+                    manifest_value,
+                    "skills",
+                    "Skill",
+                    spec,
+                    self.update_range,
+                )?,
+                PackageKind::Agent => false,
+            }
         {
             should_write_manifest = true;
         }
@@ -264,6 +271,15 @@ impl InstallArgs {
 
 fn should_load_manifest_for_install(spec: Option<&str>, manifest_path: &std::path::Path) -> bool {
     spec.is_none() || manifest_path.exists()
+}
+
+fn direct_declared_dependency_kind(spec: &str, plan: &ResolvePlan) -> Result<Option<PackageKind>> {
+    let requested = parse_package_spec(spec)?;
+    Ok(plan
+        .items
+        .iter()
+        .find(|item| item.name == requested.name)
+        .map(|item| item.kind))
 }
 
 fn ensure_supported_install_kinds(
@@ -1419,7 +1435,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_skill_install_with_local_agent_manifest_preserves_local_root() {
+    fn direct_skill_install_with_local_agent_manifest_updates_local_root_skills() {
         let root = temp_root("direct-skill-local-agent");
         let existing = Lock::V2(LockV2 {
             lockfile_version: 2,
@@ -1449,7 +1465,7 @@ mod tests {
             "name": "local-support-agent",
             "version": "0.1.0",
             "tools": ["@zack/capitalize@0.1.0"],
-            "skills": []
+            "skills": ["@zack/triage-skill@0.1.0"]
         });
 
         let skill_manifest_path =
@@ -1498,7 +1514,7 @@ mod tests {
         };
         let local = lock.roots.get("local:agent").expect("local root missing");
         assert_eq!(local.tools, vec!["tool:@zack/capitalize@0.1.0".to_string()]);
-        assert!(local.skills.is_empty());
+        assert_eq!(local.skills, vec!["skill:@zack/triage-skill@0.1.0".to_string()]);
         let skill_root = lock
             .roots
             .get("skill:@zack/triage-skill@0.1.0")
@@ -1873,6 +1889,99 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[tokio::test]
+    async fn direct_skill_install_updates_local_agent_manifest_skills_field() {
+        let root = temp_root("install-local-agent-skill");
+        fs::create_dir_all(&root).unwrap();
+        crate::manifest::write_manifest_pretty_atomic(
+            &root.join("agent.json"),
+            &json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0",
+                "tools": [{"name":"@zack/echo","version":"0.1.0"}],
+                "skills": []
+            }),
+        )
+        .unwrap();
+        crate::manifest::write_lock(
+            &root,
+            &Lock::V2(LockV2 {
+                lockfile_version: 2,
+                generated: Utc::now(),
+                packages: BTreeMap::from([(
+                    "tool:@zack/echo@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/echo".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-echo".to_string(),
+                    },
+                )]),
+                roots: BTreeMap::new(),
+            }),
+        )
+        .unwrap();
+
+        let skill_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"skill",
+                "name":"triage-skill",
+                "version":"0.1.0",
+                "description":"Skill",
+                "skill":{"entrypoint":"SKILL.md"},
+                "tools":[]
+            }))
+            .unwrap(),
+        ), ("SKILL.md", "# Skill\n".to_string())]);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(DirectSkillInstallTestState {
+            base_url: base_url.clone(),
+            skill_tar: skill_tar.clone(),
+            skill_sha: sha_hex(&skill_tar),
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(direct_skill_resolve))
+            .route("/v1/tools/install/init", post(direct_skill_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/direct-skill", get(get_direct_skill))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let args = InstallArgs {
+            manifest: root.join("agent.json").to_string_lossy().into_owned(),
+            spec: Some("@zack/triage-skill@0.1.0".to_string()),
+            frozen: false,
+            refresh: false,
+            update_range: false,
+            quiet: true,
+            require_attestation: false,
+            token: None,
+        };
+
+        args.run(base_url).await.unwrap();
+
+        let manifest_after: Value =
+            serde_json::from_str(&fs::read_to_string(root.join("agent.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest_after["tools"],
+            json!([{"name":"@zack/echo","version":"0.1.0"}])
+        );
+        assert_eq!(
+            manifest_after["skills"],
+            json!([{"name":"@zack/triage-skill","version":"0.1.0"}])
+        );
+
+        server.abort();
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn temp_root(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1900,6 +2009,13 @@ mod tests {
         expected_auth: String,
         tool_tar: Vec<u8>,
         tool_sha: String,
+    }
+
+    #[derive(Clone)]
+    struct DirectSkillInstallTestState {
+        base_url: String,
+        skill_tar: Vec<u8>,
+        skill_sha: String,
     }
 
     async fn test_resolve(
@@ -2051,6 +2167,53 @@ mod tests {
         StatusCode::NO_CONTENT
     }
 
+    async fn direct_skill_resolve(
+        State(state): State<Arc<DirectSkillInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "items": [{
+                "kind": "skill",
+                "name": item["name"],
+                "version": "0.1.0",
+                "integrity": state.skill_sha,
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
+    async fn direct_skill_init(
+        State(state): State<Arc<DirectSkillInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "session_id":"session-1",
+            "expires_at":"2026-06-01T00:00:00Z",
+            "artifacts": [{
+                "kind": "skill",
+                "name": item["name"],
+                "version": item["version"],
+                "integrity": state.skill_sha,
+                "presigned_url": format!("{}/artifact/direct-skill", state.base_url),
+                "size": 12,
+                "content_type":"application/gzip"
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
     async fn get_echo(State(state): State<Arc<InstallTestState>>) -> Response<Body> {
         Response::builder()
             .status(StatusCode::OK)
@@ -2083,6 +2246,13 @@ mod tests {
         Response::builder()
             .status(StatusCode::OK)
             .body(Body::from(state.tool_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_direct_skill(State(state): State<Arc<DirectSkillInstallTestState>>) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.skill_tar.clone()))
             .unwrap()
     }
 
