@@ -139,9 +139,18 @@ impl NewArgs {
                 let cache_dir = target_dir.join(".agentpm/cache");
                 let tools_dir = target_dir.join(".agentpm/tools");
                 let agents_dir = target_dir.join(".agentpm/agents");
-                fs::ensure_dirs(&[&cache_dir, &tools_dir, &agents_dir])?;
-                download_and_extract_all(&init, &cache_dir, &tools_dir, &agents_dir, false, quiet)
-                    .await?;
+                let skills_dir = target_dir.join(".agentpm/skills");
+                fs::ensure_dirs(&[&cache_dir, &tools_dir, &agents_dir, &skills_dir])?;
+                download_and_extract_all(
+                    &init,
+                    &cache_dir,
+                    &tools_dir,
+                    &agents_dir,
+                    &skills_dir,
+                    false,
+                    quiet,
+                )
+                .await?;
                 client.install_finalize(&init.session_id).await?;
             }
             step.ok("");
@@ -165,6 +174,7 @@ impl NewArgs {
                 package_roots: WorkspacePackageRoots {
                     tools: Vec::new(),
                     agents: resolved_agent_package_roots(&downloaded_manifest, &plan)?,
+                    skills: Vec::new(),
                 },
             };
             write_workspace_metadata(&target_dir, &workspace_metadata)?;
@@ -727,6 +737,14 @@ fn build_dependency_request(
             range,
         });
     }
+    for skill in &manifest.template.dependencies.skills {
+        let (name, range) = package_ref_parts(skill)?;
+        items.push(agentpm_sdk::models::install::PackageRequirement {
+            kind: agentpm_sdk::models::install::PackageKind::Skill,
+            name,
+            range,
+        });
+    }
 
     for item in local_manifest_dependency_items(target_dir, extra_local_manifests)? {
         items.push(item);
@@ -755,6 +773,7 @@ fn local_manifest_dependency_items(
                 kind: match item.kind {
                     PackageKind::Tool => agentpm_sdk::models::install::PackageKind::Tool,
                     PackageKind::Agent => agentpm_sdk::models::install::PackageKind::Agent,
+                    PackageKind::Skill => agentpm_sdk::models::install::PackageKind::Skill,
                 },
                 name: item.name,
                 range: item.range,
@@ -789,6 +808,7 @@ fn synthesize_root_manifest(
     target_name: &str,
 ) -> Result<Value> {
     let tool_refs = resolved_tool_manifest_refs(template_manifest, plan)?;
+    let skill_refs = resolved_skill_manifest_refs(template_manifest, plan)?;
     Ok(json!({
         "kind": "agent",
         "name": resolved_vars
@@ -801,7 +821,7 @@ fn synthesize_root_manifest(
             template_manifest.name, template_manifest.version
         ),
         "tools": tool_refs,
-        "skills": [],
+        "skills": skill_refs,
         "knowledge": [],
         "memory": [],
         "profiles": []
@@ -865,6 +885,35 @@ fn resolved_agent_package_roots(
         });
     }
     Ok(roots)
+}
+
+fn resolved_skill_manifest_refs(
+    template_manifest: &TemplateManifest,
+    plan: &ResolvePlan,
+) -> Result<Vec<Value>> {
+    let direct_skill_refs = template_manifest
+        .template
+        .dependencies
+        .skills
+        .iter()
+        .map(package_ref_parts)
+        .collect::<Result<Vec<_>>>()?;
+    let packages = plan_packages_by_name(plan, PackageKind::Skill);
+    let mut refs = Vec::new();
+    for (name, range) in direct_skill_refs {
+        let resolved = resolve_matching_plan_item(&packages, &name, &range)?.ok_or_else(|| {
+            anyhow!(
+                "resolved skill dependency {}@{} missing from plan",
+                name,
+                range
+            )
+        })?;
+        refs.push(json!({
+            "name": resolved.name,
+            "version": resolved.version,
+        }));
+    }
+    Ok(refs)
 }
 
 fn plan_packages_by_name(
@@ -1113,6 +1162,41 @@ mod tests {
 
         let target = determine_target_dir(None, &manifest, &BTreeMap::new()).unwrap();
         assert_eq!(target, PathBuf::from("my-agent"));
+    }
+
+    #[test]
+    fn build_dependency_request_includes_template_skill_dependencies() {
+        let manifest = parse_template_manifest(&json!({
+            "kind": "template",
+            "name": "research-assistant",
+            "version": "0.1.0",
+            "description": "Template",
+            "template": {
+                "display_name": "Research Assistant",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "stack": ["python"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "skills": ["@zack/triage-skill@^0.2"]
+                },
+                "entrypoints": []
+            }
+        }))
+        .unwrap();
+
+        let request = build_dependency_request(&manifest, Path::new("."), &[]).unwrap();
+
+        assert_eq!(request.items.len(), 1);
+        assert_eq!(
+            request.items[0].kind,
+            agentpm_sdk::models::install::PackageKind::Skill
+        );
+        assert_eq!(request.items[0].name, "@zack/triage-skill");
+        assert_eq!(request.items[0].range, "^0.2");
     }
 
     #[test]

@@ -2,10 +2,9 @@ use crate::manifest::{load_manifest_value, write_manifest_pretty_atomic};
 use crate::prelude::*;
 use crate::semver::types::{
     DesiredSet, Lock, LockRoot, PackageKind, PackageRequirement, ReservedReferences, ResolvePlan,
-    lock_from_plan, package_key,
+    lock_from_plan, package_key, resolve_declared_package_from_packages,
 };
 use anyhow::anyhow;
-use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,6 +22,8 @@ pub struct WorkspacePackageRoots {
     pub tools: Vec<WorkspacePackageRoot>,
     #[serde(default)]
     pub agents: Vec<WorkspacePackageRoot>,
+    #[serde(default)]
+    pub skills: Vec<WorkspacePackageRoot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -150,6 +151,14 @@ pub fn desired_from_workspace(
         ));
     }
 
+    for skill in &package_roots.skills {
+        items.push(PackageRequirement::new(
+            PackageKind::Skill,
+            skill.name.clone(),
+            skill.version.clone(),
+        ));
+    }
+
     Ok(DesiredSet { items })
 }
 
@@ -182,6 +191,12 @@ pub fn build_workspace_lock(
                 &format!("workspace manifest {}", manifest.rel_path),
                 &packages,
             )?,
+            skills: resolve_packages_for_manifest(
+                &manifest.manifest_value,
+                PackageKind::Skill,
+                &format!("workspace manifest {}", manifest.rel_path),
+                &packages,
+            )?,
             reserved: reserved_refs_from_manifest(&manifest.manifest_value),
         });
     }
@@ -190,6 +205,15 @@ pub fn build_workspace_lock(
         roots.push(build_registry_agent_root(
             &agent_root.name,
             &agent_root.version,
+            &packages,
+            install_root,
+        )?);
+    }
+
+    for skill_root in &package_roots.skills {
+        roots.push(build_registry_skill_root(
+            &skill_root.name,
+            &skill_root.version,
             &packages,
             install_root,
         )?);
@@ -221,6 +245,7 @@ pub fn validate_workspace_metadata(root: &Path, metadata: &WorkspaceMetadata) ->
 
     validate_package_roots("tool", &metadata.package_roots.tools)?;
     validate_package_roots("agent", &metadata.package_roots.agents)?;
+    validate_package_roots("skill", &metadata.package_roots.skills)?;
 
     Ok(())
 }
@@ -343,7 +368,45 @@ fn build_registry_agent_root(
             &format!("registry agent {}@{}", package, version),
             packages,
         )?,
+        skills: resolve_packages_for_manifest(
+            &manifest_value,
+            PackageKind::Skill,
+            &format!("registry agent {}@{}", package, version),
+            packages,
+        )?,
         reserved: reserved_refs_from_manifest(&manifest_value),
+    })
+}
+
+fn build_registry_skill_root(
+    package: &str,
+    version: &str,
+    packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
+    install_root: &Path,
+) -> Result<LockRoot> {
+    let (owner, name) = split_package_ref(package)?;
+    let manifest_path = install_root
+        .join(".agentpm")
+        .join("skills")
+        .join(owner)
+        .join(name)
+        .join(version)
+        .join("agent.json");
+
+    let (manifest_value, _) = load_manifest_value(&manifest_path).with_context(|| {
+        format!(
+            "loading installed skill manifest {}",
+            manifest_path.display()
+        )
+    })?;
+
+    Ok(LockRoot::RegistrySkill {
+        package_key: package_key(PackageKind::Skill, package, version),
+        tools: resolve_tools_for_manifest(
+            &manifest_value,
+            &format!("registry skill {}@{}", package, version),
+            packages,
+        )?,
     })
 }
 
@@ -352,70 +415,38 @@ fn resolve_tools_for_manifest(
     manifest_label: &str,
     packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
 ) -> Result<Vec<String>> {
-    let desired = DesiredSet::from_cli_or_agent_json(manifest_value, None, false)?;
-    let mut tools = Vec::new();
+    resolve_packages_for_manifest(manifest_value, PackageKind::Tool, manifest_label, packages)
+}
+
+fn resolve_packages_for_manifest(
+    manifest_value: &Value,
+    kind: PackageKind,
+    manifest_label: &str,
+    packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
+) -> Result<Vec<String>> {
+    let desired = DesiredSet::from_cli_or_agent_json(manifest_value, None, false)
+        .with_context(|| format!("reading kind for {}", manifest_label))?;
+    let mut resolved = Vec::new();
 
     for item in desired.items {
-        if item.kind != PackageKind::Tool {
+        if item.kind != kind {
             continue;
         }
-        let pkg = resolve_declared_tool_from_packages(packages, &item.name, &item.range)?
+        let pkg = resolve_declared_package_from_packages(packages, &item.name, &item.range, kind)?
             .ok_or_else(|| {
+                let dependency_label = kind.as_str();
                 anyhow!(
-                    "declared tool dependency {}@{} from {} is missing from the resolved package set",
+                    "declared {} dependency {}@{} from {} is missing from the resolved package set",
+                    dependency_label,
                     item.name,
                     item.range,
                     manifest_label
                 )
             })?;
-        tools.push(package_key(pkg.kind, &pkg.name, &pkg.version));
+        resolved.push(package_key(pkg.kind, &pkg.name, &pkg.version));
     }
 
-    Ok(tools)
-}
-
-fn resolve_declared_tool_from_packages(
-    packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
-    name: &str,
-    range: &str,
-) -> Result<Option<crate::semver::types::LockedPackage>> {
-    let exact = if range == "*" {
-        None
-    } else {
-        Version::parse(range).ok()
-    };
-    let req = if exact.is_none() && range != "*" {
-        Some(
-            VersionReq::parse(range)
-                .with_context(|| format!("declared tool range for {} is not valid semver", name))?,
-        )
-    } else {
-        None
-    };
-
-    let mut matches: Vec<(Version, crate::semver::types::LockedPackage)> = Vec::new();
-    for pkg in packages
-        .values()
-        .filter(|pkg| pkg.kind == PackageKind::Tool && pkg.name == name)
-    {
-        let version = match Version::parse(&pkg.version) {
-            Ok(version) => version,
-            Err(_) => continue,
-        };
-        let is_match = if let Some(exact) = &exact {
-            &version == exact
-        } else if let Some(req) = &req {
-            req.matches(&version)
-        } else {
-            true
-        };
-        if is_match {
-            matches.push((version, pkg.clone()));
-        }
-    }
-
-    matches.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(matches.pop().map(|(_, pkg)| pkg))
+    Ok(resolved)
 }
 
 fn split_package_ref(package: &str) -> Result<(String, String)> {
@@ -430,7 +461,7 @@ fn split_package_ref(package: &str) -> Result<(String, String)> {
 
 fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {
     ReservedReferences {
-        skills: manifest_array_or_empty(manifest_value, "skills"),
+        skills: Vec::new(),
         knowledge: manifest_array_or_empty(manifest_value, "knowledge"),
         memory: manifest_array_or_empty(manifest_value, "memory"),
         profiles: manifest_array_or_empty(manifest_value, "profiles"),
@@ -609,11 +640,85 @@ mod tests {
                     name: "@zack/support-agent".to_string(),
                     version: "0.1.0".to_string(),
                 }],
+                skills: vec![WorkspacePackageRoot {
+                    name: "@zack/triage-skill".to_string(),
+                    version: "0.2.0".to_string(),
+                }],
             },
         )
         .unwrap();
 
-        assert_eq!(desired.items.len(), 3);
+        assert_eq!(desired.items.len(), 4);
         assert_eq!(desired.items[2].kind, PackageKind::Agent);
+        assert_eq!(desired.items[3].kind, PackageKind::Skill);
+    }
+
+    #[test]
+    fn build_workspace_lock_records_registry_skill_package_roots() {
+        let root = temp_root("workspace-skill-root");
+        let manifest_path = root
+            .join(".agentpm")
+            .join("skills")
+            .join("zack")
+            .join("triage-skill")
+            .join("0.2.0")
+            .join("agent.json");
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "skill",
+                "name": "triage-skill",
+                "version": "0.2.0",
+                "tools": [{"name":"@zack/echo","version":"0.1.0"}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let lock = build_workspace_lock(
+            &[LocalManifestRoot {
+                rel_path: "agent.json".to_string(),
+                manifest_value: json!({
+                    "kind":"agent",
+                    "name":"primary",
+                    "version":"0.1.0",
+                    "tools":[{"name":"@zack/echo","version":"0.1.0"}],
+                    "skills":[]
+                }),
+            }],
+            &WorkspacePackageRoots {
+                tools: Vec::new(),
+                agents: Vec::new(),
+                skills: vec![WorkspacePackageRoot {
+                    name: "@zack/triage-skill".to_string(),
+                    version: "0.2.0".to_string(),
+                }],
+            },
+            &ResolvePlan {
+                items: vec![
+                    crate::semver::types::ResolvedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/echo".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-echo".to_string(),
+                    },
+                    crate::semver::types::ResolvedPackage {
+                        kind: PackageKind::Skill,
+                        name: "@zack/triage-skill".to_string(),
+                        version: "0.2.0".to_string(),
+                        integrity: "sha256-skill".to_string(),
+                    },
+                ],
+            },
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected modern lock");
+        };
+        assert_eq!(lock.lockfile_version, 3);
+        assert!(lock.roots.contains_key("skill:@zack/triage-skill@0.2.0"));
     }
 }

@@ -28,12 +28,14 @@ pub async fn download_and_extract_all(
     cache_dir: &Path,
     tools_dir: &Path,
     agents_dir: &Path,
+    skills_dir: &Path,
     refresh: bool,
     quiet: bool,
 ) -> Result<()> {
     fs::create_dir_all(cache_dir).await?;
     fs::create_dir_all(tools_dir).await?;
     fs::create_dir_all(agents_dir).await?;
+    fs::create_dir_all(skills_dir).await?;
 
     let client = Client::new();
     let mut futs = FuturesUnordered::new();
@@ -60,7 +62,8 @@ pub async fn download_and_extract_all(
 
         let cache_name = cache_filename(art);
         let cache_path = cache_dir.join(cache_name);
-        let install_dir = resolved_package_dir(art.kind, tools_dir, agents_dir, &pkg, &ver)?;
+        let install_dir =
+            resolved_package_dir(art.kind, tools_dir, agents_dir, skills_dir, &pkg, &ver)?;
 
         // Short-circuit if cached and already extracted (unless refresh)
         if !refresh
@@ -440,12 +443,14 @@ fn resolved_package_dir(
     kind: sdkm::PackageKind,
     tools_base: &Path,
     agents_base: &Path,
+    skills_base: &Path,
     package: &str,
     version: &str,
 ) -> Result<PathBuf> {
     match kind {
         sdkm::PackageKind::Tool => resolved_tool_dir(tools_base, package, version),
         sdkm::PackageKind::Agent => resolved_agent_dir(agents_base, package, version),
+        sdkm::PackageKind::Skill => resolved_agent_dir(skills_base, package, version),
         sdkm::PackageKind::Template => {
             bail!("template packages are not installable with `agentpm install`; use `agentpm new`")
         }
@@ -474,6 +479,7 @@ mod tests {
             PackageKind::Tool,
             Path::new(".agentpm/tools"),
             Path::new(".agentpm/agents"),
+            Path::new(".agentpm/skills"),
             "@zack/capitalize",
             "0.1.0",
         )
@@ -488,6 +494,7 @@ mod tests {
             PackageKind::Agent,
             Path::new(".agentpm/tools"),
             Path::new(".agentpm/agents"),
+            Path::new(".agentpm/skills"),
             "@zack/support-agent",
             "0.1.0",
         )
@@ -500,11 +507,30 @@ mod tests {
     }
 
     #[test]
+    fn resolves_skill_install_dir_under_skills_layout() {
+        let path = resolved_package_dir(
+            PackageKind::Skill,
+            Path::new(".agentpm/tools"),
+            Path::new(".agentpm/agents"),
+            Path::new(".agentpm/skills"),
+            "@zack/triage-skill",
+            "0.1.0",
+        )
+        .unwrap();
+
+        assert_eq!(
+            path,
+            PathBuf::from(".agentpm/skills/zack/triage-skill/0.1.0")
+        );
+    }
+
+    #[test]
     fn rejects_template_artifacts_in_normal_install_path() {
         let err = resolved_package_dir(
             PackageKind::Template,
             Path::new(".agentpm/tools"),
             Path::new(".agentpm/agents"),
+            Path::new(".agentpm/skills"),
             "@zack/research-template",
             "0.1.0",
         )
