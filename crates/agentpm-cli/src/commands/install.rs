@@ -1514,7 +1514,10 @@ mod tests {
         };
         let local = lock.roots.get("local:agent").expect("local root missing");
         assert_eq!(local.tools, vec!["tool:@zack/capitalize@0.1.0".to_string()]);
-        assert_eq!(local.skills, vec!["skill:@zack/triage-skill@0.1.0".to_string()]);
+        assert_eq!(
+            local.skills,
+            vec!["skill:@zack/triage-skill@0.1.0".to_string()]
+        );
         let skill_root = lock
             .roots
             .get("skill:@zack/triage-skill@0.1.0")
@@ -1923,18 +1926,21 @@ mod tests {
         )
         .unwrap();
 
-        let skill_tar = build_tarball(&[(
-            "agent.json",
-            serde_json::to_string_pretty(&json!({
-                "kind":"skill",
-                "name":"triage-skill",
-                "version":"0.1.0",
-                "description":"Skill",
-                "skill":{"entrypoint":"SKILL.md"},
-                "tools":[]
-            }))
-            .unwrap(),
-        ), ("SKILL.md", "# Skill\n".to_string())]);
+        let skill_tar = build_tarball(&[
+            (
+                "agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"skill",
+                    "name":"triage-skill",
+                    "version":"0.1.0",
+                    "description":"Skill",
+                    "skill":{"entrypoint":"SKILL.md"},
+                    "tools":[]
+                }))
+                .unwrap(),
+            ),
+            ("SKILL.md", "# Skill\n".to_string()),
+        ]);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
@@ -2249,7 +2255,9 @@ mod tests {
             .unwrap()
     }
 
-    async fn get_direct_skill(State(state): State<Arc<DirectSkillInstallTestState>>) -> Response<Body> {
+    async fn get_direct_skill(
+        State(state): State<Arc<DirectSkillInstallTestState>>,
+    ) -> Response<Body> {
         Response::builder()
             .status(StatusCode::OK)
             .body(Body::from(state.skill_tar.clone()))

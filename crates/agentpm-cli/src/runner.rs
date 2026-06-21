@@ -13,9 +13,12 @@ use std::time::{Duration, Instant};
 
 #[allow(dead_code)]
 const DEFAULT_OUTPUT_LIMIT_BYTES: usize = 1024 * 1024;
-const ERR_INSTALLED_TOOL_NOT_FOUND: &str = "installed tool not found";
-const ERR_INSTALLED_TOOL_DIR_MISSING: &str = "installed tool directory does not exist";
-const ERR_LOCKFILE_DEPENDENCY_MISSING: &str = "not found in agent.lock";
+pub(crate) const ERR_LOCKFILE_MISSING: &str = "agent.lock not found";
+pub(crate) const ERR_INSTALLED_TOOL_NOT_FOUND: &str = "installed tool not found";
+pub(crate) const ERR_INSTALLED_TOOL_DIR_MISSING: &str = "installed tool directory does not exist";
+pub(crate) const ERR_LOCKFILE_DEPENDENCY_MISSING: &str = "not found in agent.lock";
+pub(crate) const ERR_NO_INSTALLED_VERSIONS_FOUND: &str = "no installed versions found";
+pub(crate) const ERR_NO_INSTALLED_VERSION_SATISFIES: &str = "no installed version of ";
 const ERR_REQUIRED_ENV_MISSING: &str = "missing required environment variables";
 const ERR_RUNTIME_TYPE_MISMATCH: &str = "runtime/type mismatch";
 const ERR_INTERPRETER_UNSUPPORTED: &str = "unsupported interpreter override or command";
@@ -230,10 +233,16 @@ pub fn resolve_installed_tool(project_dir: &Path, spec: &ToolSpec) -> Result<Res
             version.clone()
         }
         ToolSelector::Latest => highest_installed_version(&tools_root, &spec.package)?
-            .ok_or_else(|| anyhow!("no installed versions found for {}", spec.package))?,
+            .ok_or_else(|| anyhow!("{ERR_NO_INSTALLED_VERSIONS_FOUND} for {}", spec.package))?,
         ToolSelector::Range(req) => {
             highest_matching_installed_version(&tools_root, &spec.package, req)?.ok_or_else(
-                || anyhow!("no installed version of {} satisfies {}", spec.package, req),
+                || {
+                    anyhow!(
+                        "{ERR_NO_INSTALLED_VERSION_SATISFIES}{} satisfies {}",
+                        spec.package,
+                        req
+                    )
+                },
             )?
         }
     };
@@ -394,7 +403,7 @@ fn resolve_locked_version(project_dir: &Path, package: &str) -> Result<Version> 
     let lock_path = project_dir.join("agent.lock");
     if !lock_path.exists() {
         bail!(
-            "agent.lock not found in {}; unversioned specs require a lockfile",
+            "{ERR_LOCKFILE_MISSING} in {}; unversioned specs require a lockfile",
             project_dir.display()
         );
     }
