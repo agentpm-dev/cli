@@ -180,13 +180,10 @@
 - [ ] Add backend search tests for private Skill visibility.
 
 ## Milestone 8: Registry Frontend UX
-> Scope note: this milestone makes Skills understandable and discoverable in the web registry. After this milestone, users should be able to find Skills, distinguish them from tools/agents/templates, open a Skill detail page, understand its manual/procedure content, inspect declared dependencies and metadata, and copy an install command. This milestone consumes the search/API support from Milestone 7; it does not add SDK loading helpers, CLI install behavior, or new backend dependency-resolution semantics.
+> Scope note: this milestone makes Skills understandable and discoverable in the web registry. After this milestone, users should be able to find Skills, distinguish them from tools/agents/templates, open a Skill detail page, inspect declared dependencies and metadata, and copy an install command. This milestone consumes the search/API support from Milestone 7; it does not add SDK loading helpers, CLI install behavior, new backend dependency-resolution semantics, or the dedicated backend/frontend work needed to surface `SKILL.md` as first-class manual content.
 - [ ] Add Skill kind badge/icon/display label.
 - [ ] Add `/skills/<package_id>/v<version>/overview` route.
 - [ ] Add Skill package detail page or adapt shared package detail page with Skill-specific sections.
-- [ ] Render primary manual content from `SKILL.md`/`skill.entrypoint` when available.
-- [ ] Fall back to existing README rendering if Skill entrypoint content is not available through the current detail API.
-- [ ] Decide whether the frontend needs a new backend/API field to access `skill.entrypoint` content from the artifact; if needed, add a follow-up backend task rather than silently omitting the manual.
 - [ ] Display declared tool dependencies.
 - [ ] Display declared `skill.references` and `skill.scripts`.
 - [ ] Display compatibility metadata if present.
@@ -198,6 +195,29 @@
 - [ ] Include Skills in homepage/trending package lists where package kinds are mixed.
 - [ ] Update package detail URL generation and links anywhere kind is switched.
 - [ ] Add frontend tests or manual verification notes for Skill search/detail rendering.
+
+## Milestone 8a: Skill Manual Content (`SKILL.md`)
+> Scope note: this milestone adds the missing backend and frontend support needed to display authored Skill manual content from `skill.entrypoint` / `SKILL.md` in the registry. After this milestone, a published Skill with an entrypoint file should expose that content distinctly from the normal README path, and the web Skill detail page should render it in a dedicated Manual tab. This milestone should not broaden SDK loading behavior or change the existing README contract beyond what is necessary to distinguish manual content from README content.
+- [ ] Implement Skill manual ingestion/storage using the same overall publish pipeline shape as README: CLI publish payload -> backend validation -> persisted package-version fields -> detail API exposure.
+- [ ] Do not overload existing README storage fields for Skill manuals; add parallel Skill-manual storage/exposure fields instead.
+- [ ] Define the backend detail/readme contract for Skill entrypoint content.
+- [ ] Decide whether to extend the existing tool readme DTO/route or add a dedicated Skill-manual field/route.
+- [ ] Ensure Skill publish/finalize stores `skill.entrypoint` content and path separately from top-level README content when present.
+- [ ] Ensure the stored Skill manual content preserves the declared `skill.entrypoint` path.
+- [ ] Expose Skill manual content through the registry detail API for authorized viewers of public/private packages.
+- [ ] Keep existing README behavior intact for tools, agents, and templates.
+- [ ] Ensure Skill detail API responses can distinguish:
+  - no manual content
+  - manual content from `skill.entrypoint`
+  - separate README content from top-level `readme`
+- [ ] Update frontend Skill detail pages to render the Manual tab from the dedicated Skill manual payload.
+- [ ] Keep the README tab separate and only render README content there.
+- [ ] Add backend tests for Skill manual storage/exposure.
+- [ ] Add frontend tests for:
+  - Skill with manual only
+  - Skill with manual plus separate README
+  - Skill with no exposed manual content
+- [ ] Add manual verification notes for published Skills where `SKILL.md` exists.
 
 ## Milestone 9: Node and Python SDK Skill Support
 > Scope note: this milestone makes Skills usable from SDK-based agent runtimes as inspectable artifacts. After this milestone, SDK users should be able to load an agent, inspect its resolved Skill dependencies, load a Skill, read its entrypoint content, inspect its declared tool dependencies, and then load/run those tools through the existing tool `load(...)` API. Skills are not executable SDK objects in Phase 6A; `load(...)` remains tool-only and no `run_skill`/`skill.run` API should be introduced.
@@ -275,4 +295,3 @@
 - [ ] Run full frontend test suite.
 - [ ] Run full Node SDK test suite.
 - [ ] Run full Python SDK test suite.
-
