@@ -21,7 +21,7 @@ use std::path::Component;
 use std::{
     collections::HashSet,
     fs,
-    io::{self, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 use tar::{Builder as TarBuilder, EntryType, Header};
@@ -175,16 +175,33 @@ impl PublishArgs {
 
         let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
 
+        let skill_manual_payload = match &publish_manifest {
+            PublishManifest::Skill(manifest) => {
+                let entrypoint_path = manifest_dir.join(&manifest.skill.entrypoint);
+                let manual_text = read_utf8_with_cap(&entrypoint_path, MAX_README_BYTES)
+                    .with_context(|| {
+                        format!("reading skill entrypoint {}", manifest.skill.entrypoint)
+                    })?;
+                let sha = hex_sha256(manual_text.as_bytes());
+                Some(serde_json::json!({
+                    "path": manifest.skill.entrypoint,
+                    "sha256": sha,
+                    "content": manual_text
+                }))
+            }
+            _ => None,
+        };
+
         // ---- README (optional) ----
         let manifest_readme_path = manifest_value.get("readme").and_then(|v| v.as_str());
 
         let readme_payload = match discover_readme(manifest_dir, manifest_readme_path) {
-            Some(p) => {
+            Some((p, rel_path)) => {
                 match read_utf8_with_cap(&p, MAX_README_BYTES) {
                     Ok(md_text) => {
                         let sha = hex_sha256(md_text.as_bytes());
                         Some(serde_json::json!({
-                            "path": p.strip_prefix(manifest_dir).unwrap_or(&p).to_string_lossy(),
+                            "path": rel_path,
                             "sha256": sha,
                             "content": md_text
                         }))
@@ -212,7 +229,7 @@ impl PublishArgs {
                         Ok(text) => {
                             let sha = hex_sha256(text.as_bytes());
                             file_block = Some(serde_json::json!({
-                                "path": p.strip_prefix(manifest_dir).unwrap_or(&p).to_string_lossy(),
+                                "path": rel,
                                 "sha256": sha,
                                 "content": text
                             }));
@@ -255,6 +272,15 @@ impl PublishArgs {
         {
             println!("✓ README: {} (sha256 {})", p, sha.as_str().unwrap_or(""));
         }
+        if let Some(m) = &skill_manual_payload
+            && let (Some(p), Some(sha)) = (m.get("path"), m.get("sha256"))
+        {
+            println!(
+                "✓ Skill manual: {} (sha256 {})",
+                p,
+                sha.as_str().unwrap_or("")
+            );
+        }
         if let Some(l) = &license_payload {
             let spdx = l.get("spdx").and_then(|v| v.as_str()).unwrap_or("");
             if let Some(p) = l.get("path") {
@@ -288,6 +314,7 @@ impl PublishArgs {
             &sha256_hex,
             size_bytes,
             readme_payload,
+            skill_manual_payload,
             license_payload,
             self.namespace.as_deref(),
         );
@@ -375,6 +402,7 @@ fn build_publish_metadata(
     sha256_hex: &str,
     size_bytes: u64,
     readme_payload: Option<JsonValue>,
+    skill_manual_payload: Option<JsonValue>,
     license_payload: Option<JsonValue>,
     namespace_handle: Option<&str>,
 ) -> JsonValue {
@@ -383,6 +411,7 @@ fn build_publish_metadata(
         "sha256": sha256_hex,
         "size": size_bytes,
         "readme": readme_payload,
+        "skill_manual": skill_manual_payload,
         "license": license_payload,
         "client": {
             "product": "agentpm-cli",
@@ -973,8 +1002,18 @@ fn mode_from_meta_for_name(_meta: &Metadata, name_in_tar: &str) -> u32 {
 fn file_digest_and_len(path: &Path) -> Result<(String, u64)> {
     let mut f = fs::File::open(path)?;
     let mut sha = Sha256::new();
-    let len = io::copy(&mut f, &mut sha::Writer(&mut sha))
-        .map_err(|e| anyhow!("hashing {}: {}", path.display(), e))?;
+    let mut len = 0_u64;
+    let mut buf = [0_u8; 16 * 1024];
+    loop {
+        let n = f
+            .read(&mut buf)
+            .map_err(|e| anyhow!("hashing {}: {}", path.display(), e))?;
+        if n == 0 {
+            break;
+        }
+        sha.update(&buf[..n]);
+        len += n as u64;
+    }
     let hex = format!("{:x}", sha.finalize());
     Ok((hex, len))
 }
@@ -1080,6 +1119,62 @@ fn select_local_key(key_id_flag: Option<&str>) -> Result<(String, StoredKeyV1)> 
     }
 }
 
+fn hex_sha256(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn read_utf8_with_cap(path: &Path, max_bytes: usize) -> Result<String> {
+    let md = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    if md.len() as usize > max_bytes {
+        bail!(
+            "{} is too large ({} bytes > {} bytes)",
+            path.display(),
+            md.len(),
+            max_bytes
+        );
+    }
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let s = String::from_utf8(bytes)
+        .with_context(|| format!("{} is not valid UTF-8 text", path.display()))?;
+    Ok(s)
+}
+
+fn discover_readme(base: &Path, from_manifest: Option<&str>) -> Option<(PathBuf, String)> {
+    if let Some(p) = from_manifest {
+        let abs = base.join(p);
+        if abs.exists() {
+            return Some((abs, p.to_string()));
+        }
+        return None;
+    }
+    // Auto-discover common names
+    for cand in ["README.md", "README", "README.txt"] {
+        let p = base.join(cand);
+        if p.exists() {
+            return Some((p, cand.to_string()));
+        }
+    }
+    None
+}
+
+// Best-effort fetch of license paths from manifest JSON
+fn pick_license_paths(manifest_json: &serde_json::Value) -> (Option<&str>, Option<&str>) {
+    // returns (license_spdx, license_file)
+    let spdx = manifest_json
+        .get("license")
+        .and_then(|l| l.get("spdx"))
+        .and_then(|v| v.as_str());
+
+    let file = manifest_json
+        .get("license")
+        .and_then(|l| l.get("file"))
+        .and_then(|v| v.as_str());
+
+    (spdx, file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1136,6 +1231,7 @@ mod tests {
             42,
             None,
             None,
+            None,
             Some("zack"),
         );
 
@@ -1154,9 +1250,34 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         assert!(meta.get("namespace_handle").is_none());
+    }
+
+    #[test]
+    fn publish_metadata_includes_skill_manual_when_provided() {
+        let meta = build_publish_metadata(
+            serde_json::json!({"kind": "skill", "name": "demo-skill", "version": "0.1.0"}),
+            "abc123",
+            42,
+            None,
+            Some(serde_json::json!({
+                "path": "SKILL.md",
+                "sha256": "deadbeef",
+                "content": "# Manual"
+            })),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            meta.get("skill_manual")
+                .and_then(|v| v.get("path"))
+                .and_then(|v| v.as_str()),
+            Some("SKILL.md")
+        );
     }
 
     #[tokio::test]
@@ -1654,76 +1775,5 @@ mod tests {
 
         let err = args.run("https://example.com".into()).await.unwrap_err();
         assert!(format!("{err:#}").contains("Manifest validation failed"));
-    }
-}
-
-fn hex_sha256(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
-}
-
-fn read_utf8_with_cap(path: &Path, max_bytes: usize) -> Result<String> {
-    let md = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
-    if md.len() as usize > max_bytes {
-        bail!(
-            "{} is too large ({} bytes > {} bytes)",
-            path.display(),
-            md.len(),
-            max_bytes
-        );
-    }
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    let s = String::from_utf8(bytes)
-        .with_context(|| format!("{} is not valid UTF-8 text", path.display()))?;
-    Ok(s)
-}
-
-fn discover_readme(base: &Path, from_manifest: Option<&str>) -> Option<PathBuf> {
-    if let Some(p) = from_manifest {
-        let p = base.join(p);
-        if p.exists() {
-            return Some(p);
-        }
-        return None;
-    }
-    // Auto-discover common names
-    for cand in ["README.md", "README", "README.txt"] {
-        let p = base.join(cand);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    None
-}
-
-// Best-effort fetch of license paths from manifest JSON
-fn pick_license_paths(manifest_json: &serde_json::Value) -> (Option<&str>, Option<&str>) {
-    // returns (license_spdx, license_file)
-    let spdx = manifest_json
-        .get("license")
-        .and_then(|l| l.get("spdx"))
-        .and_then(|v| v.as_str());
-
-    let file = manifest_json
-        .get("license")
-        .and_then(|l| l.get("file"))
-        .and_then(|v| v.as_str());
-
-    (spdx, file)
-}
-
-// helper to use io::copy into a hasher
-mod sha {
-    use sha2::Digest;
-    pub struct Writer<'a, D: Digest>(pub &'a mut D);
-    impl<'a, D: Digest> std::io::Write for Writer<'a, D> {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.update(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
     }
 }
