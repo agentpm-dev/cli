@@ -3,7 +3,7 @@
 This folder contains the JSON Schema that defines `agent.json` for AgentPM.
 
 - **File:** `agentpm.manifest.schema.json`
-- **Kinds:** `tool` (single tool package), `agent` (composed of tools), and `template` (workflow starter package)
+- **Kinds:** `tool` (single tool package), `skill` (procedural package), `agent` (composed package), and `template` (workflow starter package)
 - **Strictness:** `additionalProperties: false` (unknown fields are rejected)
 
 ---
@@ -61,6 +61,24 @@ agentpm init --kind agent --name research-assistant --description "Assistant com
       "prompt": "Describe the user request this agent should handle."
     }
   ]
+}
+```
+
+```bash
+agentpm init --kind skill --name triage-playbook --description "Procedural guidance for incident triage"
+```
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "kind": "skill",
+  "name": "triage-playbook",
+  "version": "0.1.0",
+  "description": "Procedural guidance for incident triage",
+  "tools": [],
+  "skill": {
+    "entrypoint": "SKILL.md"
+  }
 }
 ```
 
@@ -136,16 +154,17 @@ agentpm lint path/to/agent.json
 | Field         | Type     | Required | Allowed on | Notes                                                                               |
 |---------------|----------|----------|-----------|-------------------------------------------------------------------------------------|
 | `$schema`     | string   | no       | all       | URI to this schema (optional but recommended)                                       |
-| `kind`        | enum     | **yes**  | all       | `"tool"`, `"agent"`, or `"template"` (discriminator)                                |
+| `kind`        | enum     | **yes**  | all       | `"tool"`, `"skill"`, `"agent"`, or `"template"` (discriminator)                     |
 | `name`        | string   | **yes**  | all       | `^[a-z][a-z0-9-]{0,63}$`                                                            |
 | `version`     | semver   | **yes**  | all       | SemVer string (supports pre/metadata)                                               |
 | `description` | string   | **yes**  | all       | Free text                                                                           |
-| `tools`       | array    | **yes**¹ | **agent** | Array of tool refs: string or `{name, version}`                                     |
-| `skills`      | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
+| `tools`       | array    | **yes**¹ | **agent**, **skill** | Array of tool refs: string or `{name, version}`                           |
+| `skills`      | array    | no       | **agent** | Array of skill refs: string or `{name, version}`                                    |
 | `knowledge`   | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
 | `memory`      | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
 | `profiles`    | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
 | `examples`    | array    | no       | **agent** | Inline prompt examples `{ title, prompt }`.                                         |
+| `skill`       | object   | **yes**⁴ | **skill** | Skill metadata including `entrypoint`, optional references, scripts, and compatibility |
 | `template`    | object   | **yes**³ | **template** | Template metadata including files root, dependencies, variables, and entrypoints |
 | `entrypoint`  | string   | **yes**² | **tool**  | Execution ref `{command, args, cwd, timeout_ms, env}`                               |
 | `inputs`      | object   | **yes**² | **tool**  | JSON Schema (or shape) for inputs                                                   |
@@ -156,13 +175,16 @@ agentpm lint path/to/agent.json
 | `readme`      | string   | no       | all       | Path to README file. Will automatically look for README.md if not specified.         | 
 | `license`     | object   | no       | all       | `{ spdx: "license spdx", file: "Path to LICENSE file" }`                            | 
 
-¹ required only when `kind = "agent"`  
+¹ required only when `kind = "agent"` or `kind = "skill"`  
 ² required only when `kind = "tool"`
 ³ required only when `kind = "template"`
+⁴ required only when `kind = "skill"`
 
 **Kind-specific rules** are enforced via schema constraints:
 - `entrypoint`, `inputs`, `outputs`, `files`, `runtime` ⇒ **only valid on tools**
-- `tools`, `skills`, `knowledge`, `memory`, `profiles`, `examples` ⇒ **only valid on agents**
+- `tools` ⇒ **valid on agents and skills**
+- `skill` ⇒ **only valid on skills**
+- `skills`, `knowledge`, `memory`, `profiles`, `examples` ⇒ **only valid on agents**
 - `template` ⇒ **only valid on templates**
 
 ---
@@ -207,6 +229,25 @@ agentpm lint path/to/agent.json
       "prompt": "Read these sources and summarize the main tradeoffs."
     }
   ]
+}
+```
+
+### Skill (procedural package)
+
+```json
+{
+  "kind": "skill",
+  "name": "triage-playbook",
+  "version": "0.1.0",
+  "description": "Procedural guidance for incident triage",
+  "tools": [
+    "@zack/incident-severity@1.0.0"
+  ],
+  "skill": {
+    "entrypoint": "SKILL.md",
+    "references": ["references/checklist.md"],
+    "scripts": ["scripts/run.sh"]
+  }
 }
 ```
 
