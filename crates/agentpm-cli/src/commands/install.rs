@@ -1983,6 +1983,17 @@ mod tests {
             manifest_after["skills"],
             json!([{"name":"@zack/triage-skill","version":"0.1.0"}])
         );
+        assert_eq!(
+            fs::read_to_string(
+                installed_skill_manifest_path(&root.join(".agentpm"), "@zack/triage-skill", "0.1.0")
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .join("SKILL.md")
+            )
+            .unwrap(),
+            "# Skill\n"
+        );
 
         server.abort();
         let _ = fs::remove_dir_all(root);

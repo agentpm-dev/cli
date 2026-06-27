@@ -246,8 +246,8 @@
 - [ ] Add SDK tests proving `load(...)` rejects Skill refs with a clear error.
 - [ ] Add SDK README/docs examples for `load_skill` / `loadSkill`.
 
-## Milestone 10: Docs and Examples
-> Scope note: this milestone updates user-facing docs and examples after the core Skill lifecycle has been implemented. After this milestone, users should understand what Skills are, when to use Skills versus tools/agents/templates, how to author Skills from scratch or from an exported tool scaffold, how to publish/install/discover Skills, and how to load Skills through the SDKs. This milestone should not introduce new behavior; it should document and demonstrate behavior implemented in earlier milestones.
+## Milestone 10: Documentation
+> Scope note: this milestone updates user-facing documentation after the core Skill lifecycle has been implemented and should be completed before deploying the phase. After this milestone, users should understand what Skills are, when to use Skills versus tools/agents/templates, how to author Skills from scratch or from an exported tool scaffold, how to publish/install/discover Skills, and how to load Skills through the SDKs. This milestone should not introduce new behavior; it should document behavior implemented in earlier milestones.
 - [ ] Update manifest reference docs with `kind: "skill"`.
 - [ ] Document Skill semantics: reusable operational know-how, not necessarily executable code.
 - [ ] Document when to use a Skill versus a Tool, Agent, or Template.
@@ -266,10 +266,6 @@
 - [ ] Update search/registry docs to mention Skill discovery.
 - [ ] Document SDK Skill loading with `load_skill` / `loadSkill`.
 - [ ] Document that SDK `load(...)` remains tool-only and Skills are inspectable, not runnable, in Phase 6A.
-- [ ] Add a minimal procedural Skill example.
-- [ ] Add a tool-backed Skill example generated from export and edited into a publishable package.
-- [ ] Add an agent example that depends on a Skill and a Skill that depends on a Tool.
-- [ ] Add an SDK example showing `load_agent(...)` → `resolved_skills` → `load_skill(...)` → `resolved_tools` → `load(...)`.
 - [ ] Update any roadmap/docs text that says Skills are not first-class artifacts yet.
 
 ## Milestone 11: Compatibility and Cleanup
@@ -295,3 +291,11 @@
 - [ ] Run full frontend test suite.
 - [ ] Run full Node SDK test suite.
 - [ ] Run full Python SDK test suite.
+
+## Milestone 12: Examples Repo Update
+> Scope note: this milestone updates `agentpm-examples` after the Skill docs are complete and the latest CLI, backend, frontend, and SDK behavior has been deployed. The goal is to verify real example flows against the deployed stack and leave the example repo aligned with the final public interfaces rather than local pre-deploy behavior.
+- [ ] Add a minimal procedural Skill example in `agentpm-examples`.
+- [ ] Add a tool-backed Skill example generated from export and edited into a publishable package.
+- [ ] Add an agent example that depends on a Skill and a Skill that depends on a Tool.
+- [ ] Add an SDK example showing `load_agent(...)` → `resolvedSkills` / `resolved_skills` → `load_skill(...)` / `loadSkill(...)` → `resolvedTools` / `resolved_tools` → `load(...)`, matching each SDK’s final public contract.
+- [ ] Verify the examples repo works against the deployed registry/API rather than local-only assumptions.
