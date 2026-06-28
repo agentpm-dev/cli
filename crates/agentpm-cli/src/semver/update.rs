@@ -7,27 +7,35 @@ use serde_json::{Map, Value};
 /// - `update_range`: if false and an existing entry has a different range, returns Err.
 ///   Returns true if agent.json was modified.
 pub fn maybe_update_agent_json(meta: &mut Value, spec: &str, update_range: bool) -> Result<bool> {
+    maybe_update_manifest_dependency(meta, "tools", "Tool", spec, update_range)
+}
+
+pub fn maybe_update_manifest_dependency(
+    meta: &mut Value,
+    field: &str,
+    label: &str,
+    spec: &str,
+    update_range: bool,
+) -> Result<bool> {
     let (spec_pkg, spec_range) = parse_cli_spec(spec)?;
     let desired_range = normalize_range(&spec_range); // None means "no version field" (equiv to "*")
 
-    // Ensure "tools" is an array
-    if !meta.get("tools").map(|v| v.is_array()).unwrap_or(false) {
-        // create tools: []
+    if !meta.get(field).map(|v| v.is_array()).unwrap_or(false) {
         meta.as_object_mut()
             .ok_or_else(|| anyhow!("agent.json root must be a JSON object"))?
-            .insert("tools".to_string(), Value::Array(vec![]));
+            .insert(field.to_string(), Value::Array(vec![]));
     }
 
-    let tools = meta
-        .get_mut("tools")
+    let dependencies = meta
+        .get_mut(field)
         .and_then(Value::as_array_mut)
-        .ok_or_else(|| anyhow!("agent.json tools must be an array"))?;
+        .ok_or_else(|| anyhow!("agent.json {} must be an array", field))?;
 
     // Look for existing entry matching the same package name (exact match on string)
     let mut found_idx: Option<usize> = None;
     let mut existing_range: Option<String> = None;
 
-    for (i, item) in tools.iter().enumerate() {
+    for (i, item) in dependencies.iter().enumerate() {
         match parse_tools_item(item) {
             Some((name, rng)) if name == spec_pkg => {
                 found_idx = Some(i);
@@ -42,7 +50,7 @@ pub fn maybe_update_agent_json(meta: &mut Value, spec: &str, update_range: bool)
         // Not found → append a new entry
         (None, _) => {
             let new_item = build_tools_item(&spec_pkg, desired_range.as_deref());
-            tools.push(new_item);
+            dependencies.push(new_item);
             Ok(true)
         }
 
@@ -53,13 +61,14 @@ pub fn maybe_update_agent_json(meta: &mut Value, spec: &str, update_range: bool)
         (Some(idx), _) => {
             if !update_range {
                 return Err(anyhow!(
-                    "Tool {} already exists in agent.json with a different version range. Pass --update-range to update it.",
+                    "{} {} already exists in agent.json with a different version range. Pass --update-range to update it.",
+                    label,
                     spec_pkg
                 ));
             }
             // Replace with object form { name, version? }
             let new_item = build_tools_item(&spec_pkg, desired_range.as_deref());
-            if let Some(slot) = tools.get_mut(idx) {
+            if let Some(slot) = dependencies.get_mut(idx) {
                 *slot = new_item;
             }
             Ok(true)
@@ -164,5 +173,124 @@ fn normalize_range_opt(r: Option<&str>) -> Option<String> {
     match r {
         None => None,
         Some(s) => normalize_range(s),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{maybe_update_agent_json, maybe_update_manifest_dependency};
+    use serde_json::json;
+
+    #[test]
+    fn maybe_update_agent_json_appends_tool_dependency() {
+        let mut manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "tools": []
+        });
+
+        let changed =
+            maybe_update_agent_json(&mut manifest, "@zack/summarize@^0.1", false).unwrap();
+
+        assert!(changed);
+        assert_eq!(
+            manifest["tools"],
+            json!([{"name":"@zack/summarize","version":"^0.1"}])
+        );
+    }
+
+    #[test]
+    fn maybe_update_manifest_dependency_appends_skill_dependency() {
+        let mut manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "skills": []
+        });
+
+        let changed = maybe_update_manifest_dependency(
+            &mut manifest,
+            "skills",
+            "Skill",
+            "@zack/triage-skill@^0.2",
+            false,
+        )
+        .unwrap();
+
+        assert!(changed);
+        assert_eq!(
+            manifest["skills"],
+            json!([{"name":"@zack/triage-skill","version":"^0.2"}])
+        );
+    }
+
+    #[test]
+    fn maybe_update_agent_json_is_noop_for_same_range() {
+        let mut manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "tools": [{"name":"@zack/summarize","version":"^0.1"}]
+        });
+
+        let changed =
+            maybe_update_agent_json(&mut manifest, "@zack/summarize@^0.1", false).unwrap();
+
+        assert!(!changed);
+        assert_eq!(
+            manifest["tools"],
+            json!([{"name":"@zack/summarize","version":"^0.1"}])
+        );
+    }
+
+    #[test]
+    fn maybe_update_manifest_dependency_rejects_range_change_without_update_range() {
+        let mut manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "skills": [{"name":"@zack/triage-skill","version":"^0.1"}]
+        });
+
+        let err = maybe_update_manifest_dependency(
+            &mut manifest,
+            "skills",
+            "Skill",
+            "@zack/triage-skill@^0.2",
+            false,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Skill @zack/triage-skill already exists"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn maybe_update_manifest_dependency_updates_range_in_place() {
+        let mut manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "skills": [{"name":"@zack/triage-skill","version":"^0.1"}]
+        });
+
+        let changed = maybe_update_manifest_dependency(
+            &mut manifest,
+            "skills",
+            "Skill",
+            "@zack/triage-skill@^0.2",
+            true,
+        )
+        .unwrap();
+
+        assert!(changed);
+        assert_eq!(
+            manifest["skills"],
+            json!([{"name":"@zack/triage-skill","version":"^0.2"}])
+        );
     }
 }

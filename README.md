@@ -2,13 +2,14 @@
 
 Command-line tool for building, publishing, installing, and validating AgentPM packages.
 
-AgentPM currently supports two package kinds:
+AgentPM currently supports four package kinds:
 
 - **tools**: executable capabilities with entrypoints, runtime requirements, inputs, and outputs
-- **agents**: composition artifacts that declare tool dependencies, examples, and future reserved references
+- **skills**: procedural packages that capture playbooks, checklists, and reasoning guides around tools
+- **agents**: composition artifacts that declare tool and skill dependencies plus examples and reserved references
 - **templates**: workflow scaffolds that generate editable AgentPM workspaces
 
-Agent packages are not runnable app bundles. They install as portable composition metadata plus resolved tool dependencies.
+Agent packages are not runnable app bundles. They install as portable composition metadata plus resolved tool and skill dependencies.
 
 [![CI](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml)
 [![Homebrew tap](https://img.shields.io/badge/homebrew-agentpm--dev%2Ftap-blue)](https://github.com/agentpm-dev/homebrew-tap)
@@ -142,6 +143,7 @@ Create a new AgentPM package:
 ```bash
 agentpm --help
 agentpm init --kind tool --name demo --description "My first tool"
+agentpm init --kind skill --name triage-playbook --description "My first skill"
 agentpm init --kind agent --name support-agent --description "My first agent"
 agentpm init --kind template --name research-template --description "My workflow template"
 ```
@@ -161,7 +163,7 @@ cd my-project
 `agentpm new`:
 
 - copies and renders scaffold files from the template
-- installs declared tool and agent dependencies into the generated workspace
+- installs declared tool, skill, and agent dependencies into the generated workspace
 - writes `agent.json`, `agentpm.workspace.json`, `agent.lock`, and `.agentpm/template.json`
 - does not execute template-provided scripts or generated app code during scaffolding
 
@@ -205,9 +207,10 @@ agentpm install
 
 That:
 
-- resolves the tools declared in the local manifest
+- resolves the tools and skills declared in the local manifest
 - installs tools under `.agentpm/tools/<namespace>/<name>/<version>/`
-- writes `agent.lock` v2
+- installs skills under `.agentpm/skills/<namespace>/<name>/<version>/`
+- writes `agent.lock` (Skill-containing graphs use `lockfile_version: 3`)
 - keeps the local `agent.json` as the source of truth
 
 ### Direct package install
@@ -227,6 +230,7 @@ agentpm install @zack/support-agent@0.1.0
 Direct agent install writes:
 
 - the installed agent under `.agentpm/agents/<namespace>/<name>/<version>/`
+- the agent’s resolved skills under `.agentpm/skills/<namespace>/<name>/<version>/`
 - the agent’s resolved tools under `.agentpm/tools/<namespace>/<name>/<version>/`
 - an `agent:@namespace/name@version` root in `agent.lock`
 
@@ -253,7 +257,7 @@ The preferred publish scope is:
 
 - `packages:publish`
 
-That scope can publish tools, agents, and templates.
+That scope can publish tools, skills, agents, and templates.
 
 ### Manifest schema
 

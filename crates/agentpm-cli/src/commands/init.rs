@@ -1,6 +1,6 @@
 use crate::assets::{
-    AGENT_JSON_TPL, TEMPLATE_GENERATED_README_MD_TPL, TEMPLATE_PACKAGE_AGENT_JSON_TPL,
-    TOOL_AGENT_JSON_TPL,
+    AGENT_JSON_TPL, SKILL_AGENT_JSON_TPL, SKILL_INIT_MD_TPL, TEMPLATE_GENERATED_README_MD_TPL,
+    TEMPLATE_PACKAGE_AGENT_JSON_TPL, TOOL_AGENT_JSON_TPL,
 };
 use crate::io::fs::write_atomic;
 use crate::prelude::*;
@@ -11,11 +11,12 @@ pub enum InitKind {
     Tool,
     Agent,
     Template,
+    Skill,
 }
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// What to scaffold: a single-tool package, a composed agent, or a workflow template
+    /// What to scaffold: a single-tool package, a composed agent, a workflow template, or a skill
     #[arg(long, value_enum, default_value = "tool")]
     kind: InitKind,
 
@@ -90,6 +91,31 @@ impl InitArgs {
                 write_atomic(&generated_readme_path, &generated_readme)?;
 
                 println!("Created {}", generated_readme_path.display());
+            }
+            InitKind::Skill => {
+                let rendered = render(
+                    SKILL_AGENT_JSON_TPL,
+                    &[
+                        ("SKILL_NAME", &self.name),
+                        ("SKILL_DESCRIPTION", &self.description),
+                    ],
+                );
+                let path = out.join("agent.json");
+                write_atomic(&path, &rendered)?;
+                println!("Created {}", path.display());
+
+                let title = humanize_name(&self.name);
+                let skill_markdown = render(
+                    SKILL_INIT_MD_TPL,
+                    &[
+                        ("SKILL_NAME", &self.name),
+                        ("SKILL_TITLE", &title),
+                        ("SKILL_DESCRIPTION", &self.description),
+                    ],
+                );
+                let skill_path = out.join("SKILL.md");
+                write_atomic(&skill_path, &skill_markdown)?;
+                println!("Created {}", skill_path.display());
             }
         }
         Ok(())
@@ -201,10 +227,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn init_tool_and_agent_behavior_still_work() {
+    async fn init_skill_creates_valid_manifest_and_skill_markdown() {
+        let out = temp_dir("skill");
+        let args = InitArgs {
+            kind: InitKind::Skill,
+            name: "incident-commander".into(),
+            description: "Incident response coordination playbook.".into(),
+            out_dir: Some(out.clone()),
+        };
+
+        args.run("http://example.invalid".into()).await.unwrap();
+
+        let manifest_path = out.join("agent.json");
+        let skill_path = out.join("SKILL.md");
+
+        assert!(manifest_path.exists());
+        assert!(skill_path.exists());
+        assert!(!out.join("references").exists());
+        assert!(!out.join("scripts").exists());
+
+        validate(&manifest_path);
+
+        let manifest_json: Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        assert_eq!(manifest_json["kind"], "skill");
+        assert_eq!(manifest_json["skill"]["entrypoint"], "SKILL.md");
+        assert!(manifest_json.get("tools").is_none());
+
+        let skill_markdown = std::fs::read_to_string(&skill_path).unwrap();
+        assert!(skill_markdown.contains("name: incident-commander"));
+        assert!(skill_markdown.contains("description: Incident response coordination playbook."));
+        assert!(skill_markdown.contains("# Incident Commander"));
+        assert!(skill_markdown.contains("Incident response coordination playbook."));
+        assert!(!skill_markdown.contains("{{SKILL_NAME}}"));
+
+        let _ = std::fs::remove_dir_all(out);
+    }
+
+    #[tokio::test]
+    async fn init_tool_agent_and_template_behavior_still_work() {
         for (kind, label, expected_kind) in [
             (InitKind::Tool, "tool", "tool"),
             (InitKind::Agent, "agent", "agent"),
+            (InitKind::Template, "template", "template"),
         ] {
             let out = temp_dir(label);
             let args = InitArgs {
@@ -221,8 +286,17 @@ mod tests {
             let manifest_json: Value =
                 serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
             assert_eq!(manifest_json["kind"], expected_kind);
-            if expected_kind == "agent" {
+            if expected_kind == "tool" {
+                assert!(manifest_json.get("files").is_some());
+                assert!(manifest_json.get("entrypoint").is_some());
+                assert!(manifest_json.get("inputs").is_some());
+                assert!(manifest_json.get("outputs").is_some());
+            }
+            if expected_kind == "agent" || expected_kind == "template" {
                 validate(&manifest_path);
+            }
+            if expected_kind == "template" {
+                assert!(out.join("template").join("README.md").exists());
             }
 
             let _ = std::fs::remove_dir_all(out);

@@ -10,6 +10,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const DEFAULT_MANIFEST_SCHEMA_URL: &str = "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json";
+const EMBEDDED_MANIFEST_SCHEMA_JSON: &str =
+    include_str!("../../../schemas/agentpm.manifest.schema.json");
+
 #[derive(Serialize, Debug, Clone)]
 pub struct LintIssue {
     pub file: String,
@@ -129,6 +133,7 @@ pub enum PackageReference {
 pub struct TemplateDependencies {
     pub tools: Vec<PackageReference>,
     pub agents: Vec<PackageReference>,
+    pub skills: Vec<PackageReference>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -147,11 +152,46 @@ pub struct TemplateManifest {
     pub template: TemplateMetadata,
 }
 
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct SkillCompatibility {
+    pub model_families: Vec<String>,
+    pub runtimes: Vec<String>,
+    pub environments: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct SkillMetadata {
+    pub entrypoint: String,
+    #[serde(default)]
+    pub references: Vec<String>,
+    #[serde(default)]
+    pub scripts: Vec<String>,
+    #[serde(default)]
+    pub compatibility: SkillCompatibility,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct SkillManifest {
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tools: Vec<PackageReference>,
+    pub skill: SkillMetadata,
+}
+
 #[derive(Debug)]
 pub enum PublishManifest {
     Tool(Box<ToolManifest>),
     Agent(Box<AgentManifest>),
     Template(Box<TemplateManifest>),
+    Skill(Box<SkillManifest>),
 }
 
 /// Resolve the schema source (local file if present; else hosted URL)
@@ -163,12 +203,15 @@ pub fn resolve_schema_source(override_opt: Option<String>) -> String {
     if local_path.exists() {
         local_path.to_string_lossy().into_owned()
     } else {
-        "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json".to_string()
+        DEFAULT_MANIFEST_SCHEMA_URL.to_string()
     }
 }
 
 /// Load a JSON schema from a file or URL.
 pub fn load_schema_value(source: &str) -> Result<Value> {
+    if source == DEFAULT_MANIFEST_SCHEMA_URL {
+        return Ok(serde_json::from_str(EMBEDDED_MANIFEST_SCHEMA_JSON)?);
+    }
     if source.starts_with("http://") || source.starts_with("https://") {
         let resp = reqwest::blocking::get(source)
             .with_context(|| format!("fetching schema from {source}"))?;
@@ -247,7 +290,7 @@ pub fn validate_manifest_value(
     }
 
     if value.get("kind").and_then(Value::as_str) == Some("agent") {
-        for field in ["skills", "knowledge", "memory", "profiles"] {
+        for field in ["knowledge", "memory", "profiles"] {
             if value
                 .get(field)
                 .and_then(Value::as_array)
@@ -455,8 +498,11 @@ pub fn parse_publish_manifest(value: &Value) -> Result<PublishManifest> {
         "template" => Ok(PublishManifest::Template(Box::new(
             parse_template_manifest(value)?,
         ))),
+        "skill" => Ok(PublishManifest::Skill(Box::new(parse_skill_manifest(
+            value,
+        )?))),
         other => Err(anyhow!(format!(
-            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", and kind=\"template\" (got kind=\"{}\")",
+            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", and kind=\"skill\" manifests (got kind=\"{}\")",
             other
         ))),
     }
@@ -469,6 +515,18 @@ pub fn parse_template_manifest(value: &Value) -> Result<TemplateManifest> {
     if mf.kind != "template" {
         return Err(anyhow!(format!(
             "expected kind=\"template\" manifest (got kind=\"{}\")",
+            mf.kind
+        )));
+    }
+    Ok(mf)
+}
+
+pub fn parse_skill_manifest(value: &Value) -> Result<SkillManifest> {
+    let mf: SkillManifest =
+        serde_json::from_value(value.clone()).context("parsing manifest into SkillManifest")?;
+    if mf.kind != "skill" {
+        return Err(anyhow!(format!(
+            "expected kind=\"skill\" manifest (got kind=\"{}\")",
             mf.kind
         )));
     }
@@ -504,6 +562,25 @@ mod tests {
             .join("../../schemas/agentpm.manifest.schema.json")
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn load_schema_value_uses_embedded_default_schema_for_hosted_url() {
+        let schema = load_schema_value(DEFAULT_MANIFEST_SCHEMA_URL).unwrap();
+        assert_eq!(
+            schema.get("$schema").and_then(Value::as_str),
+            Some("https://json-schema.org/draft/2020-12/schema")
+        );
+        assert_eq!(
+            schema
+                .get("properties")
+                .and_then(|props| props.get("kind"))
+                .and_then(|kind| kind.get("enum"))
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                .unwrap(),
+            vec!["agent", "tool", "template", "skill"]
+        );
     }
 
     fn assert_manifest_ok(mut manifest: Value) {
@@ -593,6 +670,69 @@ mod tests {
     }
 
     #[test]
+    fn valid_procedural_skill_manifest_validates_without_tools() {
+        assert_manifest_ok(json!({
+            "kind": "skill",
+            "name": "incident-commander",
+            "version": "0.1.0",
+            "description": "Incident response coordination playbook.",
+            "skill": {
+                "entrypoint": "SKILL.md"
+            }
+        }));
+    }
+
+    #[test]
+    fn valid_tool_backed_skill_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "skill",
+            "name": "slack-incident-update",
+            "version": "0.1.0",
+            "description": "A playbook for posting structured incident updates to Slack.",
+            "tools": [
+                {
+                    "name": "@zack/slack-post-message",
+                    "version": "0.1.1"
+                }
+            ],
+            "skill": {
+                "entrypoint": "SKILL.md",
+                "references": [
+                    "references/tool-contract.md",
+                    "references/examples.md"
+                ],
+                "scripts": ["scripts/run.sh"],
+                "compatibility": {
+                    "runtimes": ["agentpm-run", "shell"]
+                }
+            }
+        }));
+    }
+
+    #[test]
+    fn skill_manifest_rejects_unknown_compatibility_runtime() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "skill",
+            "name": "invalid-compatibility-runtime",
+            "version": "0.1.0",
+            "description": "Unknown compatibility runtime should fail schema validation.",
+            "skill": {
+                "entrypoint": "SKILL.md",
+                "compatibility": {
+                    "runtimes": ["whatever"]
+                }
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/skill/compatibility/runtimes/0"),
+            "expected invalid compatibility runtime failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
     fn valid_template_manifest_validates() {
         assert_manifest_ok(json!({
             "kind": "template",
@@ -626,6 +766,39 @@ mod tests {
                     {
                         "label": "Run locally",
                         "command": "python main.py \"AgentPM\""
+                    }
+                ]
+            }
+        }));
+    }
+
+    #[test]
+    fn valid_template_manifest_with_skill_dependencies_validates() {
+        assert_manifest_ok(json!({
+            "kind": "template",
+            "name": "incident-response-workspace",
+            "version": "0.1.0",
+            "description": "Workspace starter with a first-class skill dependency.",
+            "template": {
+                "display_name": "Incident Response Workspace",
+                "use_case": "incident-response",
+                "execution_surfaces": ["multi-agent-workspace"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "skills": [
+                        {
+                            "name": "@zack/incident-commander",
+                            "version": "0.1.0"
+                        }
+                    ]
+                },
+                "entrypoints": [
+                    {
+                        "label": "Open workspace",
+                        "command": "agentpm run"
                     }
                 ]
             }
@@ -700,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn reserved_future_fields_validate_and_are_preserved() {
+    fn reserved_agent_fields_validate_and_are_preserved_without_warning_on_skills() {
         let mut manifest = json!({
             "kind": "agent",
             "name": "preserved-agent",
@@ -723,8 +896,14 @@ mod tests {
             "validation should preserve reserved fields"
         );
         assert!(
-            issues.iter().any(|issue| issue.instance_path == "/skills"),
-            "expected reserved-field warning, got: {issues:#?}"
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/knowledge"),
+            "expected reserved-field warning for knowledge, got: {issues:#?}"
+        );
+        assert!(
+            issues.iter().all(|issue| issue.instance_path != "/skills"),
+            "skills should not emit a reserved-field warning, got: {issues:#?}"
         );
     }
 
@@ -956,6 +1135,128 @@ mod tests {
     }
 
     #[test]
+    fn skill_manifest_rejects_top_level_skill_dependencies() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "skill",
+            "name": "recursive-skill",
+            "version": "0.1.0",
+            "description": "Should not accept skill-to-skill dependencies in Phase 6A.",
+            "tools": [],
+            "skills": ["@zack/other-skill@0.1.0"],
+            "skill": {
+                "entrypoint": "SKILL.md"
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/kind" || issue.instance_path.is_empty()),
+            "expected top-level skills rejection for kind=skill, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn skill_manifest_rejects_missing_entrypoint() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "skill",
+            "name": "missing-entrypoint",
+            "version": "0.1.0",
+            "description": "Missing skill.entrypoint should fail.",
+            "skill": {}
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.message.contains("entrypoint")),
+            "expected missing entrypoint validation error, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn skill_manifest_rejects_unsafe_entrypoint_path() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "skill",
+            "name": "unsafe-entrypoint",
+            "version": "0.1.0",
+            "description": "Unsafe entrypoint path should fail.",
+            "skill": {
+                "entrypoint": "../SKILL.md"
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/skill/entrypoint"),
+            "expected unsafe entrypoint path failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn skill_manifest_rejects_absolute_entrypoint_path() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "skill",
+            "name": "absolute-entrypoint",
+            "version": "0.1.0",
+            "description": "Absolute entrypoint path should fail.",
+            "skill": {
+                "entrypoint": "/tmp/SKILL.md"
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/skill/entrypoint"),
+            "expected absolute entrypoint path failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn skill_manifest_rejects_unsafe_reference_path() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "skill",
+            "name": "unsafe-reference",
+            "version": "0.1.0",
+            "description": "Unsafe reference path should fail.",
+            "skill": {
+                "entrypoint": "SKILL.md",
+                "references": ["references/../../secret.md"]
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/skill/references/0"),
+            "expected unsafe reference path failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn skill_manifest_rejects_unsafe_script_path() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "skill",
+            "name": "unsafe-script",
+            "version": "0.1.0",
+            "description": "Unsafe script path should fail.",
+            "skill": {
+                "entrypoint": "SKILL.md",
+                "scripts": ["/tmp/run.sh"]
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/skill/scripts/0"),
+            "expected unsafe script path failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
     fn template_manifest_rejects_unsupported_extra_properties() {
         let issues = assert_manifest_invalid(json!({
             "kind": "template",
@@ -1076,7 +1377,9 @@ mod tests {
                 assert_eq!(mf.kind, "tool");
                 assert_eq!(mf.name, "summarize");
             }
-            PublishManifest::Agent(_) | PublishManifest::Template(_) => {
+            PublishManifest::Agent(_)
+            | PublishManifest::Template(_)
+            | PublishManifest::Skill(_) => {
                 panic!("expected tool publish manifest")
             }
         }
@@ -1102,8 +1405,41 @@ mod tests {
                 assert_eq!(mf.kind, "agent");
                 assert_eq!(mf.name, "support-agent");
             }
-            PublishManifest::Tool(_) | PublishManifest::Template(_) => {
+            PublishManifest::Tool(_) | PublishManifest::Template(_) | PublishManifest::Skill(_) => {
                 panic!("expected agent publish manifest")
+            }
+        }
+    }
+
+    #[test]
+    fn parse_publish_manifest_dispatches_skill_kind() {
+        let manifest = json!({
+            "kind": "skill",
+            "name": "incident-commander",
+            "version": "0.1.0",
+            "description": "Incident response coordination playbook.",
+            "tools": [
+                {
+                    "name": "@zack/slack-post-message",
+                    "version": "0.1.1"
+                }
+            ],
+            "skill": {
+                "entrypoint": "SKILL.md",
+                "references": ["references/tool-contract.md"],
+                "scripts": ["scripts/run.sh"]
+            }
+        });
+
+        match parse_publish_manifest(&manifest).unwrap() {
+            PublishManifest::Skill(mf) => {
+                assert_eq!(mf.kind, "skill");
+                assert_eq!(mf.name, "incident-commander");
+                assert_eq!(mf.skill.entrypoint, "SKILL.md");
+                assert_eq!(mf.tools.len(), 1);
+            }
+            PublishManifest::Tool(_) | PublishManifest::Agent(_) | PublishManifest::Template(_) => {
+                panic!("expected skill publish manifest")
             }
         }
     }
@@ -1139,8 +1475,9 @@ mod tests {
                 assert_eq!(mf.kind, "template");
                 assert_eq!(mf.name, "research-assistant");
                 assert_eq!(mf.template.files_root, "template");
+                assert!(mf.template.dependencies.skills.is_empty());
             }
-            PublishManifest::Tool(_) | PublishManifest::Agent(_) => {
+            PublishManifest::Tool(_) | PublishManifest::Agent(_) | PublishManifest::Skill(_) => {
                 panic!("expected template publish manifest")
             }
         }
@@ -1156,7 +1493,9 @@ mod tests {
 
         let err = parse_publish_manifest(&manifest).unwrap_err().to_string();
         assert!(
-            err.contains("supports kind=\"tool\", kind=\"agent\", and kind=\"template\""),
+            err.contains(
+                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", and kind=\"skill\""
+            ),
             "unexpected error: {err}"
         );
     }
@@ -1190,5 +1529,49 @@ mod tests {
         let parsed = parse_template_manifest(&manifest).unwrap();
         assert_eq!(parsed.kind, "template");
         assert_eq!(parsed.name, "starter-template");
+        assert!(parsed.template.dependencies.skills.is_empty());
+    }
+
+    #[test]
+    fn parse_template_manifest_preserves_skill_dependencies() {
+        let manifest = json!({
+            "kind": "template",
+            "name": "starter-template",
+            "version": "0.1.0",
+            "description": "Starter template.",
+            "template": {
+                "display_name": "Starter Template",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "skills": [
+                        {
+                            "name": "@zack/incident-commander",
+                            "version": "0.1.0"
+                        }
+                    ]
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        });
+
+        let parsed = parse_template_manifest(&manifest).unwrap();
+        assert_eq!(parsed.template.dependencies.skills.len(), 1);
+        match &parsed.template.dependencies.skills[0] {
+            PackageReference::Object { name, version } => {
+                assert_eq!(name, "@zack/incident-commander");
+                assert_eq!(version.as_deref(), Some("0.1.0"));
+            }
+            PackageReference::String(_) => panic!("expected object dependency reference"),
+        }
     }
 }

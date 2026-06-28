@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,6 +10,7 @@ pub enum PackageKind {
     #[default]
     Tool,
     Agent,
+    Skill,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -96,13 +97,15 @@ pub struct LockedRoot {
     pub version: Option<String>,
     #[serde(default)]
     pub tools: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    #[serde(default, skip_serializing_if = "ReservedReferences::is_empty")]
     pub reserved: ReservedReferences,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ReservedReferences {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<Value>,
     #[serde(default)]
     pub knowledge: Vec<Value>,
@@ -110,6 +113,15 @@ pub struct ReservedReferences {
     pub memory: Vec<Value>,
     #[serde(default)]
     pub profiles: Vec<Value>,
+}
+
+impl ReservedReferences {
+    pub fn is_empty(&self) -> bool {
+        self.skills.is_empty()
+            && self.knowledge.is_empty()
+            && self.memory.is_empty()
+            && self.profiles.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,17 +132,29 @@ pub enum LockRoot {
         name: String,
         version: String,
         tools: Vec<String>,
+        skills: Vec<String>,
         reserved: ReservedReferences,
     },
     RegistryAgent {
         package_key: String,
         tools: Vec<String>,
+        skills: Vec<String>,
         reserved: ReservedReferences,
+    },
+    LocalSkill {
+        key: String,
+        name: String,
+        version: String,
+        tools: Vec<String>,
+    },
+    RegistrySkill {
+        package_key: String,
+        tools: Vec<String>,
     },
 }
 
 impl DesiredSet {
-    /// Build from CLI spec or from agent.json.tools
+    /// Build from CLI spec or from top-level package dependencies in a local manifest.
     pub fn from_cli_or_agent_json(
         meta: &serde_json::Value,
         spec: Option<&str>,
@@ -140,41 +164,67 @@ impl DesiredSet {
             let req = parse_package_spec(spec)?;
             Ok(DesiredSet { items: vec![req] })
         } else {
-            // Expect `tools` array in agent.json
-            let tools = meta
-                .get("tools")
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| anyhow!("agent.json has no tools array"))?;
+            let kind = meta
+                .get("kind")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("agent.json is missing kind"))?;
 
-            let mut items = Vec::new();
-            for tool in tools {
-                let (pkg, rng) = match tool {
-                    Value::String(s) => {
-                        let (name, ver) = parse_tool_str(s)?;
-                        (name, ver)
-                    }
-                    Value::Object(map) => {
-                        let name = map
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| anyhow!("tool entry missing name"))?
-                            .to_string();
-                        let rng = map
-                            .get("version")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("*")
-                            .to_string();
-                        (name, rng)
-                    }
-                    _ => return Err(anyhow!("tool must be a string or an object")),
-                };
-
-                items.push(PackageRequirement::tool(pkg, rng));
+            match kind {
+                "agent" => {
+                    let mut items = parse_manifest_requirements(meta, "tools", PackageKind::Tool)?;
+                    items.extend(parse_manifest_requirements(
+                        meta,
+                        "skills",
+                        PackageKind::Skill,
+                    )?);
+                    Ok(DesiredSet { items })
+                }
+                "skill" => Ok(DesiredSet {
+                    items: parse_manifest_requirements(meta, "tools", PackageKind::Tool)?,
+                }),
+                other => Err(anyhow!(
+                    "agentpm install currently supports local kind=\"agent\" or kind=\"skill\" manifests, found kind=\"{}\"",
+                    other
+                )),
             }
-
-            Ok(DesiredSet { items })
         }
     }
+}
+
+fn parse_manifest_requirements(
+    meta: &serde_json::Value,
+    field: &str,
+    kind: PackageKind,
+) -> Result<Vec<PackageRequirement>> {
+    let items = meta
+        .get(field)
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut out = Vec::new();
+    for item in items {
+        let (pkg, rng) = match item {
+            Value::String(s) => parse_tool_str(&s)?,
+            Value::Object(map) => {
+                let name = map
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("{field} entry missing name"))?
+                    .to_string();
+                let rng = map
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("*")
+                    .to_string();
+                (name, rng)
+            }
+            _ => return Err(anyhow!("{field} entry must be a string or an object")),
+        };
+
+        out.push(PackageRequirement::new(kind, pkg, rng));
+    }
+    Ok(out)
 }
 
 fn parse_tool_str(s: &str) -> Result<(String, String)> {
@@ -222,13 +272,13 @@ impl ResolvePlan {
 pub fn parse_package_spec(spec: &str) -> Result<PackageRequirement> {
     let s = spec.trim();
 
-    // Direct CLI specs still default to kind=tool in this milestone.
+    // Direct CLI specs still default to kind=tool in the outbound request.
     //
-    // Today, `agentpm install @namespace/name` remains a tool-oriented surface,
-    // and the backend explicitly rejects non-tool resolution/init requests.
-    // When agent packages become directly installable, this path should stop
-    // asserting `tool` up front and allow the registry/backend to resolve the
-    // package kind authoritatively.
+    // The backend resolves by package name and returns the authoritative kind
+    // in the response plan, which is how direct Skill installs work today even
+    // though the initial CLI request is tool-shaped. If direct specs later
+    // become explicitly kind-aware on the CLI side, this parser is the place
+    // to stop defaulting to `tool`.
 
     // Find the last '@'
     if let Some(i) = s.rfind('@') {
@@ -285,6 +335,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                 name,
                 version,
                 tools,
+                skills,
                 reserved,
             } => {
                 root_map.insert(
@@ -293,6 +344,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         name: Some(name.clone()),
                         version: Some(version.clone()),
                         tools: tools.clone(),
+                        skills: skills.clone(),
                         reserved: reserved.clone(),
                     },
                 );
@@ -300,6 +352,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
             LockRoot::RegistryAgent {
                 package_key,
                 tools,
+                skills,
                 reserved,
             } => {
                 root_map.insert(
@@ -308,19 +361,170 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         name: None,
                         version: None,
                         tools: tools.clone(),
+                        skills: skills.clone(),
                         reserved: reserved.clone(),
+                    },
+                );
+            }
+            LockRoot::LocalSkill {
+                key,
+                name,
+                version,
+                tools,
+            } => {
+                root_map.insert(
+                    key.clone(),
+                    LockedRoot {
+                        name: Some(name.clone()),
+                        version: Some(version.clone()),
+                        tools: tools.clone(),
+                        skills: Vec::new(),
+                        reserved: ReservedReferences::default(),
+                    },
+                );
+            }
+            LockRoot::RegistrySkill { package_key, tools } => {
+                root_map.insert(
+                    package_key.clone(),
+                    LockedRoot {
+                        name: None,
+                        version: None,
+                        tools: tools.clone(),
+                        skills: Vec::new(),
+                        reserved: ReservedReferences::default(),
                     },
                 );
             }
         }
     }
 
+    lock_from_packages_and_roots(packages, root_map)
+}
+
+pub fn lock_from_packages_and_roots(
+    packages: BTreeMap<String, LockedPackage>,
+    mut roots: BTreeMap<String, LockedRoot>,
+) -> Lock {
+    migrate_reserved_skills(&packages, &mut roots);
+    let lockfile_version = if requires_v3_lock(&packages, &roots) {
+        3
+    } else {
+        2
+    };
     Lock::V2(LockV2 {
-        lockfile_version: 2,
+        lockfile_version,
         generated: Utc::now(),
         packages,
-        roots: root_map,
+        roots,
     })
+}
+
+fn requires_v3_lock(
+    packages: &BTreeMap<String, LockedPackage>,
+    roots: &BTreeMap<String, LockedRoot>,
+) -> bool {
+    packages.values().any(|pkg| pkg.kind == PackageKind::Skill)
+        || roots.iter().any(|(key, root)| {
+            key == "local:skill"
+                || key.starts_with("local:skill:")
+                || key.starts_with("skill:")
+                || !root.skills.is_empty()
+        })
+}
+
+fn migrate_reserved_skills(
+    packages: &BTreeMap<String, LockedPackage>,
+    roots: &mut BTreeMap<String, LockedRoot>,
+) {
+    for root in roots.values_mut() {
+        if root.reserved.skills.is_empty() {
+            continue;
+        }
+
+        let mut unresolved = Vec::new();
+        for raw in root.reserved.skills.drain(..) {
+            match parse_locked_reserved_skill_ref(&raw).and_then(|(name, range)| {
+                resolve_declared_package_from_packages(packages, &name, &range, PackageKind::Skill)
+            }) {
+                Ok(Some(pkg)) => {
+                    let key = package_key(pkg.kind, &pkg.name, &pkg.version);
+                    if !root.skills.contains(&key) {
+                        root.skills.push(key);
+                    }
+                }
+                Ok(None) | Err(_) => unresolved.push(raw),
+            }
+        }
+
+        root.reserved.skills = unresolved;
+    }
+}
+
+fn parse_locked_reserved_skill_ref(raw: &Value) -> Result<(String, String)> {
+    match raw {
+        Value::String(s) => parse_tool_str(s),
+        Value::Object(map) => {
+            let name = map
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("reserved skill entry missing name"))?
+                .to_string();
+            let range = map
+                .get("version")
+                .and_then(Value::as_str)
+                .unwrap_or("*")
+                .to_string();
+            Ok((name, range))
+        }
+        _ => Err(anyhow!(
+            "reserved skill entry must be a string or an object"
+        )),
+    }
+}
+
+pub fn resolve_declared_package_from_packages(
+    packages: &BTreeMap<String, LockedPackage>,
+    name: &str,
+    range: &str,
+    kind: PackageKind,
+) -> Result<Option<LockedPackage>> {
+    let exact = if range == "*" {
+        None
+    } else {
+        semver::Version::parse(range).ok()
+    };
+    let req =
+        if exact.is_none() && range != "*" {
+            Some(semver::VersionReq::parse(range).with_context(|| {
+                format!("declared package range for {} is not valid semver", name)
+            })?)
+        } else {
+            None
+        };
+
+    let mut matches: Vec<(semver::Version, LockedPackage)> = Vec::new();
+    for pkg in packages
+        .values()
+        .filter(|pkg| pkg.kind == kind && pkg.name == name)
+    {
+        let version = match semver::Version::parse(&pkg.version) {
+            Ok(version) => version,
+            Err(_) => continue,
+        };
+        let is_match = if let Some(exact) = &exact {
+            &version == exact
+        } else if let Some(req) = &req {
+            req.matches(&version)
+        } else {
+            true
+        };
+        if is_match {
+            matches.push((version, pkg.clone()));
+        }
+    }
+
+    matches.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(matches.pop().map(|(_, pkg)| pkg))
 }
 
 pub fn package_key(kind: PackageKind, name: &str, version: &str) -> String {
@@ -332,6 +536,7 @@ impl PackageKind {
         match self {
             PackageKind::Tool => "tool",
             PackageKind::Agent => "agent",
+            PackageKind::Skill => "skill",
         }
     }
 }
@@ -348,6 +553,13 @@ impl Lock {
 
     pub fn is_v1(&self) -> bool {
         matches!(self, Lock::V1(_))
+    }
+
+    pub fn lockfile_version(&self) -> u32 {
+        match self {
+            Lock::V1(lock) => lock.lockfile_version,
+            Lock::V2(lock) => lock.lockfile_version,
+        }
     }
 
     pub fn find_unique_locked_package(
@@ -418,6 +630,45 @@ mod tests {
     }
 
     #[test]
+    fn desired_set_from_skill_manifest_collects_top_level_tools() {
+        let desired = DesiredSet::from_cli_or_agent_json(
+            &json!({
+                "kind": "skill",
+                "name": "incident-commander",
+                "version": "0.1.0",
+                "tools": [{"name":"@zack/slack-post-message","version":"^0.1"}]
+            }),
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(desired.items.len(), 1);
+        assert_eq!(desired.items[0].kind, PackageKind::Tool);
+        assert_eq!(desired.items[0].name, "@zack/slack-post-message");
+    }
+
+    #[test]
+    fn desired_set_from_agent_manifest_collects_tools_and_skills() {
+        let desired = DesiredSet::from_cli_or_agent_json(
+            &json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0",
+                "tools": ["@zack/echo@0.1.0"],
+                "skills": ["@zack/triage-skill@0.2.0"]
+            }),
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(desired.items.len(), 2);
+        assert_eq!(desired.items[0].kind, PackageKind::Tool);
+        assert_eq!(desired.items[1].kind, PackageKind::Skill);
+    }
+
+    #[test]
     fn parse_package_spec_accepts_exact_version() {
         let parsed = parse_package_spec("@zack/summarize@1.2.3").unwrap();
 
@@ -457,6 +708,7 @@ mod tests {
     fn desired_set_from_agent_json_tools_marks_tool_kind() {
         let desired = DesiredSet::from_cli_or_agent_json(
             &json!({
+                "kind": "agent",
                 "tools": [
                     "@zack/summarize@1.2.3",
                     { "name": "@zack/translate", "version": "^2.0" }
@@ -516,18 +768,27 @@ mod tests {
     fn lock_from_plan_records_local_agent_root_and_reserved_refs() {
         let lock = lock_from_plan(
             &ResolvePlan {
-                items: vec![ResolvedPackage {
-                    kind: PackageKind::Tool,
-                    name: "@zack/slack-post-message".to_string(),
-                    version: "0.1.0".to_string(),
-                    integrity: "sha256-slack".to_string(),
-                }],
+                items: vec![
+                    ResolvedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/slack-post-message".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-slack".to_string(),
+                    },
+                    ResolvedPackage {
+                        kind: PackageKind::Skill,
+                        name: "@zack/triage-skill".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-skill".to_string(),
+                    },
+                ],
             },
             &[LockRoot::LocalAgent {
                 key: "local:agent".to_string(),
                 name: "support-agent".to_string(),
                 version: "0.1.0".to_string(),
                 tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],
+                skills: Vec::new(),
                 reserved: ReservedReferences {
                     skills: vec![json!("@zack/triage-skill@0.1.0")],
                     knowledge: vec![],
@@ -540,6 +801,7 @@ mod tests {
         let Lock::V2(lock) = lock else {
             panic!("expected v2 lockfile");
         };
+        assert_eq!(lock.lockfile_version, 3);
         let root = lock.roots.get("local:agent").unwrap();
         assert_eq!(root.name.as_deref(), Some("support-agent"));
         assert_eq!(
@@ -547,9 +809,10 @@ mod tests {
             vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
         );
         assert_eq!(
-            root.reserved.skills,
-            vec![json!("@zack/triage-skill@0.1.0")]
+            root.skills,
+            vec!["skill:@zack/triage-skill@0.1.0".to_string()]
         );
+        assert!(root.reserved.skills.is_empty());
     }
 
     #[test]
@@ -574,6 +837,7 @@ mod tests {
             &[LockRoot::RegistryAgent {
                 package_key: "agent:@zack/support-agent@0.1.0".to_string(),
                 tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],
+                skills: Vec::new(),
                 reserved: ReservedReferences::default(),
             }],
         );
@@ -586,6 +850,79 @@ mod tests {
                 .contains_key("agent:@zack/support-agent@0.1.0")
         );
         assert!(lock.roots.contains_key("agent:@zack/support-agent@0.1.0"));
+    }
+
+    #[test]
+    fn lock_from_packages_and_roots_migrates_reserved_skills_to_first_class_root_field() {
+        let lock = lock_from_packages_and_roots(
+            BTreeMap::from([(
+                "skill:@zack/triage-skill@0.1.0".to_string(),
+                LockedPackage {
+                    kind: PackageKind::Skill,
+                    name: "@zack/triage-skill".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-skill".to_string(),
+                },
+            )]),
+            BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    reserved: ReservedReferences {
+                        skills: vec![json!("@zack/triage-skill@0.1.0")],
+                        knowledge: Vec::new(),
+                        memory: Vec::new(),
+                        profiles: Vec::new(),
+                    },
+                },
+            )]),
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected modern lockfile");
+        };
+        assert_eq!(lock.lockfile_version, 3);
+        let root = lock.roots.get("local:agent").unwrap();
+        assert_eq!(
+            root.skills,
+            vec!["skill:@zack/triage-skill@0.1.0".to_string()]
+        );
+        assert!(root.reserved.skills.is_empty());
+    }
+
+    #[test]
+    fn lock_from_packages_and_roots_preserves_unresolvable_reserved_skills() {
+        let lock = lock_from_packages_and_roots(
+            BTreeMap::new(),
+            BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    reserved: ReservedReferences {
+                        skills: vec![json!("@zack/missing-skill@0.1.0")],
+                        knowledge: Vec::new(),
+                        memory: Vec::new(),
+                        profiles: Vec::new(),
+                    },
+                },
+            )]),
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected modern lockfile");
+        };
+        let root = lock.roots.get("local:agent").unwrap();
+        assert!(root.skills.is_empty());
+        assert_eq!(
+            root.reserved.skills,
+            vec![json!("@zack/missing-skill@0.1.0")]
+        );
     }
 
     #[test]
@@ -658,11 +995,13 @@ mod tests {
                 LockRoot::RegistryAgent {
                     package_key: "agent:@zack/support-agent@0.1.0".to_string(),
                     tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],
+                    skills: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
                 LockRoot::RegistryAgent {
                     package_key: "agent:@zack/escalation-agent@0.1.0".to_string(),
                     tools: vec!["tool:@zack/slack-post-message@0.2.0".to_string()],
+                    skills: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
             ],

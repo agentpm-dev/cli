@@ -6,6 +6,7 @@ pub enum PackageKind {
     #[default]
     Tool,
     Agent,
+    Skill,
     Template,
 }
 
@@ -107,6 +108,17 @@ mod tests {
 
         assert_eq!(parsed.kind, PackageKind::Template);
         assert_eq!(parsed.version, "0.1.0");
+    }
+
+    #[test]
+    fn install_dto_supports_explicit_skill_kind() {
+        let parsed: ResolvedPackage = serde_json::from_str(
+            r#"{"kind":"skill","name":"@zack/triage-skill","version":"0.1.0","integrity":"abc"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.kind, PackageKind::Skill);
+        assert_eq!(parsed.name, "@zack/triage-skill");
     }
 }
 

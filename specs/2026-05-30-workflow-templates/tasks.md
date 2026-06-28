@@ -8,7 +8,7 @@
 - [ ] Define the required fields for `template`, including `display_name`, `use_case`, `execution_surfaces`, `files_root`, `dependencies`, and `entrypoints`.
 - [ ] Define `template.variables[]` with at least `name`, `description`, `required`, and `default` support.
 - [ ] Define valid `template.variables[].name` format, such as lowercase snake_case matching `^[a-z][a-z0-9_]*$`.
-- [ ] Add schema tests for invalid variable names and duplicate variable names.
+- [ ] Add schema tests for invalid variable names and duplicate variable names.         
 - [ ] Document that `template.variables` are generation-time scaffold values only and must not be used for API keys, tokens, passwords, or runtime secrets. Runtime configuration belongs in `.env.example` and manifest `environment.vars` where applicable.
 - [ ] Define `template.dependencies.tools[]` using the same package reference shape already used by agents for tools.
 - [ ] Define `template.dependencies.agents[]` using the same package reference shape as `template.dependencies.tools[]`, but treating each agent as an independent generated workspace install root.

@@ -5,17 +5,16 @@ use crate::prelude::*;
 use crate::semver::adapt::{plan_to_sdk_resolve, to_sdk_request};
 use crate::semver::types::{
     DesiredSet, Lock, LockRoot, LockedRoot, PackageKind, ReservedReferences, ResolvePlan,
-    lock_from_plan, package_key, parse_package_spec,
+    lock_from_packages_and_roots, lock_from_plan, package_key, parse_package_spec,
+    resolve_declared_package_from_packages,
 };
-use crate::semver::update::maybe_update_agent_json;
+use crate::semver::update::{maybe_update_agent_json, maybe_update_manifest_dependency};
 use crate::workspace::{
     build_workspace_lock, desired_from_workspace, load_workspace_local_manifests,
     read_workspace_metadata,
 };
 use crate::{io::download::download_and_extract_all, io::fs, ui::Step};
 use anyhow::anyhow;
-use chrono::Utc;
-use semver::{Version, VersionReq};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
@@ -77,7 +76,7 @@ impl InstallArgs {
             client = client.with_token(tok.clone());
         }
 
-        // 1) Load local manifest when present. Only manifest-driven installs require kind=agent.
+        // 1) Load local manifest when present. Manifest-driven installs support local agents and skills.
         let manifest_path = PathBuf::from(&self.manifest);
         let project_root = manifest_path
             .parent()
@@ -124,9 +123,10 @@ impl InstallArgs {
                 .as_ref()
                 .ok_or_else(|| anyhow!("agent.json is required for manifest-driven install"))?;
 
-            if manifest_value.get("kind").and_then(Value::as_str) != Some("agent") {
+            let kind = manifest_value.get("kind").and_then(Value::as_str);
+            if kind != Some("agent") && kind != Some("skill") {
                 return Err(anyhow!(
-                    "`agentpm install` currently supports kind=agent only."
+                    "`agentpm install` currently supports local kind=\"agent\" and kind=\"skill\" manifests only."
                 ));
             }
 
@@ -193,9 +193,18 @@ impl InstallArgs {
         let dl_dir = project_root.join(".agentpm/cache");
         let tools_dir = project_root.join(".agentpm/tools");
         let agents_dir = project_root.join(".agentpm/agents");
-        fs::ensure_dirs(&[&dl_dir, &tools_dir, &agents_dir])?;
-        download_and_extract_all(&init, &dl_dir, &tools_dir, &agents_dir, self.refresh, quiet)
-            .await?;
+        let skills_dir = project_root.join(".agentpm/skills");
+        fs::ensure_dirs(&[&dl_dir, &tools_dir, &agents_dir, &skills_dir])?;
+        download_and_extract_all(
+            &init,
+            &dl_dir,
+            &tools_dir,
+            &agents_dir,
+            &skills_dir,
+            self.refresh,
+            quiet,
+        )
+        .await?;
         s.ok("");
 
         // 6) Finalize (report success for metrics / server-side bookkeeping)
@@ -205,17 +214,28 @@ impl InstallArgs {
 
         // 7) If a direct tool spec was installed inside a local agent project and
         // it is not present in agent.json yet, append or update the declared range.
+        // Direct skill installs follow the same pattern, but write into the
+        // top-level `skills` field instead of `tools`.
         // Direct agent package installs intentionally do not mutate the local
-        // manifest; they are represented as registry roots in lockfile v2 instead.
+        // manifest; they are represented as registry roots in the lockfile.
         let mut should_write_manifest = false;
         if let Some(spec) = &self.spec
             && let Some(manifest_value) = manifest_value.as_mut()
             && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
-            && !plan
-                .items
-                .iter()
-                .any(|item| item.kind == PackageKind::Agent)
-            && maybe_update_agent_json(manifest_value, spec, self.update_range)?
+            && let Some(kind) = direct_declared_dependency_kind(spec, &plan)?
+            && match kind {
+                PackageKind::Tool => {
+                    maybe_update_agent_json(manifest_value, spec, self.update_range)?
+                }
+                PackageKind::Skill => maybe_update_manifest_dependency(
+                    manifest_value,
+                    "skills",
+                    "Skill",
+                    spec,
+                    self.update_range,
+                )?,
+                PackageKind::Agent => false,
+            }
         {
             should_write_manifest = true;
         }
@@ -253,6 +273,15 @@ fn should_load_manifest_for_install(spec: Option<&str>, manifest_path: &std::pat
     spec.is_none() || manifest_path.exists()
 }
 
+fn direct_declared_dependency_kind(spec: &str, plan: &ResolvePlan) -> Result<Option<PackageKind>> {
+    let requested = parse_package_spec(spec)?;
+    Ok(plan
+        .items
+        .iter()
+        .find(|item| item.name == requested.name)
+        .map(|item| item.kind))
+}
+
 fn ensure_supported_install_kinds(
     resp: &agentpm_sdk::models::install::ResolveResponse,
 ) -> Result<()> {
@@ -274,23 +303,34 @@ fn validate_frozen_lock_compatibility(
     manifest_value: Option<&Value>,
     desired: &DesiredSet,
 ) -> Result<()> {
-    if !lock.is_v1() {
-        return Ok(());
-    }
-
     let manifest_is_agent = manifest_value
         .and_then(|value| value.get("kind"))
         .and_then(Value::as_str)
         == Some("agent");
+    let manifest_is_skill = manifest_value
+        .and_then(|value| value.get("kind"))
+        .and_then(Value::as_str)
+        == Some("skill");
 
     let desired_has_agent = desired
         .items
         .iter()
         .any(|item| item.kind == PackageKind::Agent);
+    let desired_has_skill = desired
+        .items
+        .iter()
+        .any(|item| item.kind == PackageKind::Skill);
 
-    if manifest_is_agent || desired_has_agent {
+    let requires_v3 = manifest_is_skill || desired_has_skill;
+    if (manifest_is_agent || desired_has_agent) && lock.is_v1() {
         return Err(anyhow!(
             "--frozen cannot use lockfile v1 for agent dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v2"
+        ));
+    }
+    if requires_v3 && lock.lockfile_version() < 3 {
+        return Err(anyhow!(
+            "--frozen cannot use lockfile v{} for Skill dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v3",
+            lock.lockfile_version()
         ));
     }
 
@@ -309,26 +349,23 @@ fn build_updated_lock(
         return Ok(lock_from_plan(plan, &roots));
     }
 
-    let mut next = match existing_lock {
-        Lock::V2(lock) => lock.clone(),
-        Lock::V1(_) => match Lock::empty_v2() {
-            // Direct installs now accumulate roots in v2 lockfiles. When starting
-            // from a legacy v1 lock, we upgrade in place to an empty v2 structure
-            // and then add the current request/package state.
-            Lock::V2(lock) => lock,
-            Lock::V1(_) => unreachable!(),
-        },
+    let mut packages = match existing_lock {
+        Lock::V2(lock) => lock.packages.clone(),
+        Lock::V1(_) => BTreeMap::new(),
     };
-    next.generated = Utc::now();
+    let mut roots = match existing_lock {
+        Lock::V2(lock) => lock.roots.clone(),
+        Lock::V1(_) => BTreeMap::new(),
+    };
 
     for item in &plan.items {
         // Current scope: direct installs may leave unreachable package entries in
-        // the v2 lockfile after roots change. Root reachability is authoritative
+        // the lockfile after roots change. Root reachability is authoritative
         // for intent; lockfile package compaction is deferred to a later cleanup
         // decision instead of being coupled to Milestone 10a root semantics.
         // TODO: add lockfile/package compaction and on-disk prune behavior for
         // packages that are no longer reachable from any root.
-        next.packages.insert(
+        packages.insert(
             package_key(item.kind, &item.name, &item.version),
             crate::semver::types::LockedPackage {
                 kind: item.kind,
@@ -340,37 +377,20 @@ fn build_updated_lock(
     }
 
     if let Some(manifest_value) = manifest_value
-        && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
-        && !plan
-            .items
-            .iter()
-            .any(|item| item.kind == PackageKind::Agent)
+        && !plan.items.iter().any(|item| {
+            manifest_value.get("kind").and_then(Value::as_str) == Some(item.kind.as_str())
+        })
     {
-        let local_root = build_local_root_from_manifest(manifest_value, &next.packages)?;
-        next.roots.insert("local:agent".to_string(), local_root);
+        let (root_key, local_root) = build_local_root_from_manifest(manifest_value, &packages)?;
+        roots.insert(root_key, local_root);
     }
 
-    for root in build_registry_agent_roots(spec, plan, install_root)? {
-        let LockRoot::RegistryAgent {
-            package_key,
-            tools,
-            reserved,
-        } = root
-        else {
-            unreachable!("registry root builder only yields registry agent roots");
-        };
-        next.roots.insert(
-            package_key,
-            LockedRoot {
-                name: None,
-                version: None,
-                tools,
-                reserved,
-            },
-        );
+    for root in build_registry_package_roots(spec, plan, install_root)? {
+        let (root_key, locked_root) = locked_root_from_root(root)?;
+        roots.insert(root_key, locked_root);
     }
 
-    Ok(Lock::V2(next))
+    Ok(lock_from_packages_and_roots(packages, roots))
 }
 
 fn build_lock_roots(
@@ -380,37 +400,35 @@ fn build_lock_roots(
     install_root: &std::path::Path,
 ) -> Result<Vec<LockRoot>> {
     if let Some(manifest_value) = manifest_value
-        && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
         && spec.is_none()
     {
-        let name = manifest_value
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("local-agent")
-            .to_string();
-        let version = manifest_value
-            .get("version")
-            .and_then(Value::as_str)
-            .unwrap_or("0.0.0")
-            .to_string();
-
-        let tools = plan
-            .items
-            .iter()
-            .filter(|item| item.kind == PackageKind::Tool)
-            .map(|item| package_key(item.kind, &item.name, &item.version))
-            .collect();
-
-        return Ok(vec![LockRoot::LocalAgent {
-            key: "local:agent".to_string(),
-            name,
-            version,
-            tools,
-            reserved: reserved_refs_from_manifest(manifest_value),
-        }]);
+        let key = if manifest_value.get("kind").and_then(Value::as_str) == Some("skill") {
+            "local:skill".to_string()
+        } else {
+            "local:agent".to_string()
+        };
+        let root = build_local_lock_root(manifest_value, plan)?;
+        return Ok(vec![
+            match manifest_value.get("kind").and_then(Value::as_str) {
+                Some("skill") => LockRoot::LocalSkill {
+                    key,
+                    name: root.name.unwrap_or_else(|| "local-skill".to_string()),
+                    version: root.version.unwrap_or_else(|| "0.0.0".to_string()),
+                    tools: root.tools,
+                },
+                _ => LockRoot::LocalAgent {
+                    key,
+                    name: root.name.unwrap_or_else(|| "local-agent".to_string()),
+                    version: root.version.unwrap_or_else(|| "0.0.0".to_string()),
+                    tools: root.tools,
+                    skills: root.skills,
+                    reserved: root.reserved,
+                },
+            },
+        ]);
     }
 
-    build_registry_agent_roots(spec, plan, install_root)
+    build_registry_package_roots(spec, plan, install_root)
 }
 
 fn installed_agent_manifest_path(
@@ -427,7 +445,21 @@ fn installed_agent_manifest_path(
         .join("agent.json"))
 }
 
-fn build_registry_agent_roots(
+fn installed_skill_manifest_path(
+    install_root: &std::path::Path,
+    package: &str,
+    version: &str,
+) -> Result<PathBuf> {
+    let (owner, name) = split_package_ref(package)?;
+    Ok(install_root
+        .join("skills")
+        .join(owner)
+        .join(name)
+        .join(version)
+        .join("agent.json"))
+}
+
+fn build_registry_package_roots(
     spec: Option<&str>,
     plan: &ResolvePlan,
     install_root: &std::path::Path,
@@ -437,33 +469,63 @@ fn build_registry_agent_roots(
     };
     let requested = parse_package_spec(spec)?;
 
-    let tools: Vec<String> = plan
-        .items
-        .iter()
-        .filter(|item| item.kind == PackageKind::Tool)
-        .map(|item| package_key(item.kind, &item.name, &item.version))
-        .collect();
-
     let mut roots = Vec::new();
-    for agent_item in plan
-        .items
-        .iter()
-        .filter(|item| item.kind == PackageKind::Agent && item.name == requested.name)
-    {
-        let agent_manifest_path =
-            installed_agent_manifest_path(install_root, &agent_item.name, &agent_item.version)?;
-        let reserved = if agent_manifest_path.exists() {
-            let (manifest_value, _) = load_manifest_value(&agent_manifest_path)?;
-            reserved_refs_from_manifest(&manifest_value)
+    let packages = plan_to_packages(plan);
+    for item in plan.items.iter().filter(|item| {
+        (item.kind == PackageKind::Agent || item.kind == PackageKind::Skill)
+            && item.name == requested.name
+    }) {
+        let manifest_path = if item.kind == PackageKind::Agent {
+            installed_agent_manifest_path(install_root, &item.name, &item.version)?
         } else {
-            crate::semver::types::ReservedReferences::default()
+            installed_skill_manifest_path(install_root, &item.name, &item.version)?
         };
 
-        roots.push(LockRoot::RegistryAgent {
-            package_key: package_key(agent_item.kind, &agent_item.name, &agent_item.version),
-            tools: tools.clone(),
-            reserved,
-        });
+        let root = if manifest_path.exists() {
+            let (manifest_value, _) = load_manifest_value(&manifest_path)?;
+            match item.kind {
+                PackageKind::Agent => LockRoot::RegistryAgent {
+                    package_key: package_key(item.kind, &item.name, &item.version),
+                    tools: resolve_declared_packages_from_manifest(
+                        &manifest_value,
+                        &packages,
+                        &format!("registry agent {}@{}", item.name, item.version),
+                        PackageKind::Tool,
+                    )?,
+                    skills: resolve_declared_packages_from_manifest(
+                        &manifest_value,
+                        &packages,
+                        &format!("registry agent {}@{}", item.name, item.version),
+                        PackageKind::Skill,
+                    )?,
+                    reserved: reserved_refs_from_manifest(&manifest_value),
+                },
+                PackageKind::Skill => LockRoot::RegistrySkill {
+                    package_key: package_key(item.kind, &item.name, &item.version),
+                    tools: resolve_declared_packages_from_manifest(
+                        &manifest_value,
+                        &packages,
+                        &format!("registry skill {}@{}", item.name, item.version),
+                        PackageKind::Tool,
+                    )?,
+                },
+                PackageKind::Tool => unreachable!(),
+            }
+        } else if item.kind == PackageKind::Agent {
+            LockRoot::RegistryAgent {
+                package_key: package_key(item.kind, &item.name, &item.version),
+                tools: Vec::new(),
+                skills: Vec::new(),
+                reserved: ReservedReferences::default(),
+            }
+        } else {
+            LockRoot::RegistrySkill {
+                package_key: package_key(item.kind, &item.name, &item.version),
+                tools: Vec::new(),
+            }
+        };
+
+        roots.push(root);
     }
 
     Ok(roots)
@@ -472,19 +534,43 @@ fn build_registry_agent_roots(
 fn build_local_root_from_manifest(
     manifest_value: &Value,
     packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
-) -> Result<LockedRoot> {
-    let desired = DesiredSet::from_cli_or_agent_json(manifest_value, None, false)?;
-    let mut tools = Vec::new();
+) -> Result<(String, LockedRoot)> {
+    let kind = manifest_value
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("manifest is missing kind"))?;
+    let key = if kind == "skill" {
+        "local:skill".to_string()
+    } else {
+        "local:agent".to_string()
+    };
+    let mut root = build_local_lock_root(
+        manifest_value,
+        &ResolvePlan {
+            items: packages
+                .values()
+                .map(|pkg| crate::semver::types::ResolvedPackage {
+                    kind: pkg.kind,
+                    name: pkg.name.clone(),
+                    version: pkg.version.clone(),
+                    integrity: pkg.integrity.clone(),
+                })
+                .collect(),
+        },
+    )?;
+    root.name = manifest_value
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    root.version = manifest_value
+        .get("version")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Ok((key, root))
+}
 
-    for item in desired.items {
-        if item.kind != PackageKind::Tool {
-            continue;
-        }
-        if let Some(pkg) = resolve_declared_tool_from_packages(packages, &item.name, &item.range)? {
-            tools.push(package_key(pkg.kind, &pkg.name, &pkg.version));
-        }
-    }
-
+fn build_local_lock_root(manifest_value: &Value, plan: &ResolvePlan) -> Result<LockedRoot> {
+    let packages = plan_to_packages(plan);
     Ok(LockedRoot {
         name: manifest_value
             .get("name")
@@ -494,53 +580,54 @@ fn build_local_root_from_manifest(
             .get("version")
             .and_then(Value::as_str)
             .map(str::to_string),
-        tools,
+        tools: resolve_declared_packages_from_manifest(
+            manifest_value,
+            &packages,
+            "local manifest",
+            PackageKind::Tool,
+        )?,
+        skills: if manifest_value.get("kind").and_then(Value::as_str) == Some("agent") {
+            resolve_declared_packages_from_manifest(
+                manifest_value,
+                &packages,
+                "local manifest",
+                PackageKind::Skill,
+            )?
+        } else {
+            Vec::new()
+        },
         reserved: reserved_refs_from_manifest(manifest_value),
     })
 }
 
-fn resolve_declared_tool_from_packages(
+fn resolve_declared_packages_from_manifest(
+    manifest_value: &Value,
     packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
-    name: &str,
-    range: &str,
-) -> Result<Option<crate::semver::types::LockedPackage>> {
-    let exact = if range == "*" {
-        None
-    } else {
-        Version::parse(range).ok()
-    };
-    let req = if exact.is_none() && range != "*" {
-        Some(
-            VersionReq::parse(range)
-                .with_context(|| format!("declared tool range for {} is not valid semver", name))?,
-        )
-    } else {
-        None
-    };
-
-    let mut matches: Vec<(Version, crate::semver::types::LockedPackage)> = Vec::new();
-    for pkg in packages
-        .values()
-        .filter(|pkg| pkg.kind == PackageKind::Tool && pkg.name == name)
-    {
-        let version = match Version::parse(&pkg.version) {
-            Ok(version) => version,
-            Err(_) => continue,
-        };
-        let is_match = if let Some(exact) = &exact {
-            &version == exact
-        } else if let Some(req) = &req {
-            req.matches(&version)
+    manifest_label: &str,
+    kind: PackageKind,
+) -> Result<Vec<String>> {
+    let desired = DesiredSet::from_cli_or_agent_json(manifest_value, None, false)
+        .with_context(|| format!("reading kind for {}", manifest_label))?;
+    let mut resolved = Vec::new();
+    for item in desired.items {
+        if item.kind != kind {
+            continue;
+        }
+        if let Some(pkg) =
+            resolve_declared_package_from_packages(packages, &item.name, &item.range, kind)?
+        {
+            resolved.push(package_key(pkg.kind, &pkg.name, &pkg.version));
         } else {
-            true
-        };
-        if is_match {
-            matches.push((version, pkg.clone()));
+            let dependency_label = kind.as_str();
+            return Err(anyhow!(
+                "declared {} dependency {}@{} is missing from the resolved package set",
+                dependency_label,
+                item.name,
+                item.range
+            ));
         }
     }
-
-    matches.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(matches.pop().map(|(_, pkg)| pkg))
+    Ok(resolved)
 }
 
 fn split_package_ref(package: &str) -> Result<(String, String)> {
@@ -555,11 +642,89 @@ fn split_package_ref(package: &str) -> Result<(String, String)> {
 
 fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {
     ReservedReferences {
-        skills: manifest_array_or_empty(manifest_value, "skills"),
+        skills: Vec::new(),
         knowledge: manifest_array_or_empty(manifest_value, "knowledge"),
         memory: manifest_array_or_empty(manifest_value, "memory"),
         profiles: manifest_array_or_empty(manifest_value, "profiles"),
     }
+}
+
+fn plan_to_packages(plan: &ResolvePlan) -> BTreeMap<String, crate::semver::types::LockedPackage> {
+    let mut packages = BTreeMap::new();
+    for item in &plan.items {
+        packages.insert(
+            package_key(item.kind, &item.name, &item.version),
+            crate::semver::types::LockedPackage {
+                kind: item.kind,
+                name: item.name.clone(),
+                version: item.version.clone(),
+                integrity: item.integrity.clone(),
+            },
+        );
+    }
+    packages
+}
+
+fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
+    Ok(match root {
+        LockRoot::LocalAgent {
+            key,
+            name,
+            version,
+            tools,
+            skills,
+            reserved,
+        } => (
+            key,
+            LockedRoot {
+                name: Some(name),
+                version: Some(version),
+                tools,
+                skills,
+                reserved,
+            },
+        ),
+        LockRoot::RegistryAgent {
+            package_key,
+            tools,
+            skills,
+            reserved,
+        } => (
+            package_key,
+            LockedRoot {
+                name: None,
+                version: None,
+                tools,
+                skills,
+                reserved,
+            },
+        ),
+        LockRoot::LocalSkill {
+            key,
+            name,
+            version,
+            tools,
+        } => (
+            key,
+            LockedRoot {
+                name: Some(name),
+                version: Some(version),
+                tools,
+                skills: Vec::new(),
+                reserved: ReservedReferences::default(),
+            },
+        ),
+        LockRoot::RegistrySkill { package_key, tools } => (
+            package_key,
+            LockedRoot {
+                name: None,
+                version: None,
+                tools,
+                skills: Vec::new(),
+                reserved: ReservedReferences::default(),
+            },
+        ),
+    })
 }
 
 fn manifest_array_or_empty(manifest_value: &Value, field: &str) -> Vec<Value> {
@@ -574,8 +739,8 @@ fn manifest_array_or_empty(manifest_value: &Value, field: &str) -> Vec<Value> {
 mod tests {
     use super::{
         InstallArgs, build_lock_roots, build_updated_lock, ensure_supported_install_kinds,
-        installed_agent_manifest_path, should_load_manifest_for_install,
-        validate_frozen_lock_compatibility,
+        installed_agent_manifest_path, installed_skill_manifest_path,
+        should_load_manifest_for_install, validate_frozen_lock_compatibility,
     };
     use crate::semver::types::{
         DesiredSet, Lock, LockRoot, LockV1, LockV2, LockedDependency, LockedPackage, LockedRoot,
@@ -633,6 +798,19 @@ mod tests {
     }
 
     #[test]
+    fn direct_install_allows_skill_packages() {
+        ensure_supported_install_kinds(&sdkm::ResolveResponse {
+            items: vec![sdkm::ResolvedPackage {
+                kind: sdkm::PackageKind::Skill,
+                name: "@zack/triage-skill".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-skill".to_string(),
+            }],
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn frozen_v1_lockfile_rejects_local_agent_graphs() {
         let lock = Lock::V1(LockV1 {
             lockfile_version: 1,
@@ -684,6 +862,30 @@ mod tests {
     }
 
     #[test]
+    fn frozen_v2_lockfile_rejects_skill_graphs_that_require_v3() {
+        let lock = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::new(),
+            roots: BTreeMap::new(),
+        });
+        let desired = DesiredSet {
+            items: vec![crate::semver::types::PackageRequirement::new(
+                PackageKind::Skill,
+                "@zack/triage-skill",
+                "^0.1",
+            )],
+        };
+
+        let err = validate_frozen_lock_compatibility(&lock, None, &desired).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("regenerate agent.lock v3"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn manifest_driven_agent_install_builds_local_root_metadata() {
         let manifest = json!({
             "kind": "agent",
@@ -696,12 +898,20 @@ mod tests {
             "tools": ["@zack/slack-post-message@0.1.0"]
         });
         let plan = ResolvePlan {
-            items: vec![ResolvedPackage {
-                kind: PackageKind::Tool,
-                name: "@zack/slack-post-message".to_string(),
-                version: "0.1.0".to_string(),
-                integrity: "sha256-tool".to_string(),
-            }],
+            items: vec![
+                ResolvedPackage {
+                    kind: PackageKind::Tool,
+                    name: "@zack/slack-post-message".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-tool".to_string(),
+                },
+                ResolvedPackage {
+                    kind: PackageKind::Skill,
+                    name: "@zack/triage-skill".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-skill".to_string(),
+                },
+            ],
         };
 
         let root = temp_root("local-root");
@@ -713,6 +923,7 @@ mod tests {
             name,
             version,
             tools,
+            skills,
             reserved,
         } = &roots[0]
         else {
@@ -725,9 +936,46 @@ mod tests {
             tools,
             &vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
         );
+        assert_eq!(skills, &vec!["skill:@zack/triage-skill@0.1.0".to_string()]);
+        assert!(reserved.skills.is_empty());
+    }
+
+    #[test]
+    fn manifest_driven_skill_install_builds_local_skill_root_metadata() {
+        let manifest = json!({
+            "kind": "skill",
+            "name": "triage-skill",
+            "version": "0.1.0",
+            "tools": ["@zack/slack-post-message@0.1.0"]
+        });
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Tool,
+                name: "@zack/slack-post-message".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-tool".to_string(),
+            }],
+        };
+
+        let root = temp_root("local-skill-root");
+        let roots = build_lock_roots(Some(&manifest), None, &plan, &root).unwrap();
+
+        assert_eq!(roots.len(), 1);
+        let LockRoot::LocalSkill {
+            key,
+            name,
+            version,
+            tools,
+        } = &roots[0]
+        else {
+            panic!("expected local skill root");
+        };
+        assert_eq!(key, "local:skill");
+        assert_eq!(name, "triage-skill");
+        assert_eq!(version, "0.1.0");
         assert_eq!(
-            reserved.skills,
-            vec![Value::String("@zack/triage-skill@0.1.0".to_string())]
+            tools,
+            &vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
         );
     }
 
@@ -743,6 +991,7 @@ mod tests {
                 "kind": "agent",
                 "name": "support-agent",
                 "version": "0.1.0",
+                "tools": ["@zack/slack-post-message@0.1.0"],
                 "skills": ["@zack/triage-skill@0.1.0"],
                 "knowledge": [],
                 "memory": [],
@@ -766,6 +1015,12 @@ mod tests {
                     version: "0.1.0".to_string(),
                     integrity: "sha256-tool".to_string(),
                 },
+                ResolvedPackage {
+                    kind: PackageKind::Skill,
+                    name: "@zack/triage-skill".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-skill".to_string(),
+                },
             ],
         };
 
@@ -776,6 +1031,7 @@ mod tests {
         let LockRoot::RegistryAgent {
             package_key,
             tools,
+            skills,
             reserved,
         } = &roots[0]
         else {
@@ -786,10 +1042,8 @@ mod tests {
             tools,
             &vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
         );
-        assert_eq!(
-            reserved.skills,
-            vec![Value::String("@zack/triage-skill@0.1.0".to_string())]
-        );
+        assert_eq!(skills, &vec!["skill:@zack/triage-skill@0.1.0".to_string()]);
+        assert!(reserved.skills.is_empty());
     }
 
     #[test]
@@ -815,6 +1069,54 @@ mod tests {
     }
 
     #[test]
+    fn direct_skill_install_builds_registry_skill_root() {
+        let root = temp_root("registry-skill-root");
+        let manifest_path =
+            installed_skill_manifest_path(&root, "@zack/triage-skill", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "skill",
+                "name": "triage-skill",
+                "version": "0.1.0",
+                "tools": ["@zack/slack-post-message@0.1.0"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let plan = ResolvePlan {
+            items: vec![
+                ResolvedPackage {
+                    kind: PackageKind::Skill,
+                    name: "@zack/triage-skill".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-skill".to_string(),
+                },
+                ResolvedPackage {
+                    kind: PackageKind::Tool,
+                    name: "@zack/slack-post-message".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-tool".to_string(),
+                },
+            ],
+        };
+
+        let roots = build_lock_roots(None, Some("@zack/triage-skill@0.1.0"), &plan, &root).unwrap();
+
+        assert_eq!(roots.len(), 1);
+        let LockRoot::RegistrySkill { package_key, tools } = &roots[0] else {
+            panic!("expected registry skill root");
+        };
+        assert_eq!(package_key, "skill:@zack/triage-skill@0.1.0");
+        assert_eq!(
+            tools,
+            &vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
+        );
+    }
+
+    #[test]
     fn direct_agent_install_merges_existing_registry_roots() {
         let root = temp_root("merge-registry-roots");
         let existing = Lock::V2(LockV2 {
@@ -835,6 +1137,7 @@ mod tests {
                     name: None,
                     version: None,
                     tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                    skills: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -918,6 +1221,7 @@ mod tests {
                     name: None,
                     version: None,
                     tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                    skills: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -930,12 +1234,20 @@ mod tests {
             "skills": ["@zack/triage-skill@0.1.0"]
         });
         let plan = ResolvePlan {
-            items: vec![ResolvedPackage {
-                kind: PackageKind::Tool,
-                name: "@zack/capitalize".to_string(),
-                version: "0.2.0".to_string(),
-                integrity: "sha256-tool".to_string(),
-            }],
+            items: vec![
+                ResolvedPackage {
+                    kind: PackageKind::Tool,
+                    name: "@zack/capitalize".to_string(),
+                    version: "0.2.0".to_string(),
+                    integrity: "sha256-tool".to_string(),
+                },
+                ResolvedPackage {
+                    kind: PackageKind::Skill,
+                    name: "@zack/triage-skill".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-skill".to_string(),
+                },
+            ],
         };
 
         let next = build_updated_lock(
@@ -984,6 +1296,7 @@ mod tests {
                     name: Some("local-support-agent".to_string()),
                     version: Some("0.1.0".to_string()),
                     tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                    skills: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -1064,6 +1377,7 @@ mod tests {
                         name: Some("local-support-agent".to_string()),
                         version: Some("0.1.0".to_string()),
                         tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                        skills: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1073,6 +1387,7 @@ mod tests {
                         name: None,
                         version: None,
                         tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                        skills: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1117,6 +1432,100 @@ mod tests {
                 .contains(&"tool:@zack/summarize@0.2.0".to_string())
         );
         assert!(lock.roots.contains_key("agent:@zack/support-agent@0.1.0"));
+    }
+
+    #[test]
+    fn direct_skill_install_with_local_agent_manifest_updates_local_root_skills() {
+        let root = temp_root("direct-skill-local-agent");
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::from([(
+                "tool:@zack/capitalize@0.1.0".to_string(),
+                LockedPackage {
+                    kind: PackageKind::Tool,
+                    name: "@zack/capitalize".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-cap".to_string(),
+                },
+            )]),
+            roots: BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("local-support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
+                    skills: Vec::new(),
+                    reserved: Default::default(),
+                },
+            )]),
+        });
+        let manifest = json!({
+            "kind": "agent",
+            "name": "local-support-agent",
+            "version": "0.1.0",
+            "tools": ["@zack/capitalize@0.1.0"],
+            "skills": ["@zack/triage-skill@0.1.0"]
+        });
+
+        let skill_manifest_path =
+            installed_skill_manifest_path(&root, "@zack/triage-skill", "0.1.0").unwrap();
+        fs::create_dir_all(skill_manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &skill_manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "skill",
+                "name": "triage-skill",
+                "version": "0.1.0",
+                "tools": ["@zack/slack-post-message@0.1.0"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let plan = ResolvePlan {
+            items: vec![
+                ResolvedPackage {
+                    kind: PackageKind::Skill,
+                    name: "@zack/triage-skill".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-skill".to_string(),
+                },
+                ResolvedPackage {
+                    kind: PackageKind::Tool,
+                    name: "@zack/slack-post-message".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-tool".to_string(),
+                },
+            ],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            Some(&manifest),
+            Some("@zack/triage-skill@0.1.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected modern lock");
+        };
+        let local = lock.roots.get("local:agent").expect("local root missing");
+        assert_eq!(local.tools, vec!["tool:@zack/capitalize@0.1.0".to_string()]);
+        assert_eq!(
+            local.skills,
+            vec!["skill:@zack/triage-skill@0.1.0".to_string()]
+        );
+        let skill_root = lock
+            .roots
+            .get("skill:@zack/triage-skill@0.1.0")
+            .expect("skill root missing");
+        assert_eq!(
+            skill_root.tools,
+            vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
+        );
     }
 
     #[test]
@@ -1235,6 +1644,7 @@ mod tests {
                     name: "@zack/support-agent".to_string(),
                     version: "0.1.0".to_string(),
                 }],
+                skills: Vec::new(),
             },
         };
         crate::workspace::write_workspace_metadata(&root, &workspace).unwrap();
@@ -1482,6 +1892,117 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[tokio::test]
+    async fn direct_skill_install_updates_local_agent_manifest_skills_field() {
+        let root = temp_root("install-local-agent-skill");
+        fs::create_dir_all(&root).unwrap();
+        crate::manifest::write_manifest_pretty_atomic(
+            &root.join("agent.json"),
+            &json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0",
+                "tools": [{"name":"@zack/echo","version":"0.1.0"}],
+                "skills": []
+            }),
+        )
+        .unwrap();
+        crate::manifest::write_lock(
+            &root,
+            &Lock::V2(LockV2 {
+                lockfile_version: 2,
+                generated: Utc::now(),
+                packages: BTreeMap::from([(
+                    "tool:@zack/echo@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/echo".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-echo".to_string(),
+                    },
+                )]),
+                roots: BTreeMap::new(),
+            }),
+        )
+        .unwrap();
+
+        let skill_tar = build_tarball(&[
+            (
+                "agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"skill",
+                    "name":"triage-skill",
+                    "version":"0.1.0",
+                    "description":"Skill",
+                    "skill":{"entrypoint":"SKILL.md"},
+                    "tools":[]
+                }))
+                .unwrap(),
+            ),
+            ("SKILL.md", "# Skill\n".to_string()),
+        ]);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(DirectSkillInstallTestState {
+            base_url: base_url.clone(),
+            skill_tar: skill_tar.clone(),
+            skill_sha: sha_hex(&skill_tar),
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(direct_skill_resolve))
+            .route("/v1/tools/install/init", post(direct_skill_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/direct-skill", get(get_direct_skill))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let args = InstallArgs {
+            manifest: root.join("agent.json").to_string_lossy().into_owned(),
+            spec: Some("@zack/triage-skill@0.1.0".to_string()),
+            frozen: false,
+            refresh: false,
+            update_range: false,
+            quiet: true,
+            require_attestation: false,
+            token: None,
+        };
+
+        args.run(base_url).await.unwrap();
+
+        let manifest_after: Value =
+            serde_json::from_str(&fs::read_to_string(root.join("agent.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest_after["tools"],
+            json!([{"name":"@zack/echo","version":"0.1.0"}])
+        );
+        assert_eq!(
+            manifest_after["skills"],
+            json!([{"name":"@zack/triage-skill","version":"0.1.0"}])
+        );
+        assert_eq!(
+            fs::read_to_string(
+                installed_skill_manifest_path(
+                    &root.join(".agentpm"),
+                    "@zack/triage-skill",
+                    "0.1.0",
+                )
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("SKILL.md"),
+            )
+            .unwrap(),
+            "# Skill\n"
+        );
+
+        server.abort();
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn temp_root(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1509,6 +2030,13 @@ mod tests {
         expected_auth: String,
         tool_tar: Vec<u8>,
         tool_sha: String,
+    }
+
+    #[derive(Clone)]
+    struct DirectSkillInstallTestState {
+        base_url: String,
+        skill_tar: Vec<u8>,
+        skill_sha: String,
     }
 
     async fn test_resolve(
@@ -1660,6 +2188,53 @@ mod tests {
         StatusCode::NO_CONTENT
     }
 
+    async fn direct_skill_resolve(
+        State(state): State<Arc<DirectSkillInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "items": [{
+                "kind": "skill",
+                "name": item["name"],
+                "version": "0.1.0",
+                "integrity": state.skill_sha,
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
+    async fn direct_skill_init(
+        State(state): State<Arc<DirectSkillInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "session_id":"session-1",
+            "expires_at":"2026-06-01T00:00:00Z",
+            "artifacts": [{
+                "kind": "skill",
+                "name": item["name"],
+                "version": item["version"],
+                "integrity": state.skill_sha,
+                "presigned_url": format!("{}/artifact/direct-skill", state.base_url),
+                "size": 12,
+                "content_type":"application/gzip"
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
     async fn get_echo(State(state): State<Arc<InstallTestState>>) -> Response<Body> {
         Response::builder()
             .status(StatusCode::OK)
@@ -1692,6 +2267,15 @@ mod tests {
         Response::builder()
             .status(StatusCode::OK)
             .body(Body::from(state.tool_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_direct_skill(
+        State(state): State<Arc<DirectSkillInstallTestState>>,
+    ) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.skill_tar.clone()))
             .unwrap()
     }
 

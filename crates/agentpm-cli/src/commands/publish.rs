@@ -4,7 +4,7 @@ use crate::keys::signing::{
     StoredKeyV1, decrypt_private, keystore_dir, prompt_passphrase_with_fallback,
 };
 use crate::manifest::{
-    AgentManifest, Entrypoint, PublishManifest, TemplateManifest, ToolManifest,
+    AgentManifest, Entrypoint, PublishManifest, SkillManifest, TemplateManifest, ToolManifest,
     load_manifest_value, parse_publish_manifest, resolve_schema_source, validate_manifest_value,
 };
 use crate::prelude::*;
@@ -21,7 +21,7 @@ use std::path::Component;
 use std::{
     collections::HashSet,
     fs,
-    io::{self, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 use tar::{Builder as TarBuilder, EntryType, Header};
@@ -148,6 +148,8 @@ impl PublishArgs {
             PublishManifest::Template(mf) => {
                 package_template(mf, &manifest_path).context("packaging template into tar.gz")?
             }
+            PublishManifest::Skill(mf) => package_skill(mf, &manifest_path, &manifest_value)
+                .context("packaging skill into tar.gz")?,
         };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
         if size_bytes > MAX_ARTIFACT_BYTES {
@@ -173,16 +175,33 @@ impl PublishArgs {
 
         let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
 
+        let skill_manual_payload = match &publish_manifest {
+            PublishManifest::Skill(manifest) => {
+                let entrypoint_path = manifest_dir.join(&manifest.skill.entrypoint);
+                let manual_text = read_utf8_with_cap(&entrypoint_path, MAX_README_BYTES)
+                    .with_context(|| {
+                        format!("reading skill entrypoint {}", manifest.skill.entrypoint)
+                    })?;
+                let sha = hex_sha256(manual_text.as_bytes());
+                Some(serde_json::json!({
+                    "path": manifest.skill.entrypoint,
+                    "sha256": sha,
+                    "content": manual_text
+                }))
+            }
+            _ => None,
+        };
+
         // ---- README (optional) ----
         let manifest_readme_path = manifest_value.get("readme").and_then(|v| v.as_str());
 
         let readme_payload = match discover_readme(manifest_dir, manifest_readme_path) {
-            Some(p) => {
+            Some((p, rel_path)) => {
                 match read_utf8_with_cap(&p, MAX_README_BYTES) {
                     Ok(md_text) => {
                         let sha = hex_sha256(md_text.as_bytes());
                         Some(serde_json::json!({
-                            "path": p.strip_prefix(manifest_dir).unwrap_or(&p).to_string_lossy(),
+                            "path": rel_path,
                             "sha256": sha,
                             "content": md_text
                         }))
@@ -210,7 +229,7 @@ impl PublishArgs {
                         Ok(text) => {
                             let sha = hex_sha256(text.as_bytes());
                             file_block = Some(serde_json::json!({
-                                "path": p.strip_prefix(manifest_dir).unwrap_or(&p).to_string_lossy(),
+                                "path": rel,
                                 "sha256": sha,
                                 "content": text
                             }));
@@ -253,6 +272,15 @@ impl PublishArgs {
         {
             println!("✓ README: {} (sha256 {})", p, sha.as_str().unwrap_or(""));
         }
+        if let Some(m) = &skill_manual_payload
+            && let (Some(p), Some(sha)) = (m.get("path"), m.get("sha256"))
+        {
+            println!(
+                "✓ Skill manual: {} (sha256 {})",
+                p,
+                sha.as_str().unwrap_or("")
+            );
+        }
         if let Some(l) = &license_payload {
             let spdx = l.get("spdx").and_then(|v| v.as_str()).unwrap_or("");
             if let Some(p) = l.get("path") {
@@ -286,6 +314,7 @@ impl PublishArgs {
             &sha256_hex,
             size_bytes,
             readme_payload,
+            skill_manual_payload,
             license_payload,
             self.namespace.as_deref(),
         );
@@ -295,6 +324,7 @@ impl PublishArgs {
             }
             PublishManifest::Agent(mf) => artifact_filename(&mf.name, &mf.version, None),
             PublishManifest::Template(mf) => artifact_filename(&mf.name, &mf.version, None),
+            PublishManifest::Skill(mf) => artifact_filename(&mf.name, &mf.version, None),
         };
 
         // Build optional finalize_extra
@@ -372,6 +402,7 @@ fn build_publish_metadata(
     sha256_hex: &str,
     size_bytes: u64,
     readme_payload: Option<JsonValue>,
+    skill_manual_payload: Option<JsonValue>,
     license_payload: Option<JsonValue>,
     namespace_handle: Option<&str>,
 ) -> JsonValue {
@@ -380,6 +411,7 @@ fn build_publish_metadata(
         "sha256": sha256_hex,
         "size": size_bytes,
         "readme": readme_payload,
+        "skill_manual": skill_manual_payload,
         "license": license_payload,
         "client": {
             "product": "agentpm-cli",
@@ -414,82 +446,70 @@ fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf
         &manifest.version,
         Some(&manifest.runtime),
     ));
-    let f =
-        fs::File::create(&out_path).with_context(|| format!("creating {}", out_path.display()))?;
-    let enc = GzEncoder::new(f, Compression::default());
-    let mut tar = TarBuilder::new(enc);
+    write_artifact_atomically(&out_path, |tar| {
+        let mut member_count: usize = 0;
 
-    let mut member_count: usize = 0;
+        {
+            let mut header = tar::Header::new_gnu();
+            let manifest_bytes = fs::read(manifest_path)?;
+            header.set_size(manifest_bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
 
-    // 1) agent.json
-    {
-        let mut header = tar::Header::new_gnu();
-        let manifest_bytes = fs::read(manifest_path)?;
-        header.set_size(manifest_bytes.len() as u64);
-        header.set_mode(0o644);
-        header.set_cksum();
-
-        ensure_safe_tar_name("agent.json")?;
-        member_count += 1;
-        if member_count > MAX_TAR_ENTRIES {
-            bail!("too many files in package (> {MAX_TAR_ENTRIES})");
-        }
-
-        tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
-    }
-
-    // 2) entrypoint
-    let (ep_abs, ep_tar_name) = validate_and_locate_entrypoint(root, &manifest.entrypoint)?;
-    append_checked(&mut tar, &ep_abs, &ep_tar_name, &mut member_count)?;
-
-    // Start dedup set using normalized tar names
-    let mut seen: HashSet<String> = HashSet::new();
-    seen.insert(ep_tar_name.clone());
-
-    // 3) files array (dirs/globs)
-    for pat in &manifest.files {
-        let rel = Path::new(pat);
-        let abs = root.join(rel);
-        if !abs.exists() {
-            warn!("files entry does not exist: {}", abs.display());
-            continue;
-        }
-
-        if abs.is_file() {
-            let tar_name = rel_to_tar_name(rel);
-            if seen.insert(tar_name.clone()) {
-                append_checked(&mut tar, &abs, &tar_name, &mut member_count)?;
+            ensure_safe_tar_name("agent.json")?;
+            member_count += 1;
+            if member_count > MAX_TAR_ENTRIES {
+                bail!("too many files in package (> {MAX_TAR_ENTRIES})");
             }
-        } else {
-            for entry in WalkDir::new(&abs).into_iter().filter_map(|e| e.ok()) {
-                let path_abs = entry.path();
-                if path_abs.is_dir() {
-                    continue;
-                }
 
-                // Compute a project-relative path then normalize to a tar name
-                let rel_path = match path_abs.strip_prefix(root) {
-                    Ok(r) => r.to_path_buf(),
-                    Err(_) => {
-                        // Outside the project root, skip (extra safety)
+            tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+        }
+
+        let (ep_abs, ep_tar_name) = validate_and_locate_entrypoint(root, &manifest.entrypoint)?;
+        append_checked(tar, &ep_abs, &ep_tar_name, &mut member_count)?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+        seen.insert(ep_tar_name.clone());
+
+        for pat in &manifest.files {
+            let rel = Path::new(pat);
+            let abs = root.join(rel);
+            if !abs.exists() {
+                warn!("files entry does not exist: {}", abs.display());
+                continue;
+            }
+
+            if abs.is_file() {
+                let tar_name = rel_to_tar_name(rel);
+                if seen.insert(tar_name.clone()) {
+                    append_checked(tar, &abs, &tar_name, &mut member_count)?;
+                }
+            } else {
+                for entry in WalkDir::new(&abs).into_iter().filter_map(|e| e.ok()) {
+                    let path_abs = entry.path();
+                    if path_abs.is_dir() {
                         continue;
                     }
-                };
-                let tar_name = rel_to_tar_name(&rel_path);
 
-                // Exclude our packaging output
-                if tar_name.starts_with("target/agentpm/") {
-                    continue;
-                }
+                    let rel_path = match path_abs.strip_prefix(root) {
+                        Ok(r) => r.to_path_buf(),
+                        Err(_) => continue,
+                    };
+                    let tar_name = rel_to_tar_name(&rel_path);
 
-                if seen.insert(tar_name.clone()) {
-                    append_checked(&mut tar, path_abs, &tar_name, &mut member_count)?;
+                    if tar_name.starts_with("target/agentpm/") {
+                        continue;
+                    }
+
+                    if seen.insert(tar_name.clone()) {
+                        append_checked(tar, path_abs, &tar_name, &mut member_count)?;
+                    }
                 }
             }
         }
-    }
 
-    tar.finish()?;
+        Ok(())
+    })?;
     Ok(out_path)
 }
 
@@ -499,21 +519,17 @@ fn package_agent(manifest: &AgentManifest, manifest_path: &Path) -> Result<PathB
     fs::create_dir_all(&out_dir).ok();
 
     let out_path = out_dir.join(artifact_filename(&manifest.name, &manifest.version, None));
-    let f =
-        fs::File::create(&out_path).with_context(|| format!("creating {}", out_path.display()))?;
-    let enc = GzEncoder::new(f, Compression::default());
-    let mut tar = TarBuilder::new(enc);
+    write_artifact_atomically(&out_path, |tar| {
+        let manifest_bytes = fs::read(manifest_path)?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
 
-    let manifest_bytes = fs::read(manifest_path)?;
-    let mut header = tar::Header::new_gnu();
-    header.set_size(manifest_bytes.len() as u64);
-    header.set_mode(0o644);
-    header.set_cksum();
-
-    ensure_safe_tar_name("agent.json")?;
-    tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
-    tar.finish()?;
-
+        ensure_safe_tar_name("agent.json")?;
+        tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+        Ok(())
+    })?;
     Ok(out_path)
 }
 
@@ -523,57 +539,221 @@ fn package_template(manifest: &TemplateManifest, manifest_path: &Path) -> Result
     fs::create_dir_all(&out_dir).ok();
 
     let out_path = out_dir.join(artifact_filename(&manifest.name, &manifest.version, None));
-    let f =
-        fs::File::create(&out_path).with_context(|| format!("creating {}", out_path.display()))?;
-    let enc = GzEncoder::new(f, Compression::default());
-    let mut tar = TarBuilder::new(enc);
+    write_artifact_atomically(&out_path, |tar| {
+        let mut member_count: usize = 0;
 
-    let mut member_count: usize = 0;
+        let manifest_bytes = fs::read(manifest_path)?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        ensure_safe_tar_name("agent.json")?;
+        member_count += 1;
+        tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
 
-    let manifest_bytes = fs::read(manifest_path)?;
-    let mut header = tar::Header::new_gnu();
-    header.set_size(manifest_bytes.len() as u64);
-    header.set_mode(0o644);
-    header.set_cksum();
-    ensure_safe_tar_name("agent.json")?;
-    member_count += 1;
-    tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
-
-    let files_root = Path::new(&manifest.template.files_root);
-    let files_root_abs = root.join(files_root);
-    if !files_root_abs.exists() {
-        bail!(
-            "template.files_root does not exist: {}",
-            files_root_abs.display()
-        );
-    }
-
-    for entry in WalkDir::new(&files_root_abs)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path_abs = entry.path();
-        if path_abs.is_dir() {
-            continue;
+        let files_root = Path::new(&manifest.template.files_root);
+        let files_root_abs = root.join(files_root);
+        if !files_root_abs.exists() {
+            bail!(
+                "template.files_root does not exist: {}",
+                files_root_abs.display()
+            );
         }
 
-        let rel_path = path_abs.strip_prefix(root).with_context(|| {
-            format!(
-                "template file must stay within project root: {}",
-                path_abs.display()
-            )
-        })?;
-        let tar_name = rel_to_tar_name(rel_path);
+        for entry in WalkDir::new(&files_root_abs)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path_abs = entry.path();
+            if path_abs.is_dir() {
+                continue;
+            }
 
-        if tar_name.starts_with("target/agentpm/") {
-            continue;
+            let rel_path = path_abs.strip_prefix(root).with_context(|| {
+                format!(
+                    "template file must stay within project root: {}",
+                    path_abs.display()
+                )
+            })?;
+            let tar_name = rel_to_tar_name(rel_path);
+
+            if tar_name.starts_with("target/agentpm/") {
+                continue;
+            }
+
+            append_checked(tar, path_abs, &tar_name, &mut member_count)?;
         }
 
-        append_checked(&mut tar, path_abs, &tar_name, &mut member_count)?;
-    }
-
-    tar.finish()?;
+        Ok(())
+    })?;
     Ok(out_path)
+}
+
+fn package_skill(
+    manifest: &SkillManifest,
+    manifest_path: &Path,
+    manifest_value: &serde_json::Value,
+) -> Result<PathBuf> {
+    let root = manifest_path.parent().unwrap_or(Path::new("."));
+    let out_dir = root.join("target").join("agentpm");
+    fs::create_dir_all(&out_dir).ok();
+
+    let out_path = out_dir.join(artifact_filename(&manifest.name, &manifest.version, None));
+    write_artifact_atomically(&out_path, |tar| {
+        let mut member_count: usize = 0;
+
+        let manifest_bytes = fs::read(manifest_path)?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        ensure_safe_tar_name("agent.json")?;
+        member_count += 1;
+        tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+
+        append_declared_skill_file(
+            tar,
+            root,
+            &manifest.skill.entrypoint,
+            &mut member_count,
+            &mut seen,
+        )?;
+
+        for rel in &manifest.skill.references {
+            append_declared_skill_file(tar, root, rel, &mut member_count, &mut seen)?;
+        }
+
+        for rel in &manifest.skill.scripts {
+            append_declared_skill_file(tar, root, rel, &mut member_count, &mut seen)?;
+        }
+
+        if let Some(readme_path) = manifest_value.get("readme").and_then(|v| v.as_str()) {
+            append_optional_skill_file(
+                tar,
+                root,
+                "readme",
+                readme_path,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        if let Some(license_file) = pick_license_paths(manifest_value).1 {
+            append_optional_skill_file(
+                tar,
+                root,
+                "license.file",
+                license_file,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        Ok(())
+    })?;
+    Ok(out_path)
+}
+
+fn artifact_temp_path(out_path: &Path) -> PathBuf {
+    let file_name = out_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "artifact.tar.gz".to_string());
+    out_path.with_file_name(format!("{file_name}.tmp"))
+}
+
+fn write_artifact_atomically<F>(out_path: &Path, build: F) -> Result<()>
+where
+    F: FnOnce(&mut TarBuilder<GzEncoder<File>>) -> Result<()>,
+{
+    let tmp_path = artifact_temp_path(out_path);
+    let result: Result<()> = (|| {
+        let f = fs::File::create(&tmp_path)
+            .with_context(|| format!("creating {}", tmp_path.display()))?;
+        let enc = GzEncoder::new(f, Compression::default());
+        let mut tar = TarBuilder::new(enc);
+        build(&mut tar)?;
+        tar.finish()?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            fs::rename(&tmp_path, out_path).with_context(|| {
+                format!("renaming {} -> {}", tmp_path.display(), out_path.display())
+            })?;
+            Ok(())
+        }
+        Err(err) => {
+            let _ = fs::remove_file(&tmp_path);
+            Err(err)
+        }
+    }
+}
+
+fn append_declared_skill_file<W: Write>(
+    tar: &mut TarBuilder<W>,
+    root: &Path,
+    rel: &str,
+    member_count: &mut usize,
+    seen: &mut HashSet<String>,
+) -> Result<()> {
+    let (abs, tar_name) = validate_declared_skill_path(root, rel)?;
+    if seen.insert(tar_name.clone()) {
+        append_checked(tar, &abs, &tar_name, member_count)?;
+    }
+    Ok(())
+}
+
+fn append_optional_skill_file<W: Write>(
+    tar: &mut TarBuilder<W>,
+    root: &Path,
+    field_label: &str,
+    rel: &str,
+    member_count: &mut usize,
+    seen: &mut HashSet<String>,
+) -> Result<()> {
+    let (abs, tar_name) = match validate_declared_skill_path(root, rel) {
+        Ok(ok) => ok,
+        Err(err) => {
+            eprintln!("Warning: skipping {} '{}' ({}).", field_label, rel, err);
+            return Ok(());
+        }
+    };
+    if seen.insert(tar_name.clone()) {
+        append_checked(tar, &abs, &tar_name, member_count)?;
+    }
+    Ok(())
+}
+
+fn validate_declared_skill_path(root: &Path, rel: &str) -> Result<(PathBuf, String)> {
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute() {
+        bail!("skill file path must be relative: {}", rel_path.display());
+    }
+    for component in rel_path.components() {
+        if matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        ) {
+            bail!("skill file path must stay within the package root: {}", rel);
+        }
+    }
+
+    let abs = root.join(rel_path);
+    if !abs.exists() {
+        bail!("declared skill file not found: {}", abs.display());
+    }
+    let md = fs::metadata(&abs).with_context(|| format!("stat {}", abs.display()))?;
+    if !md.is_file() {
+        bail!("declared skill path is not a file: {}", abs.display());
+    }
+
+    let tar_name = rel_to_tar_name(rel_path);
+    ensure_safe_tar_name(&tar_name)?;
+    Ok((abs, tar_name))
 }
 
 fn append_checked<W: std::io::Write>(
@@ -822,8 +1002,18 @@ fn mode_from_meta_for_name(_meta: &Metadata, name_in_tar: &str) -> u32 {
 fn file_digest_and_len(path: &Path) -> Result<(String, u64)> {
     let mut f = fs::File::open(path)?;
     let mut sha = Sha256::new();
-    let len = io::copy(&mut f, &mut sha::Writer(&mut sha))
-        .map_err(|e| anyhow!("hashing {}: {}", path.display(), e))?;
+    let mut len = 0_u64;
+    let mut buf = [0_u8; 16 * 1024];
+    loop {
+        let n = f
+            .read(&mut buf)
+            .map_err(|e| anyhow!("hashing {}: {}", path.display(), e))?;
+        if n == 0 {
+            break;
+        }
+        sha.update(&buf[..n]);
+        len += n as u64;
+    }
     let hex = format!("{:x}", sha.finalize());
     Ok((hex, len))
 }
@@ -854,6 +1044,7 @@ fn manifest_kind(manifest: &PublishManifest) -> &str {
         PublishManifest::Tool(mf) => &mf.kind,
         PublishManifest::Agent(mf) => &mf.kind,
         PublishManifest::Template(mf) => &mf.kind,
+        PublishManifest::Skill(mf) => &mf.kind,
     }
 }
 
@@ -862,6 +1053,7 @@ fn manifest_name(manifest: &PublishManifest) -> &str {
         PublishManifest::Tool(mf) => &mf.name,
         PublishManifest::Agent(mf) => &mf.name,
         PublishManifest::Template(mf) => &mf.name,
+        PublishManifest::Skill(mf) => &mf.name,
     }
 }
 
@@ -870,6 +1062,7 @@ fn manifest_version(manifest: &PublishManifest) -> &str {
         PublishManifest::Tool(mf) => &mf.version,
         PublishManifest::Agent(mf) => &mf.version,
         PublishManifest::Template(mf) => &mf.version,
+        PublishManifest::Skill(mf) => &mf.version,
     }
 }
 
@@ -926,6 +1119,62 @@ fn select_local_key(key_id_flag: Option<&str>) -> Result<(String, StoredKeyV1)> 
     }
 }
 
+fn hex_sha256(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn read_utf8_with_cap(path: &Path, max_bytes: usize) -> Result<String> {
+    let md = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    if md.len() as usize > max_bytes {
+        bail!(
+            "{} is too large ({} bytes > {} bytes)",
+            path.display(),
+            md.len(),
+            max_bytes
+        );
+    }
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let s = String::from_utf8(bytes)
+        .with_context(|| format!("{} is not valid UTF-8 text", path.display()))?;
+    Ok(s)
+}
+
+fn discover_readme(base: &Path, from_manifest: Option<&str>) -> Option<(PathBuf, String)> {
+    if let Some(p) = from_manifest {
+        let abs = base.join(p);
+        if abs.exists() {
+            return Some((abs, p.to_string()));
+        }
+        return None;
+    }
+    // Auto-discover common names
+    for cand in ["README.md", "README", "README.txt"] {
+        let p = base.join(cand);
+        if p.exists() {
+            return Some((p, cand.to_string()));
+        }
+    }
+    None
+}
+
+// Best-effort fetch of license paths from manifest JSON
+fn pick_license_paths(manifest_json: &serde_json::Value) -> (Option<&str>, Option<&str>) {
+    // returns (license_spdx, license_file)
+    let spdx = manifest_json
+        .get("license")
+        .and_then(|l| l.get("spdx"))
+        .and_then(|v| v.as_str());
+
+    let file = manifest_json
+        .get("license")
+        .and_then(|l| l.get("file"))
+        .and_then(|v| v.as_str());
+
+    (spdx, file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -954,11 +1203,33 @@ mod tests {
     }
 
     #[test]
+    fn validate_declared_skill_path_rejects_parent_dir_component() {
+        let dir = temp_dir("skill-path-parent");
+        let err = validate_declared_skill_path(&dir, "../secret.md").unwrap_err();
+        assert!(format!("{err:#}").contains("skill file path must stay within the package root"));
+    }
+
+    #[test]
+    fn validate_declared_skill_path_rejects_parent_dir_only_path() {
+        let dir = temp_dir("skill-path-dotdot");
+        let err = validate_declared_skill_path(&dir, "..").unwrap_err();
+        assert!(format!("{err:#}").contains("skill file path must stay within the package root"));
+    }
+
+    #[test]
+    fn validate_declared_skill_path_rejects_absolute_path() {
+        let dir = temp_dir("skill-path-absolute");
+        let err = validate_declared_skill_path(&dir, "/etc/passwd").unwrap_err();
+        assert!(format!("{err:#}").contains("skill file path must be relative"));
+    }
+
+    #[test]
     fn publish_metadata_includes_namespace_handle_when_provided() {
         let meta = build_publish_metadata(
             serde_json::json!({"kind": "tool", "name": "demo", "version": "0.1.0"}),
             "abc123",
             42,
+            None,
             None,
             None,
             Some("zack"),
@@ -979,9 +1250,34 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         assert!(meta.get("namespace_handle").is_none());
+    }
+
+    #[test]
+    fn publish_metadata_includes_skill_manual_when_provided() {
+        let meta = build_publish_metadata(
+            serde_json::json!({"kind": "skill", "name": "demo-skill", "version": "0.1.0"}),
+            "abc123",
+            42,
+            None,
+            Some(serde_json::json!({
+                "path": "SKILL.md",
+                "sha256": "deadbeef",
+                "content": "# Manual"
+            })),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            meta.get("skill_manual")
+                .and_then(|v| v.get("path"))
+                .and_then(|v| v.as_str()),
+            Some("SKILL.md")
+        );
     }
 
     #[tokio::test]
@@ -1157,75 +1453,327 @@ mod tests {
         assert!(entries.contains(&"template/README.md".to_string()));
         assert!(entries.contains(&"template/.env.example".to_string()));
     }
-}
 
-fn hex_sha256(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
-}
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_minimal_skill_manifest() {
+        let dir = temp_dir("publish-skill-minimal");
+        let manifest_path = dir.join("agent.json");
+        let skill_path = dir.join("SKILL.md");
 
-fn read_utf8_with_cap(path: &Path, max_bytes: usize) -> Result<String> {
-    let md = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
-    if md.len() as usize > max_bytes {
-        bail!(
-            "{} is too large ({} bytes > {} bytes)",
-            path.display(),
-            md.len(),
-            max_bytes
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "skill",
+                "name": "incident-commander",
+                "version": "0.1.0",
+                "description": "Incident response coordination playbook.",
+                "skill": {
+                    "entrypoint": "SKILL.md"
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        fs::write(&skill_path, "# Incident Commander\n").unwrap();
+
+        let args = PublishArgs {
+            manifest: manifest_path.to_string_lossy().into_owned(),
+            schema: Some(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../schemas/agentpm.manifest.schema.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            strict: false,
+            dry_run: true,
+            quiet: true,
+            sign: false,
+            key_id: None,
+            token: Some("dummy-token".into()),
+            namespace: None,
+        };
+
+        args.run("https://example.com".into()).await.unwrap();
+
+        let tar_path = dir.join("target/agentpm/incident-commander-0.1.0.tar.gz");
+        assert!(tar_path.exists(), "expected {}", tar_path.display());
+        let entries = tar_entries(&tar_path);
+        assert_eq!(entries.len(), 2);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"SKILL.md".to_string()));
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_skill_with_references_and_scripts() {
+        let dir = temp_dir("publish-skill-rich");
+        let manifest_path = dir.join("agent.json");
+        let skill_path = dir.join("SKILL.md");
+        let references_dir = dir.join("references");
+        let scripts_dir = dir.join("scripts");
+        fs::create_dir_all(&references_dir).unwrap();
+        fs::create_dir_all(&scripts_dir).unwrap();
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "skill",
+                "name": "slack-incident-update",
+                "version": "0.1.0",
+                "description": "A playbook for posting incident updates to Slack.",
+                "tools": [
+                    { "name": "@zack/slack-post-message", "version": "0.1.1" }
+                ],
+                "skill": {
+                    "entrypoint": "SKILL.md",
+                    "references": [
+                        "references/tool-contract.md",
+                        "references/examples.md"
+                    ],
+                    "scripts": ["scripts/run.sh"]
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        fs::write(&skill_path, "# Slack Incident Update\n").unwrap();
+        fs::write(references_dir.join("tool-contract.md"), "contract\n").unwrap();
+        fs::write(references_dir.join("examples.md"), "examples\n").unwrap();
+        fs::write(scripts_dir.join("run.sh"), "#!/bin/sh\necho ok\n").unwrap();
+
+        let args = PublishArgs {
+            manifest: manifest_path.to_string_lossy().into_owned(),
+            schema: Some(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../schemas/agentpm.manifest.schema.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            strict: false,
+            dry_run: true,
+            quiet: true,
+            sign: false,
+            key_id: None,
+            token: Some("dummy-token".into()),
+            namespace: None,
+        };
+
+        args.run("https://example.com".into()).await.unwrap();
+
+        let tar_path = dir.join("target/agentpm/slack-incident-update-0.1.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert_eq!(entries.len(), 5);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"SKILL.md".to_string()));
+        assert!(entries.contains(&"references/tool-contract.md".to_string()));
+        assert!(entries.contains(&"references/examples.md".to_string()));
+        assert!(entries.contains(&"scripts/run.sh".to_string()));
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_skill_with_readme_and_license() {
+        let dir = temp_dir("publish-skill-readme-license");
+        let manifest_path = dir.join("agent.json");
+        let skill_path = dir.join("SKILL.md");
+        let readme_path = dir.join("README.md");
+        let license_path = dir.join("LICENSE");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "skill",
+                "name": "governance-review",
+                "version": "0.1.0",
+                "description": "Governance review playbook.",
+                "readme": "README.md",
+                "license": {
+                    "spdx": "MIT",
+                    "file": "LICENSE"
+                },
+                "skill": {
+                    "entrypoint": "SKILL.md",
+                    "references": ["SKILL.md"]
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        fs::write(&skill_path, "# Governance Review\n").unwrap();
+        fs::write(&readme_path, "# Readme\n").unwrap();
+        fs::write(&license_path, "MIT License\n").unwrap();
+
+        let args = PublishArgs {
+            manifest: manifest_path.to_string_lossy().into_owned(),
+            schema: Some(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../schemas/agentpm.manifest.schema.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            strict: false,
+            dry_run: true,
+            quiet: true,
+            sign: false,
+            key_id: None,
+            token: Some("dummy-token".into()),
+            namespace: None,
+        };
+
+        args.run("https://example.com".into()).await.unwrap();
+
+        let tar_path = dir.join("target/agentpm/governance-review-0.1.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"SKILL.md".to_string()));
+        assert!(entries.contains(&"README.md".to_string()));
+        assert!(entries.contains(&"LICENSE".to_string()));
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| entry.as_str() == "SKILL.md")
+                .count(),
+            1
         );
     }
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    let s = String::from_utf8(bytes)
-        .with_context(|| format!("{} is not valid UTF-8 text", path.display()))?;
-    Ok(s)
-}
 
-fn discover_readme(base: &Path, from_manifest: Option<&str>) -> Option<PathBuf> {
-    if let Some(p) = from_manifest {
-        let p = base.join(p);
-        if p.exists() {
-            return Some(p);
-        }
-        return None;
+    #[tokio::test]
+    async fn publish_dry_run_omits_undeclared_skill_files() {
+        let dir = temp_dir("publish-skill-undeclared");
+        let manifest_path = dir.join("agent.json");
+        let skill_path = dir.join("SKILL.md");
+        let ignored_path = dir.join("notes.txt");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "skill",
+                "name": "triage-operator",
+                "version": "0.1.0",
+                "description": "Triage operator playbook.",
+                "skill": {
+                    "entrypoint": "SKILL.md"
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        fs::write(&skill_path, "# Triage Operator\n").unwrap();
+        fs::write(&ignored_path, "do not include\n").unwrap();
+
+        let args = PublishArgs {
+            manifest: manifest_path.to_string_lossy().into_owned(),
+            schema: Some(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../schemas/agentpm.manifest.schema.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            strict: false,
+            dry_run: true,
+            quiet: true,
+            sign: false,
+            key_id: None,
+            token: Some("dummy-token".into()),
+            namespace: None,
+        };
+
+        args.run("https://example.com".into()).await.unwrap();
+
+        let tar_path = dir.join("target/agentpm/triage-operator-0.1.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"SKILL.md".to_string()));
+        assert!(!entries.contains(&"notes.txt".to_string()));
     }
-    // Auto-discover common names
-    for cand in ["README.md", "README", "README.txt"] {
-        let p = base.join(cand);
-        if p.exists() {
-            return Some(p);
-        }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_missing_declared_skill_file() {
+        let dir = temp_dir("publish-skill-missing");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "skill",
+                "name": "missing-file-skill",
+                "version": "0.1.0",
+                "description": "Missing file should fail.",
+                "skill": {
+                    "entrypoint": "SKILL.md"
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        let args = PublishArgs {
+            manifest: manifest_path.to_string_lossy().into_owned(),
+            schema: Some(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../schemas/agentpm.manifest.schema.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            strict: false,
+            dry_run: true,
+            quiet: true,
+            sign: false,
+            key_id: None,
+            token: Some("dummy-token".into()),
+            namespace: None,
+        };
+
+        let err = args.run("https://example.com".into()).await.unwrap_err();
+        assert!(format!("{err:#}").contains("declared skill file not found"));
+        assert!(
+            !dir.join("target/agentpm/missing-file-skill-0.1.0.tar.gz")
+                .exists(),
+            "failed packaging should not leave a final tarball behind"
+        );
     }
-    None
-}
 
-// Best-effort fetch of license paths from manifest JSON
-fn pick_license_paths(manifest_json: &serde_json::Value) -> (Option<&str>, Option<&str>) {
-    // returns (license_spdx, license_file)
-    let spdx = manifest_json
-        .get("license")
-        .and_then(|l| l.get("spdx"))
-        .and_then(|v| v.as_str());
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_unsafe_skill_path() {
+        let dir = temp_dir("publish-skill-unsafe");
+        let manifest_path = dir.join("agent.json");
 
-    let file = manifest_json
-        .get("license")
-        .and_then(|l| l.get("file"))
-        .and_then(|v| v.as_str());
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "skill",
+                "name": "unsafe-file-skill",
+                "version": "0.1.0",
+                "description": "Unsafe file should fail.",
+                "skill": {
+                    "entrypoint": "../SKILL.md"
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
 
-    (spdx, file)
-}
+        let args = PublishArgs {
+            manifest: manifest_path.to_string_lossy().into_owned(),
+            schema: Some(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../schemas/agentpm.manifest.schema.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            strict: false,
+            dry_run: true,
+            quiet: true,
+            sign: false,
+            key_id: None,
+            token: Some("dummy-token".into()),
+            namespace: None,
+        };
 
-// helper to use io::copy into a hasher
-mod sha {
-    use sha2::Digest;
-    pub struct Writer<'a, D: Digest>(pub &'a mut D);
-    impl<'a, D: Digest> std::io::Write for Writer<'a, D> {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.update(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
+        let err = args.run("https://example.com".into()).await.unwrap_err();
+        assert!(format!("{err:#}").contains("Manifest validation failed"));
     }
 }
