@@ -1985,11 +1985,15 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(
-                installed_skill_manifest_path(&root.join(".agentpm"), "@zack/triage-skill", "0.1.0")
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .join("SKILL.md")
+                installed_skill_manifest_path(
+                    &root.join(".agentpm"),
+                    "@zack/triage-skill",
+                    "0.1.0",
+                )
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("SKILL.md"),
             )
             .unwrap(),
             "# Skill\n"
