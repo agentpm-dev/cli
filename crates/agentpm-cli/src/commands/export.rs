@@ -17,6 +17,7 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Args, Debug, Clone)]
 pub struct ExportArgs {
@@ -359,13 +360,15 @@ async fn read_remote_tool_manifest(
 }
 
 fn temp_export_dir(prefix: &str) -> PathBuf {
+    static TEMP_EXPORT_COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = format!(
-        "{prefix}-{}-{}",
+        "{prefix}-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time went backwards")
-            .as_nanos()
+            .as_nanos(),
+        TEMP_EXPORT_COUNTER.fetch_add(1, Ordering::Relaxed)
     );
     std::env::temp_dir().join(unique)
 }
