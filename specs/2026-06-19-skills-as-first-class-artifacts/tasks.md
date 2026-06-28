@@ -338,6 +338,13 @@
 - [ ] Update the research story to include `research-brief-playbook`:
   - [ ] either in `agent-packages/research-node` or, if the local app story is clearer, in the checked-in `agent-app-research-node` root manifest
   - [ ] ensure the example remains a clean local-app story rather than forcing it into the published-agent pattern unnecessarily
+- [ ] Update the template packages that pin published agents so they follow the new Skill-aware agent versions:
+  - [ ] bump `template-packages/triage-worker-python` to the new published `@zack/ops-console` version
+  - [ ] bump `template-packages/support-assistant-workspace` to the new published `@zack/ops-console` version
+  - [ ] update any generated template files, READMEs, tests, and hardcoded `AGENT_SPEC` strings that reference the old version
+- [ ] Decide whether `template-packages/research-assistant-node` should also move to a Skill-aware story:
+  - [ ] if yes, update its manifest, generated files, and README to reflect local `skills[]` plus `loadSkill(...)`
+  - [ ] if no, leave it as the direct-tools local-app template intentionally and keep that distinction explicit
 - [ ] Update `agent-app-ops-python` to become the canonical Python Skill-loading example:
   - [ ] keep `load_agent(...)`
   - [ ] add `resolvedSkills`
