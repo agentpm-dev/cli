@@ -89,8 +89,7 @@ Recommended tool-backed Skill manifest:
       "scripts/run.sh"
     ],
     "compatibility": {
-      "runtimes": ["agentpm-run", "shell"],
-      "export_targets": ["markdown"]
+      "runtimes": ["agentpm-run", "shell"]
     }
   }
 }
@@ -105,7 +104,6 @@ Suggested `skill` metadata block:
   - `model_families`
   - `runtimes`
   - `environments`
-  - `export_targets`
 
 All declared file paths must be safe relative paths inside the package directory. They must not be absolute, contain `..`, use Windows drive roots, use UNC paths, or escape the manifest root.
 

@@ -294,8 +294,91 @@
 
 ## Milestone 12: Examples Repo Update
 > Scope note: this milestone updates `agentpm-examples` after the Skill docs are complete and the latest CLI, backend, frontend, and SDK behavior has been deployed. The goal is to verify real example flows against the deployed stack and leave the example repo aligned with the final public interfaces rather than local pre-deploy behavior.
-- [ ] Add a minimal procedural Skill example in `agentpm-examples`.
-- [ ] Add a tool-backed Skill example generated from export and edited into a publishable package.
-- [ ] Add an agent example that depends on a Skill and a Skill that depends on a Tool.
-- [ ] Add an SDK example showing `load_agent(...)` → `resolvedSkills` / `resolved_skills` → `load_skill(...)` / `loadSkill(...)` → `resolvedTools` / `resolved_tools` → `load(...)`, matching each SDK’s final public contract.
-- [ ] Verify the examples repo works against the deployed registry/API rather than local-only assumptions.
+- [ ] Add a new `skill-packages/*` example group in `agentpm-examples` for publishable Skill source packages.
+- [ ] Create exactly four first-wave Skill packages that are strong enough to seed the public registry:
+  - [ ] `incident-handoff-checklist` as a minimal procedural Skill with no tools.
+  - [ ] `slack-status-update` as a tool-backed Skill using `@zack/slack-post-message`.
+  - [ ] `issue-triage-playbook` as a tool-backed Skill using `@zack/github-issues`.
+  - [ ] `research-brief-playbook` as a multi-tool Skill for the research stack.
+- [ ] Make each Skill package look publishable and real:
+  - [ ] valid `agent.json`
+  - [ ] authored `SKILL.md`
+  - [ ] useful top-level `README.md`
+  - [ ] `references/` and `scripts/` only where they help the example rather than as filler
+- [ ] Use `scripts/` intentionally rather than uniformly:
+  - [ ] for procedural-only Skills, prefer no scripts unless one genuinely improves the example
+  - [ ] for single-tool Skills, prefer a thin `scripts/run.sh`
+  - [ ] for multi-tool Skills, allow `scripts/run.sh` plus a small number of thin named helper scripts when they clarify the workflow
+- [ ] Keep the script boundary honest:
+  - [ ] helper scripts should delegate to `agentpm run ...` rather than re-implementing tool logic
+  - [ ] do not turn Skill `scripts/` into mini apps with heavy orchestration logic
+  - [ ] preserve the repo story that the Skill holds procedure while AgentPM still owns execution
+- [ ] Plan per-Skill script/reference shape explicitly:
+  - [ ] `incident-handoff-checklist`: likely `SKILL.md` plus optional reference material, but no required `scripts/`
+  - [ ] `slack-status-update`: include `scripts/run.sh` delegating to `agentpm run @zack/slack-post-message`
+  - [ ] `issue-triage-playbook`: include `scripts/run.sh` delegating to `agentpm run @zack/github-issues`
+  - [ ] `research-brief-playbook`: include either one canonical `scripts/run.sh` or a few thin named helper scripts if that better expresses the multi-tool workflow
+- [ ] Use `slack-status-update` as the concrete export-based example:
+  - [ ] start from `agentpm export --skill @zack/slack-post-message`
+  - [ ] promote the generated scaffold into `skill-packages/slack-status-update`
+  - [ ] edit it into a publishable Skill package rather than leaving it as a local generated walkthrough
+- [ ] Decide the tool ownership boundary intentionally:
+  - [ ] when a tool is part of a reusable procedure, move it under the Skill package that owns that procedure
+  - [ ] avoid leaving the same tool duplicated at both the agent root and the Skill unless there is a deliberate reason
+  - [ ] keep direct agent-level tools only when they remain truly agent-level capabilities outside the Skill story
+- [ ] Update `agent-packages/ops-python` to depend on:
+  - [ ] `incident-handoff-checklist`
+  - [ ] `slack-status-update`
+  - [ ] `issue-triage-playbook`
+  - [ ] remove direct agent-level duplicates for tools now owned by those Skills
+  - [ ] keep `csv-query` / `json-transform` agent-level unless a new Skill explicitly absorbs them
+- [ ] Update `agent-packages/devwork-python` to depend on:
+  - [ ] `issue-triage-playbook`
+  - [ ] remove direct agent-level duplicates if that Skill now owns the same tool
+- [ ] Update the research story to include `research-brief-playbook`:
+  - [ ] either in `agent-packages/research-node` or, if the local app story is clearer, in the checked-in `agent-app-research-node` root manifest
+  - [ ] ensure the example remains a clean local-app story rather than forcing it into the published-agent pattern unnecessarily
+- [ ] Update the template packages that pin published agents so they follow the new Skill-aware agent versions:
+  - [ ] bump `template-packages/triage-worker-python` to the new published `@zack/ops-console` version
+  - [ ] bump `template-packages/support-assistant-workspace` to the new published `@zack/ops-console` version
+  - [ ] update any generated template files, READMEs, tests, and hardcoded `AGENT_SPEC` strings that reference the old version
+- [ ] Decide whether `template-packages/research-assistant-node` should also move to a Skill-aware story:
+  - [ ] if yes, update its manifest, generated files, and README to reflect local `skills[]` plus `loadSkill(...)`
+  - [ ] if no, leave it as the direct-tools local-app template intentionally and keep that distinction explicit
+- [ ] Update `agent-app-ops-python` to become the canonical Python Skill-loading example:
+  - [ ] keep `load_agent(...)`
+  - [ ] add `resolvedSkills`
+  - [ ] call `load_skill(...)` for each resolved Skill
+  - [ ] use Skill manuals / metadata in the app wiring or prompt setup
+  - [ ] flatten Skill `resolvedTools` into the final loaded tool set
+  - [ ] keep the existing extra direct local tool path where it still adds value
+- [ ] Update `agent-app-devwork-python` to show Skill reuse rather than introducing a separate parallel workflow:
+  - [ ] keep `load_agent(...)`
+  - [ ] load `issue-triage-playbook` through `resolvedSkills`
+  - [ ] use `load_skill(...)` plus Skill `resolvedTools` before `load(...)`
+  - [ ] preserve the LangGraph / approval-gated app story
+- [ ] Update `agent-app-research-node` to show Node Skill usage without destroying its value as a local-app example:
+  - [ ] keep the local root `agent.json` story
+  - [ ] add local `skills[]`
+  - [ ] use `loadSkill(...)` directly in the app
+  - [ ] use Skill manuals and Skill `resolvedTools` in the app wiring
+  - [ ] do not force this app into a `loadAgent(...)`-driven published-agent flow unless the example clearly improves
+- [ ] Ensure the examples repo demonstrates both of the intended SDK stories:
+  - [ ] Python: published agent package -> `load_agent(...)` -> `resolvedSkills` -> `load_skill(...)` -> `resolvedTools` -> `load(...)`
+  - [ ] Node: local app root -> local `skills[]` -> `loadSkill(...)` -> `resolvedTools` -> `load(...)`
+- [ ] Update the existing `skill-workflow-slack-post-message` example if it still adds value after `skill-packages/slack-status-update` exists:
+  - [ ] either repoint it to the new publishable Skill package story
+  - [ ] or narrow it explicitly to the “export a starter Skill scaffold” workflow and avoid overlapping too much with the publishable source package example
+- [ ] Update `agentpm-examples/README.md` so the repo story now includes:
+  - [ ] `skill-packages/*`
+  - [ ] first-class Skill seeds
+  - [ ] which agent apps demonstrate Skill loading
+  - [ ] which agent packages depend on published Skills
+- [ ] Update affected example READMEs so the documented setup, install, publish, and run flows stay truthful.
+- [ ] Run `agentpm lint` in every changed Skill and Agent manifest root.
+- [ ] Verify the example publish/install/load flows against the deployed stack:
+  - [ ] publish the four Skill packages to the real registry
+  - [ ] install the updated published agent packages and/or Skills in the example apps
+  - [ ] verify the Python examples against the published agent + Skill dependency chain
+  - [ ] verify the Node example against installed local Skill dependencies
+- [ ] Run the relevant repo-native tests / checks for every changed example surface before closing the milestone.
