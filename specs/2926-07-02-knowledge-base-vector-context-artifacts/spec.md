@@ -10,23 +10,18 @@ A large amount of agent setup friction comes from repeatedly doing the same expe
 - build a vector index
 - attach the retrieval corpus to an agent
 
-The goal of Phase 6B is to make prepared retrieval corpora packageable, publishable, installable, lockable, inspectable, queryable, and attachable to agents and templates as first-class AgentPM artifacts.
+The goal of Phase 6B is to make prepared context packageable, publishable, installable, lockable, inspectable, and attachable to agents and templates as first-class AgentPM artifacts. Knowledge artifacts may be optimized for vector retrieval, or they may be simple context packages intended to be loaded directly into a large-context model without chunking or embeddings.
 
-A `kind: "knowledge"` package represents a passive, dependency-free, portable retrieval corpus. It is not merely “some files” and it is not a managed vector database. It is a versioned artifact containing:
+A `kind: "knowledge"` package represents a passive, dependency-free, portable context artifact. It is not merely “some files” and it is not a managed vector database. It is a versioned artifact containing one of two MVP modes:
 
-- canonical chunked content
-- source metadata
-- embedding model metadata
-- precomputed vector files
-- an AgentPM-built local retrieval index
-- retrieval defaults
-- provenance, license, and rebuild metadata
+- `mode: "context"`: declared documents/files intended for direct context injection, with document metadata and hashes, but no required chunks, embeddings, vectors, or index
+- `mode: "vector"`: a prepared retrieval corpus with canonical chunks, source metadata, embedding model metadata, precomputed vector files, an AgentPM-built local retrieval index, retrieval defaults, provenance, license, and rebuild metadata
 
 Strategic POV:
 
-> AgentPM is the package manager and artifact contract for prepared retrieval systems. AgentPM does not own how knowledge is created. It owns how prepared knowledge is packaged, validated, indexed, installed, locked, queried, and reused.
+> AgentPM is the package manager and artifact contract for portable agent context. AgentPM does not own how knowledge is created. It owns how prepared knowledge is packaged, validated, installed, locked, inspected, and reused. When the artifact is vector-backed, AgentPM also owns local index generation and query execution.
 
-This lets developers install prepared context instead of rebuilding it locally each time, while preserving interoperability across runtimes and future vector backends.
+This lets developers install prepared context instead of rebuilding it locally each time, while preserving interoperability across large-context runtimes, retrieval runtimes, and future vector backends.
 
 ## Non-goals
 - Do not make AgentPM a crawler.
@@ -49,6 +44,9 @@ This lets developers install prepared context instead of rebuilding it locally e
 - Add `knowledge` as a first-class package kind alongside `tool`, `agent`, `template`, and `skill`.
 - A Knowledge artifact is passive and dependency-free.
 - Knowledge artifacts must not declare `tools`, `skills`, `agents`, `knowledge`, `memory`, or `profiles` dependencies.
+- Knowledge artifacts must declare a `knowledge.mode` of either `context` or `vector`.
+- `mode: "context"` artifacts package documents for direct context injection and do not require chunks, embeddings, vectors, or indexes.
+- `mode: "vector"` artifacts package prepared retrieval corpora and require chunks, sources, embeddings, vectors, and an AgentPM local index.
 - Agents may depend on Knowledge using the existing top-level `knowledge` array.
 - Templates may depend on Knowledge using `template.dependencies.knowledge`.
 - Skills must not depend on Knowledge in Phase 6B.
@@ -88,7 +86,55 @@ A Knowledge package manifest should use `agent.json` with `kind: "knowledge"` an
 
 Do not include `display_name` in the Knowledge contract. Use `name`, `description`, README, package page, and namespace/package metadata for human-facing naming.
 
-Example MVP shape:
+The Knowledge contract supports two MVP modes.
+
+#### Context-mode example
+
+Use `mode: "context"` for small or intentionally whole-document Knowledge packages that are expected to be loaded directly into an agent/runtime context window. Context-mode packages do not require chunking, embeddings, vectors, or indexes.
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "kind": "knowledge",
+  "name": "engineering-playbook",
+  "version": "0.1.0",
+  "description": "Engineering playbook intended for direct context loading.",
+  "readme": "README.md",
+  "license": {
+    "spdx": "internal"
+  },
+  "knowledge": {
+    "mode": "context",
+    "content_type": "documentation",
+    "language": "en",
+    "documents": [
+      {
+        "path": "knowledge/docs/playbook.md",
+        "content_type": "text/markdown",
+        "role": "context",
+        "bytes": 18432,
+        "sha256": "sha256:..."
+      }
+    ],
+    "context": {
+      "document_count": 1,
+      "total_bytes": 18432,
+      "content_hash": "sha256:..."
+    },
+    "provenance": {
+      "generated_at": "2026-07-02T00:00:00Z",
+      "builder": {
+        "name": "custom",
+        "version": "unknown"
+      }
+    }
+  }
+}
+```
+
+#### Vector-mode example
+
+Use `mode: "vector"` for prepared retrieval corpora with chunks, sources, embeddings, vectors, and an AgentPM local index.
 
 ```json
 {
@@ -102,6 +148,7 @@ Example MVP shape:
     "spdx": "PSF-2.0"
   },
   "knowledge": {
+    "mode": "vector",
     "content_type": "documentation",
     "language": "en",
     "corpus": {
@@ -137,6 +184,7 @@ Example MVP shape:
       }
     ],
     "retrieval": {
+      "strategy": "vector",
       "default_top_k": 8,
       "return_citations": true
     },
@@ -153,26 +201,64 @@ Example MVP shape:
 ```
 
 ### Required Knowledge package files
-For Phase 6B, a publishable Knowledge artifact should include:
+For Phase 6B, publishable Knowledge artifacts support two modes.
+
+Context-mode packages should include declared documents for direct context loading:
 
 ```text
 agent.json
 README.md                  # optional but encouraged
 knowledge/
-  chunks.jsonl             # required
-  sources.jsonl            # required
-  documents/               # optional source documents
-  embeddings/
-    default.f32            # required for queryable prepared artifact
-  indexes/
-    default/               # generated by agentpm knowledge build
+  docs/
+    playbook.md            # one or more declared context documents
   provenance/
     sources.jsonl          # optional detailed provenance/source manifest
 ```
 
-For the MVP, Knowledge artifacts should be “prepared retrieval corpora,” not corpus-only artifacts. Publishing should require chunks, sources, embeddings, and an AgentPM local index produced by `agentpm knowledge build`.
+Vector-mode packages should include prepared retrieval files:
 
-Future versions may support corpus-only Knowledge artifacts, but Phase 6B should not center the MVP on that mode.
+```text
+agent.json
+README.md                  # optional but encouraged
+knowledge/
+  chunks.jsonl             # required for mode=vector
+  sources.jsonl            # required for mode=vector
+  documents/               # optional source documents
+  embeddings/
+    default.f32            # required for mode=vector
+  indexes/
+    default/               # generated by agentpm knowledge build for mode=vector
+  provenance/
+    sources.jsonl          # optional detailed provenance/source manifest
+```
+
+For the MVP, `mode: "context"` artifacts are valid publishable Knowledge packages for direct context injection and must not require chunks, embeddings, vectors, or indexes. `mode: "vector"` artifacts are prepared retrieval corpora and should require chunks, sources, embeddings, and an AgentPM local index produced by `agentpm knowledge build`.
+
+### Context document contract
+`mode: "context"` packages use declared document entries instead of chunks, embeddings, vectors, and indexes. Each document entry points to a package-relative file intended for direct context loading by an agent/runtime/harness.
+
+Minimum shape:
+
+```json
+{
+  "path": "knowledge/docs/playbook.md",
+  "content_type": "text/markdown",
+  "role": "context",
+  "bytes": 18432,
+  "sha256": "sha256:..."
+}
+```
+
+Validation:
+- `knowledge.documents` must be a non-empty array for `mode: "context"`
+- every document must have a safe package-relative `path`
+- every declared document path must exist and be a file
+- `content_type`, if present, should be a non-empty string
+- `role`, if present, should be a non-empty string and remain open-ended; suggested initial value is `context`
+- `bytes` and `sha256` are build-derived fields owned by `agentpm knowledge build`
+- context documents should not require chunk/source/vector/index metadata
+
+`mode: "context"` is intended for small or intentionally whole-document corpora. AgentPM should validate/package/install these documents, but it should not attempt semantic retrieval over them unless a future mode or adapter adds that behavior.
 
 ### Chunk JSONL contract
 `knowledge/chunks.jsonl` is newline-delimited JSON. Each line represents one chunk.
@@ -252,7 +338,17 @@ The manifest public index type should be `agentpm-local`. The internal implement
 The index is an optimization and local query representation. The canonical interop contract remains chunks + sources + embedding metadata + vector rows.
 
 ### Build-derived manifest fields
-`agentpm knowledge build` should update `agent.json` with derived metadata:
+`agentpm knowledge build` should update `agent.json` with derived metadata according to mode.
+
+For `mode: "context"`:
+
+- `knowledge.documents[].bytes`
+- `knowledge.documents[].sha256`
+- `knowledge.context.document_count`
+- `knowledge.context.total_bytes`
+- `knowledge.context.content_hash`
+
+For `mode: "vector"`:
 
 - `knowledge.corpus.chunk_count`
 - `knowledge.corpus.source_count`
@@ -269,17 +365,19 @@ Strictly validate fields AgentPM uses to build, install, query, lock, or verify:
 
 - `kind`
 - package identity
-- required paths
+- `knowledge.mode`
+- required paths for the selected mode
 - safe relative paths
-- chunks/sources JSONL shape
-- chunk ID uniqueness
-- source ID references
-- vector dimensions/count/format
-- embedding dimensions
+- declared context document paths for `mode: "context"`
+- chunks/sources JSONL shape for `mode: "vector"`
+- chunk ID uniqueness for `mode: "vector"`
+- source ID references for `mode: "vector"`
+- vector dimensions/count/format for `mode: "vector"`
+- embedding dimensions for `mode: "vector"`
 - embedding metric if AgentPM query depends on it
-- `normalized` boolean
+- `normalized` boolean for `mode: "vector"`
 - index type/path if AgentPM must query it
-- retrieval `default_top_k`
+- retrieval `default_top_k` for vector retrieval
 
 Loosely validate informational/provenance fields:
 
@@ -318,7 +416,19 @@ agentpm new
 ```
 
 ### `agentpm init --kind knowledge`
-Creates a starter Knowledge package:
+Creates a starter Knowledge package. The default starter can be either `mode: "context"` for the lowest-friction starting point, or it can accept a flag/template variant for `mode: "vector"` if the implementation wants both scaffolds immediately. Prefer making context mode the default because it does not require embeddings.
+
+Context starter layout:
+
+```text
+agent.json
+README.md
+knowledge/
+  docs/
+    context.md
+```
+
+Vector starter layout, if supported by init:
 
 ```text
 agent.json
@@ -329,30 +439,32 @@ knowledge/
   embeddings/
 ```
 
-The starter manifest should validate. Placeholder data should be minimal but realistic enough to show expected shapes. Do not generate `indexes/default` in `init`; that belongs to `build`.
+The starter manifest should validate. Placeholder data should be minimal but realistic enough to show expected shapes. Do not generate `indexes/default` in `init`; that belongs to `build` for vector-mode packages.
 
 ### `agentpm knowledge build`
 Definition:
 
-> `agentpm knowledge build` prepares a local Knowledge package for publishing and local querying. It reads `agent.json`, validates the declared corpus, source, embedding, and index paths, verifies chunk/source/vector consistency, computes derived counts and content hashes, builds or refreshes AgentPM’s default local retrieval index, and updates `agent.json`. It does not crawl source documents or call embedding providers in Phase 6B.
+> `agentpm knowledge build` prepares a local Knowledge package for publishing and local use. It reads `agent.json`, validates the selected Knowledge mode, computes derived metadata, and updates `agent.json`. For `mode: "context"`, it validates declared documents and computes document hashes/byte counts. For `mode: "vector"`, it validates the declared corpus, source, embedding, and index paths, verifies chunk/source/vector consistency, computes derived counts and content hashes, and builds or refreshes AgentPM’s default local retrieval index. It does not crawl source documents or call embedding providers in Phase 6B.
 
 Expected behavior:
 - default manifest path: `agent.json`
 - optional `--manifest <path>`
 - optional `--check` or `--dry-run` mode may validate without writing; include only if easy and consistent with repo patterns
 - write derived metadata atomically using existing manifest write helpers
-- rebuild `knowledge/indexes/default` from vectors
+- for `mode: "context"`, validate declared documents and compute document count, byte count, per-document hashes, and aggregate content hash
+- for `mode: "vector"`, rebuild `knowledge/indexes/default` from vectors
 - fail if the manifest is not `kind: "knowledge"`
-- fail if required files are missing or invalid
-- fail if vector count/dimensions do not match chunks/manifest
+- fail if required files for the selected mode are missing or invalid
+- fail if vector count/dimensions do not match chunks/manifest for `mode: "vector"`
 
 ### `agentpm knowledge inspect`
 Reads a local or installed Knowledge package and prints metadata.
 
-Suggested human output:
+Suggested human output for vector mode:
 
 ```text
 Knowledge: @zack/python-docs@0.1.0
+Mode: vector
 Description: Prepared retrieval corpus for Python documentation.
 Chunks: 12,482
 Sources: 327
@@ -365,10 +477,25 @@ Retrieval defaults:
   citations: true
 ```
 
+Suggested human output for context mode:
+
+```text
+Knowledge: @zack/engineering-playbook@0.1.0
+Mode: context
+Description: Engineering playbook intended for direct context loading.
+Documents: 1
+Total bytes: 18,432
+Content hash: sha256:...
+Files:
+  - knowledge/docs/playbook.md text/markdown sha256:...
+```
+
 Suggested JSON output with `--json` should include the resolved manifest metadata and useful installed path information.
 
 ### `agentpm knowledge query`
-`knowledge query` is the retrieval equivalent of `agentpm run` for tools. It should let developers verify that a Knowledge artifact is actually usable.
+`knowledge query` is the retrieval equivalent of `agentpm run` for tools. It should let developers verify that a vector-mode Knowledge artifact is actually usable.
+
+For `mode: "context"`, `knowledge query` should not attempt semantic retrieval because there is no vector index. It should fail clearly and direct users to `agentpm knowledge inspect` and future context-loading/runtime behavior, or to rebuild/publish the artifact as `mode: "vector"` if semantic retrieval is desired. A future `agentpm knowledge read` command could expose context documents directly, but that command is not required in Phase 6B.
 
 Core command shape:
 
@@ -492,7 +619,7 @@ Example shape, adapting to existing lockfile v2 conventions:
 
 ```json
 {
-  "lockfile_version": 2,
+  "lockfile_version": 3,
   "packages": {
     "knowledge:@zack/python-docs@0.1.0": {
       "kind": "knowledge",
@@ -536,17 +663,19 @@ Knowledge packages must appear in registry search, package detail pages, namespa
 
 Knowledge detail page should emphasize:
 - description and README
-- chunk count
-- source count
-- embedding provider/model
-- dimensions
-- metric
-- normalized flag
-- retrieval defaults
-- index status/type
+- mode: `context` or `vector`
+- for context mode: document count, total bytes, declared document list/content types where appropriate
+- for vector mode: chunk count and source count
+- for vector mode: embedding provider/model
+- for vector mode: dimensions
+- for vector mode: metric
+- for vector mode: normalized flag
+- for vector mode: retrieval defaults
+- for vector mode: index status/type
 - license/provenance
 - install command
-- example query command
+- inspect command
+- example query command only for vector-mode packages
 - private/public visibility and signatures consistent with other package pages
 
 Do not present Knowledge as executable.
@@ -564,7 +693,7 @@ Minimum:
 Optional but useful:
 - Python `load_knowledge(...)`
 - Node `loadKnowledge(...)`
-- loaded Knowledge object includes manifest, package path, chunks/sources paths, embedding metadata, index metadata, and retrieval defaults
+- loaded Knowledge object includes manifest, package path, mode, context document metadata when `mode: "context"`, and chunks/sources paths, embedding metadata, index metadata, and retrieval defaults when `mode: "vector"`
 - direct SDK query support can be deferred unless straightforward
 
 ## Acceptance criteria
@@ -575,10 +704,11 @@ Optional but useful:
 - Skill manifests cannot reference Knowledge packages.
 - Knowledge manifests cannot declare dependencies.
 - `agentpm init --kind knowledge` creates a valid starter manifest and directory layout.
-- `agentpm knowledge build` validates chunks, sources, embeddings, vector dimensions/counts, safe paths, and required files.
-- `agentpm knowledge build` generates the default AgentPM local index from vectors.
-- `agentpm knowledge build` updates derived metadata in `agent.json`.
-- `agentpm publish --dry-run` succeeds for a valid built Knowledge package and packages `agent.json` plus declared Knowledge files.
+- `agentpm knowledge build` supports `mode: "context"` by validating declared documents and computing document metadata/hashes without requiring chunks, embeddings, vectors, or indexes.
+- `agentpm knowledge build` supports `mode: "vector"` by validating chunks, sources, embeddings, vector dimensions/counts, safe paths, and required files.
+- `agentpm knowledge build` generates the default AgentPM local index from vectors for `mode: "vector"`.
+- `agentpm knowledge build` updates derived metadata in `agent.json` for the selected mode.
+- `agentpm publish --dry-run` succeeds for valid built context-mode and vector-mode Knowledge packages and packages `agent.json` plus declared Knowledge files.
 - `agentpm publish` supports Knowledge packages through the registry publish flow.
 - Backend publish validation, DB constraints, and package kind normalization accept Knowledge.
 - Install resolve/init/finalize support Knowledge.
@@ -586,8 +716,9 @@ Optional but useful:
 - Installing an agent that references Knowledge resolves, installs, and locks Knowledge dependencies.
 - Installing/generating a template that references Knowledge resolves, installs, and locks Knowledge dependencies.
 - `agent.lock` includes Knowledge packages and root relationship entries.
-- `agentpm knowledge inspect` works for local and installed Knowledge packages.
-- `agentpm knowledge query <ref> --vector-json <file>` returns ranked chunks with scores and source metadata.
+- `agentpm knowledge inspect` works for local and installed context-mode and vector-mode Knowledge packages.
+- `agentpm knowledge query <ref> --vector-json <file>` returns ranked chunks with scores and source metadata for vector-mode packages.
+- `agentpm knowledge query` fails clearly for context-mode packages because they do not include vector indexes.
 - `agentpm knowledge query <ref> --embedding-command <cmd> "query text"` works if adapter support is implemented in the milestone.
 - `agentpm knowledge query <ref> "query text"` uses a built-in adapter only when supported and configured, and otherwise fails with a clear error telling the user to pass a vector or adapter.
 - Search, trending/package lists, package detail pages, namespace pages, and profile pages recognize Knowledge.
@@ -600,6 +731,7 @@ Optional but useful:
 - Existing semantic warnings say agent `knowledge` is preserved but not resolved. Those warnings must be removed or changed when Phase 6B resolves Knowledge.
 - Missing enum updates across CLI, SDKs, backend, DB check constraints, frontend filters, and tests can cause Knowledge packages to disappear or render as tools.
 - Knowledge artifacts may be much larger than prior package kinds. Upload/download time, S3 size, tar entry limits, malware scan time, and progress output need review.
+- Context-mode artifacts make it easier to package whole documents, which can increase package size and downstream context-window/token usage even without embeddings.
 - Raw float32 vector parsing is easy to get wrong across endianness and dimensionality.
 - If vector row order drifts from chunk row order, retrieval returns wrong chunks. Build must make the invariant explicit and validate all count/dimension conditions it can.
 - AgentPM cannot prove that vectors came from the declared model. It can only validate structural compatibility and preserve author-provided metadata.
@@ -608,11 +740,13 @@ Optional but useful:
 - Built-in provider adapters can make AgentPM feel vendor-specific. Keep them optional and BYO-token only.
 - Prompt injection in retrieved chunks is possible. Docs should warn that retrieved Knowledge is context, not trusted instruction.
 - Source/license/provenance metadata may be inaccurate. AgentPM should preserve and display it but not claim legal verification.
-- Backend export/import is deferred, but the manifest must preserve enough canonical data for future exporters.
+- Backend export/import is deferred, but vector-mode manifests must preserve enough canonical data for future exporters. Context-mode manifests must preserve enough document metadata for future context-loading runtimes.
 - Local index implementation might evolve. Publicly expose `agentpm-local`, not an implementation-specific format, unless necessary.
 - Existing tar packaging blocks embedded archives. Optional `knowledge/documents/` may contain archives; keep the existing safety rule unless there is a deliberate exception.
 
 ## Open questions
+- Should `agentpm init --kind knowledge` default to `mode: "context"`, or should it require/accept a mode flag? Recommendation: default to context mode for lowest-friction authoring and optionally add a vector starter flag/template.
+- Should Phase 6B add `agentpm knowledge read` for context-mode packages, or is `inspect` plus runtime attachment enough for the MVP?
 - Which local index implementation should be used internally for `agentpm-local`?
 - Should Phase 6B require `metric: "cosine"` and `normalized: true`, or allow additional metrics if the chosen index supports them?
 - Should `--embedding-command` be implemented in the first milestone with `query`, or should Phase 6B first ship `--vector-json` and add command adapters in a follow-up milestone?
