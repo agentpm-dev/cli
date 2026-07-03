@@ -137,6 +137,331 @@
         }
       }
     },
+    "knowledgeDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required relative path to a packaged document intended for direct context loading."
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional MIME type or content classification for the document."
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional role label describing how the document should be used, such as context or reference."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional human-readable note about the purpose of the document."
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived byte size of the declared document."
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional build-derived content hash for the declared document."
+        }
+      }
+    },
+    "knowledgeContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "document_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived count of declared context documents."
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived total byte size across declared context documents."
+        },
+        "content_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional build-derived aggregate content hash for the context corpus."
+        }
+      }
+    },
+    "knowledgeCorpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chunks_path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Relative path to the packaged chunks JSONL file for vector-mode Knowledge."
+        },
+        "sources_path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Relative path to the packaged sources JSONL file for vector-mode Knowledge."
+        },
+        "chunk_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived count of chunks in the vector corpus."
+        },
+        "source_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived count of unique sources in the vector corpus."
+        },
+        "content_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional build-derived aggregate content hash for the chunks and sources payload."
+        }
+      }
+    },
+    "knowledgeChunking": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional open-ended label describing the chunking strategy used to prepare the corpus."
+        },
+        "chunk_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional chunk size used during corpus preparation."
+        },
+        "overlap": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional overlap size used during corpus preparation."
+        }
+      }
+    },
+    "knowledgeEmbedding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "provider", "model", "dimensions", "metric", "normalized", "vectors_path"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required embedding payload identifier, used to associate vectors and indexes."
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required embedding provider label recorded for provenance and compatibility."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required embedding model label recorded for provenance and compatibility."
+        },
+        "dimensions": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required vector dimensionality for the packaged embeddings."
+        },
+        "metric": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required similarity metric label for the packaged embeddings."
+        },
+        "normalized": {
+          "type": "boolean",
+          "description": "Required flag indicating whether the packaged vectors are already normalized."
+        },
+        "vectors_path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required relative path to the packaged raw vector payload."
+        },
+        "vector_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived number of vectors in the packaged embedding payload."
+        },
+        "vectors_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional build-derived hash of the packaged vector payload."
+        }
+      }
+    },
+    "knowledgeIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "path", "embedding_id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required index identifier, typically matching the default packaged retrieval index."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["agentpm-local"],
+          "description": "Required index type label for the packaged retrieval index."
+        },
+        "path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required relative path to the packaged local retrieval index directory or file."
+        },
+        "embedding_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required embedding identifier that this index was built against."
+        },
+        "generated_by": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional generator label recorded for provenance, such as agentpm knowledge build."
+        }
+      }
+    },
+    "knowledgeRetrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional open-ended retrieval strategy label, such as full_context, vector, or future hybrid variants."
+        },
+        "default_top_k": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional default result count to use during vector retrieval."
+        },
+        "default_score_threshold": {
+          "type": "number",
+          "description": "Optional score threshold hint for retrieval filtering."
+        },
+        "return_citations": {
+          "type": "boolean",
+          "description": "Optional flag indicating whether retrieval consumers should return citations by default."
+        }
+      }
+    },
+    "knowledgeBuilder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "knowledgeProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sources_manifest_path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Optional relative path to a detailed provenance or sources manifest packaged with the Knowledge artifact."
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional timestamp indicating when the Knowledge artifact metadata was generated."
+        },
+        "builder": {
+          "$ref": "#/$defs/knowledgeBuilder",
+          "description": "Optional builder metadata describing the process or tool that generated the packaged Knowledge metadata."
+        }
+      }
+    },
+    "knowledgeMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["context", "vector"],
+          "description": "Required Knowledge artifact mode. Use context for direct-context document bundles and vector for prepared retrieval corpora."
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional high-level content classification for the Knowledge artifact, such as documentation or policy."
+        },
+        "language": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional primary language label for the packaged content."
+        },
+        "documents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/knowledgeDocument" },
+          "description": "Declared documents packaged for direct context loading in context mode."
+        },
+        "context": {
+          "$ref": "#/$defs/knowledgeContext",
+          "description": "Optional build-derived aggregate metadata for context-mode documents."
+        },
+        "corpus": {
+          "$ref": "#/$defs/knowledgeCorpus",
+          "description": "Vector-mode corpus metadata describing packaged chunks and sources."
+        },
+        "chunking": {
+          "$ref": "#/$defs/knowledgeChunking",
+          "description": "Optional descriptive metadata about how the vector corpus was chunked."
+        },
+        "embedding": {
+          "$ref": "#/$defs/knowledgeEmbedding",
+          "description": "Vector-mode embedding metadata describing the packaged vectors."
+        },
+        "indexes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/knowledgeIndex" },
+          "description": "Optional packaged retrieval indexes associated with the vector corpus."
+        },
+        "retrieval": {
+          "$ref": "#/$defs/knowledgeRetrieval",
+          "description": "Optional retrieval defaults or strategy hints for consumers of the Knowledge artifact."
+        },
+        "provenance": {
+          "$ref": "#/$defs/knowledgeProvenance",
+          "description": "Optional provenance metadata describing how the Knowledge artifact was generated."
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "mode": { "const": "context" }
+          }
+        },
+        {
+          "properties": {
+            "mode": { "const": "vector" }
+          },
+          "required": ["corpus", "embedding"],
+          "allOf": [
+            {
+              "properties": {
+                "corpus": {
+                  "required": ["chunks_path", "sources_path"]
+                }
+              }
+            },
+            {
+              "properties": {
+                "embedding": {
+                  "required": ["id", "provider", "model", "dimensions", "metric", "normalized", "vectors_path"]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
     "templateDependencyGroup": {
       "type": "object",
       "additionalProperties": false,
@@ -151,6 +476,10 @@
           "items": { "$ref": "#/$defs/packageRef" }
         },
         "skills": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "knowledge": {
           "type": "array",
           "items": { "$ref": "#/$defs/packageRef" }
         }
@@ -223,7 +552,25 @@
     "tools":      { "properties": { "kind": { "enum": ["agent", "skill"] } } },
     "examples":   { "properties": { "kind": { "const": "agent" } } },
     "skills":     { "properties": { "kind": { "const": "agent" } } },
-    "knowledge":  { "properties": { "kind": { "const": "agent" } } },
+    "knowledge":  {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": { "const": "agent" },
+            "knowledge": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/packageRef" }
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "knowledge" },
+            "knowledge": { "$ref": "#/$defs/knowledgeMetadata" }
+          }
+        }
+      ]
+    },
     "memory":     { "properties": { "kind": { "const": "agent" } } },
     "profiles":   { "properties": { "kind": { "const": "agent" } } },
     "entrypoint": {
@@ -239,7 +586,7 @@
 
   "properties": {
     "$schema": { "type": "string", "format": "uri" },
-    "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill"] },
+    "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill", "knowledge"] },
     "name": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,63}$" },
     "version": {
       "type": "string",
@@ -255,8 +602,15 @@
       "items": { "$ref": "#/$defs/packageRef" }
     },
     "knowledge": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/packageRef" }
+      "oneOf": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        {
+          "$ref": "#/$defs/knowledgeMetadata"
+        }
+      ]
     },
     "memory": {
       "type": "array",
@@ -346,6 +700,10 @@
     {
       "properties": { "kind": { "const": "skill" } },
       "required": ["skill"]
+    },
+    {
+      "properties": { "kind": { "const": "knowledge" } },
+      "required": ["knowledge"]
     }
   ]
 }
