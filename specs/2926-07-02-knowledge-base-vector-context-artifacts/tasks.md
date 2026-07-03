@@ -87,9 +87,15 @@
 - [ ] Choose and add the internal local index implementation for `agentpm-local`.
 - [ ] For vector mode, generate or refresh `knowledge/indexes/default` from the vector rows.
 - [ ] Keep the public index type as `agentpm-local` even if the internal implementation uses a specific crate/format.
+- [ ] For vector mode, write index metadata alongside the generated `agentpm-local` index so publish can detect stale indexes without rebuilding.
+- [ ] Index metadata should include `type`, `embedding_id`, `source_corpus_hash`, `source_vectors_hash`, `dimensions`, `vector_count`, `built_at`, and `agentpm_version`.
+- [ ] Ensure index metadata hashes/counts match the derived manifest fields written by build.
 - [ ] Update context-mode `agent.json` atomically with derived document counts, byte totals, hashes, and per-document metadata.
 - [ ] Update vector-mode `agent.json` atomically with derived `chunk_count`, `source_count`, `content_hash`, `vector_count`, `vectors_hash`, and default index metadata.
 - [ ] Ensure context-mode build output summarizes validated documents, total bytes, and content hash.
+- [ ] Factor build validation/metadata computation into reusable helpers that can run in write mode for `agentpm knowledge build` and check-only mode for `agentpm publish`.
+- [ ] Add a reusable context-mode build-state checker that recomputes document bytes, per-document hashes, document count, total bytes, and aggregate content hash.
+- [ ] Add a reusable vector-mode build-state checker that recomputes chunk/source counts, corpus hash, vector count, vector hash, vector dimensions, and index metadata freshness.
 - [ ] Ensure vector-mode build output summarizes validated chunks, sources, vectors, dimensions, and generated index path.
 - [ ] Add build tests for valid context-mode documents.
 - [ ] Add build tests for missing context-mode document paths.
@@ -104,26 +110,56 @@
 - [ ] Add build tests for vector count mismatch.
 - [ ] Add build tests proving vector-mode `agent.json` is updated with derived metadata.
 - [ ] Add build tests proving the generated vector-mode index directory exists.
+- [ ] Add build tests proving vector-mode index metadata is written.
+- [ ] Add build tests proving vector-mode index metadata references the current corpus hash, vector hash, dimensions, and vector count.
 - [ ] Add regression tests proving existing lint/publish code still compiles with the new command module.
 
-## Milestone 4: CLI Publish Packaging for Knowledge
-> Scope note: make built Knowledge packages publishable through the existing CLI packaging flow. Backend persistence is in a later milestone.
+## Milestone 4: CLI Publish Build-Check and Packaging for Knowledge
+> Scope note: make built Knowledge packages publishable through the existing CLI packaging flow. Publish must verify that `agentpm knowledge build` has already been run and that build-derived metadata is current. Backend persistence is in a later milestone.
 - [ ] Add `package_knowledge` to `commands/publish.rs`.
 - [ ] Package root `agent.json` into the tarball.
+- [ ] Before packaging, run Knowledge build-check validation for `kind: "knowledge"` manifests.
+- [ ] Ensure publish verifies build-derived metadata instead of trusting that fields merely exist.
+- [ ] Ensure publish does not mutate `agent.json`, compute missing build metadata, or generate indexes by default.
+- [ ] Ensure publish fails with a clear “run `agentpm knowledge build`” message when build metadata is missing.
+- [ ] Ensure publish fails with a specific stale metadata error when recomputed metadata does not match the manifest.
 - [ ] For context mode, package every declared `knowledge.documents[].path` file.
 - [ ] For context mode, package optional provenance files if present.
+- [ ] For context mode, publish build-check must verify every declared document path exists and is safe.
+- [ ] For context mode, publish build-check must recompute and compare every document `bytes` value.
+- [ ] For context mode, publish build-check must recompute and compare every document `sha256` value.
+- [ ] For context mode, publish build-check must recompute and compare `knowledge.context.document_count`.
+- [ ] For context mode, publish build-check must recompute and compare `knowledge.context.total_bytes`.
+- [ ] For context mode, publish build-check must recompute and compare `knowledge.context.content_hash`.
 - [ ] For vector mode, package declared `knowledge.corpus.chunks_path`.
 - [ ] For vector mode, package declared `knowledge.corpus.sources_path`.
 - [ ] For vector mode, package declared `knowledge.embedding.vectors_path`.
 - [ ] For vector mode, package all files under declared `agentpm-local` index paths.
 - [ ] For vector mode, package optional `knowledge.provenance.sources_manifest_path` if present.
+- [ ] For vector mode, publish build-check must validate declared chunks, sources, and vectors before packaging.
+- [ ] For vector mode, publish build-check must recompute and compare `knowledge.corpus.chunk_count`.
+- [ ] For vector mode, publish build-check must recompute and compare `knowledge.corpus.source_count`.
+- [ ] For vector mode, publish build-check must recompute and compare `knowledge.corpus.content_hash`.
+- [ ] For vector mode, publish build-check must recompute and compare `knowledge.embedding.vector_count`.
+- [ ] For vector mode, publish build-check must recompute and compare `knowledge.embedding.vectors_hash`.
+- [ ] For vector mode, publish build-check must verify vector dimensions still match `knowledge.embedding.dimensions`.
+- [ ] For vector mode, publish build-check must verify an `agentpm-local` index entry exists.
+- [ ] For vector mode, publish build-check must verify the declared `agentpm-local` index path exists.
+- [ ] For vector mode, publish build-check must verify index metadata matches the current corpus hash, vector hash, dimensions, and vector count.
 - [ ] Do not auto-package arbitrary `knowledge/documents/` contents by convention; package context documents only when explicitly declared.
 - [ ] Include README and license payload behavior consistent with other package kinds.
 - [ ] Reuse existing safe tar path checks, tar entry caps, blocked embedded archive rules, artifact size checks, and atomic artifact writing.
 - [ ] Ensure publish fails if a Knowledge manifest references files that do not exist.
-- [ ] Ensure publish fails for vector mode if no `agentpm-local` index is declared or generated.
+- [ ] Ensure publish fails if context-mode build-derived document metadata is missing.
+- [ ] Ensure publish fails if context-mode build-derived document metadata is stale.
+- [ ] Ensure publish fails if vector-mode build-derived corpus/vector metadata is missing.
+- [ ] Ensure publish fails if vector-mode build-derived corpus/vector metadata is stale.
+- [ ] Ensure publish fails if vector-mode index metadata is missing or stale.
+- [ ] Ensure publish fails for vector mode if no `agentpm-local` index is declared or present from a previous `agentpm knowledge build`.
 - [ ] Ensure publish succeeds for context mode without chunks, vectors, embeddings, or indexes when all declared documents are valid.
 - [ ] Ensure publish does not call embedding providers.
+- [ ] Ensure publish does not silently run `agentpm knowledge build`.
+- [ ] Consider a future explicit `agentpm publish --build` or `--prepare` flag, but do not implement automatic publish-time mutation in Phase 6B.
 - [ ] Update artifact filename logic for Knowledge.
 - [ ] Update signing statement kind support for Knowledge.
 - [ ] Add dry-run publish test for a valid built context-mode Knowledge package.
@@ -133,6 +169,18 @@
 - [ ] Add publish packaging tests proving unsafe paths are rejected.
 - [ ] Add publish packaging tests proving missing generated vector-mode index fails.
 - [ ] Add publish packaging tests proving context-mode packages do not require a generated index.
+- [ ] Add publish build-check tests proving unbuilt context-mode packages fail.
+- [ ] Add publish build-check tests proving stale context-mode document hashes fail.
+- [ ] Add publish build-check tests proving stale context-mode byte counts fail.
+- [ ] Add publish build-check tests proving valid built context-mode packages pass.
+- [ ] Add publish build-check tests proving unbuilt vector-mode packages fail.
+- [ ] Add publish build-check tests proving stale vector-mode corpus hashes fail.
+- [ ] Add publish build-check tests proving stale vector-mode vector hashes fail.
+- [ ] Add publish build-check tests proving missing vector-mode index metadata fails.
+- [ ] Add publish build-check tests proving stale vector-mode index metadata fails.
+- [ ] Add publish build-check tests proving valid built vector-mode packages pass.
+- [ ] Add publish tests proving publish does not mutate `agent.json`.
+- [ ] Add publish tests proving publish does not create or refresh `knowledge/indexes/default`.
 - [ ] Add regression tests for existing tool/agent/template/skill publish dry-runs.
 
 ## Milestone 5: Semver, Resolver, Install, Lockfile, and Workspace Support
@@ -164,6 +212,11 @@
 - [ ] Add a database migration updating the package kind check constraint to include `knowledge`.
 - [ ] Audit backend constants/enums/validators for hardcoded `tool|agent|template|skill` lists and add `knowledge`.
 - [ ] Update publish validation to accept `kind: "knowledge"`.
+- [ ] Add backend publish validation for Knowledge mode-specific completeness.
+- [ ] For context mode, backend publish validation should verify the manifest includes required document metadata and that declared document files are present in the uploaded artifact.
+- [ ] For vector mode, backend publish validation should verify the manifest includes required corpus, embedding, vector, and index metadata and that declared files are present in the uploaded artifact.
+- [ ] For vector mode, backend publish validation should verify an `agentpm-local` index entry and index metadata file are present in the uploaded artifact.
+- [ ] Backend validation does not need to rebuild indexes, but it should reject obviously unbuilt or incomplete Knowledge artifacts.
 - [ ] Update publish finalize dependency validation:
   - [ ] agent validates top-level `tools`, `skills`, and `knowledge`
   - [ ] skill validates top-level `tools`
@@ -184,6 +237,10 @@
 - [ ] Add backend tests for template dependency validation including Knowledge.
 - [ ] Add backend tests for direct Knowledge install resolve/init.
 - [ ] Add backend tests for private Knowledge package access denied/allowed.
+- [ ] Add backend tests rejecting context-mode Knowledge uploads missing declared document files.
+- [ ] Add backend tests rejecting context-mode Knowledge manifests missing build-derived document metadata.
+- [ ] Add backend tests rejecting vector-mode Knowledge uploads missing chunks/sources/vectors/index files.
+- [ ] Add backend tests rejecting vector-mode Knowledge manifests missing build-derived corpus/vector/index metadata.
 - [ ] Add backend regression tests for existing package kinds.
 
 ## Milestone 7: Knowledge Inspect and Query
@@ -285,6 +342,17 @@
   - [ ] `agentpm knowledge inspect`
   - [ ] `agentpm publish`
   - [ ] `agentpm install`
+- [ ] Document that Knowledge packages must be built before publishing.
+- [ ] Document that `agentpm publish` performs a build-check and fails for unbuilt or stale Knowledge packages.
+- [ ] Document that `agentpm publish` does not mutate `agent.json`, compute missing hashes, or generate vector indexes by default.
+- [ ] Document the normal Knowledge publish flow:
+  - [ ] `agentpm knowledge build`
+  - [ ] `agentpm publish`
+- [ ] Document common publish build-check failures and fixes:
+  - [ ] missing build metadata
+  - [ ] stale context document hash
+  - [ ] stale vector hash
+  - [ ] missing or stale vector index metadata
 - [ ] Document the vector-mode starter workflow:
   - [ ] create chunks/sources/vectors with any external pipeline
   - [ ] `agentpm init --kind knowledge` or vector-mode starter if available
@@ -329,3 +397,7 @@
 - [ ] Ensure vector-mode Knowledge packages still support the prepared retrieval/indexed flow.
 - [ ] Ensure direct install of package specs resolves by stored DB kind, not requested kind alone.
 - [ ] Run full backend, CLI, frontend, and SDK test suites.
+- [ ] Audit Knowledge publish code to ensure it reuses build validation/metadata computation in check-only mode rather than duplicating divergent logic.
+- [ ] Ensure `agentpm publish` never mutates Knowledge package files unless a future explicit build/prepare flag is added.
+- [ ] Ensure stale build-check errors are specific enough to tell authors what changed and to run `agentpm knowledge build`.
+- [ ] Ensure context-mode and vector-mode build-check behavior is covered in docs, CLI help, and tests.

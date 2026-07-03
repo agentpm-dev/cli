@@ -205,6 +205,12 @@ For Phase 6B, publishable Knowledge artifacts support two modes.
 
 Context-mode packages should include declared documents for direct context loading:
 
+The layouts below are recommended conventions, not fixed path requirements. AgentPM packages and validates the files declared in `agent.json`. Authors may choose different file or directory names as long as all declared paths are safe, package-relative, and, for Knowledge-owned payload files, remain under the `knowledge/` directory.
+
+For context mode, `knowledge.documents[].path` is authoritative.
+
+For vector mode, `knowledge.corpus.chunks_path`, `knowledge.corpus.sources_path`, `knowledge.embedding.vectors_path`, declared `knowledge.indexes[].path`, and optional provenance paths are authoritative.
+
 ```text
 agent.json
 README.md                  # optional but encouraged
@@ -233,6 +239,19 @@ knowledge/
 ```
 
 For the MVP, `mode: "context"` artifacts are valid publishable Knowledge packages for direct context injection and must not require chunks, embeddings, vectors, or indexes. `mode: "vector"` artifacts are prepared retrieval corpora and should require chunks, sources, embeddings, and an AgentPM local index produced by `agentpm knowledge build`.
+
+Knowledge packages must be built before publishing. `agentpm publish` must not publish an unbuilt or stale Knowledge package. For Knowledge manifests, publish performs a build-check validation and fails with a clear instruction to run `agentpm knowledge build` if required derived metadata, hashes, or mode-specific build outputs are missing or stale.
+
+`agentpm publish` should not mutate `agent.json`, compute missing hashes, or generate Knowledge indexes unless a future explicit flag such as `--build` or `--prepare` is added. The normal authoring flow is:
+
+```bash
+agentpm knowledge build
+agentpm publish
+```
+
+For mode: "context", publish verifies declared documents and build-derived document metadata.
+
+For mode: "vector", publish verifies chunks, sources, vectors, derived metadata, and generated local index metadata.
 
 ### Context document contract
 `mode: "context"` packages use declared document entries instead of chunks, embeddings, vectors, and indexes. Each document entry points to a package-relative file intended for direct context loading by an agent/runtime/harness.
@@ -360,6 +379,50 @@ For `mode: "vector"`:
 
 Treat these as derived truth owned by `build`. Authors provide paths and operational intent; `build` validates the files and records computed facts.
 
+`agentpm publish` must verify these build-derived fields instead of trusting their presence alone. Publish should recompute enough mode-specific metadata to prove the package is already built and current.
+
+For `mode: "context"`, publish should verify:
+
+- every declared `knowledge.documents[].path` exists and is safe
+- every document `bytes` value matches the current file size
+- every document `sha256` value matches the current file contents
+- `knowledge.context.document_count` matches the declared document count
+- `knowledge.context.total_bytes` matches the sum of declared document byte counts
+- `knowledge.context.content_hash` matches the recomputed aggregate context content hash
+
+For `mode: "vector"`, publish should verify:
+
+- `knowledge.corpus.chunks_path` exists and validates
+- `knowledge.corpus.sources_path` exists and validates
+- `knowledge.embedding.vectors_path` exists and validates
+- `knowledge.corpus.chunk_count` matches the current chunks file
+- `knowledge.corpus.source_count` matches the current sources file
+- `knowledge.corpus.content_hash` matches the recomputed corpus hash
+- `knowledge.embedding.vector_count` matches the current vector file
+- `knowledge.embedding.vectors_hash` matches the current vector file
+- vector dimensions still match `knowledge.embedding.dimensions`
+- an `agentpm-local` index entry exists
+- the declared `agentpm-local` index path exists
+
+For vector mode, `agentpm knowledge build` should also write index metadata that lets publish detect stale indexes without rebuilding them. The index metadata should record the source corpus hash, source vector hash, dimensions, vector count, index type, and AgentPM version used to build the index.
+
+Example index metadata:
+
+```json
+{
+  "type": "agentpm-local",
+  "embedding_id": "default",
+  "source_corpus_hash": "sha256:...",
+  "source_vectors_hash": "sha256:...",
+  "dimensions": 1536,
+  "vector_count": 12482,
+  "built_at": "2026-07-03T00:00:00Z",
+  "agentpm_version": "0.6.0"
+}
+```
+
+Publish should fail if the index metadata does not match the current manifest-derived corpus/vector hashes, dimensions, or vector count.
+
 ### Strict vs loose validation
 Strictly validate fields AgentPM uses to build, install, query, lock, or verify:
 
@@ -428,7 +491,7 @@ knowledge/
     context.md
 ```
 
-Vector starter layout, if supported by init:
+Vector starter layout:
 
 ```text
 agent.json
@@ -456,6 +519,60 @@ Expected behavior:
 - fail if the manifest is not `kind: "knowledge"`
 - fail if required files for the selected mode are missing or invalid
 - fail if vector count/dimensions do not match chunks/manifest for `mode: "vector"`
+
+### `agentpm publish` build-check behavior
+
+For `kind: "knowledge"` packages, `agentpm publish` must verify that `agentpm knowledge build` has already been run and that the build outputs are current.
+
+Publish should reuse the same validation and metadata computation logic as `agentpm knowledge build`, but in check-only mode:
+
+agentpm knowledge build
+  validates inputs
+  computes derived metadata
+  writes derived metadata
+  writes vector index metadata for mode="vector"
+
+agentpm publish
+  validates inputs
+  recomputes derived metadata
+  compares recomputed metadata to manifest fields
+  verifies vector index metadata for mode="vector"
+  packages files only if the build state is current
+  does not mutate files
+
+If build metadata is missing, publish should fail with:
+
+Knowledge package is not built.
+
+Run:
+agentpm knowledge build
+
+Then publish again.
+
+If build metadata is stale, publish should fail with a specific mismatch and the same recovery instruction:
+
+Knowledge package build metadata is stale.
+
+knowledge.documents[0].sha256 does not match knowledge/docs/playbook.md.
+
+Run:
+agentpm knowledge build
+
+Then publish again.
+
+For stale vector indexes, publish should fail with a specific index mismatch:
+
+Knowledge index is stale.
+
+knowledge/indexes/default was built for vectors hash sha256:old...
+Current vectors hash is sha256:new...
+
+Run:
+agentpm knowledge build
+
+Then publish again.
+
+Publish must not silently rebuild indexes or rewrite agent.json in Phase 6B.
 
 ### `agentpm knowledge inspect`
 Reads a local or installed Knowledge package and prints metadata.
@@ -615,7 +732,7 @@ knowledge:@zack/python-docs@0.1.0
 
 Agents/templates that reference Knowledge should include resolved Knowledge dependencies in root relationship data.
 
-Example shape, adapting to existing lockfile v2 conventions:
+Example shape, adapting to existing lockfile v3 conventions:
 
 ```json
 {
@@ -644,7 +761,7 @@ Example shape, adapting to existing lockfile v2 conventions:
 }
 ```
 
-Use the existing lockfile shape/pattern actually present in the repo. Do not introduce a new relationship model if the v2 lockfile already uses `roots`.
+Use the existing lockfile shape/pattern actually present in the repo. Do not introduce a new relationship model if the v3 lockfile already uses `roots`.
 
 ### Backend / registry constraints
 - The physical `tools` table is used for all package kinds. Add `knowledge` anywhere database constraints, Python models, route validation, service code, DTOs, search indexes, and frontend types currently enumerate package kinds.
@@ -655,6 +772,7 @@ Use the existing lockfile shape/pattern actually present in the repo. Do not int
   - for `kind: "template"`: `template.dependencies.tools`, `.agents`, `.skills`, and `.knowledge`
   - for `kind: "skill"`: top-level `tools`
   - for `kind: "knowledge"`: no dependencies
+- Publish-time validation for `kind: "knowledge"` must include a Knowledge build-check. The registry should reject unbuilt or stale Knowledge packages even if the CLI fails to catch them. Backend validation should verify required mode-specific derived metadata is present in the manifest and that required packaged files exist in the uploaded artifact. The backend does not need to rebuild indexes, but it should reject obviously incomplete Knowledge artifacts.
 - Malware scanning, yanking, signing, namespace signer policy, and entitlement enforcement apply to Knowledge packages the same way as other package kinds.
 - Consider artifact size. Knowledge packages may be significantly larger than tools/agents/skills/templates. The existing artifact max is large, but tar entry caps, blocked embedded archive rules, readme/license caps, and upload/download UX should be reviewed.
 
@@ -708,7 +826,12 @@ Optional but useful:
 - `agentpm knowledge build` supports `mode: "vector"` by validating chunks, sources, embeddings, vector dimensions/counts, safe paths, and required files.
 - `agentpm knowledge build` generates the default AgentPM local index from vectors for `mode: "vector"`.
 - `agentpm knowledge build` updates derived metadata in `agent.json` for the selected mode.
-- `agentpm publish --dry-run` succeeds for valid built context-mode and vector-mode Knowledge packages and packages `agent.json` plus declared Knowledge files.
+- Knowledge packages must be built before publishing.
+- `agentpm publish` performs a build-check for Knowledge packages and fails if required build-derived metadata is missing or stale.
+- `agentpm publish` does not mutate `agent.json`, compute missing build metadata, or generate Knowledge indexes by default.
+- For context-mode packages, publish verifies declared document hashes, byte counts, document count, total bytes, and aggregate content hash.
+- For vector-mode packages, publish verifies chunk/source/vector counts and hashes, vector dimensions, generated `agentpm-local` index presence, and index metadata freshness.
+- `agentpm publish --dry-run` succeeds for valid built context-mode and vector-mode Knowledge packages and fails for unbuilt or stale Knowledge packages.
 - `agentpm publish` supports Knowledge packages through the registry publish flow.
 - Backend publish validation, DB constraints, and package kind normalization accept Knowledge.
 - Install resolve/init/finalize support Knowledge.
@@ -743,6 +866,9 @@ Optional but useful:
 - Backend export/import is deferred, but vector-mode manifests must preserve enough canonical data for future exporters. Context-mode manifests must preserve enough document metadata for future context-loading runtimes.
 - Local index implementation might evolve. Publicly expose `agentpm-local`, not an implementation-specific format, unless necessary.
 - Existing tar packaging blocks embedded archives. Optional `knowledge/documents/` may contain archives; keep the existing safety rule unless there is a deliberate exception.
+- Checking only for the presence of build-derived fields is not enough. Publish must recompute and compare enough metadata to detect stale documents, stale vectors, and stale indexes.
+- Vector index freshness is hard to prove from the index directory alone. `agentpm knowledge build` should write index metadata that records source corpus/vector hashes, dimensions, and vector count so publish can detect stale indexes without rebuilding them.
+- If publish silently mutates Knowledge packages, authors may accidentally publish generated files they did not review. Phase 6B should keep build explicit and publish check-only.
 
 ## Open questions
 - Should `agentpm init --kind knowledge` default to `mode: "context"`, or should it require/accept a mode flag? Recommendation: default to context mode for lowest-friction authoring and optionally add a vector starter flag/template.
@@ -753,7 +879,7 @@ Optional but useful:
 - Should a built-in OpenAI adapter ship in Phase 6B, or should the first release stay fully adapter/vector-only?
 - Should raw `--vector <file.f32>` be included in Phase 6B or deferred in favor of easier-to-debug `--vector-json`?
 - Should `knowledge build` support `--check` to validate without writing derived manifest/index files?
-- Should publish require that `agentpm knowledge build` has generated an index, or should publish invoke build-like validation automatically and fail if derived metadata is stale?
+- Should Phase 6B add an explicit `agentpm publish --build` or `--prepare` flag later? Recommendation: not in the MVP. Publish should be check-only by default and fail with instructions to run `agentpm knowledge build`.
 - Should Knowledge detail pages show retrieved sample chunks or only metadata? Recommendation: metadata only in Phase 6B.
 - Should SDKs include `load_knowledge` / `loadKnowledge` in Phase 6B or defer SDK-specific loading until after CLI/registry flows are stable?
 - Should package refs allow same name across different kinds in the same namespace if existing DB constraints do not already support it?
