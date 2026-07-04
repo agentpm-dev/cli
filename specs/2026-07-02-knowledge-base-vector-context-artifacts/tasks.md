@@ -253,44 +253,89 @@
 - [ ] Add backend regression tests for existing package kinds.
 
 ## Milestone 7: Knowledge Inspect and Query
-> Scope note: add the local developer loop. Inspect should work for local or installed artifacts in both modes. Query is vector-mode only, provider-neutral, and accepts a query vector directly. Context-mode artifacts should inspect/read cleanly and fail clearly if vector query is requested. Shell command adapter support is strongly preferred. Built-in provider adapter is optional DX.
+> Scope note: add the local developer loop. Inspect should work for local or installed artifacts in both modes. Query is vector-mode only, provider-neutral, and accepts a query vector directly. For Phase 6B, `agentpm-local` v1 may use exact search over the declared vector file, with `knowledge/indexes/default/metadata.json` proving the local query metadata was built for the current chunks, sources, vectors, dimensions, metric, and vector count. Context-mode artifacts should inspect/read cleanly and fail clearly if vector query is requested. Shell command adapter support is strongly preferred. Built-in provider adapter is optional DX.
 - [ ] Implement `agentpm knowledge inspect <path-or-package>`.
 - [ ] Resolve local references:
   - [ ] package directory containing `agent.json`
   - [ ] direct `agent.json` path
   - [ ] installed package ref if already in the workspace lock/install roots
 - [ ] Print human-readable Knowledge metadata for both modes: package, mode, documents/context metadata, chunks, sources, embedding, vectors, indexes, retrieval defaults, and provenance as applicable.
+- [ ] For context mode, inspect should show declared document paths, content types, roles, byte counts, per-document hashes, document count, total bytes, and aggregate content hash.
+- [ ] For vector mode, inspect should show chunk count, source count, embedding provider/model, dimensions, metric, normalized flag, vectors path/hash, index path, index type, index algorithm, index metadata freshness, and retrieval defaults.
 - [ ] Add `--json` output for inspect.
 - [ ] Consider implementing `agentpm knowledge read <path-or-package>` or an inspect/read JSON mode for context-mode document retrieval; if deferred, make the deferral explicit in docs.
+- [ ] If `knowledge read` is implemented, support reading all declared context documents or a specific declared document path.
+- [ ] If `knowledge read` is implemented, ensure it only reads manifest-declared context documents and does not allow arbitrary file reads from the package directory.
 - [ ] Implement `agentpm knowledge query <path-or-package>` for vector-mode artifacts.
 - [ ] Reject context-mode `knowledge query` with a clear message that the artifact has no vector index and is intended for direct context loading.
 - [ ] Add `--top-k`, defaulting to manifest `retrieval.default_top_k` or a sensible fallback.
-- [ ] Add `--score-threshold` if supported by the local index.
+- [ ] Add `--score-threshold` if supported by the local exact-search implementation.
 - [ ] Add `--json`.
-- [ ] Add `--include-metadata` if not included by default.
+- [ ] Add `--include-text` if text is not included by default.
+- [ ] Add `--include-metadata` if metadata is not included by default.
 - [ ] Add `--vector-json <file|->`.
 - [ ] Parse query vector JSON and validate vector length equals manifest embedding dimensions.
 - [ ] Fail if vector JSON metadata provider/model/dimensions conflicts with the manifest.
 - [ ] Consider adding raw `--vector <file.f32>` if straightforward; otherwise defer.
-- [ ] Implement retrieval against the `agentpm-local` index.
-- [ ] Return ranked chunks with scores, chunk IDs, text snippets/full text, source IDs, source title/URI where available, and metadata.
+- [ ] For vector mode, locate the default `agentpm-local` index entry from `knowledge.indexes`.
+- [ ] Load `knowledge/indexes/default/metadata.json`.
+- [ ] Validate index metadata has `type: "agentpm-local"`.
+- [ ] Validate index metadata has supported `format_version`.
+- [ ] Validate index metadata has supported `algorithm`; for Phase 6B MVP, support `algorithm: "exact"`.
+- [ ] Validate index metadata `embedding_id` matches the manifest embedding ID.
+- [ ] Validate index metadata `metric` matches the manifest embedding metric.
+- [ ] Validate index metadata `normalized` matches the manifest embedding normalized flag.
+- [ ] Validate index metadata `dimensions` matches `knowledge.embedding.dimensions`.
+- [ ] Validate index metadata `vector_count` matches `knowledge.embedding.vector_count`.
+- [ ] Validate index metadata `chunk_count` matches `knowledge.corpus.chunk_count`.
+- [ ] Validate index metadata `source_count` matches `knowledge.corpus.source_count`.
+- [ ] Validate index metadata `chunks_path`, `sources_path`, and `vectors_path` match the manifest-declared canonical paths.
+- [ ] Validate index metadata source hashes match the manifest-derived hashes:
+  - [ ] `source_corpus_hash` matches `knowledge.corpus.content_hash`
+  - [ ] `source_vectors_hash` matches `knowledge.embedding.vectors_hash`
+  - [ ] `source_chunks_hash` matches the current or derived chunks hash, if tracked separately
+  - [ ] `source_sources_hash` matches the current or derived sources hash, if tracked separately
+- [ ] Fail clearly if index metadata is missing, unsupported, or stale.
+- [ ] For `agentpm-local` v1 exact search, open the declared canonical vector file from `knowledge.embedding.vectors_path`.
+- [ ] For exact search, scan vector rows directly from the canonical raw little-endian float32 vector file.
+- [ ] For exact search, compute similarity between the query vector and each vector row.
+- [ ] For exact search with `metric: "cosine"` and `normalized: true`, use dot product as the similarity score.
+- [ ] If additional metrics are supported, route scoring by manifest/index metadata metric.
+- [ ] Keep the top K scored rows without loading all result rows into memory unnecessarily.
+- [ ] Enforce the row-order invariant during result hydration: vector row `N` maps to chunk line `N` in `chunks.jsonl`.
+- [ ] Load matching chunk rows from `chunks.jsonl`.
+- [ ] Load matching source records from `sources.jsonl` by `source_id`.
+- [ ] Return ranked chunks with scores, chunk IDs, row numbers, text snippets/full text, source IDs, source title/URI where available, and metadata.
+- [ ] Ensure query results make it clear that scores come from local exact search when using `agentpm-local` v1.
 - [ ] Implement `--embedding-command <cmd>` if included in Phase 6B.
 - [ ] For command adapters, pass query text and embedding spec as JSON on stdin.
 - [ ] For command adapters, parse vector JSON from stdout.
 - [ ] Enforce adapter timeout, max stdout size, non-zero exit failure, and safe command execution without shell interpolation by default.
 - [ ] Ensure AgentPM registry tokens are not injected into adapter environments by AgentPM.
 - [ ] Add an internal `QueryVectorResolver` or equivalent boundary separating vector production from retrieval.
+- [ ] Add an internal `KnowledgeRetriever` or equivalent boundary separating retrieval from result hydration.
+- [ ] Ensure the retrieval layer accepts a query vector and returns scored row IDs before chunk/source hydration.
 - [ ] Optionally implement one built-in BYO-token provider adapter, likely OpenAI.
 - [ ] Ensure missing credentials for a built-in adapter produces a clear error.
 - [ ] Ensure unsupported provider/model produces a clear error recommending `--vector-json` or `--embedding-command`.
 - [ ] Add query tests using `--vector-json` against vector-mode artifacts.
 - [ ] Add query tests proving dimension mismatch fails before retrieval.
-- [ ] Add query tests proving missing index fails clearly.
+- [ ] Add query tests proving missing index metadata fails clearly.
+- [ ] Add query tests proving unsupported index metadata format/version fails clearly.
+- [ ] Add query tests proving unsupported index algorithm fails clearly.
+- [ ] Add query tests proving stale corpus hash fails clearly.
+- [ ] Add query tests proving stale vector hash fails clearly.
+- [ ] Add query tests proving mismatched metric or normalized flag fails clearly.
+- [ ] Add query tests proving exact search returns expected top-K rows for a tiny fixture corpus.
+- [ ] Add query tests proving row numbers map back to the correct chunk IDs.
+- [ ] Add query tests proving chunk `source_id` maps back to the correct source metadata.
 - [ ] Add query tests for shell adapter success/failure if implemented.
 - [ ] Add query tests for unsupported provider fallback error if built-in adapter path exists.
 - [ ] Add query tests proving context-mode artifacts fail clearly for vector query.
 - [ ] Add inspect tests for local context-mode and vector-mode Knowledge packages.
 - [ ] Add inspect tests for installed context-mode and vector-mode Knowledge packages if the install layout is available in tests.
+- [ ] Add inspect tests proving vector-mode output includes index algorithm and index metadata freshness.
+- [ ] Add read tests for context-mode artifacts if `agentpm knowledge read` is implemented.
 
 ## Milestone 8: Search, Registry UI, and Frontend Types
 > Scope note: Knowledge should appear as a first-class package in the registry, but must not be presented as executable.
