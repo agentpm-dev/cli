@@ -85,18 +85,23 @@
 - [ ] For vector mode, implement content hash calculation for corpus data, including at least `chunks.jsonl` and `sources.jsonl`.
 - [ ] For vector mode, implement vector hash calculation for the declared vector file.
 - [ ] Choose and add the internal local index implementation for `agentpm-local`.
-- [ ] For vector mode, generate or refresh `knowledge/indexes/default` from the vector rows.
+- [ ] For `agentpm-local` v1, exact search over the declared vector file is acceptable. The generated index directory must at minimum contain metadata proving the index was built for the current corpus/vector hashes, dimensions, metric, and vector count. Future AgentPM versions may replace or augment exact search with an approximate nearest-neighbor structure while preserving the `agentpm-local` manifest contract.
+- [ ] For `agentpm-local` v1, do not duplicate chunk text, source metadata, or vectors into the index directory unless required by the implementation. The canonical searchable data remains `chunks.jsonl`, `sources.jsonl`, and the declared vector file.
+- [ ] For vector mode, generate or refresh `knowledge/indexes/default/metadata.json` from the validated chunks, sources, embedding metadata, and vector file.
 - [ ] Keep the public index type as `agentpm-local` even if the internal implementation uses a specific crate/format.
 - [ ] For vector mode, write index metadata alongside the generated `agentpm-local` index so publish can detect stale indexes without rebuilding.
-- [ ] Index metadata should include `type`, `embedding_id`, `source_corpus_hash`, `source_vectors_hash`, `dimensions`, `vector_count`, `built_at`, and `agentpm_version`.
+- [ ] Index metadata should include `type`, `format_version`, `algorithm`, `embedding_id`, `metric`, `normalized`, `source_corpus_hash`, `source_chunks_hash`, `source_sources_hash`, `source_vectors_hash`, `chunks_path`, `sources_path`, `vectors_path`, `dimensions`, `chunk_count`, `source_count`, `vector_count`, `built_at`, and `agentpm_version`.
 - [ ] Ensure index metadata hashes/counts match the derived manifest fields written by build.
+- [ ] Document and enforce the row-order invariant: vector row `N` corresponds to chunk line `N` in `chunks.jsonl`.
 - [ ] Update context-mode `agent.json` atomically with derived document counts, byte totals, hashes, and per-document metadata.
 - [ ] Update vector-mode `agent.json` atomically with derived `chunk_count`, `source_count`, `content_hash`, `vector_count`, `vectors_hash`, and default index metadata.
 - [ ] Ensure context-mode build output summarizes validated documents, total bytes, and content hash.
+- [ ] Ensure vector-mode build output summarizes validated chunks, sources, vectors, dimensions, and generated index path.
 - [ ] Factor build validation/metadata computation into reusable helpers that can run in write mode for `agentpm knowledge build` and check-only mode for `agentpm publish`.
 - [ ] Add a reusable context-mode build-state checker that recomputes document bytes, per-document hashes, document count, total bytes, and aggregate content hash.
 - [ ] Add a reusable vector-mode build-state checker that recomputes chunk/source counts, corpus hash, vector count, vector hash, vector dimensions, and index metadata freshness.
-- [ ] Ensure vector-mode build output summarizes validated chunks, sources, vectors, dimensions, and generated index path.
+- [ ] Ensure generated index metadata contains enough information for `agentpm knowledge query` to locate the canonical chunks, sources, and vector file without guessing paths.
+- [ ] Ensure generated index metadata contains enough information for `agentpm knowledge query` to verify dimensions, metric, normalized flag, vector count, and source hashes before searching.
 - [ ] Add build tests for valid context-mode documents.
 - [ ] Add build tests for missing context-mode document paths.
 - [ ] Add build tests proving context-mode `agent.json` is updated with derived document metadata.
@@ -112,6 +117,10 @@
 - [ ] Add build tests proving the generated vector-mode index directory exists.
 - [ ] Add build tests proving vector-mode index metadata is written.
 - [ ] Add build tests proving vector-mode index metadata references the current corpus hash, vector hash, dimensions, and vector count.
+- [ ] Add build tests proving `agentpm-local` v1 can produce an index directory containing only `metadata.json`.
+- [ ] Add build tests proving the generated metadata declares `algorithm: "exact"`.
+- [ ] Add build tests proving the generated metadata includes canonical chunks, sources, and vectors paths.
+- [ ] Add build tests proving the generated metadata includes metric and normalized fields.
 - [ ] Add regression tests proving existing lint/publish code still compiles with the new command module.
 
 ## Milestone 4: CLI Publish Build-Check and Packaging for Knowledge
