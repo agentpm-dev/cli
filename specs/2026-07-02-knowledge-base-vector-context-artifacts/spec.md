@@ -373,6 +373,16 @@ For `mode: "context"`:
 - `knowledge.context.total_bytes`
 - `knowledge.context.content_hash`
 
+`knowledge.context.content_hash` should be deterministic over the declared document payloads in declaration order. A stable recommended definition is:
+
+```text
+sha256(
+  document_1_path + "\0" + document_1_bytes + "\xff" +
+  document_2_path + "\0" + document_2_bytes + "\xff" +
+  ...
+)
+```
+
 For `mode: "vector"`:
 
 - `knowledge.corpus.chunk_count`
@@ -382,6 +392,17 @@ For `mode: "vector"`:
 - `knowledge.embedding.vectors_hash`
 - `knowledge.indexes` entry for generated default `agentpm-local` index
 - optional index hash/metadata if convenient
+
+`knowledge.corpus.content_hash` should be deterministic over the canonical chunks and sources payloads. A stable recommended definition is:
+
+```text
+sha256(
+  "chunks" + "\0" + chunks_bytes + "\xff" +
+  "sources" + "\0" + sources_bytes + "\xff"
+)
+```
+
+`knowledge.embedding.vectors_hash` should be the sha256 of the raw little-endian float32 vector file bytes.
 
 Treat these as derived truth owned by `build`. Authors provide paths and operational intent; `build` validates the files and records computed facts.
 
@@ -410,17 +431,28 @@ For `mode: "vector"`, publish should verify:
 - an `agentpm-local` index entry exists
 - the declared `agentpm-local` index path exists
 
-For vector mode, `agentpm knowledge build` should also write index metadata that lets publish detect stale indexes without rebuilding them. The index metadata should record the source corpus hash, source vector hash, dimensions, vector count, index type, and AgentPM version used to build the index.
+For vector mode, `agentpm knowledge build` should also write index metadata that lets publish detect stale indexes without rebuilding them. The index metadata should record the source corpus hash, source chunks hash, source sources hash, source vector hash, canonical chunks/sources/vectors paths, metric, normalized flag, dimensions, chunk count, source count, vector count, index type, algorithm, format version, and AgentPM version used to build the index.
 
 Example index metadata:
 
 ```json
 {
   "type": "agentpm-local",
+  "format_version": 1,
+  "algorithm": "exact",
   "embedding_id": "default",
+  "metric": "cosine",
+  "normalized": true,
   "source_corpus_hash": "sha256:...",
+  "source_chunks_hash": "sha256:...",
+  "source_sources_hash": "sha256:...",
   "source_vectors_hash": "sha256:...",
+  "chunks_path": "knowledge/chunks.jsonl",
+  "sources_path": "knowledge/sources.jsonl",
+  "vectors_path": "knowledge/embeddings/default.f32",
   "dimensions": 1536,
+  "chunk_count": 12482,
+  "source_count": 327,
   "vector_count": 12482,
   "built_at": "2026-07-03T00:00:00Z",
   "agentpm_version": "0.6.0"
