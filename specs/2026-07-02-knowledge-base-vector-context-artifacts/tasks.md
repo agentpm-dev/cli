@@ -158,6 +158,9 @@
 - [ ] Do not auto-package arbitrary `knowledge/documents/` contents by convention; package context documents only when explicitly declared.
 - [ ] Include README and license payload behavior consistent with other package kinds.
 - [ ] Reuse existing safe tar path checks, tar entry caps, blocked embedded archive rules, artifact size checks, and atomic artifact writing.
+- [ ] Ensure CLI publish-path manifest handling continues to accept valid agent manifests with top-level `knowledge` refs.
+- [ ] Ensure CLI publish-path manifest handling continues to accept valid template manifests with `template.dependencies.knowledge`.
+- [ ] Ensure Knowledge refs on agents/templates are treated as valid manifest content in publish dry-run flows, not as reserved/future-only fields.
 - [ ] Ensure publish fails if a Knowledge manifest references files that do not exist.
 - [ ] Ensure publish fails if context-mode build-derived document metadata is missing.
 - [ ] Ensure publish fails if context-mode build-derived document metadata is stale.
@@ -188,6 +191,8 @@
 - [ ] Add publish build-check tests proving missing vector-mode index metadata fails.
 - [ ] Add publish build-check tests proving stale vector-mode index metadata fails.
 - [ ] Add publish build-check tests proving valid built vector-mode packages pass.
+- [ ] Add dry-run publish regression test for a valid agent manifest containing top-level `knowledge` refs.
+- [ ] Add dry-run publish regression test for a valid template manifest containing `template.dependencies.knowledge`.
 - [ ] Add publish tests proving publish does not mutate `agent.json`.
 - [ ] Add publish tests proving publish does not create or refresh `knowledge/indexes/default`.
 - [ ] Add regression tests for existing tool/agent/template/skill publish dry-runs.
