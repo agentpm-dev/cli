@@ -435,6 +435,8 @@
 - [ ] Document provenance/license author responsibility.
 - [ ] Add a minimal context-mode example Knowledge package under examples or docs fixtures.
 - [ ] Add a minimal vector-mode example Knowledge package under examples or docs fixtures.
+  - Maybe AgentPM Docs as a real vector knowledge package
+  - Another one can be more custom-generated for research assistant agent or something
 - [ ] Add an example embedding command adapter script if `--embedding-command` is implemented.
 - [ ] Update CLI help text snapshots/docs for new commands.
 - [ ] Update registry/docs pages that list package kinds.
