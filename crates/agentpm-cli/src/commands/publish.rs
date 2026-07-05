@@ -1,11 +1,16 @@
 use crate::auth::read_key_file;
 use crate::commands::keys::key_id_from_pub_b64;
+use crate::commands::knowledge::{
+    KnowledgeBuildMode, KnowledgeBuildSummary, execute_knowledge_build_with_manifest,
+    parse_safe_relative_path, resolve_existing_file,
+};
 use crate::keys::signing::{
     StoredKeyV1, decrypt_private, keystore_dir, prompt_passphrase_with_fallback,
 };
 use crate::manifest::{
-    AgentManifest, Entrypoint, PublishManifest, SkillManifest, TemplateManifest, ToolManifest,
-    load_manifest_value, parse_publish_manifest, resolve_schema_source, validate_manifest_value,
+    AgentManifest, Entrypoint, KnowledgeManifest, PublishManifest, SkillManifest, TemplateManifest,
+    ToolManifest, load_manifest_value, parse_publish_manifest, resolve_schema_source,
+    validate_manifest_value,
 };
 use crate::prelude::*;
 use crate::ui::Step;
@@ -150,8 +155,9 @@ impl PublishArgs {
             }
             PublishManifest::Skill(mf) => package_skill(mf, &manifest_path, &manifest_value)
                 .context("packaging skill into tar.gz")?,
-            PublishManifest::Knowledge(_) => {
-                bail!("knowledge publish support is not implemented yet")
+            PublishManifest::Knowledge(mf) => {
+                package_knowledge(mf, &manifest_path, &manifest_value)
+                    .context("packaging knowledge into tar.gz")?
             }
         };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
@@ -658,6 +664,578 @@ fn package_skill(
         Ok(())
     })?;
     Ok(out_path)
+}
+
+fn package_knowledge(
+    manifest: &KnowledgeManifest,
+    manifest_path: &Path,
+    manifest_value: &serde_json::Value,
+) -> Result<PathBuf> {
+    let root = manifest_path.parent().unwrap_or(Path::new("."));
+    let out_dir = root.join("target").join("agentpm");
+    fs::create_dir_all(&out_dir).ok();
+
+    run_knowledge_publish_build_check(manifest_path)?;
+
+    let out_path = out_dir.join(artifact_filename(&manifest.name, &manifest.version, None));
+    write_artifact_atomically(&out_path, |tar| {
+        let mut member_count: usize = 0;
+
+        let manifest_bytes = fs::read(manifest_path)?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        ensure_safe_tar_name("agent.json")?;
+        member_count += 1;
+        tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+
+        match manifest.knowledge.mode.as_str() {
+            "context" => {
+                for document in &manifest.knowledge.documents {
+                    append_declared_knowledge_file(
+                        tar,
+                        root,
+                        &document.path,
+                        &mut member_count,
+                        &mut seen,
+                    )?;
+                }
+            }
+            "vector" => {
+                let corpus =
+                    manifest.knowledge.corpus.as_ref().ok_or_else(|| {
+                        anyhow!("vector-mode Knowledge requires knowledge.corpus")
+                    })?;
+                let chunks_path = corpus.chunks_path.as_deref().ok_or_else(|| {
+                    anyhow!("vector-mode Knowledge requires knowledge.corpus.chunks_path")
+                })?;
+                let sources_path = corpus.sources_path.as_deref().ok_or_else(|| {
+                    anyhow!("vector-mode Knowledge requires knowledge.corpus.sources_path")
+                })?;
+                let embedding =
+                    manifest.knowledge.embedding.as_ref().ok_or_else(|| {
+                        anyhow!("vector-mode Knowledge requires knowledge.embedding")
+                    })?;
+
+                append_declared_knowledge_file(
+                    tar,
+                    root,
+                    chunks_path,
+                    &mut member_count,
+                    &mut seen,
+                )?;
+                append_declared_knowledge_file(
+                    tar,
+                    root,
+                    sources_path,
+                    &mut member_count,
+                    &mut seen,
+                )?;
+                append_declared_knowledge_file(
+                    tar,
+                    root,
+                    &embedding.vectors_path,
+                    &mut member_count,
+                    &mut seen,
+                )?;
+
+                for index in &manifest.knowledge.indexes {
+                    append_declared_knowledge_path(
+                        tar,
+                        root,
+                        &index.path,
+                        &mut member_count,
+                        &mut seen,
+                    )?;
+                }
+            }
+            other => bail!("unsupported knowledge mode: {}", other),
+        }
+
+        if let Some(provenance_path) = manifest
+            .knowledge
+            .provenance
+            .as_ref()
+            .and_then(|p| p.sources_manifest_path.as_deref())
+        {
+            append_optional_knowledge_file(
+                tar,
+                root,
+                "knowledge.provenance.sources_manifest_path",
+                provenance_path,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        if let Some(readme_path) = manifest_value.get("readme").and_then(|v| v.as_str()) {
+            append_optional_knowledge_file(
+                tar,
+                root,
+                "readme",
+                readme_path,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        if let Some(license_file) = pick_license_paths(manifest_value).1 {
+            append_optional_knowledge_file(
+                tar,
+                root,
+                "license.file",
+                license_file,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        Ok(())
+    })?;
+    Ok(out_path)
+}
+
+fn run_knowledge_publish_build_check(manifest_path: &Path) -> Result<()> {
+    let (knowledge_manifest, summary) =
+        execute_knowledge_build_with_manifest(manifest_path, KnowledgeBuildMode::Check)?;
+
+    match summary {
+        KnowledgeBuildSummary::Context { result, .. } => {
+            check_context_publish_metadata(&knowledge_manifest, &result)?;
+        }
+        KnowledgeBuildSummary::Vector { result, .. } => {
+            check_vector_publish_metadata(manifest_path, &knowledge_manifest, &result)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn knowledge_not_built(message: impl Into<String>) -> anyhow::Error {
+    anyhow!(
+        "Knowledge package is not built.\n\n{}\n\nRun:\nagentpm knowledge build\n\nThen publish again.",
+        message.into()
+    )
+}
+
+fn knowledge_stale(message: impl Into<String>) -> anyhow::Error {
+    anyhow!(
+        "Knowledge package build metadata is stale.\n\n{}\n\nRun:\nagentpm knowledge build\n\nThen publish again.",
+        message.into()
+    )
+}
+
+fn check_context_publish_metadata(
+    manifest: &KnowledgeManifest,
+    result: &crate::commands::knowledge::ContextBuildResult,
+) -> Result<()> {
+    if manifest.knowledge.documents.is_empty() {
+        return Err(knowledge_not_built(
+            "knowledge.documents must contain at least one declared context document.",
+        ));
+    }
+    if manifest.knowledge.documents.len() != result.documents.len() {
+        return Err(knowledge_stale(format!(
+            "knowledge.documents count {} does not match computed document count {}.",
+            manifest.knowledge.documents.len(),
+            result.documents.len()
+        )));
+    }
+
+    for (idx, (declared, built)) in manifest
+        .knowledge
+        .documents
+        .iter()
+        .zip(&result.documents)
+        .enumerate()
+    {
+        match declared.bytes {
+            Some(bytes) if bytes == built.bytes => {}
+            Some(bytes) => {
+                return Err(knowledge_stale(format!(
+                    "knowledge.documents[{idx}].bytes = {} does not match {}.",
+                    bytes, built.bytes
+                )));
+            }
+            None => {
+                return Err(knowledge_not_built(format!(
+                    "knowledge.documents[{idx}].bytes is missing for {}.",
+                    declared.path
+                )));
+            }
+        }
+
+        match declared.sha256.as_deref() {
+            Some(sha) if sha == built.sha256 => {}
+            Some(sha) => {
+                return Err(knowledge_stale(format!(
+                    "knowledge.documents[{idx}].sha256 = {} does not match {}.",
+                    sha, built.sha256
+                )));
+            }
+            None => {
+                return Err(knowledge_not_built(format!(
+                    "knowledge.documents[{idx}].sha256 is missing for {}.",
+                    declared.path
+                )));
+            }
+        }
+    }
+
+    let context = manifest
+        .knowledge
+        .context
+        .as_ref()
+        .ok_or_else(|| knowledge_not_built("knowledge.context is missing."))?;
+
+    compare_required_u64(
+        "knowledge.context.document_count",
+        context.document_count,
+        result.document_count,
+    )?;
+    compare_required_u64(
+        "knowledge.context.total_bytes",
+        context.total_bytes,
+        result.total_bytes,
+    )?;
+    compare_required_str(
+        "knowledge.context.content_hash",
+        context.content_hash.as_deref(),
+        &result.content_hash,
+    )?;
+
+    Ok(())
+}
+
+fn check_vector_publish_metadata(
+    manifest_path: &Path,
+    manifest: &KnowledgeManifest,
+    result: &crate::commands::knowledge::VectorBuildResult,
+) -> Result<()> {
+    let corpus = manifest
+        .knowledge
+        .corpus
+        .as_ref()
+        .ok_or_else(|| knowledge_not_built("knowledge.corpus is missing."))?;
+    compare_required_u64(
+        "knowledge.corpus.chunk_count",
+        corpus.chunk_count,
+        result.chunk_count,
+    )?;
+    compare_required_u64(
+        "knowledge.corpus.source_count",
+        corpus.source_count,
+        result.source_count,
+    )?;
+    compare_required_str(
+        "knowledge.corpus.content_hash",
+        corpus.content_hash.as_deref(),
+        &result.corpus_hash,
+    )?;
+
+    let embedding = manifest
+        .knowledge
+        .embedding
+        .as_ref()
+        .ok_or_else(|| knowledge_not_built("knowledge.embedding is missing."))?;
+    compare_required_u64(
+        "knowledge.embedding.vector_count",
+        embedding.vector_count,
+        result.vector_count,
+    )?;
+    compare_required_str(
+        "knowledge.embedding.vectors_hash",
+        embedding.vectors_hash.as_deref(),
+        &result.vectors_hash,
+    )?;
+    if embedding.dimensions != result.dimensions {
+        return Err(knowledge_stale(format!(
+            "knowledge.embedding.dimensions = {} does not match computed dimensions {}.",
+            embedding.dimensions, result.dimensions
+        )));
+    }
+
+    let default_index = manifest
+        .knowledge
+        .indexes
+        .iter()
+        .find(|index| index.r#type == "agentpm-local" && index.id == "default")
+        .ok_or_else(|| {
+            knowledge_not_built("knowledge.indexes is missing the default agentpm-local index.")
+        })?;
+
+    let package_root = manifest_path
+        .parent()
+        .ok_or_else(|| anyhow!("manifest path has no parent: {}", manifest_path.display()))?;
+    let (index_path, _tar_name, is_dir) =
+        resolve_declared_knowledge_path_for_packaging(package_root, &default_index.path)?;
+    if !is_dir {
+        return Err(knowledge_stale(format!(
+            "knowledge.indexes[default].path must point to a directory: {}.",
+            default_index.path
+        )));
+    }
+
+    let metadata_path = index_path.join("metadata.json");
+    if !metadata_path.exists() {
+        return Err(knowledge_not_built(format!(
+            "{} is missing.",
+            metadata_path
+                .strip_prefix(package_root)
+                .unwrap_or(&metadata_path)
+                .display()
+        )));
+    }
+
+    let metadata_text = fs::read_to_string(&metadata_path)
+        .with_context(|| format!("reading {}", metadata_path.display()))?;
+    let metadata_value: JsonValue = serde_json::from_str(&metadata_text)
+        .with_context(|| format!("parsing {}", metadata_path.display()))?;
+    check_index_metadata(
+        &metadata_value,
+        manifest,
+        result,
+        default_index.embedding_id.as_str(),
+    )?;
+
+    Ok(())
+}
+
+fn check_index_metadata(
+    metadata: &JsonValue,
+    manifest: &KnowledgeManifest,
+    result: &crate::commands::knowledge::VectorBuildResult,
+    index_embedding_id: &str,
+) -> Result<()> {
+    let obj = metadata.as_object().ok_or_else(|| {
+        knowledge_not_built("knowledge/indexes/default/metadata.json must be a JSON object.")
+    })?;
+
+    compare_metadata_str(obj, "type", "agentpm-local")?;
+    compare_metadata_u64(obj, "format_version", 1)?;
+    compare_metadata_str(obj, "algorithm", "exact")?;
+    compare_metadata_str(obj, "embedding_id", index_embedding_id)?;
+
+    let embedding = manifest
+        .knowledge
+        .embedding
+        .as_ref()
+        .ok_or_else(|| knowledge_not_built("knowledge.embedding is missing."))?;
+    compare_metadata_str(obj, "metric", embedding.metric.as_str())?;
+    compare_metadata_bool(obj, "normalized", embedding.normalized)?;
+
+    let corpus = manifest
+        .knowledge
+        .corpus
+        .as_ref()
+        .ok_or_else(|| knowledge_not_built("knowledge.corpus is missing."))?;
+    compare_metadata_str(
+        obj,
+        "chunks_path",
+        corpus
+            .chunks_path
+            .as_deref()
+            .ok_or_else(|| knowledge_not_built("knowledge.corpus.chunks_path is missing."))?,
+    )?;
+    compare_metadata_str(
+        obj,
+        "sources_path",
+        corpus
+            .sources_path
+            .as_deref()
+            .ok_or_else(|| knowledge_not_built("knowledge.corpus.sources_path is missing."))?,
+    )?;
+    compare_metadata_str(obj, "vectors_path", &embedding.vectors_path)?;
+
+    compare_metadata_u64(obj, "dimensions", result.dimensions)?;
+    compare_metadata_u64(obj, "chunk_count", result.chunk_count)?;
+    compare_metadata_u64(obj, "source_count", result.source_count)?;
+    compare_metadata_u64(obj, "vector_count", result.vector_count)?;
+    compare_metadata_str(obj, "source_corpus_hash", &result.corpus_hash)?;
+    compare_metadata_str(obj, "source_chunks_hash", &result.chunks_hash)?;
+    compare_metadata_str(obj, "source_sources_hash", &result.sources_hash)?;
+    compare_metadata_str(obj, "source_vectors_hash", &result.vectors_hash)?;
+
+    Ok(())
+}
+
+fn compare_required_u64(label: &str, actual: Option<u64>, expected: u64) -> Result<()> {
+    match actual {
+        Some(value) if value == expected => Ok(()),
+        Some(value) => Err(knowledge_stale(format!(
+            "{} = {} does not match {}.",
+            label, value, expected
+        ))),
+        None => Err(knowledge_not_built(format!("{} is missing.", label))),
+    }
+}
+
+fn compare_required_str(label: &str, actual: Option<&str>, expected: &str) -> Result<()> {
+    match actual {
+        Some(value) if value == expected => Ok(()),
+        Some(value) => Err(knowledge_stale(format!(
+            "{} = {} does not match {}.",
+            label, value, expected
+        ))),
+        None => Err(knowledge_not_built(format!("{} is missing.", label))),
+    }
+}
+
+fn compare_metadata_str(obj: &JsonMap<String, JsonValue>, key: &str, expected: &str) -> Result<()> {
+    match obj.get(key).and_then(|v| v.as_str()) {
+        Some(value) if value == expected => Ok(()),
+        Some(value) => Err(knowledge_stale(format!(
+            "knowledge/indexes/default/metadata.json {} = {} does not match {}.",
+            key, value, expected
+        ))),
+        None => Err(knowledge_not_built(format!(
+            "knowledge/indexes/default/metadata.json is missing {}.",
+            key
+        ))),
+    }
+}
+
+fn compare_metadata_u64(obj: &JsonMap<String, JsonValue>, key: &str, expected: u64) -> Result<()> {
+    match obj.get(key).and_then(|v| v.as_u64()) {
+        Some(value) if value == expected => Ok(()),
+        Some(value) => Err(knowledge_stale(format!(
+            "knowledge/indexes/default/metadata.json {} = {} does not match {}.",
+            key, value, expected
+        ))),
+        None => Err(knowledge_not_built(format!(
+            "knowledge/indexes/default/metadata.json is missing {}.",
+            key
+        ))),
+    }
+}
+
+fn compare_metadata_bool(
+    obj: &JsonMap<String, JsonValue>,
+    key: &str,
+    expected: bool,
+) -> Result<()> {
+    match obj.get(key).and_then(|v| v.as_bool()) {
+        Some(value) if value == expected => Ok(()),
+        Some(value) => Err(knowledge_stale(format!(
+            "knowledge/indexes/default/metadata.json {} = {} does not match {}.",
+            key, value, expected
+        ))),
+        None => Err(knowledge_not_built(format!(
+            "knowledge/indexes/default/metadata.json is missing {}.",
+            key
+        ))),
+    }
+}
+
+fn append_declared_knowledge_file<W: Write>(
+    tar: &mut TarBuilder<W>,
+    root: &Path,
+    rel: &str,
+    member_count: &mut usize,
+    seen: &mut HashSet<String>,
+) -> Result<()> {
+    let abs = resolve_existing_file(root, rel)
+        .with_context(|| format!("declared Knowledge file not found or invalid: {}", rel))?;
+    let tar_name = tar_name_for_declared_knowledge_path(rel)?;
+    if seen.insert(tar_name.clone()) {
+        append_checked(tar, &abs, &tar_name, member_count)?;
+    }
+    Ok(())
+}
+
+fn append_optional_knowledge_file<W: Write>(
+    tar: &mut TarBuilder<W>,
+    root: &Path,
+    field_label: &str,
+    rel: &str,
+    member_count: &mut usize,
+    seen: &mut HashSet<String>,
+) -> Result<()> {
+    let abs = match resolve_existing_file(root, rel) {
+        Ok(ok) => ok,
+        Err(err) => {
+            eprintln!("Warning: skipping {} '{}' ({}).", field_label, rel, err);
+            return Ok(());
+        }
+    };
+    let tar_name = tar_name_for_declared_knowledge_path(rel)?;
+    if seen.insert(tar_name.clone()) {
+        append_checked(tar, &abs, &tar_name, member_count)?;
+    }
+    Ok(())
+}
+
+fn append_declared_knowledge_path<W: Write>(
+    tar: &mut TarBuilder<W>,
+    root: &Path,
+    rel: &str,
+    member_count: &mut usize,
+    seen: &mut HashSet<String>,
+) -> Result<()> {
+    let (abs, tar_name, is_dir) = resolve_declared_knowledge_path_for_packaging(root, rel)?;
+    if is_dir {
+        let root = if root.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            root
+        };
+        let root_canon = fs::canonicalize(root)
+            .with_context(|| format!("reading package root {}", root.display()))?;
+        for entry in WalkDir::new(&abs).into_iter().filter_map(|e| e.ok()) {
+            let path_abs = entry.path();
+            if path_abs.is_dir() {
+                continue;
+            }
+            let rel_path = path_abs.strip_prefix(&root_canon).with_context(|| {
+                format!(
+                    "knowledge file must stay within project root: {}",
+                    path_abs.display()
+                )
+            })?;
+            let nested_tar_name = rel_to_tar_name(rel_path);
+            if seen.insert(nested_tar_name.clone()) {
+                append_checked(tar, path_abs, &nested_tar_name, member_count)?;
+            }
+        }
+    } else if seen.insert(tar_name.clone()) {
+        append_checked(tar, &abs, &tar_name, member_count)?;
+    }
+    Ok(())
+}
+
+fn resolve_declared_knowledge_path_for_packaging(
+    root: &Path,
+    rel: &str,
+) -> Result<(PathBuf, String, bool)> {
+    let rel_path = parse_safe_relative_path(rel)?;
+    let root = if root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        root
+    };
+    let abs = root.join(&rel_path);
+    let canon = fs::canonicalize(&abs)
+        .with_context(|| format!("declared Knowledge path does not exist: {}", abs.display()))?;
+    let root_canon = fs::canonicalize(root)
+        .with_context(|| format!("reading package root {}", root.display()))?;
+    if !canon.starts_with(&root_canon) {
+        bail!("declared Knowledge path escapes the package root: {}", rel);
+    }
+    let md = fs::metadata(&canon).with_context(|| format!("stat {}", canon.display()))?;
+
+    let tar_name = rel_to_tar_name(&rel_path);
+    ensure_safe_tar_name(&tar_name)?;
+    Ok((canon, tar_name, md.is_dir()))
+}
+
+fn tar_name_for_declared_knowledge_path(rel: &str) -> Result<String> {
+    let rel_path = parse_safe_relative_path(rel)?;
+    let tar_name = rel_to_tar_name(&rel_path);
+    ensure_safe_tar_name(&tar_name)?;
+    Ok(tar_name)
 }
 
 fn artifact_temp_path(out_path: &Path) -> PathBuf {
@@ -1185,6 +1763,7 @@ fn pick_license_paths(manifest_json: &serde_json::Value) -> (Option<&str>, Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::knowledge::{KnowledgeBuildMode, execute_knowledge_build};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(prefix: &str) -> PathBuf {
@@ -1207,6 +1786,127 @@ mod tests {
             out.push(entry.path().unwrap().to_string_lossy().into_owned());
         }
         out
+    }
+
+    fn schema_source() -> String {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/agentpm.manifest.schema.json")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn dry_run_args(manifest_path: &Path) -> PublishArgs {
+        PublishArgs {
+            manifest: manifest_path.to_string_lossy().into_owned(),
+            schema: Some(schema_source()),
+            strict: false,
+            dry_run: true,
+            quiet: true,
+            sign: false,
+            key_id: None,
+            token: Some("dummy-token".into()),
+            namespace: None,
+        }
+    }
+
+    fn write_f32_vectors(path: &Path, rows: &[Vec<f32>]) {
+        let mut bytes = Vec::new();
+        for row in rows {
+            for value in row {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, bytes).unwrap();
+    }
+
+    fn write_context_knowledge_manifest(dir: &Path) -> PathBuf {
+        let manifest_path = dir.join("agent.json");
+        fs::create_dir_all(dir.join("knowledge/docs")).unwrap();
+        fs::write(
+            dir.join("knowledge/docs/playbook.md"),
+            "# Playbook\n\nUse this context.\n",
+        )
+        .unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "knowledge",
+                "name": "engineering-playbook",
+                "version": "0.1.0",
+                "description": "Engineering playbook intended for direct context loading.",
+                "knowledge": {
+                    "mode": "context",
+                    "documents": [
+                        {
+                            "path": "knowledge/docs/playbook.md",
+                            "content_type": "text/markdown",
+                            "role": "context"
+                        }
+                    ]
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        manifest_path
+    }
+
+    fn write_vector_knowledge_manifest(dir: &Path) -> PathBuf {
+        let manifest_path = dir.join("agent.json");
+        fs::create_dir_all(dir.join("knowledge/embeddings")).unwrap();
+        fs::write(
+            dir.join("knowledge/chunks.jsonl"),
+            concat!(
+                "{\"id\":\"chunk_1\",\"source_id\":\"src_1\",\"text\":\"Alpha text\"}\n",
+                "{\"id\":\"chunk_2\",\"source_id\":\"src_2\",\"text\":\"Beta text\",\"metadata\":{\"section\":\"beta\"}}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("knowledge/sources.jsonl"),
+            concat!(
+                "{\"id\":\"src_1\",\"title\":\"Source One\"}\n",
+                "{\"id\":\"src_2\",\"title\":\"Source Two\"}\n"
+            ),
+        )
+        .unwrap();
+        write_f32_vectors(
+            &dir.join("knowledge/embeddings/default.f32"),
+            &[vec![0.1, 0.2, 0.3], vec![0.4, 0.5, 0.6]],
+        );
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "knowledge",
+                "name": "python-docs",
+                "version": "0.1.0",
+                "description": "Prepared retrieval corpus for Python documentation.",
+                "knowledge": {
+                    "mode": "vector",
+                    "corpus": {
+                        "chunks_path": "knowledge/chunks.jsonl",
+                        "sources_path": "knowledge/sources.jsonl"
+                    },
+                    "embedding": {
+                        "id": "default",
+                        "provider": "openai",
+                        "model": "text-embedding-3-small",
+                        "dimensions": 3,
+                        "metric": "cosine",
+                        "normalized": true,
+                        "vectors_path": "knowledge/embeddings/default.f32"
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        manifest_path
     }
 
     #[test]
@@ -1396,6 +2096,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publish_dry_run_succeeds_for_agent_manifest_with_knowledge_refs() {
+        let dir = temp_dir("publish-agent-knowledge");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "agent",
+                "name": "agent-pub-test",
+                "version": "0.2.0",
+                "description": "test agent",
+                "tools": ["@zack/slack-post-message@0.1.0"],
+                "skills": [],
+                "knowledge": [{"name": "@zack/python-docs", "version": "0.1.0"}],
+                "memory": [],
+                "profiles": [],
+                "examples": [
+                    { "title": "Example", "prompt": "Do the thing." }
+                ]
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn publish_dry_run_succeeds_for_template_manifest() {
         let dir = temp_dir("publish-template");
         let manifest_path = dir.join("agent.json");
@@ -1459,6 +2191,387 @@ mod tests {
         assert!(entries.contains(&"agent.json".to_string()));
         assert!(entries.contains(&"template/README.md".to_string()));
         assert!(entries.contains(&"template/.env.example".to_string()));
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_template_manifest_with_knowledge_dependencies() {
+        let dir = temp_dir("publish-template-knowledge");
+        let manifest_path = dir.join("agent.json");
+        let scaffold_dir = dir.join("template");
+        fs::create_dir_all(&scaffold_dir).unwrap();
+        fs::write(scaffold_dir.join("README.md"), "# {{ project_name }}\n").unwrap();
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "template",
+                "name": "template-pub-test",
+                "version": "0.3.0",
+                "description": "test template",
+                "template": {
+                    "display_name": "Template Pub Test",
+                    "use_case": "research",
+                    "execution_surfaces": ["python-sdk"],
+                    "stack": ["python"],
+                    "files_root": "template",
+                    "variables": [],
+                    "dependencies": {
+                        "tools": [],
+                        "agents": [],
+                        "skills": [],
+                        "knowledge": [{"name": "@zack/python-docs", "version": "0.1.0"}]
+                    },
+                    "entrypoints": [
+                        { "label": "Run", "command": "python main.py" }
+                    ]
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_built_context_knowledge_manifest() {
+        let dir = temp_dir("publish-knowledge-context");
+        let manifest_path = write_context_knowledge_manifest(&dir);
+        execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write).unwrap();
+        let before = fs::read_to_string(&manifest_path).unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let after = fs::read_to_string(&manifest_path).unwrap();
+        assert_eq!(
+            before, after,
+            "publish dry-run should not mutate agent.json"
+        );
+
+        let tar_path = dir.join("target/agentpm/engineering-playbook-0.1.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"knowledge/docs/playbook.md".to_string()));
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.starts_with("knowledge/indexes/"))
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_includes_knowledge_readme_and_license_file() {
+        let dir = temp_dir("publish-knowledge-context-readme-license");
+        let manifest_path = write_context_knowledge_manifest(&dir);
+        let readme_path = dir.join("README.md");
+        let license_path = dir.join("LICENSE");
+        fs::write(&readme_path, "# Knowledge Readme\n").unwrap();
+        fs::write(&license_path, "MIT License\n").unwrap();
+
+        let mut manifest: JsonValue =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        manifest["readme"] = JsonValue::from("README.md");
+        manifest["license"] = serde_json::json!({
+            "spdx": "MIT",
+            "file": "LICENSE"
+        });
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).unwrap() + "\n",
+        )
+        .unwrap();
+
+        execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write).unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let tar_path = dir.join("target/agentpm/engineering-playbook-0.1.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"README.md".to_string()));
+        assert!(entries.contains(&"LICENSE".to_string()));
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_built_vector_knowledge_manifest() {
+        let dir = temp_dir("publish-knowledge-vector");
+        let manifest_path = write_vector_knowledge_manifest(&dir);
+        execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write).unwrap();
+        let before = fs::read_to_string(&manifest_path).unwrap();
+        let index_metadata_before =
+            fs::read_to_string(dir.join("knowledge/indexes/default/metadata.json")).unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let after = fs::read_to_string(&manifest_path).unwrap();
+        assert_eq!(
+            before, after,
+            "publish dry-run should not mutate agent.json"
+        );
+        let index_metadata_after =
+            fs::read_to_string(dir.join("knowledge/indexes/default/metadata.json")).unwrap();
+        assert_eq!(
+            index_metadata_before, index_metadata_after,
+            "publish dry-run should not refresh knowledge/indexes/default"
+        );
+
+        let tar_path = dir.join("target/agentpm/python-docs-0.1.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"knowledge/chunks.jsonl".to_string()));
+        assert!(entries.contains(&"knowledge/sources.jsonl".to_string()));
+        assert!(entries.contains(&"knowledge/embeddings/default.f32".to_string()));
+        assert!(entries.contains(&"knowledge/indexes/default/metadata.json".to_string()));
+        assert!(!entries.contains(&"knowledge/indexes/default/vectors.f32".to_string()));
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_unbuilt_context_knowledge_manifest() {
+        let dir = temp_dir("publish-knowledge-context-unbuilt");
+        let manifest_path = write_context_knowledge_manifest(&dir);
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("Knowledge package is not built"),
+            "{err:#}"
+        );
+        assert!(
+            format!("{err:#}").contains("knowledge.documents[0].bytes is missing"),
+            "{err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_stale_context_document_hashes_and_bytes() {
+        let dir = temp_dir("publish-knowledge-context-stale");
+        let manifest_path = write_context_knowledge_manifest(&dir);
+        execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write).unwrap();
+        fs::write(
+            dir.join("knowledge/docs/playbook.md"),
+            "# Playbook\n\nChanged.\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Knowledge package build metadata is stale"),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("knowledge.documents[0].bytes")
+                || err_text.contains("knowledge.documents[0].sha256"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_unsafe_knowledge_paths() {
+        let dir = temp_dir("publish-knowledge-unsafe");
+        let manifest_path = dir.join("agent.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "knowledge",
+                "name": "unsafe-context",
+                "version": "0.1.0",
+                "description": "Unsafe context document path should fail.",
+                "knowledge": {
+                    "mode": "context",
+                    "documents": [
+                        { "path": "../secret.md" }
+                    ]
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("Manifest validation failed"),
+            "{err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_unbuilt_vector_knowledge_manifest() {
+        let dir = temp_dir("publish-knowledge-vector-unbuilt");
+        let manifest_path = write_vector_knowledge_manifest(&dir);
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Knowledge package is not built"),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("knowledge.corpus.chunk_count is missing"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_stale_vector_corpus_hash() {
+        let dir = temp_dir("publish-knowledge-vector-stale-corpus");
+        let manifest_path = write_vector_knowledge_manifest(&dir);
+        execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write).unwrap();
+        fs::write(
+            dir.join("knowledge/chunks.jsonl"),
+            concat!(
+                "{\"id\":\"chunk_1\",\"source_id\":\"src_1\",\"text\":\"Changed alpha\"}\n",
+                "{\"id\":\"chunk_2\",\"source_id\":\"src_2\",\"text\":\"Beta text\",\"metadata\":{\"section\":\"beta\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Knowledge package build metadata is stale"),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("knowledge.corpus.content_hash"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_stale_vector_hash() {
+        let dir = temp_dir("publish-knowledge-vector-stale-vectors");
+        let manifest_path = write_vector_knowledge_manifest(&dir);
+        execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write).unwrap();
+        write_f32_vectors(
+            &dir.join("knowledge/embeddings/default.f32"),
+            &[vec![9.0, 8.0, 7.0], vec![6.0, 5.0, 4.0]],
+        );
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Knowledge package build metadata is stale"),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("knowledge.embedding.vectors_hash"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_missing_vector_index_metadata() {
+        let dir = temp_dir("publish-knowledge-vector-missing-index-metadata");
+        let manifest_path = write_vector_knowledge_manifest(&dir);
+        execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write).unwrap();
+        fs::remove_file(dir.join("knowledge/indexes/default/metadata.json")).unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Knowledge package is not built"),
+            "{err_text}"
+        );
+        assert!(err_text.contains("metadata.json is missing"), "{err_text}");
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_stale_vector_index_metadata() {
+        let dir = temp_dir("publish-knowledge-vector-stale-index-metadata");
+        let manifest_path = write_vector_knowledge_manifest(&dir);
+        execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write).unwrap();
+
+        let metadata_path = dir.join("knowledge/indexes/default/metadata.json");
+        let mut metadata: JsonValue =
+            serde_json::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+        metadata["vector_count"] = JsonValue::from(999_u64);
+        fs::write(
+            &metadata_path,
+            serde_json::to_string_pretty(&metadata).unwrap() + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Knowledge package build metadata is stale"),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("metadata.json vector_count"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_stale_vector_index_chunks_hash() {
+        let dir = temp_dir("publish-knowledge-vector-stale-index-chunks-hash");
+        let manifest_path = write_vector_knowledge_manifest(&dir);
+        execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write).unwrap();
+
+        let metadata_path = dir.join("knowledge/indexes/default/metadata.json");
+        let mut metadata: JsonValue =
+            serde_json::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+        metadata["source_chunks_hash"] = JsonValue::from("sha256:deadbeef");
+        fs::write(
+            &metadata_path,
+            serde_json::to_string_pretty(&metadata).unwrap() + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Knowledge package build metadata is stale"),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("metadata.json source_chunks_hash"),
+            "{err_text}"
+        );
     }
 
     #[tokio::test]

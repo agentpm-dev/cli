@@ -49,17 +49,17 @@ pub struct KnowledgeQueryArgs {
 }
 
 #[derive(Debug, Clone)]
-struct BuiltContextDocument {
-    bytes: u64,
-    sha256: String,
+pub(crate) struct BuiltContextDocument {
+    pub(crate) bytes: u64,
+    pub(crate) sha256: String,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ContextBuildResult {
-    documents: Vec<BuiltContextDocument>,
-    document_count: u64,
-    total_bytes: u64,
-    content_hash: String,
+    pub(crate) documents: Vec<BuiltContextDocument>,
+    pub(crate) document_count: u64,
+    pub(crate) total_bytes: u64,
+    pub(crate) content_hash: String,
 }
 
 #[derive(Debug, Clone)]
@@ -75,13 +75,15 @@ struct SourceRecord {
 
 #[derive(Debug, Clone)]
 pub(crate) struct VectorBuildResult {
-    chunk_count: u64,
-    source_count: u64,
-    vector_count: u64,
-    dimensions: u64,
-    corpus_hash: String,
-    vectors_hash: String,
-    embedding_id: String,
+    pub(crate) chunk_count: u64,
+    pub(crate) source_count: u64,
+    pub(crate) vector_count: u64,
+    pub(crate) dimensions: u64,
+    pub(crate) corpus_hash: String,
+    pub(crate) chunks_hash: String,
+    pub(crate) sources_hash: String,
+    pub(crate) vectors_hash: String,
+    pub(crate) embedding_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -152,6 +154,14 @@ pub(crate) fn execute_knowledge_build(
     manifest_path: &Path,
     mode: KnowledgeBuildMode,
 ) -> Result<KnowledgeBuildSummary> {
+    let (_manifest, summary) = execute_knowledge_build_with_manifest(manifest_path, mode)?;
+    Ok(summary)
+}
+
+pub(crate) fn execute_knowledge_build_with_manifest(
+    manifest_path: &Path,
+    mode: KnowledgeBuildMode,
+) -> Result<(KnowledgeManifest, KnowledgeBuildSummary)> {
     let package_root = manifest_path
         .parent()
         .ok_or_else(|| anyhow!("manifest path has no parent: {}", manifest_path.display()))?
@@ -173,6 +183,8 @@ pub(crate) fn execute_knowledge_build(
 
     let manifest = parse_knowledge_manifest(&manifest_value)?;
     validate_declared_knowledge_paths(&manifest)?;
+    let summary_name = manifest.name.clone();
+    let summary_version = manifest.version.clone();
 
     let summary = match manifest.knowledge.mode.as_str() {
         "context" => {
@@ -188,8 +200,8 @@ pub(crate) fn execute_knowledge_build(
                 write_manifest_pretty_atomic(manifest_path, &manifest_value)?;
             }
             KnowledgeBuildSummary::Context {
-                name: manifest.name,
-                version: manifest.version,
+                name: summary_name.clone(),
+                version: summary_version.clone(),
                 result,
             }
         }
@@ -206,15 +218,15 @@ pub(crate) fn execute_knowledge_build(
                 write_manifest_pretty_atomic(manifest_path, &manifest_value)?;
             }
             KnowledgeBuildSummary::Vector {
-                name: manifest.name,
-                version: manifest.version,
+                name: summary_name,
+                version: summary_version,
                 result,
             }
         }
         other => bail!("unsupported knowledge mode: {}", other),
     };
 
-    Ok(summary)
+    Ok((manifest, summary))
 }
 
 fn print_build_summary(summary: &KnowledgeBuildSummary) {
@@ -476,6 +488,8 @@ pub(crate) fn build_vector_mode(
         vector_count,
         dimensions,
         corpus_hash,
+        chunks_hash,
+        sources_hash,
         vectors_hash,
         embedding_id: embedding.id.clone(),
     })
@@ -543,8 +557,13 @@ pub(crate) fn apply_vector_build(
     Ok(())
 }
 
-fn resolve_existing_file(package_root: &Path, relative: &str) -> Result<PathBuf> {
+pub(crate) fn resolve_existing_file(package_root: &Path, relative: &str) -> Result<PathBuf> {
     let rel = parse_safe_relative_path(relative)?;
+    let package_root = if package_root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        package_root
+    };
     let abs = package_root.join(&rel);
     let canon = fs::canonicalize(&abs)
         .with_context(|| format!("declared path does not exist: {}", abs.display()))?;
@@ -560,7 +579,7 @@ fn resolve_existing_file(package_root: &Path, relative: &str) -> Result<PathBuf>
     Ok(canon)
 }
 
-fn parse_safe_relative_path(relative: &str) -> Result<PathBuf> {
+pub(crate) fn parse_safe_relative_path(relative: &str) -> Result<PathBuf> {
     if relative.is_empty() {
         bail!("declared path must not be empty");
     }
