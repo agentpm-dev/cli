@@ -13,7 +13,11 @@ use crate::workspace::{
     build_workspace_lock, desired_from_workspace, load_workspace_local_manifests,
     read_workspace_metadata,
 };
-use crate::{io::download::download_and_extract_all, io::fs, ui::Step};
+use crate::{
+    io::download::{InstallRoots, download_and_extract_all},
+    io::fs,
+    ui::Step,
+};
 use anyhow::anyhow;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -194,13 +198,23 @@ impl InstallArgs {
         let tools_dir = project_root.join(".agentpm/tools");
         let agents_dir = project_root.join(".agentpm/agents");
         let skills_dir = project_root.join(".agentpm/skills");
-        fs::ensure_dirs(&[&dl_dir, &tools_dir, &agents_dir, &skills_dir])?;
-        download_and_extract_all(
-            &init,
+        let knowledge_dir = project_root.join(".agentpm/knowledge");
+        fs::ensure_dirs(&[
             &dl_dir,
             &tools_dir,
             &agents_dir,
             &skills_dir,
+            &knowledge_dir,
+        ])?;
+        download_and_extract_all(
+            &init,
+            &dl_dir,
+            InstallRoots {
+                tools_dir: &tools_dir,
+                agents_dir: &agents_dir,
+                skills_dir: &skills_dir,
+                knowledge_dir: &knowledge_dir,
+            },
             self.refresh,
             quiet,
         )
@@ -231,6 +245,13 @@ impl InstallArgs {
                     manifest_value,
                     "skills",
                     "Skill",
+                    spec,
+                    self.update_range,
+                )?,
+                PackageKind::Knowledge => maybe_update_manifest_dependency(
+                    manifest_value,
+                    "knowledge",
+                    "Knowledge",
                     spec,
                     self.update_range,
                 )?,
@@ -320,8 +341,12 @@ fn validate_frozen_lock_compatibility(
         .items
         .iter()
         .any(|item| item.kind == PackageKind::Skill);
+    let desired_has_knowledge = desired
+        .items
+        .iter()
+        .any(|item| item.kind == PackageKind::Knowledge);
 
-    let requires_v3 = manifest_is_skill || desired_has_skill;
+    let requires_v3 = manifest_is_skill || desired_has_skill || desired_has_knowledge;
     if (manifest_is_agent || desired_has_agent) && lock.is_v1() {
         return Err(anyhow!(
             "--frozen cannot use lockfile v1 for agent dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v2"
@@ -329,7 +354,7 @@ fn validate_frozen_lock_compatibility(
     }
     if requires_v3 && lock.lockfile_version() < 3 {
         return Err(anyhow!(
-            "--frozen cannot use lockfile v{} for Skill dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v3",
+            "--frozen cannot use lockfile v{} for Skill or Knowledge dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v3",
             lock.lockfile_version()
         ));
     }
@@ -422,6 +447,7 @@ fn build_lock_roots(
                     version: root.version.unwrap_or_else(|| "0.0.0".to_string()),
                     tools: root.tools,
                     skills: root.skills,
+                    knowledge: root.knowledge,
                     reserved: root.reserved,
                 },
             },
@@ -459,6 +485,20 @@ fn installed_skill_manifest_path(
         .join("agent.json"))
 }
 
+fn installed_knowledge_manifest_path(
+    install_root: &std::path::Path,
+    package: &str,
+    version: &str,
+) -> Result<PathBuf> {
+    let (owner, name) = split_package_ref(package)?;
+    Ok(install_root
+        .join("knowledge")
+        .join(owner)
+        .join(name)
+        .join(version)
+        .join("agent.json"))
+}
+
 fn build_registry_package_roots(
     spec: Option<&str>,
     plan: &ResolvePlan,
@@ -472,57 +512,81 @@ fn build_registry_package_roots(
     let mut roots = Vec::new();
     let packages = plan_to_packages(plan);
     for item in plan.items.iter().filter(|item| {
-        (item.kind == PackageKind::Agent || item.kind == PackageKind::Skill)
+        (item.kind == PackageKind::Agent
+            || item.kind == PackageKind::Skill
+            || item.kind == PackageKind::Knowledge)
             && item.name == requested.name
     }) {
-        let manifest_path = if item.kind == PackageKind::Agent {
-            installed_agent_manifest_path(install_root, &item.name, &item.version)?
-        } else {
-            installed_skill_manifest_path(install_root, &item.name, &item.version)?
-        };
-
-        let root = if manifest_path.exists() {
-            let (manifest_value, _) = load_manifest_value(&manifest_path)?;
-            match item.kind {
-                PackageKind::Agent => LockRoot::RegistryAgent {
+        let root = match item.kind {
+            PackageKind::Agent => {
+                let manifest_path =
+                    installed_agent_manifest_path(install_root, &item.name, &item.version)?;
+                if manifest_path.exists() {
+                    let (manifest_value, _) = load_manifest_value(&manifest_path)?;
+                    LockRoot::RegistryAgent {
+                        package_key: package_key(item.kind, &item.name, &item.version),
+                        tools: resolve_declared_packages_from_manifest(
+                            &manifest_value,
+                            &packages,
+                            &format!("registry agent {}@{}", item.name, item.version),
+                            PackageKind::Tool,
+                        )?,
+                        skills: resolve_declared_packages_from_manifest(
+                            &manifest_value,
+                            &packages,
+                            &format!("registry agent {}@{}", item.name, item.version),
+                            PackageKind::Skill,
+                        )?,
+                        knowledge: resolve_declared_packages_from_manifest(
+                            &manifest_value,
+                            &packages,
+                            &format!("registry agent {}@{}", item.name, item.version),
+                            PackageKind::Knowledge,
+                        )?,
+                        reserved: reserved_refs_from_manifest(&manifest_value),
+                    }
+                } else {
+                    LockRoot::RegistryAgent {
+                        package_key: package_key(item.kind, &item.name, &item.version),
+                        tools: Vec::new(),
+                        skills: Vec::new(),
+                        knowledge: Vec::new(),
+                        reserved: ReservedReferences::default(),
+                    }
+                }
+            }
+            PackageKind::Skill => {
+                let manifest_path =
+                    installed_skill_manifest_path(install_root, &item.name, &item.version)?;
+                if manifest_path.exists() {
+                    let (manifest_value, _) = load_manifest_value(&manifest_path)?;
+                    LockRoot::RegistrySkill {
+                        package_key: package_key(item.kind, &item.name, &item.version),
+                        tools: resolve_declared_packages_from_manifest(
+                            &manifest_value,
+                            &packages,
+                            &format!("registry skill {}@{}", item.name, item.version),
+                            PackageKind::Tool,
+                        )?,
+                    }
+                } else {
+                    LockRoot::RegistrySkill {
+                        package_key: package_key(item.kind, &item.name, &item.version),
+                        tools: Vec::new(),
+                    }
+                }
+            }
+            PackageKind::Knowledge => {
+                let manifest_path =
+                    installed_knowledge_manifest_path(install_root, &item.name, &item.version)?;
+                if manifest_path.exists() {
+                    let _ = load_manifest_value(&manifest_path)?;
+                }
+                LockRoot::RegistryKnowledge {
                     package_key: package_key(item.kind, &item.name, &item.version),
-                    tools: resolve_declared_packages_from_manifest(
-                        &manifest_value,
-                        &packages,
-                        &format!("registry agent {}@{}", item.name, item.version),
-                        PackageKind::Tool,
-                    )?,
-                    skills: resolve_declared_packages_from_manifest(
-                        &manifest_value,
-                        &packages,
-                        &format!("registry agent {}@{}", item.name, item.version),
-                        PackageKind::Skill,
-                    )?,
-                    reserved: reserved_refs_from_manifest(&manifest_value),
-                },
-                PackageKind::Skill => LockRoot::RegistrySkill {
-                    package_key: package_key(item.kind, &item.name, &item.version),
-                    tools: resolve_declared_packages_from_manifest(
-                        &manifest_value,
-                        &packages,
-                        &format!("registry skill {}@{}", item.name, item.version),
-                        PackageKind::Tool,
-                    )?,
-                },
-                PackageKind::Tool => unreachable!(),
+                }
             }
-        } else if item.kind == PackageKind::Agent {
-            LockRoot::RegistryAgent {
-                package_key: package_key(item.kind, &item.name, &item.version),
-                tools: Vec::new(),
-                skills: Vec::new(),
-                reserved: ReservedReferences::default(),
-            }
-        } else {
-            LockRoot::RegistrySkill {
-                package_key: package_key(item.kind, &item.name, &item.version),
-                tools: Vec::new(),
-            }
+            PackageKind::Tool => unreachable!(),
         };
 
         roots.push(root);
@@ -596,6 +660,16 @@ fn build_local_lock_root(manifest_value: &Value, plan: &ResolvePlan) -> Result<L
         } else {
             Vec::new()
         },
+        knowledge: if manifest_value.get("kind").and_then(Value::as_str) == Some("agent") {
+            resolve_declared_packages_from_manifest(
+                manifest_value,
+                &packages,
+                "local manifest",
+                PackageKind::Knowledge,
+            )?
+        } else {
+            Vec::new()
+        },
         reserved: reserved_refs_from_manifest(manifest_value),
     })
 }
@@ -643,7 +717,7 @@ fn split_package_ref(package: &str) -> Result<(String, String)> {
 fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {
     ReservedReferences {
         skills: Vec::new(),
-        knowledge: manifest_array_or_empty(manifest_value, "knowledge"),
+        knowledge: Vec::new(),
         memory: manifest_array_or_empty(manifest_value, "memory"),
         profiles: manifest_array_or_empty(manifest_value, "profiles"),
     }
@@ -673,6 +747,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
             version,
             tools,
             skills,
+            knowledge,
             reserved,
         } => (
             key,
@@ -681,6 +756,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 version: Some(version),
                 tools,
                 skills,
+                knowledge,
                 reserved,
             },
         ),
@@ -688,6 +764,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
             package_key,
             tools,
             skills,
+            knowledge,
             reserved,
         } => (
             package_key,
@@ -696,6 +773,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 version: None,
                 tools,
                 skills,
+                knowledge,
                 reserved,
             },
         ),
@@ -711,6 +789,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 version: Some(version),
                 tools,
                 skills: Vec::new(),
+                knowledge: Vec::new(),
                 reserved: ReservedReferences::default(),
             },
         ),
@@ -721,6 +800,18 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 version: None,
                 tools,
                 skills: Vec::new(),
+                knowledge: Vec::new(),
+                reserved: ReservedReferences::default(),
+            },
+        ),
+        LockRoot::RegistryKnowledge { package_key } => (
+            package_key,
+            LockedRoot {
+                name: None,
+                version: None,
+                tools: Vec::new(),
+                skills: Vec::new(),
+                knowledge: Vec::new(),
                 reserved: ReservedReferences::default(),
             },
         ),
@@ -739,8 +830,9 @@ fn manifest_array_or_empty(manifest_value: &Value, field: &str) -> Vec<Value> {
 mod tests {
     use super::{
         InstallArgs, build_lock_roots, build_updated_lock, ensure_supported_install_kinds,
-        installed_agent_manifest_path, installed_skill_manifest_path,
-        should_load_manifest_for_install, validate_frozen_lock_compatibility,
+        installed_agent_manifest_path, installed_knowledge_manifest_path,
+        installed_skill_manifest_path, should_load_manifest_for_install,
+        validate_frozen_lock_compatibility,
     };
     use crate::semver::types::{
         DesiredSet, Lock, LockRoot, LockV1, LockV2, LockedDependency, LockedPackage, LockedRoot,
@@ -805,6 +897,19 @@ mod tests {
                 name: "@zack/triage-skill".to_string(),
                 version: "0.1.0".to_string(),
                 integrity: "sha256-skill".to_string(),
+            }],
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn direct_install_allows_knowledge_packages() {
+        ensure_supported_install_kinds(&sdkm::ResolveResponse {
+            items: vec![sdkm::ResolvedPackage {
+                kind: sdkm::PackageKind::Knowledge,
+                name: "@zack/python-docs".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-knowledge".to_string(),
             }],
         })
         .unwrap();
@@ -892,7 +997,7 @@ mod tests {
             "name": "support-agent",
             "version": "0.1.0",
             "skills": ["@zack/triage-skill@0.1.0"],
-            "knowledge": [],
+            "knowledge": ["@zack/python-docs@0.1.0"],
             "memory": [],
             "profiles": [],
             "tools": ["@zack/slack-post-message@0.1.0"]
@@ -911,6 +1016,12 @@ mod tests {
                     version: "0.1.0".to_string(),
                     integrity: "sha256-skill".to_string(),
                 },
+                ResolvedPackage {
+                    kind: PackageKind::Knowledge,
+                    name: "@zack/python-docs".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-knowledge".to_string(),
+                },
             ],
         };
 
@@ -924,6 +1035,7 @@ mod tests {
             version,
             tools,
             skills,
+            knowledge,
             reserved,
         } = &roots[0]
         else {
@@ -937,6 +1049,10 @@ mod tests {
             &vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
         );
         assert_eq!(skills, &vec!["skill:@zack/triage-skill@0.1.0".to_string()]);
+        assert_eq!(
+            knowledge,
+            &vec!["knowledge:@zack/python-docs@0.1.0".to_string()]
+        );
         assert!(reserved.skills.is_empty());
     }
 
@@ -993,7 +1109,7 @@ mod tests {
                 "version": "0.1.0",
                 "tools": ["@zack/slack-post-message@0.1.0"],
                 "skills": ["@zack/triage-skill@0.1.0"],
-                "knowledge": [],
+                "knowledge": ["@zack/python-docs@0.1.0"],
                 "memory": [],
                 "profiles": []
             }))
@@ -1021,6 +1137,12 @@ mod tests {
                     version: "0.1.0".to_string(),
                     integrity: "sha256-skill".to_string(),
                 },
+                ResolvedPackage {
+                    kind: PackageKind::Knowledge,
+                    name: "@zack/python-docs".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-knowledge".to_string(),
+                },
             ],
         };
 
@@ -1032,6 +1154,7 @@ mod tests {
             package_key,
             tools,
             skills,
+            knowledge,
             reserved,
         } = &roots[0]
         else {
@@ -1043,6 +1166,10 @@ mod tests {
             &vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
         );
         assert_eq!(skills, &vec!["skill:@zack/triage-skill@0.1.0".to_string()]);
+        assert_eq!(
+            knowledge,
+            &vec!["knowledge:@zack/python-docs@0.1.0".to_string()]
+        );
         assert!(reserved.skills.is_empty());
     }
 
@@ -1117,6 +1244,46 @@ mod tests {
     }
 
     #[test]
+    fn direct_knowledge_install_builds_registry_knowledge_root() {
+        let root = temp_root("registry-knowledge-root");
+        let manifest_path =
+            installed_knowledge_manifest_path(&root, "@zack/python-docs", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "knowledge",
+                "name": "python-docs",
+                "version": "0.1.0",
+                "description": "Knowledge",
+                "knowledge": {
+                    "mode": "context",
+                    "documents": [{"path":"knowledge/docs/context.md"}]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Knowledge,
+                name: "@zack/python-docs".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-knowledge".to_string(),
+            }],
+        };
+
+        let roots = build_lock_roots(None, Some("@zack/python-docs@0.1.0"), &plan, &root).unwrap();
+
+        assert_eq!(roots.len(), 1);
+        let LockRoot::RegistryKnowledge { package_key } = &roots[0] else {
+            panic!("expected registry knowledge root");
+        };
+        assert_eq!(package_key, "knowledge:@zack/python-docs@0.1.0");
+    }
+
+    #[test]
     fn direct_agent_install_merges_existing_registry_roots() {
         let root = temp_root("merge-registry-roots");
         let existing = Lock::V2(LockV2 {
@@ -1138,6 +1305,7 @@ mod tests {
                     version: None,
                     tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                     skills: Vec::new(),
+                    knowledge: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -1222,6 +1390,7 @@ mod tests {
                     version: None,
                     tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                     skills: Vec::new(),
+                    knowledge: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -1297,6 +1466,7 @@ mod tests {
                     version: Some("0.1.0".to_string()),
                     tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                     skills: Vec::new(),
+                    knowledge: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -1378,6 +1548,7 @@ mod tests {
                         version: Some("0.1.0".to_string()),
                         tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                         skills: Vec::new(),
+                        knowledge: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1388,6 +1559,7 @@ mod tests {
                         version: None,
                         tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                         skills: Vec::new(),
+                        knowledge: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1456,6 +1628,7 @@ mod tests {
                     version: Some("0.1.0".to_string()),
                     tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                     skills: Vec::new(),
+                    knowledge: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -1645,6 +1818,7 @@ mod tests {
                     version: "0.1.0".to_string(),
                 }],
                 skills: Vec::new(),
+                knowledge: Vec::new(),
             },
         };
         crate::workspace::write_workspace_metadata(&root, &workspace).unwrap();

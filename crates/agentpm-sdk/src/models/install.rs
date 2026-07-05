@@ -7,6 +7,7 @@ pub enum PackageKind {
     Tool,
     Agent,
     Skill,
+    Knowledge,
     Template,
 }
 
@@ -119,6 +120,17 @@ mod tests {
 
         assert_eq!(parsed.kind, PackageKind::Skill);
         assert_eq!(parsed.name, "@zack/triage-skill");
+    }
+
+    #[test]
+    fn install_dto_supports_explicit_knowledge_kind() {
+        let parsed: ResolvedPackage = serde_json::from_str(
+            r#"{"kind":"knowledge","name":"@zack/python-docs","version":"0.1.0","integrity":"abc"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.kind, PackageKind::Knowledge);
+        assert_eq!(parsed.name, "@zack/python-docs");
     }
 }
 

@@ -1,4 +1,6 @@
-use crate::io::download::{download_and_extract_all, download_to, ensure_sha256, extract_tar_gz};
+use crate::io::download::{
+    InstallRoots, download_and_extract_all, download_to, ensure_sha256, extract_tar_gz,
+};
 use crate::io::fs;
 use crate::manifest::{
     PackageReference, TemplateManifest, load_manifest_value, parse_template_manifest,
@@ -140,13 +142,23 @@ impl NewArgs {
                 let tools_dir = target_dir.join(".agentpm/tools");
                 let agents_dir = target_dir.join(".agentpm/agents");
                 let skills_dir = target_dir.join(".agentpm/skills");
-                fs::ensure_dirs(&[&cache_dir, &tools_dir, &agents_dir, &skills_dir])?;
-                download_and_extract_all(
-                    &init,
+                let knowledge_dir = target_dir.join(".agentpm/knowledge");
+                fs::ensure_dirs(&[
                     &cache_dir,
                     &tools_dir,
                     &agents_dir,
                     &skills_dir,
+                    &knowledge_dir,
+                ])?;
+                download_and_extract_all(
+                    &init,
+                    &cache_dir,
+                    InstallRoots {
+                        tools_dir: &tools_dir,
+                        agents_dir: &agents_dir,
+                        skills_dir: &skills_dir,
+                        knowledge_dir: &knowledge_dir,
+                    },
                     false,
                     quiet,
                 )
@@ -175,6 +187,7 @@ impl NewArgs {
                     tools: Vec::new(),
                     agents: resolved_agent_package_roots(&downloaded_manifest, &plan)?,
                     skills: Vec::new(),
+                    knowledge: Vec::new(),
                 },
             };
             write_workspace_metadata(&target_dir, &workspace_metadata)?;
@@ -745,6 +758,14 @@ fn build_dependency_request(
             range,
         });
     }
+    for knowledge in &manifest.template.dependencies.knowledge {
+        let (name, range) = package_ref_parts(knowledge)?;
+        items.push(agentpm_sdk::models::install::PackageRequirement {
+            kind: agentpm_sdk::models::install::PackageKind::Knowledge,
+            name,
+            range,
+        });
+    }
 
     for item in local_manifest_dependency_items(target_dir, extra_local_manifests)? {
         items.push(item);
@@ -774,6 +795,7 @@ fn local_manifest_dependency_items(
                     PackageKind::Tool => agentpm_sdk::models::install::PackageKind::Tool,
                     PackageKind::Agent => agentpm_sdk::models::install::PackageKind::Agent,
                     PackageKind::Skill => agentpm_sdk::models::install::PackageKind::Skill,
+                    PackageKind::Knowledge => agentpm_sdk::models::install::PackageKind::Knowledge,
                 },
                 name: item.name,
                 range: item.range,
@@ -809,6 +831,7 @@ fn synthesize_root_manifest(
 ) -> Result<Value> {
     let tool_refs = resolved_tool_manifest_refs(template_manifest, plan)?;
     let skill_refs = resolved_skill_manifest_refs(template_manifest, plan)?;
+    let knowledge_refs = resolved_knowledge_manifest_refs(template_manifest, plan)?;
     Ok(json!({
         "kind": "agent",
         "name": resolved_vars
@@ -822,7 +845,7 @@ fn synthesize_root_manifest(
         ),
         "tools": tool_refs,
         "skills": skill_refs,
-        "knowledge": [],
+        "knowledge": knowledge_refs,
         "memory": [],
         "profiles": []
     }))
@@ -904,6 +927,35 @@ fn resolved_skill_manifest_refs(
         let resolved = resolve_matching_plan_item(&packages, &name, &range)?.ok_or_else(|| {
             anyhow!(
                 "resolved skill dependency {}@{} missing from plan",
+                name,
+                range
+            )
+        })?;
+        refs.push(json!({
+            "name": resolved.name,
+            "version": resolved.version,
+        }));
+    }
+    Ok(refs)
+}
+
+fn resolved_knowledge_manifest_refs(
+    template_manifest: &TemplateManifest,
+    plan: &ResolvePlan,
+) -> Result<Vec<Value>> {
+    let direct_knowledge_refs = template_manifest
+        .template
+        .dependencies
+        .knowledge
+        .iter()
+        .map(package_ref_parts)
+        .collect::<Result<Vec<_>>>()?;
+    let packages = plan_packages_by_name(plan, PackageKind::Knowledge);
+    let mut refs = Vec::new();
+    for (name, range) in direct_knowledge_refs {
+        let resolved = resolve_matching_plan_item(&packages, &name, &range)?.ok_or_else(|| {
+            anyhow!(
+                "resolved knowledge dependency {}@{} missing from plan",
                 name,
                 range
             )
@@ -1197,6 +1249,41 @@ mod tests {
         );
         assert_eq!(request.items[0].name, "@zack/triage-skill");
         assert_eq!(request.items[0].range, "^0.2");
+    }
+
+    #[test]
+    fn build_dependency_request_includes_template_knowledge_dependencies() {
+        let manifest = parse_template_manifest(&json!({
+            "kind": "template",
+            "name": "research-assistant",
+            "version": "0.1.0",
+            "description": "Template",
+            "template": {
+                "display_name": "Research Assistant",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "stack": ["python"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "knowledge": ["@zack/python-docs@0.1.0"]
+                },
+                "entrypoints": []
+            }
+        }))
+        .unwrap();
+
+        let request = build_dependency_request(&manifest, Path::new("."), &[]).unwrap();
+
+        assert_eq!(request.items.len(), 1);
+        assert_eq!(
+            request.items[0].kind,
+            agentpm_sdk::models::install::PackageKind::Knowledge
+        );
+        assert_eq!(request.items[0].name, "@zack/python-docs");
+        assert_eq!(request.items[0].range, "0.1.0");
     }
 
     #[test]
@@ -1500,6 +1587,8 @@ mod tests {
             tool_sha: "1".repeat(64),
             agent_tar: Vec::new(),
             agent_sha: "2".repeat(64),
+            knowledge_tar: Vec::new(),
+            knowledge_sha: "3".repeat(64),
         });
         let app = Router::new()
             .route("/v1/tools/install/resolve", post(test_resolve))
@@ -1508,6 +1597,7 @@ mod tests {
             .route("/artifact/template", get(get_template))
             .route("/artifact/tool", get(get_tool))
             .route("/artifact/agent", get(get_agent))
+            .route("/artifact/knowledge", get(get_knowledge))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -1553,7 +1643,8 @@ mod tests {
                             "variables":[{"name":"project_name","required":true,"default":"my-workspace"}],
                             "dependencies":{
                                 "tools":[{"name":"@zack/echo","version":"0.1.0"}],
-                                "agents":[{"name":"@zack/support-agent","version":"0.1.0"}]
+                                "agents":[{"name":"@zack/support-agent","version":"0.1.0"}],
+                                "knowledge":[{"name":"@zack/python-docs","version":"0.1.0"}]
                             },
                             "entrypoints":[{"label":"Run","command":"python main.py"}]
                         }
@@ -1615,6 +1706,23 @@ mod tests {
             }))
             .unwrap(),
         )]);
+        let knowledge_tar = build_tarball(&[
+            (
+                "agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"knowledge",
+                    "name":"python-docs",
+                    "version":"0.1.0",
+                    "description":"Knowledge",
+                    "knowledge":{
+                        "mode":"context",
+                        "documents":[{"path":"knowledge/docs/context.md"}]
+                    }
+                }))
+                .unwrap(),
+            ),
+            ("knowledge/docs/context.md", "# Python Docs\n".to_string()),
+        ]);
         let template_sha = sha_hex(&template_tar);
         let initial_state = TestState {
             base_url: String::new(),
@@ -1624,6 +1732,8 @@ mod tests {
             tool_tar,
             agent_sha: sha_hex(&agent_tar),
             agent_tar,
+            knowledge_sha: sha_hex(&knowledge_tar),
+            knowledge_tar,
         };
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1640,6 +1750,7 @@ mod tests {
             .route("/artifact/template", get(get_template))
             .route("/artifact/tool", get(get_tool))
             .route("/artifact/agent", get(get_agent))
+            .route("/artifact/knowledge", get(get_knowledge))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -1676,6 +1787,11 @@ mod tests {
         assert!(lock["packages"].get("tool:@zack/echo@0.1.0").is_some());
         assert!(lock["packages"].get("tool:@zack/summarize@0.1.0").is_some());
         assert!(
+            lock["packages"]
+                .get("knowledge:@zack/python-docs@0.1.0")
+                .is_some()
+        );
+        assert!(
             lock["roots"]
                 .get("agent:@zack/support-agent@0.1.0")
                 .is_some()
@@ -1692,6 +1808,22 @@ mod tests {
                 .unwrap()
                 .len(),
             2
+        );
+        assert_eq!(
+            lock["roots"]["local:agent"]["knowledge"],
+            json!(["knowledge:@zack/python-docs@0.1.0"])
+        );
+        assert!(
+            target
+                .join(".agentpm/knowledge/zack/python-docs/0.1.0/agent.json")
+                .exists()
+        );
+        let root_manifest: Value =
+            serde_json::from_str(&std::fs::read_to_string(target.join("agent.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            root_manifest["knowledge"],
+            json!([{"name":"@zack/python-docs","version":"0.1.0"}])
         );
         assert!(
             lock["packages"]
@@ -1778,6 +1910,8 @@ mod tests {
             tool_tar,
             agent_sha: "2".repeat(64),
             agent_tar: Vec::new(),
+            knowledge_sha: "3".repeat(64),
+            knowledge_tar: Vec::new(),
         });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1793,6 +1927,7 @@ mod tests {
             .route("/v1/tools/install/finalize", post(test_finalize))
             .route("/artifact/tool", get(get_tool))
             .route("/artifact/agent", get(get_agent))
+            .route("/artifact/knowledge", get(get_knowledge))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -1893,6 +2028,8 @@ mod tests {
             tool_tar,
             agent_sha: "2".repeat(64),
             agent_tar: Vec::new(),
+            knowledge_sha: "3".repeat(64),
+            knowledge_tar: Vec::new(),
         });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1908,6 +2045,7 @@ mod tests {
             .route("/v1/tools/install/finalize", post(test_finalize))
             .route("/artifact/tool", get(get_tool))
             .route("/artifact/agent", get(get_agent))
+            .route("/artifact/knowledge", get(get_knowledge))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -2064,79 +2202,51 @@ mod tests {
     #[tokio::test]
     async fn failed_generation_cleans_up_target_directory() {
         let root = temp_dir("failed-generation");
-        let template_tar = build_tarball(
-            &[
-                (
-                    "agent.json",
-                    serde_json::to_string_pretty(&json!({
-                        "kind":"template",
-                        "name":"broken-template",
-                        "version":"0.1.0",
-                        "description":"Broken template.",
-                        "template":{
-                            "display_name":"Broken Template",
-                            "use_case":"research",
-                            "execution_surfaces":["multi-agent-workspace"],
-                            "stack":["python"],
-                            "files_root":"template",
-                            "variables":[{"name":"project_name","required":true,"default":"broken-workspace"}],
-                            "dependencies":{"tools":[],"agents":[]},
-                            "entrypoints":[]
-                        }
-                    }))
-                    .unwrap(),
-                ),
-                (
-                    "template/agents/reviewer.agent.json",
-                    serde_json::to_string_pretty(&json!({
-                        "kind":"agent",
-                        "name":"reviewer",
-                        "version":"0.1.0",
-                        "tools":[]
-                    }))
-                    .unwrap(),
-                ),
-            ],
-        );
-        let state = Arc::new(TestState {
-            base_url: String::new(),
-            template_sha: sha_hex(&template_tar),
-            template_tar,
-            tool_sha: "1".repeat(64),
-            tool_tar: Vec::new(),
-            agent_sha: "2".repeat(64),
-            agent_tar: Vec::new(),
-        });
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr: SocketAddr = listener.local_addr().unwrap();
-        let base_url = format!("http://127.0.0.1:{}", addr.port());
-        let state = Arc::new(TestState {
-            base_url: base_url.clone(),
-            ..(*state).clone()
-        });
-        let app = Router::new()
-            .route("/v1/tools/install/resolve", post(test_resolve))
-            .route("/v1/tools/install/init", post(test_init))
-            .route("/v1/tools/install/finalize", post(test_finalize))
-            .route("/artifact/template", get(get_template))
-            .route("/artifact/tool", get(get_tool))
-            .route("/artifact/agent", get(get_agent))
-            .with_state(state);
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        let template_root = root.join("template-src");
+        std::fs::create_dir_all(template_root.join("template/agents")).unwrap();
+        std::fs::write(
+            template_root.join("agent.json"),
+            serde_json::to_string_pretty(&json!({
+                "kind":"template",
+                "name":"broken-template",
+                "version":"0.1.0",
+                "description":"Broken template.",
+                "template":{
+                    "display_name":"Broken Template",
+                    "use_case":"research",
+                    "execution_surfaces":["multi-agent-workspace"],
+                    "stack":["python"],
+                    "files_root":"template",
+                    "variables":[{"name":"project_name","description":"Project name","required":true,"default":"broken-workspace"}],
+                    "dependencies":{"tools":[],"agents":[]},
+                    "entrypoints":[{"label":"Run","command":"python main.py"}]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            template_root.join("template/agents/reviewer.agent.json"),
+            serde_json::to_string_pretty(&json!({
+                "kind":"agent",
+                "name":"reviewer",
+                "version":"0.1.0",
+                "tools":[]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
 
         let target = root.join("generated");
         let args = NewArgs {
-            template_ref: "@zack/broken-template@0.1.0".to_string(),
+            template_ref: template_root.display().to_string(),
             target_dir: Some(target.clone()),
             vars: Vec::new(),
             quiet: true,
             token: None,
         };
 
-        let err = args.run(base_url).await.unwrap_err();
+        let err = args.run("http://unused".to_string()).await.unwrap_err();
         let err_text = format!("{err:#}");
         assert!(
             err_text.contains("generated manifest agents/reviewer.agent.json"),
@@ -2144,93 +2254,63 @@ mod tests {
         );
         assert!(!target.exists() || std::fs::read_dir(&target).unwrap().next().is_none());
 
-        server.abort();
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
     async fn generation_rejects_local_agent_manifests_outside_agents_directory() {
         let root = temp_dir("bad-agent-convention");
-        let template_tar = build_tarball(
-            &[
-                (
-                    "agent.json",
-                    serde_json::to_string_pretty(&json!({
-                        "kind":"template",
-                        "name":"bad-layout-template",
-                        "version":"0.1.0",
-                        "description":"Bad layout template.",
-                        "template":{
-                            "display_name":"Bad Layout Template",
-                            "use_case":"research",
-                            "execution_surfaces":["multi-agent-workspace"],
-                            "stack":["python"],
-                            "files_root":"template",
-                            "variables":[{"name":"project_name","required":true,"default":"bad-layout"}],
-                            "dependencies":{"tools":[],"agents":[]},
-                            "entrypoints":[]
-                        }
-                    }))
-                    .unwrap(),
-                ),
-                (
-                    "template/services/reviewer.agent.json",
-                    serde_json::to_string_pretty(&json!({
-                        "kind":"agent",
-                        "name":"reviewer",
-                        "version":"0.1.0",
-                        "description":"Reviewer"
-                    }))
-                    .unwrap(),
-                ),
-            ],
-        );
-        let initial_state = TestState {
-            base_url: String::new(),
-            template_sha: sha_hex(&template_tar),
-            template_tar,
-            tool_sha: "1".repeat(64),
-            tool_tar: Vec::new(),
-            agent_sha: "2".repeat(64),
-            agent_tar: Vec::new(),
-        };
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr: SocketAddr = listener.local_addr().unwrap();
-        let base_url = format!("http://127.0.0.1:{}", addr.port());
-        let state = Arc::new(TestState {
-            base_url: base_url.clone(),
-            ..initial_state
-        });
-        let app = Router::new()
-            .route("/v1/tools/install/resolve", post(test_resolve))
-            .route("/v1/tools/install/init", post(test_init))
-            .route("/v1/tools/install/finalize", post(test_finalize))
-            .route("/artifact/template", get(get_template))
-            .route("/artifact/tool", get(get_tool))
-            .route("/artifact/agent", get(get_agent))
-            .with_state(state);
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        let template_root = root.join("template-src");
+        std::fs::create_dir_all(template_root.join("template/services")).unwrap();
+        std::fs::write(
+            template_root.join("agent.json"),
+            serde_json::to_string_pretty(&json!({
+                "kind":"template",
+                "name":"bad-layout-template",
+                "version":"0.1.0",
+                "description":"Bad layout template.",
+                "template":{
+                    "display_name":"Bad Layout Template",
+                    "use_case":"research",
+                    "execution_surfaces":["multi-agent-workspace"],
+                    "stack":["python"],
+                    "files_root":"template",
+                    "variables":[{"name":"project_name","description":"Project name","required":true,"default":"bad-layout"}],
+                    "dependencies":{"tools":[],"agents":[]},
+                    "entrypoints":[{"label":"Run","command":"python main.py"}]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            template_root.join("template/services/reviewer.agent.json"),
+            serde_json::to_string_pretty(&json!({
+                "kind":"agent",
+                "name":"reviewer",
+                "version":"0.1.0",
+                "description":"Reviewer"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
 
         let target = root.join("generated");
         let args = NewArgs {
-            template_ref: "@zack/bad-layout-template@0.1.0".to_string(),
+            template_ref: template_root.display().to_string(),
             target_dir: Some(target.clone()),
             vars: Vec::new(),
             quiet: true,
             token: None,
         };
 
-        let err = args.run(base_url).await.unwrap_err();
+        let err = args.run("http://unused".to_string()).await.unwrap_err();
         assert!(
             format!("{err:#}").contains("must live under agents/"),
             "{err:#}"
         );
         assert!(!target.exists() || std::fs::read_dir(&target).unwrap().next().is_none());
 
-        server.abort();
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2243,6 +2323,8 @@ mod tests {
         tool_sha: String,
         agent_tar: Vec<u8>,
         agent_sha: String,
+        knowledge_tar: Vec<u8>,
+        knowledge_sha: String,
     }
 
     async fn test_resolve(
@@ -2273,6 +2355,12 @@ mod tests {
                     "name":name,
                     "version":"0.1.0",
                     "integrity":state.tool_sha
+                })),
+                "knowledge" => items.push(json!({
+                    "kind":"knowledge",
+                    "name":name,
+                    "version":"0.1.0",
+                    "integrity":state.knowledge_sha
                 })),
                 "agent" => {
                     items.push(json!({
@@ -2312,12 +2400,15 @@ mod tests {
                 "template" => format!("{}/artifact/template", state.base_url),
                 "tool" => format!("{}/artifact/tool", state.base_url),
                 "agent" => format!("{}/artifact/agent", state.base_url),
+                "knowledge" => format!("{}/artifact/knowledge", state.base_url),
                 _ => return Err(StatusCode::BAD_REQUEST),
             };
             let integrity = match kind {
                 "template" => state.template_sha.as_str(),
                 "tool" => state.tool_sha.as_str(),
-                _ => state.agent_sha.as_str(),
+                "agent" => state.agent_sha.as_str(),
+                "knowledge" => state.knowledge_sha.as_str(),
+                _ => return Err(StatusCode::BAD_REQUEST),
             };
             artifacts.push(json!({
                 "kind":kind,
@@ -2361,6 +2452,12 @@ mod tests {
         Response::builder()
             .status(StatusCode::OK)
             .body(Body::from(state.agent_tar.clone()))
+            .unwrap()
+    }
+    async fn get_knowledge(State(state): State<Arc<TestState>>) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.knowledge_tar.clone()))
             .unwrap()
     }
 

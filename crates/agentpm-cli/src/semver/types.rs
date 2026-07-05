@@ -11,6 +11,7 @@ pub enum PackageKind {
     Tool,
     Agent,
     Skill,
+    Knowledge,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -99,6 +100,8 @@ pub struct LockedRoot {
     pub tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub knowledge: Vec<String>,
     #[serde(default, skip_serializing_if = "ReservedReferences::is_empty")]
     pub reserved: ReservedReferences,
 }
@@ -133,12 +136,14 @@ pub enum LockRoot {
         version: String,
         tools: Vec<String>,
         skills: Vec<String>,
+        knowledge: Vec<String>,
         reserved: ReservedReferences,
     },
     RegistryAgent {
         package_key: String,
         tools: Vec<String>,
         skills: Vec<String>,
+        knowledge: Vec<String>,
         reserved: ReservedReferences,
     },
     LocalSkill {
@@ -150,6 +155,9 @@ pub enum LockRoot {
     RegistrySkill {
         package_key: String,
         tools: Vec<String>,
+    },
+    RegistryKnowledge {
+        package_key: String,
     },
 }
 
@@ -176,6 +184,11 @@ impl DesiredSet {
                         meta,
                         "skills",
                         PackageKind::Skill,
+                    )?);
+                    items.extend(parse_manifest_requirements(
+                        meta,
+                        "knowledge",
+                        PackageKind::Knowledge,
                     )?);
                     Ok(DesiredSet { items })
                 }
@@ -336,6 +349,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                 version,
                 tools,
                 skills,
+                knowledge,
                 reserved,
             } => {
                 root_map.insert(
@@ -345,6 +359,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         version: Some(version.clone()),
                         tools: tools.clone(),
                         skills: skills.clone(),
+                        knowledge: knowledge.clone(),
                         reserved: reserved.clone(),
                     },
                 );
@@ -353,6 +368,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                 package_key,
                 tools,
                 skills,
+                knowledge,
                 reserved,
             } => {
                 root_map.insert(
@@ -362,6 +378,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         version: None,
                         tools: tools.clone(),
                         skills: skills.clone(),
+                        knowledge: knowledge.clone(),
                         reserved: reserved.clone(),
                     },
                 );
@@ -379,6 +396,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         version: Some(version.clone()),
                         tools: tools.clone(),
                         skills: Vec::new(),
+                        knowledge: Vec::new(),
                         reserved: ReservedReferences::default(),
                     },
                 );
@@ -391,6 +409,20 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         version: None,
                         tools: tools.clone(),
                         skills: Vec::new(),
+                        knowledge: Vec::new(),
+                        reserved: ReservedReferences::default(),
+                    },
+                );
+            }
+            LockRoot::RegistryKnowledge { package_key } => {
+                root_map.insert(
+                    package_key.clone(),
+                    LockedRoot {
+                        name: None,
+                        version: None,
+                        tools: Vec::new(),
+                        skills: Vec::new(),
+                        knowledge: Vec::new(),
                         reserved: ReservedReferences::default(),
                     },
                 );
@@ -406,6 +438,7 @@ pub fn lock_from_packages_and_roots(
     mut roots: BTreeMap<String, LockedRoot>,
 ) -> Lock {
     migrate_reserved_skills(&packages, &mut roots);
+    migrate_reserved_knowledge(&packages, &mut roots);
     let lockfile_version = if requires_v3_lock(&packages, &roots) {
         3
     } else {
@@ -423,12 +456,16 @@ fn requires_v3_lock(
     packages: &BTreeMap<String, LockedPackage>,
     roots: &BTreeMap<String, LockedRoot>,
 ) -> bool {
-    packages.values().any(|pkg| pkg.kind == PackageKind::Skill)
+    packages
+        .values()
+        .any(|pkg| pkg.kind == PackageKind::Skill || pkg.kind == PackageKind::Knowledge)
         || roots.iter().any(|(key, root)| {
             key == "local:skill"
                 || key.starts_with("local:skill:")
                 || key.starts_with("skill:")
                 || !root.skills.is_empty()
+                || key.starts_with("knowledge:")
+                || !root.knowledge.is_empty()
         })
 }
 
@@ -443,7 +480,7 @@ fn migrate_reserved_skills(
 
         let mut unresolved = Vec::new();
         for raw in root.reserved.skills.drain(..) {
-            match parse_locked_reserved_skill_ref(&raw).and_then(|(name, range)| {
+            match parse_locked_reserved_package_ref(&raw).and_then(|(name, range)| {
                 resolve_declared_package_from_packages(packages, &name, &range, PackageKind::Skill)
             }) {
                 Ok(Some(pkg)) => {
@@ -460,14 +497,47 @@ fn migrate_reserved_skills(
     }
 }
 
-fn parse_locked_reserved_skill_ref(raw: &Value) -> Result<(String, String)> {
+fn migrate_reserved_knowledge(
+    packages: &BTreeMap<String, LockedPackage>,
+    roots: &mut BTreeMap<String, LockedRoot>,
+) {
+    for root in roots.values_mut() {
+        if root.reserved.knowledge.is_empty() {
+            continue;
+        }
+
+        let mut unresolved = Vec::new();
+        for raw in root.reserved.knowledge.drain(..) {
+            match parse_locked_reserved_package_ref(&raw).and_then(|(name, range)| {
+                resolve_declared_package_from_packages(
+                    packages,
+                    &name,
+                    &range,
+                    PackageKind::Knowledge,
+                )
+            }) {
+                Ok(Some(pkg)) => {
+                    let key = package_key(pkg.kind, &pkg.name, &pkg.version);
+                    if !root.knowledge.contains(&key) {
+                        root.knowledge.push(key);
+                    }
+                }
+                Ok(None) | Err(_) => unresolved.push(raw),
+            }
+        }
+
+        root.reserved.knowledge = unresolved;
+    }
+}
+
+fn parse_locked_reserved_package_ref(raw: &Value) -> Result<(String, String)> {
     match raw {
         Value::String(s) => parse_tool_str(s),
         Value::Object(map) => {
             let name = map
                 .get("name")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("reserved skill entry missing name"))?
+                .ok_or_else(|| anyhow!("reserved package entry missing name"))?
                 .to_string();
             let range = map
                 .get("version")
@@ -537,6 +607,7 @@ impl PackageKind {
             PackageKind::Tool => "tool",
             PackageKind::Agent => "agent",
             PackageKind::Skill => "skill",
+            PackageKind::Knowledge => "knowledge",
         }
     }
 }
@@ -649,23 +720,25 @@ mod tests {
     }
 
     #[test]
-    fn desired_set_from_agent_manifest_collects_tools_and_skills() {
+    fn desired_set_from_agent_manifest_collects_tools_skills_and_knowledge() {
         let desired = DesiredSet::from_cli_or_agent_json(
             &json!({
                 "kind": "agent",
                 "name": "support-agent",
                 "version": "0.1.0",
                 "tools": ["@zack/echo@0.1.0"],
-                "skills": ["@zack/triage-skill@0.2.0"]
+                "skills": ["@zack/triage-skill@0.2.0"],
+                "knowledge": ["@zack/python-docs@0.1.0"]
             }),
             None,
             false,
         )
         .unwrap();
 
-        assert_eq!(desired.items.len(), 2);
+        assert_eq!(desired.items.len(), 3);
         assert_eq!(desired.items[0].kind, PackageKind::Tool);
         assert_eq!(desired.items[1].kind, PackageKind::Skill);
+        assert_eq!(desired.items[2].kind, PackageKind::Knowledge);
     }
 
     #[test]
@@ -789,6 +862,7 @@ mod tests {
                 version: "0.1.0".to_string(),
                 tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],
                 skills: Vec::new(),
+                knowledge: Vec::new(),
                 reserved: ReservedReferences {
                     skills: vec![json!("@zack/triage-skill@0.1.0")],
                     knowledge: vec![],
@@ -838,6 +912,7 @@ mod tests {
                 package_key: "agent:@zack/support-agent@0.1.0".to_string(),
                 tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],
                 skills: Vec::new(),
+                knowledge: Vec::new(),
                 reserved: ReservedReferences::default(),
             }],
         );
@@ -871,6 +946,7 @@ mod tests {
                     version: Some("0.1.0".to_string()),
                     tools: Vec::new(),
                     skills: Vec::new(),
+                    knowledge: Vec::new(),
                     reserved: ReservedReferences {
                         skills: vec![json!("@zack/triage-skill@0.1.0")],
                         knowledge: Vec::new(),
@@ -904,6 +980,7 @@ mod tests {
                     version: Some("0.1.0".to_string()),
                     tools: Vec::new(),
                     skills: Vec::new(),
+                    knowledge: Vec::new(),
                     reserved: ReservedReferences {
                         skills: vec![json!("@zack/missing-skill@0.1.0")],
                         knowledge: Vec::new(),
@@ -922,6 +999,81 @@ mod tests {
         assert_eq!(
             root.reserved.skills,
             vec![json!("@zack/missing-skill@0.1.0")]
+        );
+    }
+
+    #[test]
+    fn lock_from_packages_and_roots_migrates_reserved_knowledge_to_first_class_root_field() {
+        let lock = lock_from_packages_and_roots(
+            BTreeMap::from([(
+                "knowledge:@zack/python-docs@0.1.0".to_string(),
+                LockedPackage {
+                    kind: PackageKind::Knowledge,
+                    name: "@zack/python-docs".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-knowledge".to_string(),
+                },
+            )]),
+            BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    reserved: ReservedReferences {
+                        skills: Vec::new(),
+                        knowledge: vec![json!("@zack/python-docs@0.1.0")],
+                        memory: Vec::new(),
+                        profiles: Vec::new(),
+                    },
+                },
+            )]),
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected modern lockfile");
+        };
+        assert_eq!(lock.lockfile_version, 3);
+        let root = lock.roots.get("local:agent").unwrap();
+        assert_eq!(
+            root.knowledge,
+            vec!["knowledge:@zack/python-docs@0.1.0".to_string()]
+        );
+        assert!(root.reserved.knowledge.is_empty());
+    }
+
+    #[test]
+    fn lock_from_packages_and_roots_preserves_unresolvable_reserved_knowledge() {
+        let lock = lock_from_packages_and_roots(
+            BTreeMap::new(),
+            BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    reserved: ReservedReferences {
+                        skills: Vec::new(),
+                        knowledge: vec![json!("@zack/missing-knowledge@0.1.0")],
+                        memory: Vec::new(),
+                        profiles: Vec::new(),
+                    },
+                },
+            )]),
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected modern lockfile");
+        };
+        let root = lock.roots.get("local:agent").unwrap();
+        assert!(root.knowledge.is_empty());
+        assert_eq!(
+            root.reserved.knowledge,
+            vec![json!("@zack/missing-knowledge@0.1.0")]
         );
     }
 
@@ -996,12 +1148,14 @@ mod tests {
                     package_key: "agent:@zack/support-agent@0.1.0".to_string(),
                     tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],
                     skills: Vec::new(),
+                    knowledge: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
                 LockRoot::RegistryAgent {
                     package_key: "agent:@zack/escalation-agent@0.1.0".to_string(),
                     tools: vec!["tool:@zack/slack-post-message@0.2.0".to_string()],
                     skills: Vec::new(),
+                    knowledge: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
             ],
