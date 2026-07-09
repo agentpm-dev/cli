@@ -267,6 +267,7 @@
 - [ ] Update workspace/root-building logic so Knowledge remains a leaf package in direct-install flows.
 - [ ] Ensure install behavior remains consistent with the long-term leaf-package direction for future package kinds such as Memory Blueprints, Instruction Profiles, and Loops.
 - [ ] Replace direct Knowledge install tests that expect a standalone Knowledge root with tests that expect package-only lockfile state.
+- [ ] Add an explicit install test proving direct Knowledge install inside a local `kind: "agent"` project installs the package, updates top-level `agent.json` `knowledge`, records the dependency on `local:agent`, and does not create a standalone Knowledge root.
 - [ ] Add regression tests proving agent/template Knowledge dependency edges still materialize correctly in roots.
 - [ ] Add regression tests proving SDK/CLI consumers that read installed Knowledge from agent/template dependency graphs still work without direct Knowledge roots.
 
