@@ -437,6 +437,7 @@ pub fn lock_from_packages_and_roots(
     packages: BTreeMap<String, LockedPackage>,
     mut roots: BTreeMap<String, LockedRoot>,
 ) -> Lock {
+    prune_standalone_knowledge_roots(&mut roots);
     migrate_reserved_skills(&packages, &mut roots);
     migrate_reserved_knowledge(&packages, &mut roots);
     let lockfile_version = if requires_v3_lock(&packages, &roots) {
@@ -452,13 +453,15 @@ pub fn lock_from_packages_and_roots(
     })
 }
 
+fn prune_standalone_knowledge_roots(roots: &mut BTreeMap<String, LockedRoot>) {
+    roots.retain(|key, _| !key.starts_with("knowledge:"));
+}
+
 fn requires_v3_lock(
     packages: &BTreeMap<String, LockedPackage>,
     roots: &BTreeMap<String, LockedRoot>,
 ) -> bool {
-    packages
-        .values()
-        .any(|pkg| pkg.kind == PackageKind::Skill || pkg.kind == PackageKind::Knowledge)
+    packages.values().any(|pkg| pkg.kind == PackageKind::Skill)
         || roots.iter().any(|(key, root)| {
             key == "local:skill"
                 || key.starts_with("local:skill:")

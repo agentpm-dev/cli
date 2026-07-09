@@ -345,8 +345,14 @@ fn validate_frozen_lock_compatibility(
         .items
         .iter()
         .any(|item| item.kind == PackageKind::Knowledge);
+    let manifest_has_knowledge = manifest_value
+        .and_then(|value| value.get("knowledge"))
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty());
 
-    let requires_v3 = manifest_is_skill || desired_has_skill || desired_has_knowledge;
+    let requires_v3 = manifest_is_skill
+        || desired_has_skill
+        || (manifest_is_agent && (manifest_has_knowledge || desired_has_knowledge));
     if (manifest_is_agent || desired_has_agent) && lock.is_v1() {
         return Err(anyhow!(
             "--frozen cannot use lockfile v1 for agent dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v2"
@@ -485,6 +491,7 @@ fn installed_skill_manifest_path(
         .join("agent.json"))
 }
 
+#[cfg(test)]
 fn installed_knowledge_manifest_path(
     install_root: &std::path::Path,
     package: &str,
@@ -512,9 +519,7 @@ fn build_registry_package_roots(
     let mut roots = Vec::new();
     let packages = plan_to_packages(plan);
     for item in plan.items.iter().filter(|item| {
-        (item.kind == PackageKind::Agent
-            || item.kind == PackageKind::Skill
-            || item.kind == PackageKind::Knowledge)
+        (item.kind == PackageKind::Agent || item.kind == PackageKind::Skill)
             && item.name == requested.name
     }) {
         let root = match item.kind {
@@ -576,16 +581,7 @@ fn build_registry_package_roots(
                     }
                 }
             }
-            PackageKind::Knowledge => {
-                let manifest_path =
-                    installed_knowledge_manifest_path(install_root, &item.name, &item.version)?;
-                if manifest_path.exists() {
-                    let _ = load_manifest_value(&manifest_path)?;
-                }
-                LockRoot::RegistryKnowledge {
-                    package_key: package_key(item.kind, &item.name, &item.version),
-                }
-            }
+            PackageKind::Knowledge => unreachable!(),
             PackageKind::Tool => unreachable!(),
         };
 
@@ -1244,7 +1240,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_knowledge_install_builds_registry_knowledge_root() {
+    fn direct_knowledge_install_does_not_build_registry_root() {
         let root = temp_root("registry-knowledge-root");
         let manifest_path =
             installed_knowledge_manifest_path(&root, "@zack/python-docs", "0.1.0").unwrap();
@@ -1276,11 +1272,7 @@ mod tests {
 
         let roots = build_lock_roots(None, Some("@zack/python-docs@0.1.0"), &plan, &root).unwrap();
 
-        assert_eq!(roots.len(), 1);
-        let LockRoot::RegistryKnowledge { package_key } = &roots[0] else {
-            panic!("expected registry knowledge root");
-        };
-        assert_eq!(package_key, "knowledge:@zack/python-docs@0.1.0");
+        assert!(roots.is_empty());
     }
 
     #[test]
@@ -1698,6 +1690,136 @@ mod tests {
         assert_eq!(
             skill_root.tools,
             vec!["tool:@zack/slack-post-message@0.1.0".to_string()]
+        );
+    }
+
+    #[test]
+    fn direct_knowledge_install_without_local_manifest_keeps_package_only_v2_lock() {
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::new(),
+            roots: BTreeMap::new(),
+        });
+        let root = temp_root("direct-knowledge-package-only");
+        let manifest_path =
+            installed_knowledge_manifest_path(&root, "@zack/python-docs", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "knowledge",
+                "name": "python-docs",
+                "version": "0.1.0",
+                "description": "Knowledge",
+                "knowledge": {
+                    "mode": "context",
+                    "documents": [{"path":"knowledge/docs/context.md"}]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Knowledge,
+                name: "@zack/python-docs".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-knowledge".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            None,
+            Some("@zack/python-docs@0.1.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(lock.lockfile_version, 2);
+        assert!(lock.roots.is_empty());
+        assert!(
+            lock.packages
+                .contains_key("knowledge:@zack/python-docs@0.1.0")
+        );
+    }
+
+    #[test]
+    fn direct_knowledge_install_prunes_standalone_knowledge_roots_from_existing_lock() {
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 3,
+            generated: Utc::now(),
+            packages: BTreeMap::from([(
+                "knowledge:@zack/python-docs@0.1.0".to_string(),
+                LockedPackage {
+                    kind: PackageKind::Knowledge,
+                    name: "@zack/python-docs".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-old-knowledge".to_string(),
+                },
+            )]),
+            roots: BTreeMap::from([(
+                "knowledge:@zack/python-docs@0.1.0".to_string(),
+                LockedRoot {
+                    name: None,
+                    version: None,
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    reserved: Default::default(),
+                },
+            )]),
+        });
+        let root = temp_root("direct-knowledge-prune-root");
+        let manifest_path =
+            installed_knowledge_manifest_path(&root, "@zack/python-docs", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "knowledge",
+                "name": "python-docs",
+                "version": "0.1.0",
+                "description": "Knowledge",
+                "knowledge": {
+                    "mode": "context",
+                    "documents": [{"path":"knowledge/docs/context.md"}]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Knowledge,
+                name: "@zack/python-docs".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-knowledge".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            None,
+            Some("@zack/python-docs@0.1.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(lock.lockfile_version, 2);
+        assert!(!lock.roots.contains_key("knowledge:@zack/python-docs@0.1.0"));
+        assert!(
+            lock.packages
+                .contains_key("knowledge:@zack/python-docs@0.1.0")
         );
     }
 
@@ -2177,6 +2299,133 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[tokio::test]
+    async fn direct_knowledge_install_updates_local_agent_manifest_without_standalone_root() {
+        let root = temp_root("install-local-agent-knowledge");
+        fs::create_dir_all(&root).unwrap();
+        crate::manifest::write_manifest_pretty_atomic(
+            &root.join("agent.json"),
+            &json!({
+                "kind": "agent",
+                "name": "research-agent",
+                "version": "0.1.0",
+                "tools": [{"name":"@zack/echo","version":"0.1.0"}],
+                "knowledge": []
+            }),
+        )
+        .unwrap();
+        crate::manifest::write_lock(
+            &root,
+            &Lock::V2(LockV2 {
+                lockfile_version: 2,
+                generated: Utc::now(),
+                packages: BTreeMap::from([(
+                    "tool:@zack/echo@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/echo".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-echo".to_string(),
+                    },
+                )]),
+                roots: BTreeMap::new(),
+            }),
+        )
+        .unwrap();
+
+        let knowledge_tar = build_tarball(&[
+            (
+                "agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"knowledge",
+                    "name":"sample-docs",
+                    "version":"0.1.0",
+                    "description":"Knowledge",
+                    "knowledge":{
+                        "mode":"context",
+                        "documents":[{"path":"knowledge/docs/context.md"}]
+                    }
+                }))
+                .unwrap(),
+            ),
+            ("knowledge/docs/context.md", "# Sample Docs\n".to_string()),
+        ]);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(DirectKnowledgeInstallTestState {
+            base_url: base_url.clone(),
+            knowledge_tar: knowledge_tar.clone(),
+            knowledge_sha: sha_hex(&knowledge_tar),
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(direct_knowledge_resolve))
+            .route("/v1/tools/install/init", post(direct_knowledge_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/direct-knowledge", get(get_direct_knowledge))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let args = InstallArgs {
+            manifest: root.join("agent.json").to_string_lossy().into_owned(),
+            spec: Some("@zack/sample-docs@0.1.0".to_string()),
+            frozen: false,
+            refresh: false,
+            update_range: false,
+            quiet: true,
+            require_attestation: false,
+            token: None,
+        };
+
+        args.run(base_url).await.unwrap();
+
+        let manifest_after: Value =
+            serde_json::from_str(&fs::read_to_string(root.join("agent.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest_after["tools"],
+            json!([{"name":"@zack/echo","version":"0.1.0"}])
+        );
+        assert_eq!(
+            manifest_after["knowledge"],
+            json!([{"name":"@zack/sample-docs","version":"0.1.0"}])
+        );
+
+        let lock_after = crate::manifest::read_lock_or_default(&root).unwrap();
+        let Lock::V2(lock_after) = lock_after else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(lock_after.lockfile_version, 3);
+        assert!(
+            lock_after
+                .packages
+                .contains_key("knowledge:@zack/sample-docs@0.1.0")
+        );
+        assert!(
+            !lock_after
+                .roots
+                .contains_key("knowledge:@zack/sample-docs@0.1.0")
+        );
+        assert_eq!(
+            lock_after
+                .roots
+                .get("local:agent")
+                .expect("local agent root missing")
+                .knowledge,
+            vec!["knowledge:@zack/sample-docs@0.1.0".to_string()]
+        );
+        assert!(
+            installed_knowledge_manifest_path(&root.join(".agentpm"), "@zack/sample-docs", "0.1.0")
+                .unwrap()
+                .exists()
+        );
+
+        server.abort();
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn temp_root(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2211,6 +2460,13 @@ mod tests {
         base_url: String,
         skill_tar: Vec<u8>,
         skill_sha: String,
+    }
+
+    #[derive(Clone)]
+    struct DirectKnowledgeInstallTestState {
+        base_url: String,
+        knowledge_tar: Vec<u8>,
+        knowledge_sha: String,
     }
 
     async fn test_resolve(
@@ -2383,6 +2639,27 @@ mod tests {
             .unwrap())
     }
 
+    async fn direct_knowledge_resolve(
+        State(state): State<Arc<DirectKnowledgeInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "items": [{
+                "kind": "knowledge",
+                "name": item["name"],
+                "version": "0.1.0",
+                "integrity": state.knowledge_sha,
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
     async fn direct_skill_init(
         State(state): State<Arc<DirectSkillInstallTestState>>,
         body: String,
@@ -2398,6 +2675,32 @@ mod tests {
                 "version": item["version"],
                 "integrity": state.skill_sha,
                 "presigned_url": format!("{}/artifact/direct-skill", state.base_url),
+                "size": 12,
+                "content_type":"application/gzip"
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
+    async fn direct_knowledge_init(
+        State(state): State<Arc<DirectKnowledgeInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "session_id":"session-1",
+            "expires_at":"2026-06-01T00:00:00Z",
+            "artifacts": [{
+                "kind": "knowledge",
+                "name": item["name"],
+                "version": item["version"],
+                "integrity": state.knowledge_sha,
+                "presigned_url": format!("{}/artifact/direct-knowledge", state.base_url),
                 "size": 12,
                 "content_type":"application/gzip"
             }]
@@ -2450,6 +2753,15 @@ mod tests {
         Response::builder()
             .status(StatusCode::OK)
             .body(Body::from(state.skill_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_direct_knowledge(
+        State(state): State<Arc<DirectKnowledgeInstallTestState>>,
+    ) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.knowledge_tar.clone()))
             .unwrap()
     }
 

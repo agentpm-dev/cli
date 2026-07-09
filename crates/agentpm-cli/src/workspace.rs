@@ -233,14 +233,6 @@ pub fn build_workspace_lock(
             install_root,
         )?);
     }
-    for knowledge_root in &package_roots.knowledge {
-        roots.push(build_registry_knowledge_root(
-            &knowledge_root.name,
-            &knowledge_root.version,
-            &packages,
-        )?);
-    }
-
     Ok(lock_from_plan(plan, &roots))
 }
 
@@ -436,30 +428,6 @@ fn build_registry_skill_root(
             &format!("registry skill {}@{}", package, version),
             packages,
         )?,
-    })
-}
-
-fn build_registry_knowledge_root(
-    package: &str,
-    version: &str,
-    packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
-) -> Result<LockRoot> {
-    let pkg = resolve_declared_package_from_packages(
-        packages,
-        package,
-        version,
-        PackageKind::Knowledge,
-    )?
-    .ok_or_else(|| {
-        anyhow!(
-            "declared knowledge dependency {}@{} from workspace package roots is missing from the resolved package set",
-            package,
-            version
-        )
-    })?;
-
-    Ok(LockRoot::RegistryKnowledge {
-        package_key: package_key(pkg.kind, &pkg.name, &pkg.version),
     })
 }
 
@@ -782,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn build_workspace_lock_records_registry_knowledge_package_roots() {
+    fn build_workspace_lock_records_knowledge_dependencies_without_registry_root() {
         let root = temp_root("workspace-knowledge-root");
 
         let lock = build_workspace_lock(
@@ -829,7 +797,7 @@ mod tests {
             panic!("expected v2 lock");
         };
         assert_eq!(lock.lockfile_version, 3);
-        assert!(lock.roots.contains_key("knowledge:@zack/python-docs@0.1.0"));
+        assert!(!lock.roots.contains_key("knowledge:@zack/python-docs@0.1.0"));
         assert_eq!(
             lock.roots["local:agent"].knowledge,
             vec!["knowledge:@zack/python-docs@0.1.0".to_string()]
