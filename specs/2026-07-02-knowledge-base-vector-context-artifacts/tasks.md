@@ -402,7 +402,30 @@
 - [ ] Add SDK tests for `load_knowledge` / `loadKnowledge` if implemented.
 - [ ] Add SDK regression tests for existing tool/agent/skill behavior.
 
-## Milestone 10: Docs, Examples, and Developer Guidance
+## Milestone 10: Compatibility, Cleanup, and Audits
+> Scope note: final audit for hardcoded package kind lists, stale warnings, and accidental behavior changes.
+- [ ] Audit CLI for hardcoded `tool|agent|template|skill` lists and add `knowledge` where intended.
+- [ ] Audit backend for hardcoded package kind lists and add `knowledge` where intended.
+- [ ] Audit frontend for hardcoded package kind lists and add `knowledge` where intended.
+- [ ] Audit Node SDK public exports and package kind models for Knowledge.
+- [ ] Audit Python SDK public exports and package kind models for Knowledge.
+- [ ] Audit docs and UI copy that says “tools” when it means “packages,” but avoid broad table/model renames.
+- [ ] Ensure the existing physical `tools` table naming does not leak as incorrect user-facing copy.
+- [ ] Ensure old tool, agent, template, and skill package flows remain installable.
+- [ ] Ensure existing template `dependencies` without `knowledge` remains valid.
+- [ ] Ensure private namespace access applies consistently to private Knowledge publish/install/search/detail flows.
+- [ ] Ensure Knowledge packages do not appear as executable tools.
+- [ ] Ensure context-mode Knowledge packages are not treated as vector-queryable unless a future retrieval strategy is added.
+- [ ] Ensure vector-mode Knowledge packages still support the prepared retrieval/indexed flow.
+- [ ] Ensure direct install of package specs resolves by stored DB kind, not requested kind alone.
+- [ ] Ensure direct Knowledge install remains leaf-shaped in the lockfile and does not create a standalone Knowledge root.
+- [ ] Run full backend, CLI, frontend, and SDK test suites.
+- [ ] Audit Knowledge publish code to ensure it reuses build validation/metadata computation in check-only mode rather than duplicating divergent logic.
+- [ ] Ensure `agentpm publish` never mutates Knowledge package files unless a future explicit build/prepare flag is added.
+- [ ] Ensure stale build-check errors are specific enough to tell authors what changed and to run `agentpm knowledge build`.
+- [ ] Ensure context-mode and vector-mode build-check behavior is covered in docs, CLI help, and tests.
+
+## Milestone 11: Docs, Examples, and Developer Guidance
 > Scope note: document the contract and the product boundaries clearly. Codex should include docs that prevent users from assuming AgentPM crawls, embeds, or hosts provider credentials.
 - [ ] Add docs page for Knowledge artifacts.
 - [ ] Document the strategic boundary: AgentPM packages prepared context; it does not crawl/chunk/embed in Phase 6B, and vector retrieval is one supported Knowledge mode.
@@ -455,26 +478,3 @@
 - [ ] Add an example embedding command adapter script if `--embedding-command` is implemented.
 - [ ] Update CLI help text snapshots/docs for new commands.
 - [ ] Update registry/docs pages that list package kinds.
-
-## Milestone 11: Compatibility, Cleanup, and Audits
-> Scope note: final audit for hardcoded package kind lists, stale warnings, and accidental behavior changes.
-- [ ] Audit CLI for hardcoded `tool|agent|template|skill` lists and add `knowledge` where intended.
-- [ ] Audit backend for hardcoded package kind lists and add `knowledge` where intended.
-- [ ] Audit frontend for hardcoded package kind lists and add `knowledge` where intended.
-- [ ] Audit Node SDK public exports and package kind models for Knowledge.
-- [ ] Audit Python SDK public exports and package kind models for Knowledge.
-- [ ] Audit docs and UI copy that says “tools” when it means “packages,” but avoid broad table/model renames.
-- [ ] Ensure the existing physical `tools` table naming does not leak as incorrect user-facing copy.
-- [ ] Ensure old tool, agent, template, and skill package flows remain installable.
-- [ ] Ensure existing template `dependencies` without `knowledge` remains valid.
-- [ ] Ensure private namespace access applies consistently to private Knowledge publish/install/search/detail flows.
-- [ ] Ensure Knowledge packages do not appear as executable tools.
-- [ ] Ensure context-mode Knowledge packages are not treated as vector-queryable unless a future retrieval strategy is added.
-- [ ] Ensure vector-mode Knowledge packages still support the prepared retrieval/indexed flow.
-- [ ] Ensure direct install of package specs resolves by stored DB kind, not requested kind alone.
-- [ ] Ensure direct Knowledge install remains leaf-shaped in the lockfile and does not create a standalone Knowledge root.
-- [ ] Run full backend, CLI, frontend, and SDK test suites.
-- [ ] Audit Knowledge publish code to ensure it reuses build validation/metadata computation in check-only mode rather than duplicating divergent logic.
-- [ ] Ensure `agentpm publish` never mutates Knowledge package files unless a future explicit build/prepare flag is added.
-- [ ] Ensure stale build-check errors are specific enough to tell authors what changed and to run `agentpm knowledge build`.
-- [ ] Ensure context-mode and vector-mode build-check behavior is covered in docs, CLI help, and tests.
