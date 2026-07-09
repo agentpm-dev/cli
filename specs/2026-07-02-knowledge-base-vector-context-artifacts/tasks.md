@@ -257,13 +257,26 @@
 - [ ] Add backend tests rejecting vector-mode Knowledge manifests missing build-derived corpus/vector/index metadata.
 - [ ] Add backend regression tests for existing package kinds.
 
+## Milestone 6a: Leaf-Package Lockfile Semantics for Knowledge
+> Scope note: correct the direct-install lockfile model so Knowledge behaves like a leaf package rather than a root package. Direct Knowledge installs should be tracked like direct tool installs unless a local or registry entrypoint references them.
+- [ ] Remove direct Knowledge root creation for `agentpm install @ns/pkg` when the resolved package kind is `knowledge`.
+- [ ] Preserve Knowledge package entries in `packages` for direct installs, including integrity pinning.
+- [ ] Ensure Knowledge only appears in `roots` when referenced by a local/generated agent root or another supported entrypoint relationship.
+- [ ] Update lockfile version behavior so direct Knowledge install alone does not force a root-shaped lockfile entry.
+- [ ] Keep v3 lockfile behavior for actual Knowledge dependency graphs on agents/templates.
+- [ ] Update workspace/root-building logic so Knowledge remains a leaf package in direct-install flows.
+- [ ] Ensure install behavior remains consistent with the long-term leaf-package direction for future package kinds such as Memory Blueprints, Instruction Profiles, and Loops.
+- [ ] Replace direct Knowledge install tests that expect a standalone Knowledge root with tests that expect package-only lockfile state.
+- [ ] Add regression tests proving agent/template Knowledge dependency edges still materialize correctly in roots.
+- [ ] Add regression tests proving SDK/CLI consumers that read installed Knowledge from agent/template dependency graphs still work without direct Knowledge roots.
+
 ## Milestone 7: Knowledge Inspect and Query
 > Scope note: add the local developer loop. Inspect should work for local or installed artifacts in both modes. Query is vector-mode only, provider-neutral, and accepts a query vector directly. For Phase 6B, `agentpm-local` v1 may use exact search over the declared vector file, with `knowledge/indexes/default/metadata.json` proving the local query metadata was built for the current chunks, sources, vectors, dimensions, metric, and vector count. Context-mode artifacts should inspect/read cleanly and fail clearly if vector query is requested. Shell command adapter support is strongly preferred. Built-in provider adapter is optional DX.
 - [ ] Implement `agentpm knowledge inspect <path-or-package>`.
 - [ ] Resolve local references:
   - [ ] package directory containing `agent.json`
   - [ ] direct `agent.json` path
-  - [ ] installed package ref if already in the workspace lock/install roots
+  - [ ] installed package ref via the install layout and/or lockfile package graph; do not require a standalone Knowledge root for direct installs
 - [ ] Print human-readable Knowledge metadata for both modes: package, mode, documents/context metadata, chunks, sources, embedding, vectors, indexes, retrieval defaults, and provenance as applicable.
 - [ ] For context mode, inspect should show declared document paths, content types, roles, byte counts, per-document hashes, document count, total bytes, and aggregate content hash.
 - [ ] For vector mode, inspect should show chunk count, source count, embedding provider/model, dimensions, metric, normalized flag, vectors path/hash, index path, index type, index algorithm, index metadata freshness, and retrieval defaults.
@@ -377,6 +390,7 @@
 - [ ] Update install/resolve/search/detail response models in both SDKs to include Knowledge.
 - [ ] Update Python agent loading to include resolved Knowledge metadata/paths if existing loaded agents expose resolved dependencies.
 - [ ] Update Node agent loading to include resolved Knowledge metadata/paths if existing loaded agents expose resolved dependencies.
+- [ ] Ensure SDK Knowledge-loading paths can resolve installed Knowledge from agent/template dependency graphs without requiring a standalone Knowledge root entry for direct installs.
 - [ ] Consider adding Python `load_knowledge(...)` returning manifest, package path, mode, context document paths, chunks path, sources path, embedding metadata, indexes, and retrieval defaults as applicable.
 - [ ] Consider adding Node `loadKnowledge(...)` with equivalent behavior and naming conventions.
 - [ ] Ensure existing generic callable `load(...)` remains tool-only.
@@ -457,6 +471,7 @@
 - [ ] Ensure context-mode Knowledge packages are not treated as vector-queryable unless a future retrieval strategy is added.
 - [ ] Ensure vector-mode Knowledge packages still support the prepared retrieval/indexed flow.
 - [ ] Ensure direct install of package specs resolves by stored DB kind, not requested kind alone.
+- [ ] Ensure direct Knowledge install remains leaf-shaped in the lockfile and does not create a standalone Knowledge root.
 - [ ] Run full backend, CLI, frontend, and SDK test suites.
 - [ ] Audit Knowledge publish code to ensure it reuses build validation/metadata computation in check-only mode rather than duplicating divergent logic.
 - [ ] Ensure `agentpm publish` never mutates Knowledge package files unless a future explicit build/prepare flag is added.
