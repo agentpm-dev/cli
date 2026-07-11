@@ -15,8 +15,20 @@ use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::thread;
+use std::time::{Duration, Instant};
+
+#[cfg(not(test))]
+const EMBEDDING_ADAPTER_TIMEOUT_MS: u64 = 10_000;
+#[cfg(test)]
+const EMBEDDING_ADAPTER_TIMEOUT_MS: u64 = 1_000;
+const EMBEDDING_ADAPTER_MAX_STDOUT_BYTES: usize = 1024 * 1024;
+const EMBEDDING_ADAPTER_MAX_STDERR_BYTES: usize = 64 * 1024;
 
 #[derive(Args, Debug)]
 pub struct KnowledgeArgs {
@@ -467,7 +479,7 @@ fn query_knowledge(base_dir: &Path, args: &KnowledgeQueryArgs) -> Result<QueryVi
         &manifest,
         vector_result,
     )?)?;
-    let query_vector = resolve_query_vector(args, &manifest)?;
+    let query_vector = resolve_query_vector(base_dir, args, &manifest)?;
     let top_k = args
         .top_k
         .or_else(|| {
@@ -854,16 +866,19 @@ fn require_fresh_local_index(
 }
 
 fn resolve_query_vector(
+    base_dir: &Path,
     args: &KnowledgeQueryArgs,
     manifest: &KnowledgeManifest,
 ) -> Result<QueryVectorInput> {
     if let Some(vector_json) = &args.vector_json {
         return load_query_vector_json(vector_json, manifest);
     }
-    if args.embedding_command.is_some() {
-        bail!(
-            "`--embedding-command` is not implemented yet for `agentpm knowledge query`; pass `--vector-json` instead"
-        );
+    if let Some(command) = &args.embedding_command {
+        let query_text = args
+            .query_text
+            .as_deref()
+            .ok_or_else(|| anyhow!("`--embedding-command` requires query text input"))?;
+        return load_query_vector_from_adapter(base_dir, command, query_text, manifest);
     }
     if args.query_text.is_some() {
         let provider = manifest
@@ -903,6 +918,44 @@ fn load_query_vector_json(
         }
     })?;
 
+    parse_query_vector_input(value, manifest)
+}
+
+fn load_query_vector_from_adapter(
+    base_dir: &Path,
+    command_line: &str,
+    query_text: &str,
+    manifest: &KnowledgeManifest,
+) -> Result<QueryVectorInput> {
+    let embedding = manifest
+        .knowledge
+        .embedding
+        .as_ref()
+        .ok_or_else(|| anyhow!("vector-mode Knowledge requires knowledge.embedding"))?;
+    let input_payload = json!({
+        "text": query_text,
+        "embedding": {
+            "provider": embedding.provider,
+            "model": embedding.model,
+            "dimensions": embedding.dimensions,
+            "metric": embedding.metric,
+            "normalized": embedding.normalized
+        }
+    });
+    let stdout = execute_embedding_adapter(
+        command_line,
+        base_dir,
+        &(serde_json::to_vec(&input_payload)?),
+    )?;
+    let value: Value =
+        serde_json::from_slice(&stdout).context("adapter stdout was not valid JSON")?;
+    parse_query_vector_input(value, manifest)
+}
+
+fn parse_query_vector_input(
+    value: Value,
+    manifest: &KnowledgeManifest,
+) -> Result<QueryVectorInput> {
     let input = match value {
         Value::Array(values) => QueryVectorInput {
             values: parse_query_vector_values(&values)?,
@@ -918,19 +971,45 @@ fn load_query_vector_json(
                 .ok_or_else(|| {
                     anyhow!("query vector JSON object must contain a `vector` or `values` array")
                 })?;
+            let embedding_meta = map.get("embedding").and_then(Value::as_object);
             QueryVectorInput {
                 values: parse_query_vector_values(values)?,
                 provider: map
                     .get("provider")
                     .and_then(Value::as_str)
+                    .or_else(|| {
+                        embedding_meta
+                            .and_then(|meta| meta.get("provider"))
+                            .and_then(Value::as_str)
+                    })
                     .map(str::to_string),
-                model: map.get("model").and_then(Value::as_str).map(str::to_string),
-                dimensions: map.get("dimensions").and_then(Value::as_u64),
+                model: map
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .or_else(|| {
+                        embedding_meta
+                            .and_then(|meta| meta.get("model"))
+                            .and_then(Value::as_str)
+                    })
+                    .map(str::to_string),
+                dimensions: map.get("dimensions").and_then(Value::as_u64).or_else(|| {
+                    embedding_meta
+                        .and_then(|meta| meta.get("dimensions"))
+                        .and_then(Value::as_u64)
+                }),
             }
         }
         _ => bail!("query vector JSON must be an array or object"),
     };
 
+    validate_query_vector_input(&input, manifest)?;
+    Ok(input)
+}
+
+fn validate_query_vector_input(
+    input: &QueryVectorInput,
+    manifest: &KnowledgeManifest,
+) -> Result<()> {
     let embedding = manifest
         .knowledge
         .embedding
@@ -970,8 +1049,267 @@ fn load_query_vector_json(
             embedding.model
         );
     }
+    Ok(())
+}
 
-    Ok(input)
+fn execute_embedding_adapter(command_line: &str, cwd: &Path, input: &[u8]) -> Result<Vec<u8>> {
+    let argv = parse_adapter_command_line(command_line)?;
+    let program = argv
+        .first()
+        .ok_or_else(|| anyhow!("`--embedding-command` must not be empty"))?;
+    let args = &argv[1..];
+
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let stdout_over_limit = Arc::new(AtomicBool::new(false));
+    let stderr_over_limit = Arc::new(AtomicBool::new(false));
+
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawning embedding adapter `{}`", command_line))?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("embedding adapter stdin was not piped"))?;
+    stdin
+        .write_all(input)
+        .context("writing adapter request to stdin")?;
+    drop(stdin);
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("embedding adapter stdout was not piped"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("embedding adapter stderr was not piped"))?;
+
+    let stdout_limit_flag = Arc::clone(&stdout_over_limit);
+    let stdout_handle = thread::spawn(move || {
+        read_stream_with_limit(
+            stdout,
+            EMBEDDING_ADAPTER_MAX_STDOUT_BYTES,
+            &stdout_limit_flag,
+        )
+    });
+    let stderr_limit_flag = Arc::clone(&stderr_over_limit);
+    let stderr_handle = thread::spawn(move || {
+        read_stream_with_limit(
+            stderr,
+            EMBEDDING_ADAPTER_MAX_STDERR_BYTES,
+            &stderr_limit_flag,
+        )
+    });
+
+    let start = Instant::now();
+    let timeout = Duration::from_millis(EMBEDDING_ADAPTER_TIMEOUT_MS);
+    loop {
+        if child
+            .try_wait()
+            .context("waiting for embedding adapter")?
+            .is_some()
+        {
+            break;
+        }
+        if start.elapsed() >= timeout {
+            timed_out.store(true, AtomicOrdering::Relaxed);
+            #[cfg(unix)]
+            {
+                let _ = kill_process_group(child.id());
+            }
+            let _ = child.kill();
+            break;
+        }
+        if stdout_over_limit.load(AtomicOrdering::Relaxed)
+            || stderr_over_limit.load(AtomicOrdering::Relaxed)
+        {
+            #[cfg(unix)]
+            {
+                let _ = kill_process_group(child.id());
+            }
+            let _ = child.kill();
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let status = child.wait().context("waiting for embedding adapter exit")?;
+    let stdout = stdout_handle
+        .join()
+        .map_err(|_| anyhow!("embedding adapter stdout reader panicked"))??;
+    let stderr = stderr_handle
+        .join()
+        .map_err(|_| anyhow!("embedding adapter stderr reader panicked"))??;
+
+    if timed_out.load(AtomicOrdering::Relaxed) {
+        bail!(
+            "embedding adapter timed out after {} ms",
+            EMBEDDING_ADAPTER_TIMEOUT_MS
+        );
+    }
+    if stdout_over_limit.load(AtomicOrdering::Relaxed) {
+        bail!(
+            "embedding adapter stdout exceeded {} bytes",
+            EMBEDDING_ADAPTER_MAX_STDOUT_BYTES
+        );
+    }
+    if stderr_over_limit.load(AtomicOrdering::Relaxed) {
+        bail!(
+            "embedding adapter stderr exceeded {} bytes",
+            EMBEDDING_ADAPTER_MAX_STDERR_BYTES
+        );
+    }
+    if !status.success() {
+        let stderr_text = String::from_utf8_lossy(&stderr);
+        let suffix = if stderr_text.trim().is_empty() {
+            String::new()
+        } else {
+            format!(": {}", stderr_text.trim())
+        };
+        bail!(
+            "embedding adapter exited unsuccessfully (status {}){}",
+            status,
+            suffix
+        );
+    }
+
+    Ok(stdout)
+}
+
+fn read_stream_with_limit<R: Read>(
+    mut reader: R,
+    limit: usize,
+    over_limit: &AtomicBool,
+) -> Result<Vec<u8>> {
+    let mut buf = [0u8; 8192];
+    let mut output = Vec::new();
+    loop {
+        let read = reader
+            .read(&mut buf)
+            .context("reading embedding adapter stream")?;
+        if read == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(output.len());
+        let to_take = remaining.min(read);
+        output.extend_from_slice(&buf[..to_take]);
+        if to_take < read {
+            over_limit.store(true, AtomicOrdering::Relaxed);
+            break;
+        }
+    }
+    Ok(output)
+}
+
+fn parse_adapter_command_line(command_line: &str) -> Result<Vec<String>> {
+    #[derive(Clone, Copy)]
+    enum Quote {
+        Single,
+        Double,
+    }
+
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut chars = command_line.chars().peekable();
+    let mut quote = None;
+    let mut arg_started = false;
+
+    while let Some(ch) = chars.next() {
+        match quote {
+            Some(Quote::Single) => {
+                if ch == '\'' {
+                    quote = None;
+                } else {
+                    current.push(ch);
+                }
+                arg_started = true;
+            }
+            Some(Quote::Double) => {
+                if ch == '"' {
+                    quote = None;
+                } else if ch == '\\' {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    } else {
+                        current.push('\\');
+                    }
+                } else {
+                    current.push(ch);
+                }
+                arg_started = true;
+            }
+            None => match ch {
+                '\'' => {
+                    quote = Some(Quote::Single);
+                    arg_started = true;
+                }
+                '"' => {
+                    quote = Some(Quote::Double);
+                    arg_started = true;
+                }
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                        arg_started = true;
+                    }
+                }
+                ch if ch.is_whitespace() => {
+                    if arg_started || !current.is_empty() {
+                        args.push(std::mem::take(&mut current));
+                        arg_started = false;
+                    }
+                }
+                _ => {
+                    current.push(ch);
+                    arg_started = true;
+                }
+            },
+        }
+    }
+
+    if quote.is_some() {
+        bail!("`--embedding-command` contains an unterminated quote");
+    }
+    if arg_started || !current.is_empty() {
+        args.push(current);
+    }
+    if args.is_empty() {
+        bail!("`--embedding-command` must not be empty");
+    }
+    Ok(args)
+}
+
+#[cfg(unix)]
+fn kill_process_group(pid: u32) -> Result<()> {
+    let rc = unsafe { libc::killpg(pid as i32, libc::SIGKILL) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() != std::io::ErrorKind::NotFound {
+            return Err(err).context("killing timed-out adapter process group");
+        }
+    }
+    Ok(())
 }
 
 fn parse_query_vector_values(values: &[Value]) -> Result<Vec<f32>> {
@@ -2004,6 +2342,30 @@ mod tests {
         fs::write(path, bytes).unwrap();
     }
 
+    fn available_python() -> Option<String> {
+        for candidate in ["python3", "python"] {
+            let status = std::process::Command::new(candidate)
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            if matches!(status, Ok(status) if status.success()) {
+                return Some(candidate.to_string());
+            }
+        }
+        None
+    }
+
+    fn write_adapter_script(root: &Path, body: &str) -> PathBuf {
+        let path = root.join("adapter.py");
+        fs::write(&path, body).unwrap();
+        path
+    }
+
+    fn quote_arg(arg: &str) -> String {
+        format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+
     #[tokio::test]
     async fn build_context_mode_updates_manifest_metadata() {
         let root = temp_dir("context");
@@ -3030,6 +3392,49 @@ mod tests {
     }
 
     #[test]
+    fn query_rejects_context_mode_before_embedding_command_executes() {
+        let python = available_python().expect("python required for tests");
+        let root = temp_dir("query-context-mode-embedding-command");
+        write_context_fixture(&root);
+        let marker = root.join("adapter-ran.txt");
+        let script = write_adapter_script(
+            &root,
+            &format!(
+                r#"from pathlib import Path
+Path({}).write_text("ran", encoding="utf-8")
+raise SystemExit(0)
+"#,
+                quote_arg(&marker.to_string_lossy())
+            ),
+        );
+        let command = format!("{python} {}", quote_arg(&script.to_string_lossy()));
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: Some("How does handoff work?".to_string()),
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: None,
+                embedding_command: Some(command),
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("intended for direct context loading"));
+        assert!(
+            !marker.exists(),
+            "embedding adapter should not execute for context-mode packages"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn query_rejects_vector_length_mismatch_before_search() {
         let root = temp_dir("query-vector-length-mismatch");
         write_vector_fixture(&root);
@@ -3349,5 +3754,297 @@ mod tests {
         assert!(format!("{err:#}").contains("Provide --vector-json"));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_embedding_command_returns_ranked_rows() {
+        let python = available_python().expect("python required for tests");
+        let root = temp_dir("query-embedding-command-success");
+        write_vector_fixture(&root);
+        let script = write_adapter_script(
+            &root,
+            r#"import json, sys
+payload = json.load(sys.stdin)
+assert payload["text"] == "find alpha"
+assert payload["embedding"]["provider"] == "openai"
+assert payload["embedding"]["model"] == "text-embedding-3-small"
+assert payload["embedding"]["dimensions"] == 3
+json.dump({"vector": [1.0, 0.0, 0.0], "provider": "openai", "model": "text-embedding-3-small", "dimensions": 3}, sys.stdout)
+"#,
+        );
+        let command = format!("{python} {}", quote_arg(&script.to_string_lossy()));
+
+        let view = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: Some("find alpha".to_string()),
+                top_k: Some(2),
+                score_threshold: None,
+                json: true,
+                include_text: true,
+                include_metadata: false,
+                vector_json: None,
+                embedding_command: Some(command),
+            },
+        )
+        .unwrap();
+
+        let results = view.json["results"].as_array().unwrap();
+        assert_eq!(results[0]["chunk_id"], "chunk_1");
+        assert_eq!(results[1]["chunk_id"], "chunk_3");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_embedding_command_non_zero_exit_fails_clearly() {
+        let python = available_python().expect("python required for tests");
+        let root = temp_dir("query-embedding-command-fail");
+        write_vector_fixture(&root);
+        let script = write_adapter_script(
+            &root,
+            r#"import sys
+sys.stderr.write("adapter boom\n")
+raise SystemExit(7)
+"#,
+        );
+        let command = format!("{python} {}", quote_arg(&script.to_string_lossy()));
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: Some("find alpha".to_string()),
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: None,
+                embedding_command: Some(command),
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("embedding adapter exited unsuccessfully"));
+        assert!(format!("{err:#}").contains("adapter boom"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_embedding_command_invalid_json_stdout_fails_clearly() {
+        let python = available_python().expect("python required for tests");
+        let root = temp_dir("query-embedding-command-invalid-json");
+        write_vector_fixture(&root);
+        let script = write_adapter_script(
+            &root,
+            r#"import sys
+sys.stdout.write("not json")
+"#,
+        );
+        let command = format!("{python} {}", quote_arg(&script.to_string_lossy()));
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: Some("find alpha".to_string()),
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: None,
+                embedding_command: Some(command),
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("adapter stdout was not valid JSON"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_embedding_command_timeout_fails_clearly() {
+        let python = available_python().expect("python required for tests");
+        let root = temp_dir("query-embedding-command-timeout");
+        write_vector_fixture(&root);
+        let script = write_adapter_script(
+            &root,
+            r#"import time
+time.sleep(30)
+"#,
+        );
+        let command = format!("{python} {}", quote_arg(&script.to_string_lossy()));
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: Some("find alpha".to_string()),
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: None,
+                embedding_command: Some(command),
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("embedding adapter timed out"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_embedding_command_provider_mismatch_fails_clearly() {
+        let python = available_python().expect("python required for tests");
+        let root = temp_dir("query-embedding-command-provider-mismatch");
+        write_vector_fixture(&root);
+        let script = write_adapter_script(
+            &root,
+            r#"import json, sys
+json.dump({"vector": [1.0, 0.0, 0.0], "provider": "voyage", "model": "voyage-code-3", "dimensions": 3}, sys.stdout)
+"#,
+        );
+        let command = format!("{python} {}", quote_arg(&script.to_string_lossy()));
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: Some("find alpha".to_string()),
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: None,
+                embedding_command: Some(command),
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("provider `voyage` does not match"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_embedding_command_model_mismatch_fails_clearly() {
+        let python = available_python().expect("python required for tests");
+        let root = temp_dir("query-embedding-command-model-mismatch");
+        write_vector_fixture(&root);
+        let script = write_adapter_script(
+            &root,
+            r#"import json, sys
+json.dump({"vector": [1.0, 0.0, 0.0], "provider": "openai", "model": "text-embedding-3-large", "dimensions": 3}, sys.stdout)
+"#,
+        );
+        let command = format!("{python} {}", quote_arg(&script.to_string_lossy()));
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: Some("find alpha".to_string()),
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: None,
+                embedding_command: Some(command),
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("model `text-embedding-3-large` does not match"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_embedding_command_dimensions_mismatch_fails_clearly() {
+        let python = available_python().expect("python required for tests");
+        let root = temp_dir("query-embedding-command-dimensions-mismatch");
+        write_vector_fixture(&root);
+        let script = write_adapter_script(
+            &root,
+            r#"import json, sys
+json.dump({"vector": [1.0, 0.0, 0.0], "provider": "openai", "model": "text-embedding-3-small", "dimensions": 4}, sys.stdout)
+"#,
+        );
+        let command = format!("{python} {}", quote_arg(&script.to_string_lossy()));
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: Some("find alpha".to_string()),
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: None,
+                embedding_command: Some(command),
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("metadata dimensions 4 does not match"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_embedding_command_requires_query_text() {
+        let root = temp_dir("query-embedding-command-no-text");
+        write_vector_fixture(&root);
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: None,
+                embedding_command: Some("python3 adapter.py".to_string()),
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("requires query text input"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parse_adapter_command_line_preserves_empty_quoted_args() {
+        let parsed =
+            parse_adapter_command_line(r#"python3 script.py --flag "" '' "value with spaces""#)
+                .unwrap();
+
+        assert_eq!(
+            parsed,
+            vec![
+                "python3".to_string(),
+                "script.py".to_string(),
+                "--flag".to_string(),
+                String::new(),
+                String::new(),
+                "value with spaces".to_string(),
+            ]
+        );
     }
 }

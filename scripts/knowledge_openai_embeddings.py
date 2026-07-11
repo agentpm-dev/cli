@@ -43,6 +43,16 @@ def parse_args() -> argparse.Namespace:
     query.add_argument("--output", required=True, help="Path to write query JSON")
     query.add_argument("--model", default=DEFAULT_MODEL, help="Embedding model")
 
+    adapter = subparsers.add_parser(
+        "adapter",
+        help="Read the AgentPM embedding adapter stdin contract and write vector JSON to stdout.",
+    )
+    adapter.add_argument(
+        "--default-model",
+        default=DEFAULT_MODEL,
+        help="Fallback embedding model when stdin omits embedding.model",
+    )
+
     return parser.parse_args()
 
 
@@ -171,6 +181,32 @@ def command_query_to_json(args: argparse.Namespace) -> None:
     )
 
 
+def command_adapter(args: argparse.Namespace) -> None:
+    api_key = require_api_key()
+    payload = json.load(sys.stdin)
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise SystemExit('adapter stdin payload must include non-empty "text"')
+    embedding = payload.get("embedding")
+    if embedding is not None and not isinstance(embedding, dict):
+        raise SystemExit('adapter stdin payload "embedding" must be an object when present')
+    model = (
+        embedding.get("model")
+        if isinstance(embedding, dict) and isinstance(embedding.get("model"), str)
+        else args.default_model
+    )
+    embeddings = request_embeddings([text], model, api_key)
+    vector = embeddings[0]
+    output = {
+        "vector": vector,
+        "provider": "openai",
+        "model": model,
+        "dimensions": len(vector),
+    }
+    json.dump(output, sys.stdout)
+    sys.stdout.write("\n")
+
+
 def main() -> None:
     args = parse_args()
     if args.command == "chunks-to-f32":
@@ -178,6 +214,9 @@ def main() -> None:
         return
     if args.command == "query-to-json":
         command_query_to_json(args)
+        return
+    if args.command == "adapter":
+        command_adapter(args)
         return
     raise SystemExit(f"Unsupported command: {args.command}")
 
