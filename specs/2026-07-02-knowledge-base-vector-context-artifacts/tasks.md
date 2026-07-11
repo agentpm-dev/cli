@@ -356,6 +356,28 @@
 - [ ] Add inspect tests proving vector-mode output includes index algorithm and index metadata freshness.
 - [ ] Add read tests for context-mode artifacts if `agentpm knowledge read` is implemented.
 
+## Milestone 7a: Embedding Command Adapter for Knowledge Query
+> Scope note: add the narrow shell-command adapter path for `agentpm knowledge query` so users can turn query text into vectors without a built-in provider integration. Keep the contract explicit, safe, and limited to query-time vector production.
+- [ ] Implement `agentpm knowledge query --embedding-command <cmd>` for vector-mode Knowledge packages.
+- [ ] Require explicit `--embedding-command`; do not auto-discover or infer commands.
+- [ ] Require query text input when `--embedding-command` is used.
+- [ ] Pass a compact JSON payload on stdin containing the query text and embedding spec from the manifest.
+- [ ] Keep the stdin payload contract documented and stable enough for example scripts.
+- [ ] Parse stdout JSON using the same vector-object/array contract accepted by `--vector-json`.
+- [ ] Reuse existing vector length/provider/model/dimensions validation after adapter output is parsed.
+- [ ] Execute the adapter without shell interpolation by default.
+- [ ] Enforce a timeout for adapter execution.
+- [ ] Enforce a max stdout size for adapter responses.
+- [ ] Fail clearly on non-zero adapter exit.
+- [ ] Fail clearly on invalid adapter JSON output.
+- [ ] Ensure AgentPM registry tokens are not injected into the adapter environment.
+- [ ] Ensure context-mode packages still fail clearly before adapter execution.
+- [ ] Add query tests proving `--embedding-command` success against a tiny vector-mode fixture.
+- [ ] Add query tests proving adapter non-zero exit fails clearly.
+- [ ] Add query tests proving adapter invalid JSON stdout fails clearly.
+- [ ] Add query tests proving adapter timeout fails clearly.
+- [ ] Add query tests proving adapter-produced provider/model/dimensions mismatches fail clearly.
+
 ## Milestone 8: Search, Registry UI, and Frontend Types
 > Scope note: Knowledge should appear as a first-class package in the registry, but must not be presented as executable.
 - [ ] Update backend search filters/types to include Knowledge.

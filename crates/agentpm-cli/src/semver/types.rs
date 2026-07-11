@@ -604,6 +604,16 @@ pub fn package_key(kind: PackageKind, name: &str, version: &str) -> String {
     format!("{}:{}@{}", kind.as_str(), name, version)
 }
 
+pub(crate) fn split_package_ref(package: &str) -> Result<(String, String)> {
+    if !package.starts_with('@') {
+        return Err(anyhow!("package must be of form @owner/name"));
+    }
+    let mut parts = package[1..].splitn(2, '/');
+    let owner = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
+    let name = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
+    Ok((owner.to_string(), name.to_string()))
+}
+
 impl PackageKind {
     pub fn as_str(self) -> &'static str {
         match self {

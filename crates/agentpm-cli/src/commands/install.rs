@@ -6,7 +6,7 @@ use crate::semver::adapt::{plan_to_sdk_resolve, to_sdk_request};
 use crate::semver::types::{
     DesiredSet, Lock, LockRoot, LockedRoot, PackageKind, ReservedReferences, ResolvePlan,
     lock_from_packages_and_roots, lock_from_plan, package_key, parse_package_spec,
-    resolve_declared_package_from_packages,
+    resolve_declared_package_from_packages, split_package_ref,
 };
 use crate::semver::update::{maybe_update_agent_json, maybe_update_manifest_dependency};
 use crate::workspace::{
@@ -698,16 +698,6 @@ fn resolve_declared_packages_from_manifest(
         }
     }
     Ok(resolved)
-}
-
-fn split_package_ref(package: &str) -> Result<(String, String)> {
-    if !package.starts_with('@') {
-        return Err(anyhow!("package must be of form @owner/name"));
-    }
-    let mut parts = package[1..].splitn(2, '/');
-    let owner = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
-    let name = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
-    Ok((owner.to_string(), name.to_string()))
 }
 
 fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {

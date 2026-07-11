@@ -2,7 +2,7 @@ use crate::manifest::{load_manifest_value, write_manifest_pretty_atomic};
 use crate::prelude::*;
 use crate::semver::types::{
     DesiredSet, Lock, LockRoot, PackageKind, PackageRequirement, ReservedReferences, ResolvePlan,
-    lock_from_plan, package_key, resolve_declared_package_from_packages,
+    lock_from_plan, package_key, resolve_declared_package_from_packages, split_package_ref,
 };
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -468,16 +468,6 @@ fn resolve_packages_for_manifest(
     }
 
     Ok(resolved)
-}
-
-fn split_package_ref(package: &str) -> Result<(String, String)> {
-    if !package.starts_with('@') {
-        return Err(anyhow!("package must be of form @owner/name"));
-    }
-    let mut parts = package[1..].splitn(2, '/');
-    let owner = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
-    let name = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
-    Ok((owner.to_string(), name.to_string()))
 }
 
 fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {

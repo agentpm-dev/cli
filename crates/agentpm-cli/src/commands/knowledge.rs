@@ -3,12 +3,19 @@ use crate::manifest::{
     resolve_schema_source, validate_manifest_value, write_manifest_pretty_atomic,
 };
 use crate::prelude::*;
+use crate::semver::types::{
+    Lock, LockedPackage, PackageKind, parse_package_spec, resolve_declared_package_from_packages,
+    split_package_ref,
+};
 use anyhow::{Context, anyhow, bail};
 use chrono::{SecondsFormat, Utc};
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Args, Debug)]
@@ -40,12 +47,39 @@ pub struct KnowledgeBuildArgs {
 pub struct KnowledgeInspectArgs {
     #[arg(value_name = "PATH_OR_PACKAGE")]
     pub target: String,
+
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug, Clone)]
 pub struct KnowledgeQueryArgs {
     #[arg(value_name = "PATH_OR_PACKAGE")]
     pub target: String,
+
+    #[arg(value_name = "QUERY_TEXT")]
+    pub query_text: Option<String>,
+
+    #[arg(long)]
+    pub top_k: Option<usize>,
+
+    #[arg(long)]
+    pub score_threshold: Option<f64>,
+
+    #[arg(long)]
+    pub json: bool,
+
+    #[arg(long)]
+    pub include_text: bool,
+
+    #[arg(long)]
+    pub include_metadata: bool,
+
+    #[arg(long, value_name = "FILE|-")]
+    pub vector_json: Option<String>,
+
+    #[arg(long, value_name = "CMD")]
+    pub embedding_command: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,11 +100,104 @@ pub(crate) struct ContextBuildResult {
 struct ChunkRecord {
     id: String,
     source_id: String,
+    text: String,
+    metadata: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
 struct SourceRecord {
     id: String,
+    object: Map<String, Value>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedKnowledgeTarget {
+    manifest_path: PathBuf,
+    package_root: PathBuf,
+    display_target: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LocalIndexMetadata {
+    r#type: String,
+    format_version: u64,
+    algorithm: String,
+    embedding_id: String,
+    metric: String,
+    normalized: bool,
+    source_corpus_hash: String,
+    source_chunks_hash: String,
+    source_sources_hash: String,
+    source_vectors_hash: String,
+    chunks_path: String,
+    sources_path: String,
+    vectors_path: String,
+    dimensions: u64,
+    chunk_count: u64,
+    source_count: u64,
+    vector_count: u64,
+    built_at: Option<String>,
+    agentpm_version: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedLocalIndexMetadata {
+    declared_index_path: String,
+    metadata_path: PathBuf,
+    metadata: LocalIndexMetadata,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedLocalIndexValidation {
+    resolved: ResolvedLocalIndexMetadata,
+    mismatches: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct QueryVectorInput {
+    values: Vec<f32>,
+    provider: Option<String>,
+    model: Option<String>,
+    dimensions: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct QueryRowMatch {
+    row: usize,
+    score: f64,
+}
+
+#[derive(Debug, Clone)]
+struct QueryResultRow {
+    row: usize,
+    score: f64,
+    chunk_id: String,
+    source_id: String,
+    source_title: Option<String>,
+    source_uri: Option<String>,
+    text: Option<String>,
+    chunk_metadata: Option<Value>,
+    source_metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct QueryExecutionOptions {
+    top_k: usize,
+    score_threshold: Option<f64>,
+    include_text: bool,
+    include_metadata: bool,
+}
+
+#[derive(Debug, Clone)]
+struct InspectView {
+    json: Value,
+    text: String,
+}
+
+#[derive(Debug, Clone)]
+struct QueryView {
+    json: Value,
+    text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -130,12 +257,8 @@ impl KnowledgeArgs {
     pub async fn run(self) -> Result<()> {
         match self.command {
             KnowledgeCmd::Build(args) => args.run().await,
-            KnowledgeCmd::Inspect(_) => {
-                bail!("`agentpm knowledge inspect` is not implemented yet")
-            }
-            KnowledgeCmd::Query(_) => {
-                bail!("`agentpm knowledge query` is not implemented yet")
-            }
+            KnowledgeCmd::Inspect(args) => args.run().await,
+            KnowledgeCmd::Query(args) => args.run().await,
         }
     }
 }
@@ -146,6 +269,32 @@ impl KnowledgeBuildArgs {
         let summary = execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write)?;
         print_build_summary(&summary);
 
+        Ok(())
+    }
+}
+
+impl KnowledgeInspectArgs {
+    pub async fn run(self) -> Result<()> {
+        let cwd = std::env::current_dir().context("reading current directory")?;
+        let rendered = inspect_knowledge(&cwd, &self)?;
+        if self.json {
+            println!("{}", serde_json::to_string_pretty(&rendered.json)?);
+        } else {
+            println!("{}", rendered.text);
+        }
+        Ok(())
+    }
+}
+
+impl KnowledgeQueryArgs {
+    pub async fn run(self) -> Result<()> {
+        let cwd = std::env::current_dir().context("reading current directory")?;
+        let rendered = query_knowledge(&cwd, &self)?;
+        if self.json {
+            println!("{}", serde_json::to_string_pretty(&rendered.json)?);
+        } else {
+            println!("{}", rendered.text);
+        }
         Ok(())
     }
 }
@@ -256,6 +405,945 @@ fn print_build_summary(summary: &KnowledgeBuildSummary) {
             println!("Index: knowledge/indexes/default");
         }
     }
+}
+
+fn inspect_knowledge(base_dir: &Path, args: &KnowledgeInspectArgs) -> Result<InspectView> {
+    let target = resolve_knowledge_target(base_dir, &args.target)?;
+    let (manifest, summary) =
+        execute_knowledge_build_with_manifest(&target.manifest_path, KnowledgeBuildMode::Check)?;
+    let manifest_mismatches = manifest_summary_mismatches(&manifest, &summary);
+    let vector_index = if matches!(summary, KnowledgeBuildSummary::Vector { .. }) {
+        Some(load_local_index_validation(
+            &target.package_root,
+            &manifest,
+            summary_vector_result(&summary)?,
+        )?)
+    } else {
+        None
+    };
+
+    let json = build_inspect_json(
+        &target,
+        &manifest,
+        &summary,
+        &manifest_mismatches,
+        vector_index.as_ref(),
+    );
+    let text = build_inspect_text(
+        &target,
+        &manifest,
+        &summary,
+        &manifest_mismatches,
+        vector_index.as_ref(),
+    );
+    Ok(InspectView { json, text })
+}
+
+fn query_knowledge(base_dir: &Path, args: &KnowledgeQueryArgs) -> Result<QueryView> {
+    let target = resolve_knowledge_target(base_dir, &args.target)?;
+    let (manifest, summary) =
+        execute_knowledge_build_with_manifest(&target.manifest_path, KnowledgeBuildMode::Check)?;
+
+    if manifest.knowledge.mode != "vector" {
+        bail!(
+            "Knowledge package `{}` is mode=\"{}\" and has no vector index; it is intended for direct context loading",
+            manifest.name,
+            manifest.knowledge.mode
+        );
+    }
+
+    let manifest_mismatches = manifest_summary_mismatches(&manifest, &summary);
+    if !manifest_mismatches.is_empty() {
+        bail!(
+            "Knowledge manifest build metadata is stale for {}:\n- {}\nRun `agentpm knowledge build` to refresh it.",
+            target.manifest_path.display(),
+            manifest_mismatches.join("\n- ")
+        );
+    }
+
+    let vector_result = summary_vector_result(&summary)?;
+    let local_index = require_fresh_local_index(load_local_index_validation(
+        &target.package_root,
+        &manifest,
+        vector_result,
+    )?)?;
+    let query_vector = resolve_query_vector(args, &manifest)?;
+    let top_k = args
+        .top_k
+        .or_else(|| {
+            manifest
+                .knowledge
+                .retrieval
+                .as_ref()
+                .and_then(|r| r.default_top_k.map(|value| value as usize))
+        })
+        .unwrap_or(5);
+    if top_k == 0 {
+        bail!("--top-k must be greater than 0");
+    }
+    let score_threshold = args.score_threshold.or_else(|| {
+        manifest
+            .knowledge
+            .retrieval
+            .as_ref()
+            .and_then(|r| r.default_score_threshold)
+    });
+
+    let rows = execute_exact_vector_query(
+        &target.package_root,
+        &manifest,
+        &local_index.metadata,
+        &query_vector.values,
+        QueryExecutionOptions {
+            top_k,
+            score_threshold,
+            include_text: args.include_text,
+            include_metadata: args.include_metadata,
+        },
+    )?;
+
+    let json = build_query_json(
+        &target,
+        &manifest,
+        &local_index.metadata,
+        &rows,
+        args.include_text,
+        args.include_metadata,
+    );
+    let text = build_query_text(&target, &manifest, &local_index.metadata, &rows);
+    Ok(QueryView { json, text })
+}
+
+fn resolve_knowledge_target(base_dir: &Path, target: &str) -> Result<ResolvedKnowledgeTarget> {
+    let candidate_path = Path::new(target);
+    let candidate_abs = if candidate_path.is_absolute() {
+        candidate_path.to_path_buf()
+    } else {
+        base_dir.join(candidate_path)
+    };
+
+    if candidate_abs.exists() {
+        let manifest_path = if candidate_abs.is_dir() {
+            candidate_abs.join("agent.json")
+        } else {
+            candidate_abs
+        };
+        if !manifest_path.exists() {
+            bail!(
+                "Knowledge target does not contain agent.json: {}",
+                manifest_path.display()
+            );
+        }
+        let package_root = manifest_path
+            .parent()
+            .ok_or_else(|| anyhow!("manifest path has no parent: {}", manifest_path.display()))?
+            .to_path_buf();
+        return Ok(ResolvedKnowledgeTarget {
+            manifest_path,
+            package_root,
+            display_target: target.to_string(),
+        });
+    }
+
+    let normalized = target
+        .strip_prefix("knowledge:")
+        .unwrap_or(target)
+        .to_string();
+    let requested = parse_package_spec(&normalized)
+        .with_context(|| format!("resolving Knowledge target `{}`", target))?;
+
+    let project_root = base_dir;
+    let lock = crate::manifest::read_lock_or_default(project_root)?;
+    let packages = match &lock {
+        Lock::V2(lock) => lock.packages.clone(),
+        Lock::V1(_) => BTreeMap::new(),
+    };
+    let resolved_pkg = if packages.is_empty() {
+        None
+    } else {
+        resolve_declared_package_from_packages(
+            &packages,
+            &requested.name,
+            &requested.range,
+            PackageKind::Knowledge,
+        )?
+    };
+
+    let (owner, name) = split_package_ref(&requested.name)?;
+    let version = if let Some(pkg) = resolved_pkg {
+        pkg.version
+    } else {
+        resolve_installed_knowledge_version(project_root, &owner, &name, &requested.range)?
+    };
+    let manifest_path = project_root
+        .join(".agentpm")
+        .join("knowledge")
+        .join(&owner)
+        .join(&name)
+        .join(&version)
+        .join("agent.json");
+    if !manifest_path.exists() {
+        bail!(
+            "Installed Knowledge package not found for {} at {}",
+            requested.name,
+            manifest_path.display()
+        );
+    }
+    let package_root = manifest_path
+        .parent()
+        .ok_or_else(|| anyhow!("manifest path has no parent: {}", manifest_path.display()))?
+        .to_path_buf();
+
+    Ok(ResolvedKnowledgeTarget {
+        manifest_path,
+        package_root,
+        display_target: format!("{}@{}", requested.name, version),
+    })
+}
+
+fn resolve_installed_knowledge_version(
+    project_root: &Path,
+    owner: &str,
+    name: &str,
+    range: &str,
+) -> Result<String> {
+    let base = project_root
+        .join(".agentpm")
+        .join("knowledge")
+        .join(owner)
+        .join(name);
+    if !base.exists() {
+        bail!("No installed Knowledge package found at {}", base.display());
+    }
+
+    let mut packages = BTreeMap::new();
+    for entry in fs::read_dir(&base).with_context(|| format!("reading {}", base.display()))? {
+        let entry = entry?;
+        if !entry
+            .file_type()
+            .with_context(|| format!("reading {}", entry.path().display()))?
+            .is_dir()
+        {
+            continue;
+        }
+        let version = entry.file_name().to_string_lossy().to_string();
+        let key = crate::semver::types::package_key(
+            PackageKind::Knowledge,
+            &format!("@{owner}/{name}"),
+            &version,
+        );
+        packages.insert(
+            key,
+            LockedPackage {
+                kind: PackageKind::Knowledge,
+                name: format!("@{owner}/{name}"),
+                version,
+                integrity: String::new(),
+            },
+        );
+    }
+
+    let pkg = resolve_declared_package_from_packages(
+        &packages,
+        &format!("@{owner}/{name}"),
+        range,
+        PackageKind::Knowledge,
+    )?
+    .ok_or_else(|| {
+        anyhow!(
+            "No installed Knowledge package version matched @{} / {} with range {}",
+            owner,
+            name,
+            range
+        )
+    })?;
+    Ok(pkg.version)
+}
+
+fn manifest_summary_mismatches(
+    manifest: &KnowledgeManifest,
+    summary: &KnowledgeBuildSummary,
+) -> Vec<String> {
+    match summary {
+        KnowledgeBuildSummary::Context { result, .. } => {
+            let mut mismatches = Vec::new();
+            match manifest.knowledge.context.as_ref() {
+                Some(context) => {
+                    if context.document_count != Some(result.document_count) {
+                        mismatches.push("knowledge.context.document_count".to_string());
+                    }
+                    if context.total_bytes != Some(result.total_bytes) {
+                        mismatches.push("knowledge.context.total_bytes".to_string());
+                    }
+                    if context.content_hash.as_deref() != Some(result.content_hash.as_str()) {
+                        mismatches.push("knowledge.context.content_hash".to_string());
+                    }
+                }
+                None => mismatches.push("knowledge.context".to_string()),
+            }
+
+            if manifest.knowledge.documents.len() != result.documents.len() {
+                mismatches.push("knowledge.documents length".to_string());
+            } else {
+                for (idx, (doc, built)) in manifest
+                    .knowledge
+                    .documents
+                    .iter()
+                    .zip(&result.documents)
+                    .enumerate()
+                {
+                    if doc.bytes != Some(built.bytes) {
+                        mismatches.push(format!("knowledge.documents[{idx}].bytes"));
+                    }
+                    if doc.sha256.as_deref() != Some(built.sha256.as_str()) {
+                        mismatches.push(format!("knowledge.documents[{idx}].sha256"));
+                    }
+                }
+            }
+            mismatches
+        }
+        KnowledgeBuildSummary::Vector { result, .. } => {
+            let mut mismatches = Vec::new();
+            match manifest.knowledge.corpus.as_ref() {
+                Some(corpus) => {
+                    if corpus.chunk_count != Some(result.chunk_count) {
+                        mismatches.push("knowledge.corpus.chunk_count".to_string());
+                    }
+                    if corpus.source_count != Some(result.source_count) {
+                        mismatches.push("knowledge.corpus.source_count".to_string());
+                    }
+                    if corpus.content_hash.as_deref() != Some(result.corpus_hash.as_str()) {
+                        mismatches.push("knowledge.corpus.content_hash".to_string());
+                    }
+                }
+                None => mismatches.push("knowledge.corpus".to_string()),
+            }
+            match manifest.knowledge.embedding.as_ref() {
+                Some(embedding) => {
+                    if embedding.vector_count != Some(result.vector_count) {
+                        mismatches.push("knowledge.embedding.vector_count".to_string());
+                    }
+                    if embedding.vectors_hash.as_deref() != Some(result.vectors_hash.as_str()) {
+                        mismatches.push("knowledge.embedding.vectors_hash".to_string());
+                    }
+                    if embedding.dimensions != result.dimensions {
+                        mismatches.push("knowledge.embedding.dimensions".to_string());
+                    }
+                }
+                None => mismatches.push("knowledge.embedding".to_string()),
+            }
+            mismatches
+        }
+    }
+}
+
+fn summary_vector_result(summary: &KnowledgeBuildSummary) -> Result<&VectorBuildResult> {
+    match summary {
+        KnowledgeBuildSummary::Vector { result, .. } => Ok(result),
+        _ => bail!("expected vector-mode Knowledge summary"),
+    }
+}
+
+fn load_local_index_validation(
+    package_root: &Path,
+    manifest: &KnowledgeManifest,
+    vector_result: &VectorBuildResult,
+) -> Result<ResolvedLocalIndexValidation> {
+    let index = manifest
+        .knowledge
+        .indexes
+        .iter()
+        .find(|index| index.id == "default" && index.r#type == "agentpm-local")
+        .ok_or_else(|| anyhow!("vector-mode Knowledge requires a default agentpm-local index"))?;
+
+    let index_dir = resolve_existing_dir(package_root, &index.path)?;
+    let metadata_path = index_dir.join("metadata.json");
+    if !metadata_path.exists() {
+        bail!("index metadata is missing: {}", metadata_path.display());
+    }
+    let metadata_text = fs::read_to_string(&metadata_path)
+        .with_context(|| format!("reading {}", metadata_path.display()))?;
+    let metadata: LocalIndexMetadata = serde_json::from_str(&metadata_text)
+        .with_context(|| format!("parsing {}", metadata_path.display()))?;
+
+    let mut mismatches = Vec::new();
+    if metadata.r#type != "agentpm-local" {
+        mismatches.push("type".to_string());
+    }
+    if metadata.format_version != 1 {
+        mismatches.push("format_version".to_string());
+    }
+    if metadata.algorithm != "exact" {
+        mismatches.push("algorithm".to_string());
+    }
+    if metadata.embedding_id != vector_result.embedding_id {
+        mismatches.push("embedding_id".to_string());
+    }
+    let embedding = manifest
+        .knowledge
+        .embedding
+        .as_ref()
+        .ok_or_else(|| anyhow!("vector-mode Knowledge requires knowledge.embedding"))?;
+    if metadata.metric != embedding.metric {
+        mismatches.push("metric".to_string());
+    }
+    if metadata.normalized != embedding.normalized {
+        mismatches.push("normalized".to_string());
+    }
+    if metadata.dimensions != embedding.dimensions {
+        mismatches.push("dimensions".to_string());
+    }
+    if metadata.vector_count != vector_result.vector_count {
+        mismatches.push("vector_count".to_string());
+    }
+    if metadata.chunk_count != vector_result.chunk_count {
+        mismatches.push("chunk_count".to_string());
+    }
+    if metadata.source_count != vector_result.source_count {
+        mismatches.push("source_count".to_string());
+    }
+    let corpus = manifest
+        .knowledge
+        .corpus
+        .as_ref()
+        .ok_or_else(|| anyhow!("vector-mode Knowledge requires knowledge.corpus"))?;
+    if metadata.chunks_path != corpus.chunks_path.clone().unwrap_or_default() {
+        mismatches.push("chunks_path".to_string());
+    }
+    if metadata.sources_path != corpus.sources_path.clone().unwrap_or_default() {
+        mismatches.push("sources_path".to_string());
+    }
+    if metadata.vectors_path != embedding.vectors_path {
+        mismatches.push("vectors_path".to_string());
+    }
+    if metadata.source_corpus_hash != vector_result.corpus_hash {
+        mismatches.push("source_corpus_hash".to_string());
+    }
+    if metadata.source_chunks_hash != vector_result.chunks_hash {
+        mismatches.push("source_chunks_hash".to_string());
+    }
+    if metadata.source_sources_hash != vector_result.sources_hash {
+        mismatches.push("source_sources_hash".to_string());
+    }
+    if metadata.source_vectors_hash != vector_result.vectors_hash {
+        mismatches.push("source_vectors_hash".to_string());
+    }
+
+    Ok(ResolvedLocalIndexValidation {
+        resolved: ResolvedLocalIndexMetadata {
+            declared_index_path: index.path.clone(),
+            metadata_path,
+            metadata,
+        },
+        mismatches,
+    })
+}
+
+fn require_fresh_local_index(
+    validation: ResolvedLocalIndexValidation,
+) -> Result<ResolvedLocalIndexMetadata> {
+    if !validation.mismatches.is_empty() {
+        bail!(
+            "index metadata is stale or unsupported at {}:\n- {}\nRun `agentpm knowledge build` to refresh it.",
+            validation.resolved.metadata_path.display(),
+            validation.mismatches.join("\n- ")
+        );
+    }
+
+    Ok(validation.resolved)
+}
+
+fn resolve_query_vector(
+    args: &KnowledgeQueryArgs,
+    manifest: &KnowledgeManifest,
+) -> Result<QueryVectorInput> {
+    if let Some(vector_json) = &args.vector_json {
+        return load_query_vector_json(vector_json, manifest);
+    }
+    if args.embedding_command.is_some() {
+        bail!(
+            "`--embedding-command` is not implemented yet for `agentpm knowledge query`; pass `--vector-json` instead"
+        );
+    }
+    if args.query_text.is_some() {
+        let provider = manifest
+            .knowledge
+            .embedding
+            .as_ref()
+            .map(|embedding| format!("{}/{}", embedding.provider, embedding.model))
+            .unwrap_or_else(|| "unknown provider/model".to_string());
+        bail!(
+            "This artifact uses {}.\nagentpm knowledge query cannot embed text automatically yet.\nProvide --vector-json, or use a runtime that supports this provider.",
+            provider
+        );
+    }
+    bail!("`agentpm knowledge query` requires `--vector-json <file|->`");
+}
+
+fn load_query_vector_json(
+    path_or_dash: &str,
+    manifest: &KnowledgeManifest,
+) -> Result<QueryVectorInput> {
+    let raw = if path_or_dash == "-" {
+        use std::io::Read as _;
+        let mut input = String::new();
+        std::io::stdin()
+            .read_to_string(&mut input)
+            .context("reading query vector JSON from stdin")?;
+        input
+    } else {
+        fs::read_to_string(path_or_dash)
+            .with_context(|| format!("reading query vector JSON from {}", path_or_dash))?
+    };
+    let value: Value = serde_json::from_str(&raw).with_context(|| {
+        if path_or_dash == "-" {
+            "parsing query vector JSON from stdin".to_string()
+        } else {
+            format!("parsing query vector JSON from {}", path_or_dash)
+        }
+    })?;
+
+    let input = match value {
+        Value::Array(values) => QueryVectorInput {
+            values: parse_query_vector_values(&values)?,
+            provider: None,
+            model: None,
+            dimensions: None,
+        },
+        Value::Object(map) => {
+            let values = map
+                .get("vector")
+                .or_else(|| map.get("values"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    anyhow!("query vector JSON object must contain a `vector` or `values` array")
+                })?;
+            QueryVectorInput {
+                values: parse_query_vector_values(values)?,
+                provider: map
+                    .get("provider")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                model: map.get("model").and_then(Value::as_str).map(str::to_string),
+                dimensions: map.get("dimensions").and_then(Value::as_u64),
+            }
+        }
+        _ => bail!("query vector JSON must be an array or object"),
+    };
+
+    let embedding = manifest
+        .knowledge
+        .embedding
+        .as_ref()
+        .ok_or_else(|| anyhow!("vector-mode Knowledge requires knowledge.embedding"))?;
+    if input.values.len() != embedding.dimensions as usize {
+        bail!(
+            "query vector length {} does not match knowledge.embedding.dimensions {}",
+            input.values.len(),
+            embedding.dimensions
+        );
+    }
+    if let Some(dimensions) = input.dimensions
+        && dimensions != embedding.dimensions
+    {
+        bail!(
+            "query vector metadata dimensions {} does not match knowledge.embedding.dimensions {}",
+            dimensions,
+            embedding.dimensions
+        );
+    }
+    if let Some(provider) = input.provider.as_deref()
+        && provider != embedding.provider
+    {
+        bail!(
+            "query vector metadata provider `{}` does not match knowledge.embedding.provider `{}`",
+            provider,
+            embedding.provider
+        );
+    }
+    if let Some(model) = input.model.as_deref()
+        && model != embedding.model
+    {
+        bail!(
+            "query vector metadata model `{}` does not match knowledge.embedding.model `{}`",
+            model,
+            embedding.model
+        );
+    }
+
+    Ok(input)
+}
+
+fn parse_query_vector_values(values: &[Value]) -> Result<Vec<f32>> {
+    let mut parsed = Vec::with_capacity(values.len());
+    for (idx, value) in values.iter().enumerate() {
+        let number = value
+            .as_f64()
+            .ok_or_else(|| anyhow!("query vector entry {} must be a number", idx))?;
+        parsed.push(number as f32);
+    }
+    Ok(parsed)
+}
+
+fn execute_exact_vector_query(
+    package_root: &Path,
+    manifest: &KnowledgeManifest,
+    index: &LocalIndexMetadata,
+    query_vector: &[f32],
+    options: QueryExecutionOptions,
+) -> Result<Vec<QueryResultRow>> {
+    if index.metric != "cosine" || !index.normalized {
+        bail!("only metric=\"cosine\" with normalized=true is supported for local exact search");
+    }
+
+    let vectors_path = resolve_existing_file(package_root, &index.vectors_path)?;
+    let chunk_path = resolve_existing_file(package_root, &index.chunks_path)?;
+    let source_path = resolve_existing_file(package_root, &index.sources_path)?;
+
+    let best_rows = score_vector_rows(
+        &vectors_path,
+        query_vector,
+        index.dimensions as usize,
+        options.top_k,
+        options.score_threshold,
+    )?;
+    let chunks = read_chunks_jsonl(&chunk_path, &index.chunks_path)?;
+    let sources = read_sources_jsonl(&source_path, &index.sources_path)?;
+    let source_map = sources
+        .into_iter()
+        .map(|source| (source.id.clone(), source))
+        .collect::<HashMap<_, _>>();
+
+    let mut rows = Vec::new();
+    for hit in best_rows {
+        let chunk = chunks.get(hit.row).ok_or_else(|| {
+            anyhow!(
+                "query result row {} is out of bounds for {} chunk rows",
+                hit.row,
+                chunks.len()
+            )
+        })?;
+        let source = source_map.get(&chunk.source_id).ok_or_else(|| {
+            anyhow!(
+                "chunk `{}` references missing source `{}` during hydration",
+                chunk.id,
+                chunk.source_id
+            )
+        })?;
+
+        rows.push(QueryResultRow {
+            row: hit.row,
+            score: hit.score,
+            chunk_id: chunk.id.clone(),
+            source_id: chunk.source_id.clone(),
+            source_title: source
+                .object
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            source_uri: source
+                .object
+                .get("uri")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            text: options.include_text.then(|| chunk.text.clone()),
+            chunk_metadata: options.include_metadata.then(|| {
+                chunk
+                    .metadata
+                    .clone()
+                    .unwrap_or_else(|| Value::Object(Map::new()))
+            }),
+            source_metadata: options
+                .include_metadata
+                .then(|| Value::Object(source.object.clone())),
+        });
+    }
+
+    let _ = manifest;
+    Ok(rows)
+}
+
+fn score_vector_rows(
+    path: &Path,
+    query_vector: &[f32],
+    dimensions: usize,
+    top_k: usize,
+    score_threshold: Option<f64>,
+) -> Result<Vec<QueryRowMatch>> {
+    let mut file = fs::File::open(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut row_buffer = vec![0u8; dimensions * 4];
+    let mut best = Vec::new();
+    let mut row = 0usize;
+
+    loop {
+        match file.read_exact(&mut row_buffer) {
+            Ok(()) => {
+                let score = row_score_dot_product(&row_buffer, query_vector);
+                if score_threshold.is_none_or(|threshold| score >= threshold) {
+                    best.push(QueryRowMatch { row, score });
+                    best.sort_by(|a, b| {
+                        b.score
+                            .partial_cmp(&a.score)
+                            .unwrap_or(Ordering::Equal)
+                            .then_with(|| a.row.cmp(&b.row))
+                    });
+                    if best.len() > top_k {
+                        best.pop();
+                    }
+                }
+                row += 1;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(err) => {
+                return Err(err).with_context(|| format!("reading {}", path.display()));
+            }
+        }
+    }
+
+    Ok(best)
+}
+
+fn row_score_dot_product(row_bytes: &[u8], query_vector: &[f32]) -> f64 {
+    row_bytes
+        .chunks_exact(4)
+        .zip(query_vector)
+        .map(|(chunk, query)| {
+            let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            (value as f64) * (*query as f64)
+        })
+        .sum()
+}
+
+fn build_inspect_json(
+    target: &ResolvedKnowledgeTarget,
+    manifest: &KnowledgeManifest,
+    summary: &KnowledgeBuildSummary,
+    manifest_mismatches: &[String],
+    local_index: Option<&ResolvedLocalIndexValidation>,
+) -> Value {
+    let mut root = json!({
+        "target": target.display_target,
+        "manifest_path": target.manifest_path,
+        "package_root": target.package_root,
+        "name": manifest.name,
+        "version": manifest.version,
+        "mode": manifest.knowledge.mode,
+        "manifest_metadata_fresh": manifest_mismatches.is_empty(),
+        "manifest_metadata_mismatches": manifest_mismatches,
+    });
+
+    match summary {
+        KnowledgeBuildSummary::Context { result, .. } => {
+            root["build"] = json!({
+                "document_count": result.document_count,
+                "total_bytes": result.total_bytes,
+                "content_hash": result.content_hash
+            });
+        }
+        KnowledgeBuildSummary::Vector { result, .. } => {
+            root["build"] = json!({
+                "chunk_count": result.chunk_count,
+                "source_count": result.source_count,
+                "vector_count": result.vector_count,
+                "dimensions": result.dimensions,
+                "corpus_hash": result.corpus_hash,
+                "vectors_hash": result.vectors_hash
+            });
+            if let Some(index) = local_index {
+                root["index"] = json!({
+                    "path": index.resolved.declared_index_path,
+                    "metadata_path": index.resolved.metadata_path,
+                    "type": index.resolved.metadata.r#type,
+                    "algorithm": index.resolved.metadata.algorithm,
+                    "format_version": index.resolved.metadata.format_version,
+                    "fresh": index.mismatches.is_empty(),
+                    "mismatches": index.mismatches,
+                    "built_at": index.resolved.metadata.built_at,
+                    "agentpm_version": index.resolved.metadata.agentpm_version,
+                });
+            }
+        }
+    }
+
+    root
+}
+
+fn build_inspect_text(
+    target: &ResolvedKnowledgeTarget,
+    manifest: &KnowledgeManifest,
+    summary: &KnowledgeBuildSummary,
+    manifest_mismatches: &[String],
+    local_index: Option<&ResolvedLocalIndexValidation>,
+) -> String {
+    let mut lines = vec![
+        format!("Knowledge: {}@{}", manifest.name, manifest.version),
+        format!("Target: {}", target.display_target),
+        format!("Manifest: {}", target.manifest_path.display()),
+        format!("Mode: {}", manifest.knowledge.mode),
+        format!(
+            "Manifest metadata freshness: {}",
+            if manifest_mismatches.is_empty() {
+                "fresh"
+            } else {
+                "stale"
+            }
+        ),
+    ];
+    if !manifest_mismatches.is_empty() {
+        lines.push(format!(
+            "Manifest mismatches: {}",
+            manifest_mismatches.join(", ")
+        ));
+    }
+
+    match summary {
+        KnowledgeBuildSummary::Context { result, .. } => {
+            lines.push(format!("Documents: {}", result.document_count));
+            lines.push(format!("Total bytes: {}", result.total_bytes));
+            lines.push(format!("Content hash: {}", result.content_hash));
+            for document in &manifest.knowledge.documents {
+                lines.push(format!("Document: {}", document.path));
+                if let Some(content_type) = &document.content_type {
+                    lines.push(format!("  Content type: {}", content_type));
+                }
+                if let Some(role) = &document.role {
+                    lines.push(format!("  Role: {}", role));
+                }
+                if let Some(bytes) = document.bytes {
+                    lines.push(format!("  Bytes: {}", bytes));
+                }
+                if let Some(sha256) = &document.sha256 {
+                    lines.push(format!("  SHA256: {}", sha256));
+                }
+            }
+        }
+        KnowledgeBuildSummary::Vector { result, .. } => {
+            let embedding = manifest.knowledge.embedding.as_ref();
+            lines.push(format!("Chunks: {}", result.chunk_count));
+            lines.push(format!("Sources: {}", result.source_count));
+            if let Some(embedding) = embedding {
+                lines.push(format!(
+                    "Embedding: {}/{}",
+                    embedding.provider, embedding.model
+                ));
+                lines.push(format!("Dimensions: {}", embedding.dimensions));
+                lines.push(format!("Metric: {}", embedding.metric));
+                lines.push(format!("Normalized: {}", embedding.normalized));
+                lines.push(format!("Vectors path: {}", embedding.vectors_path));
+                if let Some(vectors_hash) = &embedding.vectors_hash {
+                    lines.push(format!("Vectors hash: {}", vectors_hash));
+                }
+            }
+            if let Some(index) = local_index {
+                lines.push(format!(
+                    "Index path: {}",
+                    index.resolved.declared_index_path
+                ));
+                lines.push(format!("Index type: {}", index.resolved.metadata.r#type));
+                lines.push(format!(
+                    "Index algorithm: {}",
+                    index.resolved.metadata.algorithm
+                ));
+                lines.push(format!(
+                    "Index metadata freshness: {}",
+                    if index.mismatches.is_empty() {
+                        "fresh"
+                    } else {
+                        "stale"
+                    }
+                ));
+                if !index.mismatches.is_empty() {
+                    lines.push(format!("Index mismatches: {}", index.mismatches.join(", ")));
+                }
+            }
+            if let Some(retrieval) = &manifest.knowledge.retrieval {
+                if let Some(strategy) = &retrieval.strategy {
+                    lines.push(format!("Retrieval strategy: {}", strategy));
+                }
+                if let Some(default_top_k) = retrieval.default_top_k {
+                    lines.push(format!("Default top-k: {}", default_top_k));
+                }
+            }
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn build_query_json(
+    target: &ResolvedKnowledgeTarget,
+    manifest: &KnowledgeManifest,
+    index: &LocalIndexMetadata,
+    rows: &[QueryResultRow],
+    include_text: bool,
+    include_metadata: bool,
+) -> Value {
+    json!({
+        "target": target.display_target,
+        "name": manifest.name,
+        "version": manifest.version,
+        "mode": manifest.knowledge.mode,
+        "query": {
+            "algorithm": index.algorithm,
+            "metric": index.metric,
+            "normalized": index.normalized,
+            "include_text": include_text,
+            "include_metadata": include_metadata
+        },
+        "results": rows.iter().map(|row| {
+            json!({
+                "row": row.row,
+                "score": row.score,
+                "chunk_id": row.chunk_id,
+                "source_id": row.source_id,
+                "source_title": row.source_title,
+                "source_uri": row.source_uri,
+                "text": row.text,
+                "chunk_metadata": row.chunk_metadata,
+                "source_metadata": row.source_metadata
+            })
+        }).collect::<Vec<_>>()
+    })
+}
+
+fn build_query_text(
+    target: &ResolvedKnowledgeTarget,
+    manifest: &KnowledgeManifest,
+    index: &LocalIndexMetadata,
+    rows: &[QueryResultRow],
+) -> String {
+    let mut lines = vec![
+        format!("Knowledge query: {}@{}", manifest.name, manifest.version),
+        format!("Target: {}", target.display_target),
+        format!(
+            "Search: {} local exact search (metric={}, normalized={})",
+            index.r#type, index.metric, index.normalized
+        ),
+        format!("Results: {}", rows.len()),
+    ];
+    for (rank, row) in rows.iter().enumerate() {
+        lines.push(format!(
+            "{}. score={:.6} row={} chunk={} source={}",
+            rank + 1,
+            row.score,
+            row.row,
+            row.chunk_id,
+            row.source_id
+        ));
+        if let Some(title) = &row.source_title {
+            lines.push(format!("   title: {}", title));
+        }
+        if let Some(uri) = &row.source_uri {
+            lines.push(format!("   uri: {}", uri));
+        }
+        if let Some(text) = &row.text {
+            lines.push(format!("   text: {}", text));
+        }
+        if let Some(metadata) = &row.chunk_metadata {
+            lines.push(format!("   chunk_metadata: {}", metadata));
+        }
+    }
+    lines.join("\n")
 }
 
 fn resolve_manifest_path(manifest: &Path) -> Result<PathBuf> {
@@ -579,6 +1667,28 @@ pub(crate) fn resolve_existing_file(package_root: &Path, relative: &str) -> Resu
     Ok(canon)
 }
 
+fn resolve_existing_dir(package_root: &Path, relative: &str) -> Result<PathBuf> {
+    let rel = parse_safe_relative_path(relative)?;
+    let package_root = if package_root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        package_root
+    };
+    let abs = package_root.join(&rel);
+    let canon = fs::canonicalize(&abs)
+        .with_context(|| format!("declared path does not exist: {}", abs.display()))?;
+    let root_canon = fs::canonicalize(package_root)
+        .with_context(|| format!("reading package root {}", package_root.display()))?;
+    if !canon.starts_with(&root_canon) {
+        bail!("declared path escapes the package root: {}", relative);
+    }
+    let md = fs::metadata(&canon).with_context(|| format!("reading {}", canon.display()))?;
+    if !md.is_dir() {
+        bail!("declared path is not a directory: {}", relative);
+    }
+    Ok(canon)
+}
+
 pub(crate) fn parse_safe_relative_path(relative: &str) -> Result<PathBuf> {
     if relative.is_empty() {
         bail!("declared path must not be empty");
@@ -680,8 +1790,12 @@ fn read_chunks_jsonl(path: &Path, display_path: &str) -> Result<Vec<ChunkRecord>
             );
         }
 
-        let _ = text_value;
-        chunks.push(ChunkRecord { id, source_id });
+        chunks.push(ChunkRecord {
+            id,
+            source_id,
+            text: text_value.to_string(),
+            metadata: obj.get("metadata").cloned(),
+        });
     }
 
     Ok(chunks)
@@ -723,7 +1837,10 @@ fn read_sources_jsonl(path: &Path, display_path: &str) -> Result<Vec<SourceRecor
             );
         }
 
-        sources.push(SourceRecord { id });
+        sources.push(SourceRecord {
+            id,
+            object: obj.clone(),
+        });
     }
 
     Ok(sources)
@@ -1604,6 +2721,632 @@ mod tests {
             !root.join("knowledge/indexes/default").exists(),
             "check mode should not generate the local index"
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn write_context_fixture(root: &Path) {
+        fs::create_dir_all(root.join("knowledge/docs")).unwrap();
+        fs::write(
+            root.join("knowledge/docs/playbook.md"),
+            "# Playbook\n\nUse this context.\n",
+        )
+        .unwrap();
+        write_manifest(
+            root,
+            &json!({
+                "kind": "knowledge",
+                "name": "engineering-playbook",
+                "version": "0.1.0",
+                "description": "Engineering playbook intended for direct context loading.",
+                "knowledge": {
+                    "mode": "context",
+                    "documents": [
+                        {
+                            "path": "knowledge/docs/playbook.md",
+                            "content_type": "text/markdown",
+                            "role": "context"
+                        }
+                    ]
+                }
+            }),
+        );
+        execute_knowledge_build(&root.join("agent.json"), KnowledgeBuildMode::Write).unwrap();
+    }
+
+    fn write_vector_fixture(root: &Path) {
+        fs::create_dir_all(root.join("knowledge/embeddings")).unwrap();
+        fs::write(
+            root.join("knowledge/chunks.jsonl"),
+            concat!(
+                "{\"id\":\"chunk_1\",\"source_id\":\"src_1\",\"text\":\"Alpha text\"}\n",
+                "{\"id\":\"chunk_2\",\"source_id\":\"src_2\",\"text\":\"Beta text\",\"metadata\":{\"section\":\"beta\"}}\n",
+                "{\"id\":\"chunk_3\",\"source_id\":\"src_2\",\"text\":\"Gamma text\"}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("knowledge/sources.jsonl"),
+            concat!(
+                "{\"id\":\"src_1\",\"title\":\"Source One\",\"uri\":\"https://example.com/one\"}\n",
+                "{\"id\":\"src_2\",\"title\":\"Source Two\",\"uri\":\"https://example.com/two\"}\n"
+            ),
+        )
+        .unwrap();
+        write_f32_vectors(
+            &root.join("knowledge/embeddings/default.f32"),
+            &[
+                vec![1.0, 0.0, 0.0],
+                vec![0.0, 1.0, 0.0],
+                vec![0.5, 0.5, 0.0],
+            ],
+        );
+        write_manifest(
+            root,
+            &json!({
+                "kind": "knowledge",
+                "name": "python-docs",
+                "version": "0.1.0",
+                "description": "Prepared retrieval corpus for Python documentation.",
+                "knowledge": {
+                    "mode": "vector",
+                    "corpus": {
+                        "chunks_path": "knowledge/chunks.jsonl",
+                        "sources_path": "knowledge/sources.jsonl"
+                    },
+                    "embedding": {
+                        "id": "default",
+                        "provider": "openai",
+                        "model": "text-embedding-3-small",
+                        "dimensions": 3,
+                        "metric": "cosine",
+                        "normalized": true,
+                        "vectors_path": "knowledge/embeddings/default.f32"
+                    },
+                    "retrieval": {
+                        "strategy": "vector",
+                        "default_top_k": 2
+                    }
+                }
+            }),
+        );
+        execute_knowledge_build(&root.join("agent.json"), KnowledgeBuildMode::Write).unwrap();
+    }
+
+    #[test]
+    fn inspect_context_mode_local_package_outputs_metadata() {
+        let root = temp_dir("inspect-context-local");
+        write_context_fixture(&root);
+
+        let view = inspect_knowledge(
+            &root,
+            &KnowledgeInspectArgs {
+                target: ".".to_string(),
+                json: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(view.json["mode"], "context");
+        assert_eq!(view.json["build"]["document_count"], 1);
+        assert_eq!(view.json["manifest_metadata_fresh"], true);
+        assert!(view.text.contains("Mode: context"));
+        assert!(view.text.contains("Document: knowledge/docs/playbook.md"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn inspect_vector_mode_local_package_includes_index_freshness() {
+        let root = temp_dir("inspect-vector-local");
+        write_vector_fixture(&root);
+
+        let view = inspect_knowledge(
+            &root,
+            &KnowledgeInspectArgs {
+                target: ".".to_string(),
+                json: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(view.json["mode"], "vector");
+        assert_eq!(view.json["index"]["algorithm"], "exact");
+        assert_eq!(view.json["index"]["fresh"], true);
+        assert!(view.text.contains("Index metadata freshness: fresh"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn inspect_vector_mode_reports_stale_index_instead_of_failing() {
+        let root = temp_dir("inspect-vector-stale-index");
+        write_vector_fixture(&root);
+        let metadata_path = root.join("knowledge/indexes/default/metadata.json");
+        let mut metadata: Value =
+            serde_json::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+        metadata["metric"] = Value::String("euclidean".to_string());
+        write_manifest_pretty_atomic(&metadata_path, &metadata).unwrap();
+
+        let view = inspect_knowledge(
+            &root,
+            &KnowledgeInspectArgs {
+                target: ".".to_string(),
+                json: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(view.json["index"]["fresh"], false);
+        assert_eq!(view.json["index"]["mismatches"], json!(["metric"]));
+        assert!(view.text.contains("Index metadata freshness: stale"));
+        assert!(view.text.contains("Index mismatches: metric"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn inspect_installed_vector_package_ref_resolves_via_lock_and_install_layout() {
+        let root = temp_dir("inspect-installed-vector");
+        let install_root = root.join(".agentpm/knowledge/zack/python-docs/0.1.0");
+        write_vector_fixture(&install_root);
+        crate::manifest::write_lock(
+            &root,
+            &Lock::V2(crate::semver::types::LockV2 {
+                lockfile_version: 3,
+                generated: Utc::now(),
+                packages: BTreeMap::from([(
+                    "knowledge:@zack/python-docs@0.1.0".to_string(),
+                    crate::semver::types::LockedPackage {
+                        kind: PackageKind::Knowledge,
+                        name: "@zack/python-docs".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-knowledge".to_string(),
+                    },
+                )]),
+                roots: BTreeMap::new(),
+            }),
+        )
+        .unwrap();
+
+        let view = inspect_knowledge(
+            &root,
+            &KnowledgeInspectArgs {
+                target: "@zack/python-docs".to_string(),
+                json: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(view.json["name"], "python-docs");
+        assert_eq!(view.json["index"]["algorithm"], "exact");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn inspect_installed_context_package_ref_resolves_via_lock_and_install_layout() {
+        let root = temp_dir("inspect-installed-context");
+        let install_root = root.join(".agentpm/knowledge/zack/engineering-playbook/0.1.0");
+        write_context_fixture(&install_root);
+        crate::manifest::write_lock(
+            &root,
+            &Lock::V2(crate::semver::types::LockV2 {
+                lockfile_version: 3,
+                generated: Utc::now(),
+                packages: BTreeMap::from([(
+                    "knowledge:@zack/engineering-playbook@0.1.0".to_string(),
+                    crate::semver::types::LockedPackage {
+                        kind: PackageKind::Knowledge,
+                        name: "@zack/engineering-playbook".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-knowledge".to_string(),
+                    },
+                )]),
+                roots: BTreeMap::new(),
+            }),
+        )
+        .unwrap();
+
+        let view = inspect_knowledge(
+            &root,
+            &KnowledgeInspectArgs {
+                target: "@zack/engineering-playbook".to_string(),
+                json: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(view.json["name"], "engineering-playbook");
+        assert_eq!(view.json["mode"], "context");
+        assert_eq!(view.json["build"]["document_count"], 1);
+        assert_eq!(view.json["manifest_metadata_fresh"], true);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_vector_json_returns_ranked_rows_and_source_metadata() {
+        let root = temp_dir("query-vector");
+        write_vector_fixture(&root);
+        let vector_path = root.join("query.json");
+        fs::write(&vector_path, "{\"vector\":[1.0,0.0,0.0]}").unwrap();
+
+        let view = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: Some(2),
+                score_threshold: None,
+                json: true,
+                include_text: true,
+                include_metadata: true,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap();
+
+        let results = view.json["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["chunk_id"], "chunk_1");
+        assert_eq!(results[0]["row"], 0);
+        assert_eq!(results[0]["source_id"], "src_1");
+        assert_eq!(results[0]["source_title"], "Source One");
+        assert_eq!(results[1]["chunk_id"], "chunk_3");
+        assert_eq!(results[1]["row"], 2);
+        assert!(view.text.contains("chunk=chunk_1"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_rejects_context_mode_packages_clearly() {
+        let root = temp_dir("query-context-mode");
+        write_context_fixture(&root);
+        let vector_path = root.join("query.json");
+        fs::write(&vector_path, "[1.0,0.0,0.0]").unwrap();
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("intended for direct context loading"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_rejects_vector_length_mismatch_before_search() {
+        let root = temp_dir("query-vector-length-mismatch");
+        write_vector_fixture(&root);
+        let vector_path = root.join("query.json");
+        fs::write(&vector_path, "[1.0,0.0]").unwrap();
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("query vector length 2 does not match"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_rejects_provider_metadata_mismatch() {
+        let root = temp_dir("query-provider-mismatch");
+        write_vector_fixture(&root);
+        let vector_path = root.join("query.json");
+        fs::write(
+            &vector_path,
+            "{\"vector\":[1.0,0.0,0.0],\"provider\":\"voyage\"}",
+        )
+        .unwrap();
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("provider `voyage` does not match"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_rejects_missing_index_metadata() {
+        let root = temp_dir("query-missing-index-metadata");
+        write_vector_fixture(&root);
+        fs::remove_file(root.join("knowledge/indexes/default/metadata.json")).unwrap();
+        let vector_path = root.join("query.json");
+        fs::write(&vector_path, "[1.0,0.0,0.0]").unwrap();
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("index metadata is missing"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_rejects_unsupported_index_algorithm() {
+        let root = temp_dir("query-unsupported-algorithm");
+        write_vector_fixture(&root);
+        let metadata_path = root.join("knowledge/indexes/default/metadata.json");
+        let mut metadata: Value =
+            serde_json::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+        metadata["algorithm"] = Value::String("ann".to_string());
+        write_manifest_pretty_atomic(&metadata_path, &metadata).unwrap();
+        let vector_path = root.join("query.json");
+        fs::write(&vector_path, "[1.0,0.0,0.0]").unwrap();
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("algorithm"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_rejects_unsupported_index_format_version() {
+        let root = temp_dir("query-unsupported-format-version");
+        write_vector_fixture(&root);
+        let metadata_path = root.join("knowledge/indexes/default/metadata.json");
+        let mut metadata: Value =
+            serde_json::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+        metadata["format_version"] = Value::Number(2.into());
+        write_manifest_pretty_atomic(&metadata_path, &metadata).unwrap();
+        let vector_path = root.join("query.json");
+        fs::write(&vector_path, "[1.0,0.0,0.0]").unwrap();
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("format_version"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_rejects_stale_corpus_hash() {
+        let root = temp_dir("query-stale-corpus");
+        write_vector_fixture(&root);
+        fs::write(
+            root.join("knowledge/chunks.jsonl"),
+            concat!(
+                "{\"id\":\"chunk_1\",\"source_id\":\"src_1\",\"text\":\"Alpha text changed\"}\n",
+                "{\"id\":\"chunk_2\",\"source_id\":\"src_2\",\"text\":\"Beta text\",\"metadata\":{\"section\":\"beta\"}}\n",
+                "{\"id\":\"chunk_3\",\"source_id\":\"src_2\",\"text\":\"Gamma text\"}\n"
+            ),
+        )
+        .unwrap();
+        let vector_path = root.join("query.json");
+        fs::write(&vector_path, "[1.0,0.0,0.0]").unwrap();
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("manifest build metadata is stale"));
+        assert!(format!("{err:#}").contains("knowledge.corpus.content_hash"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_rejects_stale_vector_hash() {
+        let root = temp_dir("query-stale-vectors");
+        write_vector_fixture(&root);
+        write_f32_vectors(
+            &root.join("knowledge/embeddings/default.f32"),
+            &[
+                vec![0.9, 0.1, 0.0],
+                vec![0.0, 1.0, 0.0],
+                vec![0.5, 0.5, 0.0],
+            ],
+        );
+        let vector_path = root.join("query.json");
+        fs::write(&vector_path, "[1.0,0.0,0.0]").unwrap();
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("knowledge.embedding.vectors_hash"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_rejects_normalized_flag_mismatch() {
+        let root = temp_dir("query-normalized-mismatch");
+        write_vector_fixture(&root);
+        let metadata_path = root.join("knowledge/indexes/default/metadata.json");
+        let mut metadata: Value =
+            serde_json::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+        metadata["normalized"] = Value::Bool(false);
+        write_manifest_pretty_atomic(&metadata_path, &metadata).unwrap();
+        let vector_path = root.join("query.json");
+        fs::write(&vector_path, "[1.0,0.0,0.0]").unwrap();
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("normalized"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_rejects_metric_mismatch() {
+        let root = temp_dir("query-metric-mismatch");
+        write_vector_fixture(&root);
+        let metadata_path = root.join("knowledge/indexes/default/metadata.json");
+        let mut metadata: Value =
+            serde_json::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+        metadata["metric"] = Value::String("euclidean".to_string());
+        write_manifest_pretty_atomic(&metadata_path, &metadata).unwrap();
+        let vector_path = root.join("query.json");
+        fs::write(&vector_path, "[1.0,0.0,0.0]").unwrap();
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: None,
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: Some(vector_path.to_string_lossy().into_owned()),
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("metric"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn query_text_without_vector_or_adapter_fails_clearly() {
+        let root = temp_dir("query-text-no-adapter");
+        write_vector_fixture(&root);
+
+        let err = query_knowledge(
+            &root,
+            &KnowledgeQueryArgs {
+                target: ".".to_string(),
+                query_text: Some("what is alpha?".to_string()),
+                top_k: None,
+                score_threshold: None,
+                json: false,
+                include_text: false,
+                include_metadata: false,
+                vector_json: None,
+                embedding_command: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("cannot embed text automatically yet"));
+        assert!(format!("{err:#}").contains("Provide --vector-json"));
 
         let _ = fs::remove_dir_all(root);
     }
