@@ -424,8 +424,8 @@
 - [ ] Add SDK tests for `load_knowledge` / `loadKnowledge` if implemented.
 - [ ] Add SDK regression tests for existing tool/agent/skill behavior.
 
-## Milestone 10: Compatibility, Cleanup, and Audits
-> Scope note: final audit for hardcoded package kind lists, stale warnings, and accidental behavior changes.
+## Milestone 10: Compatibility, Cleanup, Docs, and Deployment
+> Scope note: final pre-examples closeout for package-kind audits, stale warnings, docs, deployment readiness, and accidental behavior changes. Finish everything needed before example apps depend on the public Knowledge flow.
 - [ ] Audit CLI for hardcoded `tool|agent|template|skill` lists and add `knowledge` where intended.
 - [ ] Audit backend for hardcoded package kind lists and add `knowledge` where intended.
 - [ ] Audit frontend for hardcoded package kind lists and add `knowledge` where intended.
@@ -446,9 +446,6 @@
 - [ ] Ensure `agentpm publish` never mutates Knowledge package files unless a future explicit build/prepare flag is added.
 - [ ] Ensure stale build-check errors are specific enough to tell authors what changed and to run `agentpm knowledge build`.
 - [ ] Ensure context-mode and vector-mode build-check behavior is covered in docs, CLI help, and tests.
-
-## Milestone 11: Docs, Examples, and Developer Guidance
-> Scope note: document the contract and the product boundaries clearly. Codex should include docs that prevent users from assuming AgentPM crawls, embeds, or hosts provider credentials.
 - [ ] Add docs page for Knowledge artifacts.
 - [ ] Document the strategic boundary: AgentPM packages prepared context; it does not crawl/chunk/embed in Phase 6B, and vector retrieval is one supported Knowledge mode.
 - [ ] Document the two Knowledge modes:
@@ -500,3 +497,15 @@
 - [ ] Add an example embedding command adapter script if `--embedding-command` is implemented.
 - [ ] Update CLI help text snapshots/docs for new commands.
 - [ ] Update registry/docs pages that list package kinds.
+
+- [ ] Deploy the CLI/backend/frontend/docs changes needed for public Knowledge flows.
+- [ ] Verify production publish/install/search/detail/inspect/query flows after deployment.
+
+## Milestone 11: Examples and Example-App Integration
+> Scope note: examples only. After Milestone 10 is deployed and verified, add the curated Knowledge examples and wire the example apps against the live public flow.
+- [ ] Add a minimal context-mode example Knowledge package under examples or docs fixtures.
+- [ ] Add a minimal vector-mode example Knowledge package under examples or docs fixtures.
+  - [ ] Maybe AgentPM Docs as a real vector knowledge package.
+  - [ ] Another can be more custom-generated for the research assistant agent or similar.
+- [ ] Add an example embedding command adapter script if `--embedding-command` is implemented and the examples repo should carry it.
+- [ ] Update example apps to consume published Knowledge packages only after Milestone 10 deployment/verification is complete.
