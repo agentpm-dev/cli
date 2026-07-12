@@ -601,7 +601,7 @@ pub fn parse_tool_manifest(value: &Value) -> Result<ToolManifest> {
         serde_json::from_value(value.clone()).context("parsing manifest into ToolManifest")?;
     if mf.kind != "tool" {
         return Err(anyhow!(format!(
-            "`agentpm publish` currently supports only kind=\"tool\" (got kind=\"{}\")",
+            "parse_tool_manifest requires kind=\"tool\" (got kind=\"{}\"); `agentpm publish` supports kind=\"tool\", \"skill\", \"knowledge\", \"agent\", and \"template\"",
             mf.kind
         )));
     }

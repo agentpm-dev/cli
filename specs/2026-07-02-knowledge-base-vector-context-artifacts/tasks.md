@@ -497,7 +497,6 @@
 - [ ] Add an example embedding command adapter script if `--embedding-command` is implemented.
 - [ ] Update CLI help text snapshots/docs for new commands.
 - [ ] Update registry/docs pages that list package kinds.
-
 - [ ] Deploy the CLI/backend/frontend/docs changes needed for public Knowledge flows.
 - [ ] Verify production publish/install/search/detail/inspect/query flows after deployment.
 
