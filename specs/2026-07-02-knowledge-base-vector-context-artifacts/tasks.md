@@ -598,3 +598,17 @@
   - [ ] Knowledge sections still render
   - [ ] package-kind sections do not disappear simply because another kind dominates the global activity list
 - [ ] Add manual verification notes for the landing page showing that mixed trending content appears correctly after publish activity across several package kinds.
+
+## Milestone 14: Lemon Squeezy Production Billing Configuration
+> Scope note: production billing enablement only. Verify and complete the Render-side environment configuration needed for Lemon Squeezy now that production approval is in place, without expanding scope into new billing product features.
+- [ ] Audit the current billing-related configuration surfaces across `agentpm-api`, `agentpm-web`, and the relevant Render production services.
+- [ ] Identify the full set of environment variables required for production Lemon Squeezy billing flows.
+- [ ] Verify that each required production env var is present in Render with the correct prod value.
+- [ ] Verify that no staging, test-mode, placeholder, or legacy billing values are still active in production.
+- [ ] Confirm that any public web env vars point at the correct production URLs, store identifiers, and variant identifiers.
+- [ ] Confirm that server-side billing secrets are configured only on the services that need them and are not exposed to the client.
+- [ ] Document the expected production env var set and which service owns each one.
+- [ ] Run a minimal production-safety verification pass after configuration.
+  - [ ] Confirm billing-gated web UI surfaces behave as enabled when the prod env vars are present.
+  - [ ] Confirm API-side billing or checkout initialization paths resolve against Lemon Squeezy production configuration.
+  - [ ] Confirm there are no obvious prod callback/signing mismatches across app URLs, webhook secrets, store IDs, or variant IDs.
