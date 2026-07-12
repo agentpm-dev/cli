@@ -502,9 +502,47 @@
 
 ## Milestone 11: Examples and Example-App Integration
 > Scope note: examples only. After Milestone 10 is deployed and verified, add the curated Knowledge examples and wire the example apps against the live public flow.
-- [ ] Add a minimal context-mode example Knowledge package under examples or docs fixtures.
-- [ ] Add a minimal vector-mode example Knowledge package under examples or docs fixtures.
-  - [ ] Maybe AgentPM Docs as a real vector knowledge package.
-  - [ ] Another can be more custom-generated for the research assistant agent or similar.
-- [ ] Add an example embedding command adapter script if `--embedding-command` is implemented and the examples repo should carry it.
-- [ ] Update example apps to consume published Knowledge packages only after Milestone 10 deployment/verification is complete.
+- [ ] Add a new `knowledge-packages/*` area in `agentpm-examples` for publishable Knowledge package source manifests and assets.
+- [ ] Add `@zack/support-response-handbook` as the seeded context-mode Knowledge package.
+  - [ ] Use `mode: "context"`.
+  - [ ] Include more than one declared document file.
+  - [ ] Shape it as a support-response guidance bundle rather than a generic placeholder corpus.
+  - [ ] Include authored files such as response principles, escalation guidance, and reusable message templates.
+  - [ ] Run `agentpm knowledge build` so the published artifact includes derived context metadata.
+- [ ] Add `@zack/devwork-maintainer-guide` as the seeded small vector-mode Knowledge package.
+  - [ ] Use `mode: "vector"`.
+  - [ ] Keep it intentionally small and heavily authored rather than generated from a large source corpus.
+  - [ ] Shape it around maintainer/repository review workflows so it fits `devwork-copilot`.
+  - [ ] Include authored source docs plus generated chunks, sources, vectors, and index metadata.
+  - [ ] Run `agentpm knowledge build` so the package is publish-ready.
+- [ ] Add `@zack/agentpm-docs` as the seeded larger vector-mode Knowledge package.
+  - [ ] Use real content from `agentpm-api/docs/v0.1/**/*.mdx`.
+  - [ ] Include the original docs files in the published package in addition to `chunks.jsonl`, `sources.jsonl`, and vectors.
+  - [ ] Keep the corpus moderate in size: large enough to demonstrate realistic retrieval, but not so large that it becomes unwieldy as a seeded registry artifact.
+  - [ ] Include provenance/source metadata that ties chunks back to source files and public docs routes where practical.
+  - [ ] Run `agentpm knowledge build` so the package is publish-ready.
+- [ ] Add a reproducible corpus-preparation pipeline for `@zack/agentpm-docs` in the examples repo.
+  - [ ] Use a common, recognizable chunking library such as `langchain_text_splitters` rather than a custom one-off splitter unless a simpler repo-native option is clearly better.
+  - [ ] Strip or normalize MDX/frontmatter into chunkable content while preserving source traceability.
+  - [ ] Emit AgentPM-compatible `knowledge/chunks.jsonl` and `knowledge/sources.jsonl`.
+  - [ ] Generate embeddings with `text-embedding-3-small`.
+  - [ ] Write the raw little-endian float32 payload expected by AgentPM to `knowledge/embeddings/default.f32`.
+  - [ ] Include a query-time adapter example script for this package so manual `agentpm knowledge query --embedding-command ...` demos use the same embedding family.
+- [ ] Preserve contrast across the seeded examples.
+  - [ ] Keep the context package authored and direct-context oriented.
+  - [ ] Keep the small vector package authored and workflow-specific.
+  - [ ] Use the larger `agentpm-docs` package as the main example of preparing real source content into AgentPM Knowledge shape.
+- [ ] Update published example manifests to consume the new Knowledge packages only after those Knowledge packages are published.
+  - [ ] Add `@zack/support-response-handbook` to `template-packages/support-assistant-workspace` so the generated workspace demonstrates template-driven Knowledge usage.
+  - [ ] Add `@zack/devwork-maintainer-guide` to `agent-packages/devwork-python` so a published agent demonstrates agent-level Knowledge usage.
+  - [ ] Do not require `@zack/agentpm-docs` to be attached to an agent; keep it as the main standalone inspect/query showcase.
+- [ ] Update generated/example app surfaces after package publish so the seeded public flow is visible in real apps.
+  - [ ] Update `agent-app-support-assistant-workspace` to show the context-mode Knowledge dependency in the generated/root manifests and supporting README copy.
+  - [ ] Update `agent-app-devwork-python` to exercise agent-installed vector-mode Knowledge through the SDK-loaded agent graph.
+  - [ ] Decide whether `agent-app-research-node` should reference `@zack/agentpm-docs` only as a manual local demo or remain independent.
+- [ ] Update example-repo README/documentation so the three Knowledge packages are discoverable alongside tools, skills, agents, and templates.
+- [ ] Add manual verification notes for the examples phase.
+  - [ ] Publish/install each Knowledge package from prod.
+  - [ ] Verify context-mode inspect output for `@zack/support-response-handbook`.
+  - [ ] Verify vector-mode inspect/query output for `@zack/devwork-maintainer-guide`.
+  - [ ] Verify realistic inspect/query demos for `@zack/agentpm-docs`, including an embedding-command query path using the provided adapter script.
