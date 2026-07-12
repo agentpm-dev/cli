@@ -561,7 +561,10 @@
 - [ ] Audit direct `agentpm install @ns/agent@version` behavior when the same agent package is installed repeatedly at newer versions in the same workspace.
 - [ ] Decide and document the intended behavior for direct-installed published agent roots.
   - [ ] If the direct install is acting as the current selected registry root for that package, older versions of the same package should not remain as parallel roots by default.
+  - [ ] Treat "the same package" here as the same package kind plus the same namespace/name, regardless of version.
+  - [ ] When a user runs direct `agentpm install @ns/name@newer-version`, replace any existing direct-installed registry root for that same package kind and package name instead of accumulating multiple versions of the same selected root.
   - [ ] Preserve support for multiple versions only when they are intentionally required by distinct roots or manifests, not as an accidental artifact of repeated upgrades.
+  - [ ] Do not remove older versions that are still required by a local root, template-generated root, workspace-generated root, or another distinct registry root.
 - [ ] Update lockfile/root merge behavior so reinstalling `@ns/name` at a newer exact version replaces stale direct-install roots for the same package identity.
 - [ ] Ensure old package entries are pruned when they are no longer referenced by any root after the replacement.
 - [ ] Preserve existing behavior for:
