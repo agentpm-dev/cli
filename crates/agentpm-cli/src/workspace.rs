@@ -2,7 +2,7 @@ use crate::manifest::{load_manifest_value, write_manifest_pretty_atomic};
 use crate::prelude::*;
 use crate::semver::types::{
     DesiredSet, Lock, LockRoot, PackageKind, PackageRequirement, ReservedReferences, ResolvePlan,
-    lock_from_plan, package_key, resolve_declared_package_from_packages,
+    lock_from_plan, package_key, resolve_declared_package_from_packages, split_package_ref,
 };
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,8 @@ pub struct WorkspacePackageRoots {
     pub agents: Vec<WorkspacePackageRoot>,
     #[serde(default)]
     pub skills: Vec<WorkspacePackageRoot>,
+    #[serde(default)]
+    pub knowledge: Vec<WorkspacePackageRoot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,6 +160,13 @@ pub fn desired_from_workspace(
             skill.version.clone(),
         ));
     }
+    for knowledge in &package_roots.knowledge {
+        items.push(PackageRequirement::new(
+            PackageKind::Knowledge,
+            knowledge.name.clone(),
+            knowledge.version.clone(),
+        ));
+    }
 
     Ok(DesiredSet { items })
 }
@@ -197,6 +206,12 @@ pub fn build_workspace_lock(
                 &format!("workspace manifest {}", manifest.rel_path),
                 &packages,
             )?,
+            knowledge: resolve_packages_for_manifest(
+                &manifest.manifest_value,
+                PackageKind::Knowledge,
+                &format!("workspace manifest {}", manifest.rel_path),
+                &packages,
+            )?,
             reserved: reserved_refs_from_manifest(&manifest.manifest_value),
         });
     }
@@ -218,7 +233,6 @@ pub fn build_workspace_lock(
             install_root,
         )?);
     }
-
     Ok(lock_from_plan(plan, &roots))
 }
 
@@ -246,6 +260,7 @@ pub fn validate_workspace_metadata(root: &Path, metadata: &WorkspaceMetadata) ->
     validate_package_roots("tool", &metadata.package_roots.tools)?;
     validate_package_roots("agent", &metadata.package_roots.agents)?;
     validate_package_roots("skill", &metadata.package_roots.skills)?;
+    validate_package_roots("knowledge", &metadata.package_roots.knowledge)?;
 
     Ok(())
 }
@@ -374,6 +389,12 @@ fn build_registry_agent_root(
             &format!("registry agent {}@{}", package, version),
             packages,
         )?,
+        knowledge: resolve_packages_for_manifest(
+            &manifest_value,
+            PackageKind::Knowledge,
+            &format!("registry agent {}@{}", package, version),
+            packages,
+        )?,
         reserved: reserved_refs_from_manifest(&manifest_value),
     })
 }
@@ -449,20 +470,10 @@ fn resolve_packages_for_manifest(
     Ok(resolved)
 }
 
-fn split_package_ref(package: &str) -> Result<(String, String)> {
-    if !package.starts_with('@') {
-        return Err(anyhow!("package must be of form @owner/name"));
-    }
-    let mut parts = package[1..].splitn(2, '/');
-    let owner = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
-    let name = parts.next().ok_or_else(|| anyhow!("invalid package"))?;
-    Ok((owner.to_string(), name.to_string()))
-}
-
 fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {
     ReservedReferences {
         skills: Vec::new(),
-        knowledge: manifest_array_or_empty(manifest_value, "knowledge"),
+        knowledge: Vec::new(),
         memory: manifest_array_or_empty(manifest_value, "memory"),
         profiles: manifest_array_or_empty(manifest_value, "profiles"),
     }
@@ -644,13 +655,18 @@ mod tests {
                     name: "@zack/triage-skill".to_string(),
                     version: "0.2.0".to_string(),
                 }],
+                knowledge: vec![WorkspacePackageRoot {
+                    name: "@zack/python-docs".to_string(),
+                    version: "0.1.0".to_string(),
+                }],
             },
         )
         .unwrap();
 
-        assert_eq!(desired.items.len(), 4);
+        assert_eq!(desired.items.len(), 5);
         assert_eq!(desired.items[2].kind, PackageKind::Agent);
         assert_eq!(desired.items[3].kind, PackageKind::Skill);
+        assert_eq!(desired.items[4].kind, PackageKind::Knowledge);
     }
 
     #[test]
@@ -694,6 +710,7 @@ mod tests {
                     name: "@zack/triage-skill".to_string(),
                     version: "0.2.0".to_string(),
                 }],
+                knowledge: Vec::new(),
             },
             &ResolvePlan {
                 items: vec![
@@ -720,5 +737,60 @@ mod tests {
         };
         assert_eq!(lock.lockfile_version, 3);
         assert!(lock.roots.contains_key("skill:@zack/triage-skill@0.2.0"));
+    }
+
+    #[test]
+    fn build_workspace_lock_records_knowledge_dependencies_without_registry_root() {
+        let root = temp_root("workspace-knowledge-root");
+
+        let lock = build_workspace_lock(
+            &[LocalManifestRoot {
+                rel_path: "agent.json".to_string(),
+                manifest_value: json!({
+                    "kind":"agent",
+                    "name":"primary",
+                    "version":"0.1.0",
+                    "tools":[{"name":"@zack/echo","version":"0.1.0"}],
+                    "knowledge":[{"name":"@zack/python-docs","version":"0.1.0"}]
+                }),
+            }],
+            &WorkspacePackageRoots {
+                tools: Vec::new(),
+                agents: Vec::new(),
+                skills: Vec::new(),
+                knowledge: vec![WorkspacePackageRoot {
+                    name: "@zack/python-docs".to_string(),
+                    version: "0.1.0".to_string(),
+                }],
+            },
+            &ResolvePlan {
+                items: vec![
+                    crate::semver::types::ResolvedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/echo".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-echo".to_string(),
+                    },
+                    crate::semver::types::ResolvedPackage {
+                        kind: PackageKind::Knowledge,
+                        name: "@zack/python-docs".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-knowledge".to_string(),
+                    },
+                ],
+            },
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(lock.lockfile_version, 3);
+        assert!(!lock.roots.contains_key("knowledge:@zack/python-docs@0.1.0"));
+        assert_eq!(
+            lock.roots["local:agent"].knowledge,
+            vec!["knowledge:@zack/python-docs@0.1.0".to_string()]
+        );
     }
 }

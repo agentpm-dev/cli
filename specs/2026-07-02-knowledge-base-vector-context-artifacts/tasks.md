@@ -1,0 +1,510 @@
+# Tasks
+
+## Milestone 1: Knowledge Manifest Contract
+> Scope note: establish `kind: "knowledge"` as a valid package contract and make the schema/type layer understand the difference between agent dependency `knowledge` arrays and Knowledge package `knowledge` objects. This milestone does not publish, install, build indexes, or query yet.
+- [ ] Add `knowledge` to the manifest `kind` enum in `schemas/agentpm.manifest.schema.json`.
+- [ ] Add `$defs.knowledgeMetadata` for the Knowledge contract object with required `mode` enum values `context` and `vector`.
+- [ ] Add `$defs.knowledgeDocument` for context-mode declared documents, including required safe `path` and optional `content_type`, `role`, `description`, `bytes`, and `sha256` fields.
+- [ ] Add `$defs.knowledgeContext` or equivalent context-mode metadata for build-derived `document_count`, `total_bytes`, and `content_hash`.
+- [ ] Add `$defs.knowledgeCorpus` for vector-mode chunks/sources, with required `chunks_path` and `sources_path` only when `mode` is `vector`, plus build-derived `chunk_count`, `source_count`, and `content_hash`.
+- [ ] Add `$defs.knowledgeChunking` with optional free-form `strategy`, `chunk_size`, `overlap`, and optional metadata/tool fields if desired.
+- [ ] Add `$defs.knowledgeEmbedding` with required `id`, `provider`, `model`, `dimensions`, `metric`, `normalized`, and `vectors_path` only when `mode` is `vector`; add optional build-derived `vector_count` and `vectors_hash`.
+- [ ] Add `$defs.knowledgeIndex` with required `id`, `type`, `path`, and `embedding_id` only when `mode` is `vector`; allow `type: "agentpm-local"` for the MVP.
+- [ ] Add `$defs.knowledgeRetrieval` with a `strategy` that supports `full_context` for context mode and `vector` for vector mode, plus optional `default_top_k`, `default_score_threshold`, and `return_citations` for vector mode.
+- [ ] Add `$defs.knowledgeProvenance` with optional `sources_manifest_path`, `generated_at`, and `builder`.
+- [ ] Ensure all Knowledge document, corpus, embedding, index, and provenance paths use the existing safe relative path definition or a compatible one.
+- [ ] Update top-level `knowledge` schema so it can be an array for `kind: "agent"` and an object for `kind: "knowledge"` without ambiguity.
+- [ ] Add a `oneOf` branch requiring the Knowledge contract object when `kind` is `knowledge`.
+- [ ] Update dependent schemas so `knowledge` is allowed for `agent` as an array and for `knowledge` as an object.
+- [ ] Ensure `tools`, `skills`, `memory`, `profiles`, `entrypoint`, `inputs`, `outputs`, `files`, `runtime`, `skill`, and `template` are rejected for `kind: "knowledge"`.
+- [ ] Update template dependency schema to support optional `template.dependencies.knowledge`.
+- [ ] Ensure existing template manifests without `template.dependencies.knowledge` remain valid.
+- [ ] Update CLI manifest structs/types to add `KnowledgeManifest` and nested Knowledge metadata structs where useful.
+- [ ] Update `PublishManifest` to include a `Knowledge` variant.
+- [ ] Update manifest parsing to return `PublishManifest::Knowledge` for `kind: "knowledge"`.
+- [ ] Update manifest kind/name/version helper functions used by publish/signature code to include Knowledge.
+- [ ] Remove or update the semantic warning that says non-empty agent `knowledge` is “validated and preserved, but not resolved in Phase 3.”
+- [ ] Add schema/manifest tests for a valid minimal context-mode Knowledge manifest.
+- [ ] Add schema/manifest tests for a valid built context-mode Knowledge manifest with derived document counts/bytes/hashes.
+- [ ] Add schema/manifest tests for a valid minimal vector-mode Knowledge manifest.
+- [ ] Add schema/manifest tests for a valid built vector-mode Knowledge manifest with derived counts/hashes/indexes.
+- [ ] Add schema/manifest tests for a valid agent manifest with Knowledge dependencies.
+- [ ] Add schema/manifest tests for a valid template manifest with `template.dependencies.knowledge`.
+- [ ] Add schema/manifest tests proving existing templates without `template.dependencies.knowledge` remain valid.
+- [ ] Add schema/manifest tests rejecting Knowledge packages with dependency arrays.
+- [ ] Add schema/manifest tests rejecting unsafe Knowledge paths.
+- [ ] Add schema/manifest tests proving `chunking.strategy` accepts open-ended strings.
+- [ ] Add schema/manifest tests proving context-mode Knowledge does not require chunks, sources, embeddings, vectors, or indexes.
+- [ ] Add schema/manifest tests proving vector-mode Knowledge requires chunks, sources, embeddings, vectors, and indexes after build/publish validation.
+
+## Milestone 2: CLI Init Support
+> Scope note: add the authoring starting point. After this milestone, `agentpm init --kind knowledge` creates a valid starter package, but it is not yet buildable/publishable/queryable.
+- [ ] Add `Knowledge` to the `InitKind` enum.
+- [ ] Update `agentpm init --help` text to mention tool, agent, template, skill, and knowledge.
+- [ ] Add a `KNOWLEDGE_AGENT_JSON_TPL` asset.
+- [ ] Add a starter `README.md` template for Knowledge packages.
+- [ ] Update `init.rs` to render `agent.json` for `--kind knowledge`.
+- [ ] Have `init --kind knowledge` create a valid context-mode starter by default, including `knowledge/docs/` and a small placeholder document.
+- [ ] Include context-mode `documents` metadata in the generated manifest.
+- [ ] Add `--mode context|vector` to `init --kind knowledge`; have vector mode create `knowledge/chunks.jsonl`, `knowledge/sources.jsonl`, and `knowledge/embeddings/` placeholders.
+- [ ] Ensure `init --kind knowledge` does not create `knowledge/indexes/default`; vector-mode indexes are generated by `knowledge build`.
+- [ ] Add init tests proving the generated Knowledge package validates.
+- [ ] Add init tests proving the expected directory layout is created.
+- [ ] Add regression tests proving existing tool/agent/template/skill init behavior still works.
+
+## Milestone 3: Knowledge Build
+> Scope note: implement the core local preparation step for both Knowledge modes. `agentpm knowledge build` reads `agent.json`, validates declared files, computes derived metadata, and writes the updated manifest. For `mode: "vector"`, it also builds the default `agentpm-local` index from vectors. It does not crawl, chunk, or call embedding providers.
+- [ ] Add a new `commands::knowledge` module and `Commands::Knowledge` subcommand group.
+- [ ] Add `KnowledgeArgs` with `build`, `inspect`, and `query` subcommands, even if inspect/query are initially stubbed until later milestones.
+- [ ] Add `KnowledgeBuildArgs` with default `--manifest agent.json`.
+- [ ] Consider adding `--check` or `--dry-run` if consistent with repo patterns; otherwise defer.
+- [ ] Implement package-root resolution from manifest path.
+- [ ] Load and schema-validate the manifest before build-specific validation.
+- [ ] Reject non-`kind: "knowledge"` manifests with a clear error.
+- [ ] Validate that declared Knowledge paths are safe package-relative paths and cannot escape the package root.
+- [ ] Branch build behavior by `knowledge.mode`.
+- [ ] For context mode, validate every declared document path exists, is a file, and stays within the package root.
+- [ ] For context mode, compute per-document `bytes` and `sha256` fields where missing or stale.
+- [ ] For context mode, compute derived `document_count`, `total_bytes`, and `content_hash` metadata.
+- [ ] For context mode, do not require chunks, sources, embeddings, vectors, or indexes.
+- [ ] For vector mode, implement JSONL reader for chunks with clear line-numbered errors.
+- [ ] Validate chunk IDs are non-empty strings and unique.
+- [ ] Validate chunk `source_id` is a non-empty string.
+- [ ] Validate chunk `text` is a non-empty string.
+- [ ] Validate chunk `metadata`, if present, is an object.
+- [ ] Implement JSONL reader for sources with clear line-numbered errors.
+- [ ] Validate source IDs are non-empty strings and unique.
+- [ ] Validate every chunk `source_id` exists in sources.
+- [ ] Validate vector file exists.
+- [ ] Read raw little-endian float32 vector file metadata without loading more into memory than necessary if feasible.
+- [ ] Validate vector byte length is divisible by 4.
+- [ ] Validate `embedding.dimensions` is a positive integer.
+- [ ] Validate vector count equals chunk count using `file_bytes / 4 / dimensions`.
+- [ ] Validate vector file is not empty.
+- [ ] Decide whether Phase 6B supports only `metric: "cosine"` and `normalized: true`; enforce if yes.
+- [ ] For vector mode, implement content hash calculation for corpus data, including at least `chunks.jsonl` and `sources.jsonl`.
+- [ ] For vector mode, implement vector hash calculation for the declared vector file.
+- [ ] Choose and add the internal local index implementation for `agentpm-local`.
+- [ ] For `agentpm-local` v1, exact search over the declared vector file is acceptable. The generated index directory must at minimum contain metadata proving the index was built for the current corpus/vector hashes, dimensions, metric, and vector count. Future AgentPM versions may replace or augment exact search with an approximate nearest-neighbor structure while preserving the `agentpm-local` manifest contract.
+- [ ] For `agentpm-local` v1, do not duplicate chunk text, source metadata, or vectors into the index directory unless required by the implementation. The canonical searchable data remains `chunks.jsonl`, `sources.jsonl`, and the declared vector file.
+- [ ] For vector mode, generate or refresh `knowledge/indexes/default/metadata.json` from the validated chunks, sources, embedding metadata, and vector file.
+- [ ] Keep the public index type as `agentpm-local` even if the internal implementation uses a specific crate/format.
+- [ ] For vector mode, write index metadata alongside the generated `agentpm-local` index so publish can detect stale indexes without rebuilding.
+- [ ] Index metadata should include `type`, `format_version`, `algorithm`, `embedding_id`, `metric`, `normalized`, `source_corpus_hash`, `source_chunks_hash`, `source_sources_hash`, `source_vectors_hash`, `chunks_path`, `sources_path`, `vectors_path`, `dimensions`, `chunk_count`, `source_count`, `vector_count`, `built_at`, and `agentpm_version`.
+- [ ] Ensure index metadata hashes/counts match the derived manifest fields written by build.
+- [ ] Document and enforce the row-order invariant: vector row `N` corresponds to chunk line `N` in `chunks.jsonl`.
+- [ ] Update context-mode `agent.json` atomically with derived document counts, byte totals, hashes, and per-document metadata.
+- [ ] Update vector-mode `agent.json` atomically with derived `chunk_count`, `source_count`, `content_hash`, `vector_count`, `vectors_hash`, and default index metadata.
+- [ ] Ensure context-mode build output summarizes validated documents, total bytes, and content hash.
+- [ ] Ensure vector-mode build output summarizes validated chunks, sources, vectors, dimensions, and generated index path.
+- [ ] Factor build validation/metadata computation into reusable helpers that can run in write mode for `agentpm knowledge build` and check-only mode for `agentpm publish`.
+- [ ] Add a reusable context-mode build-state checker that recomputes document bytes, per-document hashes, document count, total bytes, and aggregate content hash.
+- [ ] Add a reusable vector-mode build-state checker that recomputes chunk/source counts, corpus hash, vector count, vector hash, vector dimensions, and index metadata freshness.
+- [ ] Ensure generated index metadata contains enough information for `agentpm knowledge query` to locate the canonical chunks, sources, and vector file without guessing paths.
+- [ ] Ensure generated index metadata contains enough information for `agentpm knowledge query` to verify dimensions, metric, normalized flag, vector count, and source hashes before searching.
+- [ ] Add build tests for valid context-mode documents.
+- [ ] Add build tests for missing context-mode document paths.
+- [ ] Add build tests proving context-mode `agent.json` is updated with derived document metadata.
+- [ ] Add build tests proving context mode does not require vector files or indexes.
+- [ ] Add build tests for valid vector-mode chunks/sources/vectors.
+- [ ] Add build tests for duplicate chunk IDs.
+- [ ] Add build tests for duplicate source IDs.
+- [ ] Add build tests for missing source references.
+- [ ] Add build tests for missing vector file.
+- [ ] Add build tests for vector dimension mismatch.
+- [ ] Add build tests for vector count mismatch.
+- [ ] Add build tests proving vector-mode `agent.json` is updated with derived metadata.
+- [ ] Add build tests proving the generated vector-mode index directory exists.
+- [ ] Add build tests proving vector-mode index metadata is written.
+- [ ] Add build tests proving vector-mode index metadata references the current corpus hash, vector hash, dimensions, and vector count.
+- [ ] Add build tests proving `agentpm-local` v1 can produce an index directory containing only `metadata.json`.
+- [ ] Add build tests proving the generated metadata declares `algorithm: "exact"`.
+- [ ] Add build tests proving the generated metadata includes canonical chunks, sources, and vectors paths.
+- [ ] Add build tests proving the generated metadata includes metric and normalized fields.
+- [ ] Add regression tests proving existing lint/publish code still compiles with the new command module.
+
+## Milestone 4: CLI Publish Build-Check and Packaging for Knowledge
+> Scope note: make built Knowledge packages publishable through the existing CLI packaging flow. Publish must verify that `agentpm knowledge build` has already been run and that build-derived metadata is current. Backend persistence is in a later milestone.
+- [ ] Add `package_knowledge` to `commands/publish.rs`.
+- [ ] Package root `agent.json` into the tarball.
+- [ ] Before packaging, run Knowledge build-check validation for `kind: "knowledge"` manifests.
+- [ ] Ensure publish verifies build-derived metadata instead of trusting that fields merely exist.
+- [ ] Ensure publish does not mutate `agent.json`, compute missing build metadata, or generate indexes by default.
+- [ ] Ensure publish fails with a clear “run `agentpm knowledge build`” message when build metadata is missing.
+- [ ] Ensure publish fails with a specific stale metadata error when recomputed metadata does not match the manifest.
+- [ ] For context mode, package every declared `knowledge.documents[].path` file.
+- [ ] For context mode, package optional provenance files if present.
+- [ ] For context mode, publish build-check must verify every declared document path exists and is safe.
+- [ ] For context mode, publish build-check must recompute and compare every document `bytes` value.
+- [ ] For context mode, publish build-check must recompute and compare every document `sha256` value.
+- [ ] For context mode, publish build-check must recompute and compare `knowledge.context.document_count`.
+- [ ] For context mode, publish build-check must recompute and compare `knowledge.context.total_bytes`.
+- [ ] For context mode, publish build-check must recompute and compare `knowledge.context.content_hash`.
+- [ ] For vector mode, package declared `knowledge.corpus.chunks_path`.
+- [ ] For vector mode, package declared `knowledge.corpus.sources_path`.
+- [ ] For vector mode, package declared `knowledge.embedding.vectors_path`.
+- [ ] For vector mode, package all files under declared `agentpm-local` index paths.
+- [ ] For vector mode, package optional `knowledge.provenance.sources_manifest_path` if present.
+- [ ] For vector mode, publish build-check must validate declared chunks, sources, and vectors before packaging.
+- [ ] For vector mode, publish build-check must recompute and compare `knowledge.corpus.chunk_count`.
+- [ ] For vector mode, publish build-check must recompute and compare `knowledge.corpus.source_count`.
+- [ ] For vector mode, publish build-check must recompute and compare `knowledge.corpus.content_hash`.
+- [ ] For vector mode, publish build-check must recompute and compare `knowledge.embedding.vector_count`.
+- [ ] For vector mode, publish build-check must recompute and compare `knowledge.embedding.vectors_hash`.
+- [ ] For vector mode, publish build-check must verify vector dimensions still match `knowledge.embedding.dimensions`.
+- [ ] For vector mode, publish build-check must verify an `agentpm-local` index entry exists.
+- [ ] For vector mode, publish build-check must verify the declared `agentpm-local` index path exists.
+- [ ] For vector mode, publish build-check must verify index metadata matches the current corpus hash, vector hash, dimensions, and vector count.
+- [ ] Do not auto-package arbitrary `knowledge/documents/` contents by convention; package context documents only when explicitly declared.
+- [ ] Include README and license payload behavior consistent with other package kinds.
+- [ ] Reuse existing safe tar path checks, tar entry caps, blocked embedded archive rules, artifact size checks, and atomic artifact writing.
+- [ ] Ensure CLI publish-path manifest handling continues to accept valid agent manifests with top-level `knowledge` refs.
+- [ ] Ensure CLI publish-path manifest handling continues to accept valid template manifests with `template.dependencies.knowledge`.
+- [ ] Ensure Knowledge refs on agents/templates are treated as valid manifest content in publish dry-run flows, not as reserved/future-only fields.
+- [ ] Ensure publish fails if a Knowledge manifest references files that do not exist.
+- [ ] Ensure publish fails if context-mode build-derived document metadata is missing.
+- [ ] Ensure publish fails if context-mode build-derived document metadata is stale.
+- [ ] Ensure publish fails if vector-mode build-derived corpus/vector metadata is missing.
+- [ ] Ensure publish fails if vector-mode build-derived corpus/vector metadata is stale.
+- [ ] Ensure publish fails if vector-mode index metadata is missing or stale.
+- [ ] Ensure publish fails for vector mode if no `agentpm-local` index is declared or present from a previous `agentpm knowledge build`.
+- [ ] Ensure publish succeeds for context mode without chunks, vectors, embeddings, or indexes when all declared documents are valid.
+- [ ] Ensure publish does not call embedding providers.
+- [ ] Ensure publish does not silently run `agentpm knowledge build`.
+- [ ] Consider a future explicit `agentpm publish --build` or `--prepare` flag, but do not implement automatic publish-time mutation in Phase 6B.
+- [ ] Update artifact filename logic for Knowledge.
+- [ ] Update signing statement kind support for Knowledge.
+- [ ] Add dry-run publish test for a valid built context-mode Knowledge package.
+- [ ] Add dry-run publish test for a valid built vector-mode Knowledge package.
+- [ ] Add publish packaging tests proving expected context-mode document entries are included.
+- [ ] Add publish packaging tests proving expected vector-mode entries are included.
+- [ ] Add publish packaging tests proving unsafe paths are rejected.
+- [ ] Add publish packaging tests proving missing generated vector-mode index fails.
+- [ ] Add publish packaging tests proving context-mode packages do not require a generated index.
+- [ ] Add publish build-check tests proving unbuilt context-mode packages fail.
+- [ ] Add publish build-check tests proving stale context-mode document hashes fail.
+- [ ] Add publish build-check tests proving stale context-mode byte counts fail.
+- [ ] Add publish build-check tests proving valid built context-mode packages pass.
+- [ ] Add publish build-check tests proving unbuilt vector-mode packages fail.
+- [ ] Add publish build-check tests proving stale vector-mode corpus hashes fail.
+- [ ] Add publish build-check tests proving stale vector-mode vector hashes fail.
+- [ ] Add publish build-check tests proving missing vector-mode index metadata fails.
+- [ ] Add publish build-check tests proving stale vector-mode index metadata fails.
+- [ ] Add publish build-check tests proving valid built vector-mode packages pass.
+- [ ] Add dry-run publish regression test for a valid agent manifest containing top-level `knowledge` refs.
+- [ ] Add dry-run publish regression test for a valid template manifest containing `template.dependencies.knowledge`.
+- [ ] Add publish tests proving publish does not mutate `agent.json`.
+- [ ] Add publish tests proving publish does not create or refresh `knowledge/indexes/default`.
+- [ ] Add regression tests for existing tool/agent/template/skill publish dry-runs.
+
+## Milestone 5: Semver, Resolver, Install, Lockfile, and Workspace Support
+> Scope note: make Knowledge resolvable and installable through the CLI and lockfile graph. Agents and templates should now resolve Knowledge dependencies.
+- [ ] Add `Knowledge` to CLI `PackageKind` enum in semver/resolve types.
+- [ ] Add Knowledge to SDK install model enums used by the CLI, or regenerate/update the client models as needed.
+- [ ] Update desired-set parsing so agent top-level `knowledge` dependency refs become Knowledge package requirements.
+- [ ] Ensure skill manifests do not produce Knowledge requirements.
+- [ ] Update template dependency parsing to include `template.dependencies.knowledge`.
+- [ ] Update resolve plan conversion to include Knowledge.
+- [ ] Update package-key formatting/parsing to support `knowledge:@ns/name@version`.
+- [ ] Add `.agentpm/knowledge` install root.
+- [ ] Update download/extract helpers to route Knowledge artifacts into `.agentpm/knowledge/<namespace>/<name>/<version>`.
+- [ ] Update direct `agentpm install @ns/pkg` behavior to handle Knowledge when the backend returns `kind: "knowledge"`.
+- [ ] Update workspace metadata package roots to include Knowledge if the current model tracks installed package roots by kind.
+- [ ] Update workspace lock building to include Knowledge root relationships for local/generated agents.
+- [ ] Update `agentpm new` dependency request building to include template Knowledge dependencies.
+- [ ] Update synthesized root manifest from templates to include resolved direct Knowledge refs.
+- [ ] Update generated workspace metadata to include installed Knowledge roots if needed.
+- [ ] Add install tests for direct Knowledge package install.
+- [ ] Add install tests for an agent that depends on Knowledge.
+- [ ] Add install tests for a template that depends on Knowledge.
+- [ ] Add lockfile tests proving Knowledge packages are pinned with integrity.
+- [ ] Add lockfile tests proving agent/template root relationships include Knowledge.
+- [ ] Add regression tests proving tools, agents, templates, and skills still resolve/install.
+
+## Milestone 6: Backend and Database Package-Kind Support
+> Scope note: make the registry persist, resolve, install, and enforce access for Knowledge packages. Reuse the existing shared `tools` / `tool_versions` package model unless implementation constraints force otherwise.
+- [ ] Add a database migration updating the package kind check constraint to include `knowledge`.
+- [ ] Audit backend constants/enums/validators for hardcoded `tool|agent|template|skill` lists and add `knowledge`.
+- [ ] Update publish validation to accept `kind: "knowledge"`.
+- [ ] Add backend publish validation for Knowledge mode-specific completeness.
+- [ ] For context mode, backend publish validation should verify the manifest includes required document metadata and that declared document files are present in the uploaded artifact.
+- [ ] For vector mode, backend publish validation should verify the manifest includes required corpus, embedding, vector, and index metadata and that declared files are present in the uploaded artifact.
+- [ ] For vector mode, backend publish validation should verify an `agentpm-local` index entry and index metadata file are present in the uploaded artifact.
+- [ ] Backend validation does not need to rebuild indexes, but it should reject obviously unbuilt or incomplete Knowledge artifacts.
+- [ ] Update publish finalize dependency validation:
+  - [ ] agent validates top-level `tools`, `skills`, and `knowledge`
+  - [ ] skill validates top-level `tools`
+  - [ ] template validates `tools`, `agents`, `skills`, and `knowledge`
+  - [ ] knowledge validates no dependencies
+- [ ] Ensure private namespace entitlement/enforcement applies to Knowledge publish.
+- [ ] Ensure malware scanning/auto-yank flow applies to Knowledge.
+- [ ] Ensure namespace signer/signing policy applies to Knowledge.
+- [ ] Update install item normalization to accept `knowledge`.
+- [ ] Update install resolve to return Knowledge items.
+- [ ] Update install init to presign Knowledge artifacts and return kind `knowledge`.
+- [ ] Update package detail URL helpers/routes to include Knowledge.
+- [ ] Update namespace package list/activity endpoints to include Knowledge.
+- [ ] Update package version/detail DTOs to preserve and return Knowledge manifest metadata.
+- [ ] Add backend tests for publish validation accepting Knowledge.
+- [ ] Add backend tests for publish validation rejecting dependencies in Knowledge manifests.
+- [ ] Add backend tests for agent dependency validation including Knowledge.
+- [ ] Add backend tests for template dependency validation including Knowledge.
+- [ ] Add backend tests for direct Knowledge install resolve/init.
+- [ ] Add backend tests for private Knowledge package access denied/allowed.
+- [ ] Add backend tests rejecting context-mode Knowledge uploads missing declared document files.
+- [ ] Add backend tests rejecting context-mode Knowledge manifests missing build-derived document metadata.
+- [ ] Add backend tests rejecting vector-mode Knowledge uploads missing chunks/sources/vectors/index files.
+- [ ] Add backend tests rejecting vector-mode Knowledge manifests missing build-derived corpus/vector/index metadata.
+- [ ] Add backend regression tests for existing package kinds.
+
+## Milestone 6a: Leaf-Package Lockfile Semantics for Knowledge
+> Scope note: correct the direct-install lockfile model so Knowledge behaves like a leaf package rather than a root package. Direct Knowledge installs should be tracked like direct tool installs unless a local or registry entrypoint references them.
+- [ ] Remove direct Knowledge root creation for `agentpm install @ns/pkg` when the resolved package kind is `knowledge`.
+- [ ] Preserve Knowledge package entries in `packages` for direct installs, including integrity pinning.
+- [ ] Ensure Knowledge only appears in `roots` when referenced by a local/generated agent root or another supported entrypoint relationship.
+- [ ] Update lockfile version behavior so direct Knowledge install alone does not force a root-shaped lockfile entry.
+- [ ] Keep v3 lockfile behavior for actual Knowledge dependency graphs on agents/templates.
+- [ ] Update workspace/root-building logic so Knowledge remains a leaf package in direct-install flows.
+- [ ] Ensure install behavior remains consistent with the long-term leaf-package direction for future package kinds such as Memory Blueprints, Instruction Profiles, and Loops.
+- [ ] Replace direct Knowledge install tests that expect a standalone Knowledge root with tests that expect package-only lockfile state.
+- [ ] Add an explicit install test proving direct Knowledge install inside a local `kind: "agent"` project installs the package, updates top-level `agent.json` `knowledge`, records the dependency on `local:agent`, and does not create a standalone Knowledge root.
+- [ ] Add regression tests proving agent/template Knowledge dependency edges still materialize correctly in roots.
+- [ ] Add regression tests proving SDK/CLI consumers that read installed Knowledge from agent/template dependency graphs still work without direct Knowledge roots.
+
+## Milestone 7: Knowledge Inspect and Query
+> Scope note: add the local developer loop. Inspect should work for local or installed artifacts in both modes. Query is vector-mode only, provider-neutral, and accepts a query vector directly. For Phase 6B, `agentpm-local` v1 may use exact search over the declared vector file, with `knowledge/indexes/default/metadata.json` proving the local query metadata was built for the current chunks, sources, vectors, dimensions, metric, and vector count. Context-mode artifacts should inspect/read cleanly and fail clearly if vector query is requested. Shell command adapter support is strongly preferred. Built-in provider adapter is optional DX.
+- [ ] Implement `agentpm knowledge inspect <path-or-package>`.
+- [ ] Resolve local references:
+  - [ ] package directory containing `agent.json`
+  - [ ] direct `agent.json` path
+  - [ ] installed package ref via the install layout and/or lockfile package graph; do not require a standalone Knowledge root for direct installs
+- [ ] Print human-readable Knowledge metadata for both modes: package, mode, documents/context metadata, chunks, sources, embedding, vectors, indexes, retrieval defaults, and provenance as applicable.
+- [ ] For context mode, inspect should show declared document paths, content types, roles, byte counts, per-document hashes, document count, total bytes, and aggregate content hash.
+- [ ] For vector mode, inspect should show chunk count, source count, embedding provider/model, dimensions, metric, normalized flag, vectors path/hash, index path, index type, index algorithm, index metadata freshness, and retrieval defaults.
+- [ ] Add `--json` output for inspect.
+- [ ] Consider implementing `agentpm knowledge read <path-or-package>` or an inspect/read JSON mode for context-mode document retrieval; if deferred, make the deferral explicit in docs.
+- [ ] If `knowledge read` is implemented, support reading all declared context documents or a specific declared document path.
+- [ ] If `knowledge read` is implemented, ensure it only reads manifest-declared context documents and does not allow arbitrary file reads from the package directory.
+- [ ] Implement `agentpm knowledge query <path-or-package>` for vector-mode artifacts.
+- [ ] Reject context-mode `knowledge query` with a clear message that the artifact has no vector index and is intended for direct context loading.
+- [ ] Add `--top-k`, defaulting to manifest `retrieval.default_top_k` or a sensible fallback.
+- [ ] Add `--score-threshold` if supported by the local exact-search implementation.
+- [ ] Add `--json`.
+- [ ] Add `--include-text` if text is not included by default.
+- [ ] Add `--include-metadata` if metadata is not included by default.
+- [ ] Add `--vector-json <file|->`.
+- [ ] Parse query vector JSON and validate vector length equals manifest embedding dimensions.
+- [ ] Fail if vector JSON metadata provider/model/dimensions conflicts with the manifest.
+- [ ] Consider adding raw `--vector <file.f32>` if straightforward; otherwise defer.
+- [ ] For vector mode, locate the default `agentpm-local` index entry from `knowledge.indexes`.
+- [ ] Load `knowledge/indexes/default/metadata.json`.
+- [ ] Validate index metadata has `type: "agentpm-local"`.
+- [ ] Validate index metadata has supported `format_version`.
+- [ ] Validate index metadata has supported `algorithm`; for Phase 6B MVP, support `algorithm: "exact"`.
+- [ ] Validate index metadata `embedding_id` matches the manifest embedding ID.
+- [ ] Validate index metadata `metric` matches the manifest embedding metric.
+- [ ] Validate index metadata `normalized` matches the manifest embedding normalized flag.
+- [ ] Validate index metadata `dimensions` matches `knowledge.embedding.dimensions`.
+- [ ] Validate index metadata `vector_count` matches `knowledge.embedding.vector_count`.
+- [ ] Validate index metadata `chunk_count` matches `knowledge.corpus.chunk_count`.
+- [ ] Validate index metadata `source_count` matches `knowledge.corpus.source_count`.
+- [ ] Validate index metadata `chunks_path`, `sources_path`, and `vectors_path` match the manifest-declared canonical paths.
+- [ ] Validate index metadata source hashes match the manifest-derived hashes:
+  - [ ] `source_corpus_hash` matches `knowledge.corpus.content_hash`
+  - [ ] `source_vectors_hash` matches `knowledge.embedding.vectors_hash`
+  - [ ] `source_chunks_hash` matches the current or derived chunks hash, if tracked separately
+  - [ ] `source_sources_hash` matches the current or derived sources hash, if tracked separately
+- [ ] Fail clearly if index metadata is missing, unsupported, or stale.
+- [ ] For `agentpm-local` v1 exact search, open the declared canonical vector file from `knowledge.embedding.vectors_path`.
+- [ ] For exact search, scan vector rows directly from the canonical raw little-endian float32 vector file.
+- [ ] For exact search, compute similarity between the query vector and each vector row.
+- [ ] For exact search with `metric: "cosine"` and `normalized: true`, use dot product as the similarity score.
+- [ ] If additional metrics are supported, route scoring by manifest/index metadata metric.
+- [ ] Keep the top K scored rows without loading all result rows into memory unnecessarily.
+- [ ] Enforce the row-order invariant during result hydration: vector row `N` maps to chunk line `N` in `chunks.jsonl`.
+- [ ] Load matching chunk rows from `chunks.jsonl`.
+- [ ] Load matching source records from `sources.jsonl` by `source_id`.
+- [ ] Return ranked chunks with scores, chunk IDs, row numbers, text snippets/full text, source IDs, source title/URI where available, and metadata.
+- [ ] Ensure query results make it clear that scores come from local exact search when using `agentpm-local` v1.
+- [ ] Implement `--embedding-command <cmd>` if included in Phase 6B.
+- [ ] For command adapters, pass query text and embedding spec as JSON on stdin.
+- [ ] For command adapters, parse vector JSON from stdout.
+- [ ] Enforce adapter timeout, max stdout size, non-zero exit failure, and safe command execution without shell interpolation by default.
+- [ ] Ensure AgentPM registry tokens are not injected into adapter environments by AgentPM.
+- [ ] Add an internal `QueryVectorResolver` or equivalent boundary separating vector production from retrieval.
+- [ ] Add an internal `KnowledgeRetriever` or equivalent boundary separating retrieval from result hydration.
+- [ ] Ensure the retrieval layer accepts a query vector and returns scored row IDs before chunk/source hydration.
+- [ ] Optionally implement one built-in BYO-token provider adapter, likely OpenAI.
+- [ ] Ensure missing credentials for a built-in adapter produces a clear error.
+- [ ] Ensure unsupported provider/model produces a clear error recommending `--vector-json` or `--embedding-command`.
+- [ ] Add query tests using `--vector-json` against vector-mode artifacts.
+- [ ] Add query tests proving dimension mismatch fails before retrieval.
+- [ ] Add query tests proving missing index metadata fails clearly.
+- [ ] Add query tests proving unsupported index metadata format/version fails clearly.
+- [ ] Add query tests proving unsupported index algorithm fails clearly.
+- [ ] Add query tests proving stale corpus hash fails clearly.
+- [ ] Add query tests proving stale vector hash fails clearly.
+- [ ] Add query tests proving mismatched metric or normalized flag fails clearly.
+- [ ] Add query tests proving exact search returns expected top-K rows for a tiny fixture corpus.
+- [ ] Add query tests proving row numbers map back to the correct chunk IDs.
+- [ ] Add query tests proving chunk `source_id` maps back to the correct source metadata.
+- [ ] Add query tests for shell adapter success/failure if implemented.
+- [ ] Add query tests for unsupported provider fallback error if built-in adapter path exists.
+- [ ] Add query tests proving context-mode artifacts fail clearly for vector query.
+- [ ] Add inspect tests for local context-mode and vector-mode Knowledge packages.
+- [ ] Add inspect tests for installed context-mode and vector-mode Knowledge packages if the install layout is available in tests.
+- [ ] Add inspect tests proving vector-mode output includes index algorithm and index metadata freshness.
+- [ ] Add read tests for context-mode artifacts if `agentpm knowledge read` is implemented.
+
+## Milestone 7a: Embedding Command Adapter for Knowledge Query
+> Scope note: add the narrow shell-command adapter path for `agentpm knowledge query` so users can turn query text into vectors without a built-in provider integration. Keep the contract explicit, safe, and limited to query-time vector production.
+- [ ] Implement `agentpm knowledge query --embedding-command <cmd>` for vector-mode Knowledge packages.
+- [ ] Require explicit `--embedding-command`; do not auto-discover or infer commands.
+- [ ] Require query text input when `--embedding-command` is used.
+- [ ] Pass a compact JSON payload on stdin containing the query text and embedding spec from the manifest.
+- [ ] Keep the stdin payload contract documented and stable enough for example scripts.
+- [ ] Parse stdout JSON using the same vector-object/array contract accepted by `--vector-json`.
+- [ ] Reuse existing vector length/provider/model/dimensions validation after adapter output is parsed.
+- [ ] Execute the adapter without shell interpolation by default.
+- [ ] Enforce a timeout for adapter execution.
+- [ ] Enforce a max stdout size for adapter responses.
+- [ ] Fail clearly on non-zero adapter exit.
+- [ ] Fail clearly on invalid adapter JSON output.
+- [ ] Ensure AgentPM registry tokens are not injected into the adapter environment.
+- [ ] Ensure context-mode packages still fail clearly before adapter execution.
+- [ ] Add query tests proving `--embedding-command` success against a tiny vector-mode fixture.
+- [ ] Add query tests proving adapter non-zero exit fails clearly.
+- [ ] Add query tests proving adapter invalid JSON stdout fails clearly.
+- [ ] Add query tests proving adapter timeout fails clearly.
+- [ ] Add query tests proving adapter-produced provider/model/dimensions mismatches fail clearly.
+
+## Milestone 8: Search, Registry UI, and Frontend Types
+> Scope note: Knowledge should appear as a first-class package in the registry, but must not be presented as executable.
+- [ ] Update backend search filters/types to include Knowledge.
+- [ ] Update search totals to include `knowledge`.
+- [ ] Update trending/most-downloaded queries and DTOs to include Knowledge.
+- [ ] Update frontend package kind types/unions to include `knowledge`.
+- [ ] Add Knowledge filter tab where package type filters exist.
+- [ ] Add Knowledge kind badge/icon treatment.
+- [ ] Update search results to render Knowledge packages with correct label.
+- [ ] Update namespace package lists to include Knowledge.
+- [ ] Update profile package lists to include Knowledge.
+- [ ] Add Knowledge package detail route/page, or update generic package detail routing to support Knowledge.
+- [ ] Knowledge detail page should show README/description.
+- [ ] Knowledge detail page should show mode (`context` or `vector`).
+- [ ] Knowledge detail page should show context document count, total bytes, and declared documents when present.
+- [ ] Knowledge detail page should show chunk count and source count when present.
+- [ ] Knowledge detail page should show embedding provider/model/dimensions/metric/normalized for vector mode.
+- [ ] Knowledge detail page should show retrieval defaults.
+- [ ] Knowledge detail page should show provenance/license fields when present.
+- [ ] Knowledge detail page should show install command.
+- [ ] Knowledge detail page should show example inspect/query commands.
+- [ ] Do not show a “run” command for Knowledge.
+- [ ] Add frontend tests for Knowledge search result rendering.
+- [ ] Add frontend tests for Knowledge totals/counts.
+- [ ] Add frontend tests for context-mode Knowledge detail metadata rendering.
+- [ ] Add frontend tests for vector-mode Knowledge detail metadata rendering.
+- [ ] Add regression tests proving existing Tool/Agent/Template/Skill pages still render.
+
+## Milestone 9: SDK Metadata Support
+> Scope note: make SDK package-kind models aware of Knowledge. Full SDK retrieval can be deferred; metadata/path access is enough for Phase 6B unless implementation is cheap.
+- [ ] Update Python SDK package kind models to include `knowledge`.
+- [ ] Update Node SDK package kind models to include `knowledge`.
+- [ ] Update install/resolve/search/detail response models in both SDKs to include Knowledge.
+- [ ] Update Python agent loading to include resolved Knowledge metadata/paths if existing loaded agents expose resolved dependencies.
+- [ ] Update Node agent loading to include resolved Knowledge metadata/paths if existing loaded agents expose resolved dependencies.
+- [ ] Ensure SDK Knowledge-loading paths can resolve installed Knowledge from agent/template dependency graphs without requiring a standalone Knowledge root entry for direct installs.
+- [ ] Consider adding Python `load_knowledge(...)` returning manifest, package path, mode, context document paths, chunks path, sources path, embedding metadata, indexes, and retrieval defaults as applicable.
+- [ ] Consider adding Node `loadKnowledge(...)` with equivalent behavior and naming conventions.
+- [ ] Ensure existing generic callable `load(...)` remains tool-only.
+- [ ] If `load(...)` is called with a Knowledge ref, fail clearly and direct users to `load_knowledge` / `loadKnowledge` if implemented.
+- [ ] Do not add provider credential handling or provider billing behavior to SDKs.
+- [ ] Add SDK tests for package kind parsing.
+- [ ] Add SDK tests for loaded agent resolved Knowledge metadata if implemented.
+- [ ] Add SDK tests for `load_knowledge` / `loadKnowledge` if implemented.
+- [ ] Add SDK regression tests for existing tool/agent/skill behavior.
+
+## Milestone 10: Compatibility, Cleanup, Docs, and Deployment
+> Scope note: final pre-examples closeout for package-kind audits, stale warnings, docs, deployment readiness, and accidental behavior changes. Finish everything needed before example apps depend on the public Knowledge flow.
+- [ ] Audit CLI for hardcoded `tool|agent|template|skill` lists and add `knowledge` where intended.
+- [ ] Audit backend for hardcoded package kind lists and add `knowledge` where intended.
+- [ ] Audit frontend for hardcoded package kind lists and add `knowledge` where intended.
+- [ ] Audit Node SDK public exports and package kind models for Knowledge.
+- [ ] Audit Python SDK public exports and package kind models for Knowledge.
+- [ ] Audit docs and UI copy that says “tools” when it means “packages,” but avoid broad table/model renames.
+- [ ] Ensure the existing physical `tools` table naming does not leak as incorrect user-facing copy.
+- [ ] Ensure old tool, agent, template, and skill package flows remain installable.
+- [ ] Ensure existing template `dependencies` without `knowledge` remains valid.
+- [ ] Ensure private namespace access applies consistently to private Knowledge publish/install/search/detail flows.
+- [ ] Ensure Knowledge packages do not appear as executable tools.
+- [ ] Ensure context-mode Knowledge packages are not treated as vector-queryable unless a future retrieval strategy is added.
+- [ ] Ensure vector-mode Knowledge packages still support the prepared retrieval/indexed flow.
+- [ ] Ensure direct install of package specs resolves by stored DB kind, not requested kind alone.
+- [ ] Ensure direct Knowledge install remains leaf-shaped in the lockfile and does not create a standalone Knowledge root.
+- [ ] Run full backend, CLI, frontend, and SDK test suites.
+- [ ] Audit Knowledge publish code to ensure it reuses build validation/metadata computation in check-only mode rather than duplicating divergent logic.
+- [ ] Ensure `agentpm publish` never mutates Knowledge package files unless a future explicit build/prepare flag is added.
+- [ ] Ensure stale build-check errors are specific enough to tell authors what changed and to run `agentpm knowledge build`.
+- [ ] Ensure context-mode and vector-mode build-check behavior is covered in docs, CLI help, and tests.
+- [ ] Add docs page for Knowledge artifacts.
+- [ ] Document the strategic boundary: AgentPM packages prepared context; it does not crawl/chunk/embed in Phase 6B, and vector retrieval is one supported Knowledge mode.
+- [ ] Document the two Knowledge modes:
+  - [ ] `mode: "context"` for declared documents intended for direct context injection
+  - [ ] `mode: "vector"` for prepared retrieval corpora with chunks, sources, embeddings, and local indexes
+- [ ] Document the context-mode starter workflow:
+  - [ ] `agentpm init --kind knowledge`
+  - [ ] add or edit declared documents
+  - [ ] `agentpm knowledge build`
+  - [ ] `agentpm knowledge inspect`
+  - [ ] `agentpm publish`
+  - [ ] `agentpm install`
+- [ ] Document that Knowledge packages must be built before publishing.
+- [ ] Document that `agentpm publish` performs a build-check and fails for unbuilt or stale Knowledge packages.
+- [ ] Document that `agentpm publish` does not mutate `agent.json`, compute missing hashes, or generate vector indexes by default.
+- [ ] Document the normal Knowledge publish flow:
+  - [ ] `agentpm knowledge build`
+  - [ ] `agentpm publish`
+- [ ] Document common publish build-check failures and fixes:
+  - [ ] missing build metadata
+  - [ ] stale context document hash
+  - [ ] stale vector hash
+  - [ ] missing or stale vector index metadata
+- [ ] Document the vector-mode starter workflow:
+  - [ ] create chunks/sources/vectors with any external pipeline
+  - [ ] `agentpm init --kind knowledge` or vector-mode starter if available
+  - [ ] edit manifest paths/metadata
+  - [ ] `agentpm knowledge build`
+  - [ ] `agentpm knowledge inspect`
+  - [ ] `agentpm knowledge query --vector-json`
+  - [ ] `agentpm publish`
+  - [ ] `agentpm install`
+- [ ] Document context-mode document metadata format.
+- [ ] Document chunks JSONL format.
+- [ ] Document sources JSONL format.
+- [ ] Document raw little-endian float32 vector format.
+- [ ] Document vector row order invariant.
+- [ ] Document strict embedding compatibility.
+- [ ] Document query vector JSON.
+- [ ] Document shell embedding adapter stdin/stdout contract.
+- [ ] Document optional built-in provider adapter behavior if implemented.
+- [ ] Document unsupported provider behavior and workarounds.
+- [ ] Document security guidance around prompt injection and untrusted retrieved context.
+- [ ] Document provenance/license author responsibility.
+- [ ] Add a minimal context-mode example Knowledge package under examples or docs fixtures.
+- [ ] Add a minimal vector-mode example Knowledge package under examples or docs fixtures.
+  - Maybe AgentPM Docs as a real vector knowledge package
+  - Another one can be more custom-generated for research assistant agent or something
+- [ ] Add an example embedding command adapter script if `--embedding-command` is implemented.
+- [ ] Update CLI help text snapshots/docs for new commands.
+- [ ] Update registry/docs pages that list package kinds.
+- [ ] Deploy the CLI/backend/frontend/docs changes needed for public Knowledge flows.
+- [ ] Verify production publish/install/search/detail/inspect/query flows after deployment.
+
+## Milestone 11: Examples and Example-App Integration
+> Scope note: examples only. After Milestone 10 is deployed and verified, add the curated Knowledge examples and wire the example apps against the live public flow.
+- [ ] Add a minimal context-mode example Knowledge package under examples or docs fixtures.
+- [ ] Add a minimal vector-mode example Knowledge package under examples or docs fixtures.
+  - [ ] Maybe AgentPM Docs as a real vector knowledge package.
+  - [ ] Another can be more custom-generated for the research assistant agent or similar.
+- [ ] Add an example embedding command adapter script if `--embedding-command` is implemented and the examples repo should carry it.
+- [ ] Update example apps to consume published Knowledge packages only after Milestone 10 deployment/verification is complete.

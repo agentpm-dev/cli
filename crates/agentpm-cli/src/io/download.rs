@@ -10,6 +10,14 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use tokio::{fs, io::AsyncReadExt, io::AsyncWriteExt, task};
 
+#[derive(Clone, Copy)]
+pub struct InstallRoots<'a> {
+    pub tools_dir: &'a Path,
+    pub agents_dir: &'a Path,
+    pub skills_dir: &'a Path,
+    pub knowledge_dir: &'a Path,
+}
+
 /// Return canonical + alias command names for a runtime type.
 /// Primary first so the message shows the expected name first.
 fn runtime_cmd_candidates(rt_type: &str) -> Option<Vec<&'static str>> {
@@ -26,16 +34,15 @@ fn runtime_cmd_candidates(rt_type: &str) -> Option<Vec<&'static str>> {
 pub async fn download_and_extract_all(
     init: &sdkm::InstallInitResponse,
     cache_dir: &Path,
-    tools_dir: &Path,
-    agents_dir: &Path,
-    skills_dir: &Path,
+    install_roots: InstallRoots<'_>,
     refresh: bool,
     quiet: bool,
 ) -> Result<()> {
     fs::create_dir_all(cache_dir).await?;
-    fs::create_dir_all(tools_dir).await?;
-    fs::create_dir_all(agents_dir).await?;
-    fs::create_dir_all(skills_dir).await?;
+    fs::create_dir_all(install_roots.tools_dir).await?;
+    fs::create_dir_all(install_roots.agents_dir).await?;
+    fs::create_dir_all(install_roots.skills_dir).await?;
+    fs::create_dir_all(install_roots.knowledge_dir).await?;
 
     let client = Client::new();
     let mut futs = FuturesUnordered::new();
@@ -62,8 +69,15 @@ pub async fn download_and_extract_all(
 
         let cache_name = cache_filename(art);
         let cache_path = cache_dir.join(cache_name);
-        let install_dir =
-            resolved_package_dir(art.kind, tools_dir, agents_dir, skills_dir, &pkg, &ver)?;
+        let install_dir = resolved_package_dir(
+            art.kind,
+            install_roots.tools_dir,
+            install_roots.agents_dir,
+            install_roots.skills_dir,
+            install_roots.knowledge_dir,
+            &pkg,
+            &ver,
+        )?;
 
         // Short-circuit if cached and already extracted (unless refresh)
         if !refresh
@@ -444,6 +458,7 @@ fn resolved_package_dir(
     tools_base: &Path,
     agents_base: &Path,
     skills_base: &Path,
+    knowledge_base: &Path,
     package: &str,
     version: &str,
 ) -> Result<PathBuf> {
@@ -451,6 +466,7 @@ fn resolved_package_dir(
         sdkm::PackageKind::Tool => resolved_tool_dir(tools_base, package, version),
         sdkm::PackageKind::Agent => resolved_agent_dir(agents_base, package, version),
         sdkm::PackageKind::Skill => resolved_agent_dir(skills_base, package, version),
+        sdkm::PackageKind::Knowledge => resolved_agent_dir(knowledge_base, package, version),
         sdkm::PackageKind::Template => {
             bail!("template packages are not installable with `agentpm install`; use `agentpm new`")
         }
@@ -480,6 +496,7 @@ mod tests {
             Path::new(".agentpm/tools"),
             Path::new(".agentpm/agents"),
             Path::new(".agentpm/skills"),
+            Path::new(".agentpm/knowledge"),
             "@zack/capitalize",
             "0.1.0",
         )
@@ -495,6 +512,7 @@ mod tests {
             Path::new(".agentpm/tools"),
             Path::new(".agentpm/agents"),
             Path::new(".agentpm/skills"),
+            Path::new(".agentpm/knowledge"),
             "@zack/support-agent",
             "0.1.0",
         )
@@ -513,6 +531,7 @@ mod tests {
             Path::new(".agentpm/tools"),
             Path::new(".agentpm/agents"),
             Path::new(".agentpm/skills"),
+            Path::new(".agentpm/knowledge"),
             "@zack/triage-skill",
             "0.1.0",
         )
@@ -531,6 +550,7 @@ mod tests {
             Path::new(".agentpm/tools"),
             Path::new(".agentpm/agents"),
             Path::new(".agentpm/skills"),
+            Path::new(".agentpm/knowledge"),
             "@zack/research-template",
             "0.1.0",
         )
@@ -540,6 +560,25 @@ mod tests {
             err.to_string()
                 .contains("template packages are not installable with"),
             "{err:#}"
+        );
+    }
+
+    #[test]
+    fn resolves_knowledge_install_dir_under_knowledge_layout() {
+        let path = resolved_package_dir(
+            PackageKind::Knowledge,
+            Path::new(".agentpm/tools"),
+            Path::new(".agentpm/agents"),
+            Path::new(".agentpm/skills"),
+            Path::new(".agentpm/knowledge"),
+            "@zack/python-docs",
+            "0.1.0",
+        )
+        .unwrap();
+
+        assert_eq!(
+            path,
+            PathBuf::from(".agentpm/knowledge/zack/python-docs/0.1.0")
         );
     }
 

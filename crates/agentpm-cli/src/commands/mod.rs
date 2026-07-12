@@ -3,6 +3,7 @@ pub mod export;
 pub mod init;
 pub mod install;
 pub mod keys;
+pub mod knowledge;
 pub mod lint;
 pub mod login;
 pub mod namespace;
@@ -20,11 +21,14 @@ pub enum Commands {
     /// Log in and cache credentials
     Login(login::LoginArgs),
 
-    /// Scaffold agent.json (tool, agent, template, or skill)
+    /// Scaffold agent.json (tool, agent, template, skill, or knowledge)
     Init(init::InitArgs),
 
-    /// Lint agent.json (tool, agent, template, or skill)
+    /// Lint agent.json (tool, agent, template, skill, or knowledge)
     Lint(lint::LintArgs),
+
+    /// Build or inspect a Knowledge package
+    Knowledge(knowledge::KnowledgeArgs),
 
     /// Publish a tool to the registry
     Publish(publish::PublishArgs),

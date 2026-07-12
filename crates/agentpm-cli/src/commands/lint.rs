@@ -133,3 +133,60 @@ impl LintArgs {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("agentpm-lint-{label}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn lint_accepts_valid_knowledge_manifest_without_warnings() {
+        let out = temp_dir("knowledge");
+        let manifest_path = out.join("agent.json");
+        std::fs::write(
+            &manifest_path,
+            r#"{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "kind": "knowledge",
+  "name": "engineering-playbook",
+  "version": "0.1.0",
+  "description": "Engineering playbook intended for direct context loading.",
+  "knowledge": {
+    "mode": "context",
+    "documents": [
+      {
+        "path": "knowledge/docs/context.md"
+      }
+    ]
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let result = LintArgs {
+            paths: vec![manifest_path.to_string_lossy().to_string()],
+            schema: None,
+            strict: true,
+            format: "json".into(),
+            fix: false,
+        }
+        .run()
+        .await;
+
+        assert!(result.is_ok(), "expected lint to pass, got: {result:?}");
+
+        let _ = std::fs::remove_dir_all(out);
+    }
+}

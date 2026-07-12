@@ -134,6 +134,7 @@ pub struct TemplateDependencies {
     pub tools: Vec<PackageReference>,
     pub agents: Vec<PackageReference>,
     pub skills: Vec<PackageReference>,
+    pub knowledge: Vec<PackageReference>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -186,12 +187,137 @@ pub struct SkillManifest {
     pub skill: SkillMetadata,
 }
 
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct KnowledgeDocument {
+    pub path: String,
+    pub content_type: Option<String>,
+    pub role: Option<String>,
+    pub description: Option<String>,
+    pub bytes: Option<u64>,
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct KnowledgeContext {
+    pub document_count: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub content_hash: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct KnowledgeCorpus {
+    pub chunks_path: Option<String>,
+    pub sources_path: Option<String>,
+    pub chunk_count: Option<u64>,
+    pub source_count: Option<u64>,
+    pub content_hash: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct KnowledgeChunking {
+    pub strategy: Option<String>,
+    pub chunk_size: Option<u64>,
+    pub overlap: Option<u64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct KnowledgeEmbedding {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub dimensions: u64,
+    pub metric: String,
+    pub normalized: bool,
+    pub vectors_path: String,
+    pub vector_count: Option<u64>,
+    pub vectors_hash: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct KnowledgeIndex {
+    pub id: String,
+    pub r#type: String,
+    pub path: String,
+    pub embedding_id: String,
+    pub generated_by: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct KnowledgeRetrieval {
+    pub strategy: Option<String>,
+    pub default_top_k: Option<u64>,
+    pub default_score_threshold: Option<f64>,
+    pub return_citations: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct KnowledgeBuilder {
+    pub name: String,
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct KnowledgeProvenance {
+    pub sources_manifest_path: Option<String>,
+    pub generated_at: Option<String>,
+    pub builder: Option<KnowledgeBuilder>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct KnowledgeMetadata {
+    pub mode: String,
+    pub content_type: Option<String>,
+    pub language: Option<String>,
+    pub documents: Vec<KnowledgeDocument>,
+    pub context: Option<KnowledgeContext>,
+    pub corpus: Option<KnowledgeCorpus>,
+    pub chunking: Option<KnowledgeChunking>,
+    pub embedding: Option<KnowledgeEmbedding>,
+    pub indexes: Vec<KnowledgeIndex>,
+    pub retrieval: Option<KnowledgeRetrieval>,
+    pub provenance: Option<KnowledgeProvenance>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct KnowledgeManifest {
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+    pub knowledge: KnowledgeMetadata,
+}
+
 #[derive(Debug)]
 pub enum PublishManifest {
     Tool(Box<ToolManifest>),
     Agent(Box<AgentManifest>),
     Template(Box<TemplateManifest>),
     Skill(Box<SkillManifest>),
+    Knowledge(Box<KnowledgeManifest>),
 }
 
 /// Resolve the schema source (local file if present; else hosted URL)
@@ -290,7 +416,7 @@ pub fn validate_manifest_value(
     }
 
     if value.get("kind").and_then(Value::as_str) == Some("agent") {
-        for field in ["knowledge", "memory", "profiles"] {
+        for field in ["memory", "profiles"] {
             if value
                 .get(field)
                 .and_then(Value::as_array)
@@ -475,7 +601,7 @@ pub fn parse_tool_manifest(value: &Value) -> Result<ToolManifest> {
         serde_json::from_value(value.clone()).context("parsing manifest into ToolManifest")?;
     if mf.kind != "tool" {
         return Err(anyhow!(format!(
-            "`agentpm publish` currently supports only kind=\"tool\" (got kind=\"{}\")",
+            "parse_tool_manifest requires kind=\"tool\" (got kind=\"{}\"); `agentpm publish` supports kind=\"tool\", \"skill\", \"knowledge\", \"agent\", and \"template\"",
             mf.kind
         )));
     }
@@ -501,8 +627,11 @@ pub fn parse_publish_manifest(value: &Value) -> Result<PublishManifest> {
         "skill" => Ok(PublishManifest::Skill(Box::new(parse_skill_manifest(
             value,
         )?))),
+        "knowledge" => Ok(PublishManifest::Knowledge(Box::new(
+            parse_knowledge_manifest(value)?,
+        ))),
         other => Err(anyhow!(format!(
-            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", and kind=\"skill\" manifests (got kind=\"{}\")",
+            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", and kind=\"knowledge\" manifests (got kind=\"{}\")",
             other
         ))),
     }
@@ -527,6 +656,18 @@ pub fn parse_skill_manifest(value: &Value) -> Result<SkillManifest> {
     if mf.kind != "skill" {
         return Err(anyhow!(format!(
             "expected kind=\"skill\" manifest (got kind=\"{}\")",
+            mf.kind
+        )));
+    }
+    Ok(mf)
+}
+
+pub fn parse_knowledge_manifest(value: &Value) -> Result<KnowledgeManifest> {
+    let mf: KnowledgeManifest =
+        serde_json::from_value(value.clone()).context("parsing manifest into KnowledgeManifest")?;
+    if mf.kind != "knowledge" {
+        return Err(anyhow!(format!(
+            "expected kind=\"knowledge\" manifest (got kind=\"{}\")",
             mf.kind
         )));
     }
@@ -579,7 +720,7 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
                 .unwrap(),
-            vec!["agent", "tool", "template", "skill"]
+            vec!["agent", "tool", "template", "skill", "knowledge"]
         );
     }
 
@@ -806,6 +947,184 @@ mod tests {
     }
 
     #[test]
+    fn valid_agent_manifest_with_knowledge_dependencies_validates() {
+        assert_manifest_ok(json!({
+            "kind": "agent",
+            "name": "research-agent",
+            "version": "0.1.0",
+            "description": "Agent with a knowledge dependency.",
+            "tools": [],
+            "knowledge": [
+                { "name": "@zack/python-docs", "version": "0.1.0" }
+            ]
+        }));
+    }
+
+    #[test]
+    fn valid_template_manifest_with_knowledge_dependencies_validates() {
+        assert_manifest_ok(json!({
+            "kind": "template",
+            "name": "knowledge-workspace",
+            "version": "0.1.0",
+            "description": "Workspace starter with a first-class knowledge dependency.",
+            "template": {
+                "display_name": "Knowledge Workspace",
+                "use_case": "research",
+                "execution_surfaces": ["multi-agent-workspace"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "knowledge": [
+                        {
+                            "name": "@zack/python-docs",
+                            "version": "0.1.0"
+                        }
+                    ]
+                },
+                "entrypoints": [
+                    {
+                        "label": "Open workspace",
+                        "command": "agentpm run"
+                    }
+                ]
+            }
+        }));
+    }
+
+    #[test]
+    fn valid_minimal_context_mode_knowledge_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "knowledge",
+            "name": "engineering-playbook",
+            "version": "0.1.0",
+            "description": "Engineering playbook intended for direct context loading.",
+            "knowledge": {
+                "mode": "context"
+            }
+        }));
+    }
+
+    #[test]
+    fn valid_built_context_mode_knowledge_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "knowledge",
+            "name": "engineering-playbook",
+            "version": "0.1.0",
+            "description": "Engineering playbook intended for direct context loading.",
+            "knowledge": {
+                "mode": "context",
+                "documents": [
+                    {
+                        "path": "knowledge/docs/playbook.md",
+                        "content_type": "text/markdown",
+                        "role": "context",
+                        "bytes": 18432,
+                        "sha256": "sha256:abc123"
+                    }
+                ],
+                "context": {
+                    "document_count": 1,
+                    "total_bytes": 18432,
+                    "content_hash": "sha256:def456"
+                },
+                "provenance": {
+                    "generated_at": "2026-07-02T00:00:00Z",
+                    "builder": {
+                        "name": "custom",
+                        "version": "unknown"
+                    }
+                }
+            }
+        }));
+    }
+
+    #[test]
+    fn valid_minimal_vector_mode_knowledge_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "knowledge",
+            "name": "python-docs",
+            "version": "0.1.0",
+            "description": "Prepared retrieval corpus for Python documentation.",
+            "knowledge": {
+                "mode": "vector",
+                "corpus": {
+                    "chunks_path": "knowledge/chunks.jsonl",
+                    "sources_path": "knowledge/sources.jsonl"
+                },
+                "embedding": {
+                    "id": "default",
+                    "provider": "openai",
+                    "model": "text-embedding-3-small",
+                    "dimensions": 1536,
+                    "metric": "cosine",
+                    "normalized": true,
+                    "vectors_path": "knowledge/embeddings/default.f32"
+                }
+            }
+        }));
+    }
+
+    #[test]
+    fn valid_built_vector_mode_knowledge_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "knowledge",
+            "name": "python-docs",
+            "version": "0.1.0",
+            "description": "Prepared retrieval corpus for Python documentation.",
+            "knowledge": {
+                "mode": "vector",
+                "corpus": {
+                    "chunks_path": "knowledge/chunks.jsonl",
+                    "sources_path": "knowledge/sources.jsonl",
+                    "chunk_count": 12482,
+                    "source_count": 327,
+                    "content_hash": "sha256:content"
+                },
+                "chunking": {
+                    "strategy": "recursive-text-splitter",
+                    "chunk_size": 512,
+                    "overlap": 64
+                },
+                "embedding": {
+                    "id": "default",
+                    "provider": "openai",
+                    "model": "text-embedding-3-small",
+                    "dimensions": 1536,
+                    "metric": "cosine",
+                    "normalized": true,
+                    "vectors_path": "knowledge/embeddings/default.f32",
+                    "vector_count": 12482,
+                    "vectors_hash": "sha256:vectors"
+                },
+                "indexes": [
+                    {
+                        "id": "default",
+                        "type": "agentpm-local",
+                        "path": "knowledge/indexes/default",
+                        "embedding_id": "default",
+                        "generated_by": "agentpm knowledge build"
+                    }
+                ],
+                "retrieval": {
+                    "strategy": "vector",
+                    "default_top_k": 8,
+                    "return_citations": true
+                },
+                "provenance": {
+                    "sources_manifest_path": "knowledge/provenance/sources.jsonl",
+                    "generated_at": "2026-07-02T00:00:00Z",
+                    "builder": {
+                        "name": "custom",
+                        "version": "unknown"
+                    }
+                }
+            }
+        }));
+    }
+
+    #[test]
     fn invalid_tool_manifest_missing_single_required_tool_field_fails() {
         let issues = assert_manifest_invalid(json!({
             "kind": "tool",
@@ -873,7 +1192,7 @@ mod tests {
     }
 
     #[test]
-    fn reserved_agent_fields_validate_and_are_preserved_without_warning_on_skills() {
+    fn reserved_agent_fields_validate_and_are_preserved_without_warning_on_skills_or_knowledge() {
         let mut manifest = json!({
             "kind": "agent",
             "name": "preserved-agent",
@@ -896,14 +1215,14 @@ mod tests {
             "validation should preserve reserved fields"
         );
         assert!(
-            issues
-                .iter()
-                .any(|issue| issue.instance_path == "/knowledge"),
-            "expected reserved-field warning for knowledge, got: {issues:#?}"
-        );
-        assert!(
             issues.iter().all(|issue| issue.instance_path != "/skills"),
             "skills should not emit a reserved-field warning, got: {issues:#?}"
+        );
+        assert!(
+            issues
+                .iter()
+                .all(|issue| issue.instance_path != "/knowledge"),
+            "knowledge should not emit a reserved-field warning, got: {issues:#?}"
         );
     }
 
@@ -1157,6 +1476,127 @@ mod tests {
     }
 
     #[test]
+    fn knowledge_manifest_rejects_dependency_arrays() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "knowledge",
+            "name": "bad-knowledge",
+            "version": "0.1.0",
+            "description": "Knowledge packages must not declare dependencies.",
+            "tools": ["@zack/slack-post-message@0.1.0"],
+            "knowledge": {
+                "mode": "context"
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/kind"),
+            "expected dependency rejection for kind=knowledge, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn knowledge_manifest_rejects_unsafe_document_path() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "knowledge",
+            "name": "unsafe-context",
+            "version": "0.1.0",
+            "description": "Unsafe context document path should fail.",
+            "knowledge": {
+                "mode": "context",
+                "documents": [
+                    {
+                        "path": "../secret.md"
+                    }
+                ]
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/knowledge"
+                    && issue.schema_path == "/properties/knowledge/oneOf"
+            }),
+            "expected unsafe knowledge document path failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn knowledge_manifest_chunking_strategy_accepts_open_ended_strings() {
+        assert_manifest_ok(json!({
+            "kind": "knowledge",
+            "name": "custom-chunking",
+            "version": "0.1.0",
+            "description": "Custom chunking strategy labels should be accepted.",
+            "knowledge": {
+                "mode": "vector",
+                "corpus": {
+                    "chunks_path": "knowledge/chunks.jsonl",
+                    "sources_path": "knowledge/sources.jsonl"
+                },
+                "chunking": {
+                    "strategy": "my-org-custom-splitter"
+                },
+                "embedding": {
+                    "id": "default",
+                    "provider": "openai",
+                    "model": "text-embedding-3-small",
+                    "dimensions": 1536,
+                    "metric": "cosine",
+                    "normalized": true,
+                    "vectors_path": "knowledge/embeddings/default.f32"
+                }
+            }
+        }));
+    }
+
+    #[test]
+    fn knowledge_manifest_retrieval_strategy_accepts_open_ended_strings() {
+        assert_manifest_ok(json!({
+            "kind": "knowledge",
+            "name": "custom-retrieval",
+            "version": "0.1.0",
+            "description": "Custom retrieval strategy labels should be accepted.",
+            "knowledge": {
+                "mode": "vector",
+                "corpus": {
+                    "chunks_path": "knowledge/chunks.jsonl",
+                    "sources_path": "knowledge/sources.jsonl"
+                },
+                "embedding": {
+                    "id": "default",
+                    "provider": "openai",
+                    "model": "text-embedding-3-small",
+                    "dimensions": 1536,
+                    "metric": "cosine",
+                    "normalized": true,
+                    "vectors_path": "knowledge/embeddings/default.f32"
+                },
+                "retrieval": {
+                    "strategy": "hybrid-bm25-vector"
+                }
+            }
+        }));
+    }
+
+    #[test]
+    fn context_mode_knowledge_does_not_require_vector_fields() {
+        assert_manifest_ok(json!({
+            "kind": "knowledge",
+            "name": "context-only",
+            "version": "0.1.0",
+            "description": "Context mode should not require vector-only fields.",
+            "knowledge": {
+                "mode": "context",
+                "documents": [
+                    {
+                        "path": "knowledge/docs/playbook.md"
+                    }
+                ]
+            }
+        }));
+    }
+
+    #[test]
     fn skill_manifest_rejects_missing_entrypoint() {
         let issues = assert_manifest_invalid(json!({
             "kind": "skill",
@@ -1379,7 +1819,8 @@ mod tests {
             }
             PublishManifest::Agent(_)
             | PublishManifest::Template(_)
-            | PublishManifest::Skill(_) => {
+            | PublishManifest::Skill(_)
+            | PublishManifest::Knowledge(_) => {
                 panic!("expected tool publish manifest")
             }
         }
@@ -1405,7 +1846,10 @@ mod tests {
                 assert_eq!(mf.kind, "agent");
                 assert_eq!(mf.name, "support-agent");
             }
-            PublishManifest::Tool(_) | PublishManifest::Template(_) | PublishManifest::Skill(_) => {
+            PublishManifest::Tool(_)
+            | PublishManifest::Template(_)
+            | PublishManifest::Skill(_)
+            | PublishManifest::Knowledge(_) => {
                 panic!("expected agent publish manifest")
             }
         }
@@ -1438,7 +1882,10 @@ mod tests {
                 assert_eq!(mf.skill.entrypoint, "SKILL.md");
                 assert_eq!(mf.tools.len(), 1);
             }
-            PublishManifest::Tool(_) | PublishManifest::Agent(_) | PublishManifest::Template(_) => {
+            PublishManifest::Tool(_)
+            | PublishManifest::Agent(_)
+            | PublishManifest::Template(_)
+            | PublishManifest::Knowledge(_) => {
                 panic!("expected skill publish manifest")
             }
         }
@@ -1476,9 +1923,46 @@ mod tests {
                 assert_eq!(mf.name, "research-assistant");
                 assert_eq!(mf.template.files_root, "template");
                 assert!(mf.template.dependencies.skills.is_empty());
+                assert!(mf.template.dependencies.knowledge.is_empty());
             }
-            PublishManifest::Tool(_) | PublishManifest::Agent(_) | PublishManifest::Skill(_) => {
+            PublishManifest::Tool(_)
+            | PublishManifest::Agent(_)
+            | PublishManifest::Skill(_)
+            | PublishManifest::Knowledge(_) => {
                 panic!("expected template publish manifest")
+            }
+        }
+    }
+
+    #[test]
+    fn parse_publish_manifest_dispatches_knowledge_kind() {
+        let manifest = json!({
+            "kind": "knowledge",
+            "name": "engineering-playbook",
+            "version": "0.1.0",
+            "description": "Engineering playbook intended for direct context loading.",
+            "knowledge": {
+                "mode": "context",
+                "documents": [
+                    {
+                        "path": "knowledge/docs/playbook.md"
+                    }
+                ]
+            }
+        });
+
+        match parse_publish_manifest(&manifest).unwrap() {
+            PublishManifest::Knowledge(mf) => {
+                assert_eq!(mf.kind, "knowledge");
+                assert_eq!(mf.name, "engineering-playbook");
+                assert_eq!(mf.knowledge.mode, "context");
+                assert_eq!(mf.knowledge.documents.len(), 1);
+            }
+            PublishManifest::Tool(_)
+            | PublishManifest::Agent(_)
+            | PublishManifest::Template(_)
+            | PublishManifest::Skill(_) => {
+                panic!("expected knowledge publish manifest")
             }
         }
     }
@@ -1494,7 +1978,7 @@ mod tests {
         let err = parse_publish_manifest(&manifest).unwrap_err().to_string();
         assert!(
             err.contains(
-                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", and kind=\"skill\""
+                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", and kind=\"knowledge\""
             ),
             "unexpected error: {err}"
         );
@@ -1530,6 +2014,7 @@ mod tests {
         assert_eq!(parsed.kind, "template");
         assert_eq!(parsed.name, "starter-template");
         assert!(parsed.template.dependencies.skills.is_empty());
+        assert!(parsed.template.dependencies.knowledge.is_empty());
     }
 
     #[test]
@@ -1569,6 +2054,49 @@ mod tests {
         match &parsed.template.dependencies.skills[0] {
             PackageReference::Object { name, version } => {
                 assert_eq!(name, "@zack/incident-commander");
+                assert_eq!(version.as_deref(), Some("0.1.0"));
+            }
+            PackageReference::String(_) => panic!("expected object dependency reference"),
+        }
+    }
+
+    #[test]
+    fn parse_template_manifest_preserves_knowledge_dependencies() {
+        let manifest = json!({
+            "kind": "template",
+            "name": "starter-template",
+            "version": "0.1.0",
+            "description": "Starter template.",
+            "template": {
+                "display_name": "Starter Template",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "knowledge": [
+                        {
+                            "name": "@zack/python-docs",
+                            "version": "0.1.0"
+                        }
+                    ]
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        });
+
+        let parsed = parse_template_manifest(&manifest).unwrap();
+        assert_eq!(parsed.template.dependencies.knowledge.len(), 1);
+        match &parsed.template.dependencies.knowledge[0] {
+            PackageReference::Object { name, version } => {
+                assert_eq!(name, "@zack/python-docs");
                 assert_eq!(version.as_deref(), Some("0.1.0"));
             }
             PackageReference::String(_) => panic!("expected object dependency reference"),
