@@ -508,19 +508,28 @@
   - [ ] Include more than one declared document file.
   - [ ] Shape it as a support-response guidance bundle rather than a generic placeholder corpus.
   - [ ] Include authored files such as response principles, escalation guidance, and reusable message templates.
+  - [ ] Use as much of the context-mode Knowledge manifest surface as naturally fits, including fields such as per-document `content_type`, `role`, `description`, and build-derived bytes/hashes/context summary metadata.
   - [ ] Run `agentpm knowledge build` so the published artifact includes derived context metadata.
 - [ ] Add `@zack/devwork-maintainer-guide` as the seeded small vector-mode Knowledge package.
   - [ ] Use `mode: "vector"`.
   - [ ] Keep it intentionally small and heavily authored rather than generated from a large source corpus.
   - [ ] Shape it around maintainer/repository review workflows so it fits `devwork-copilot`.
   - [ ] Include authored source docs plus generated chunks, sources, vectors, and index metadata.
+  - [ ] Use as much of the vector-mode Knowledge manifest surface as naturally fits, including retrieval defaults, chunk/source metadata, chunking metadata when it helps explain the package, and provenance fields where they are meaningful.
   - [ ] Run `agentpm knowledge build` so the package is publish-ready.
 - [ ] Add `@zack/agentpm-docs` as the seeded larger vector-mode Knowledge package.
   - [ ] Use real content from `agentpm-api/docs/v0.1/**/*.mdx`.
   - [ ] Include the original docs files in the published package in addition to `chunks.jsonl`, `sources.jsonl`, and vectors.
   - [ ] Keep the corpus moderate in size: large enough to demonstrate realistic retrieval, but not so large that it becomes unwieldy as a seeded registry artifact.
   - [ ] Include provenance/source metadata that ties chunks back to source files and public docs routes where practical.
+  - [ ] Use the richer Knowledge manifest surface where it adds real explanatory value, including provenance fields such as `generated_at`, `builder`, and `sources_manifest_path`, plus retrieval defaults and embedding/index metadata that help the package read as a polished public example rather than a bare minimum artifact.
   - [ ] Run `agentpm knowledge build` so the package is publish-ready.
+- [ ] Treat the seeded Knowledge packages as public examples of the `knowledge` manifest shape, not just functional corpora.
+  - [ ] Prefer using real, meaningful metadata over leaving optional fields blank when the content naturally supports them.
+  - [ ] Avoid forcing every optional field into every package; use the richer properties where they improve clarity, inspect output, and registry detail pages.
+  - [ ] Make sure at least one package demonstrates provenance fields such as `generated_at` and `builder`.
+  - [ ] Make sure at least one vector package demonstrates retrieval defaults such as `default_top_k`, `default_score_threshold` when appropriate, and `return_citations`.
+  - [ ] Make sure the examples expose chunk/source/document metadata strongly enough that `agentpm knowledge inspect` visibly shows more than the bare minimum contract.
 - [ ] Add a reproducible corpus-preparation pipeline for `@zack/agentpm-docs` in the examples repo.
   - [ ] Use a common, recognizable chunking library such as `langchain_text_splitters` rather than a custom one-off splitter unless a simpler repo-native option is clearly better.
   - [ ] Strip or normalize MDX/frontmatter into chunkable content while preserving source traceability.
