@@ -548,10 +548,50 @@
 - [ ] Update generated/example app surfaces after package publish so the seeded public flow is visible in real apps.
   - [ ] Update `agent-app-support-assistant-workspace` to show the context-mode Knowledge dependency in the generated/root manifests and supporting README copy.
   - [ ] Update `agent-app-devwork-python` to exercise agent-installed vector-mode Knowledge through the SDK-loaded agent graph.
-  - [ ] Decide whether `agent-app-research-node` should reference `@zack/agentpm-docs` only as a manual local demo or remain independent.
+  - [ ] Keep `agent-app-research-node` independent; do not attach `@zack/agentpm-docs` to it as part of this milestone.
 - [ ] Update example-repo README/documentation so the three Knowledge packages are discoverable alongside tools, skills, agents, and templates.
 - [ ] Add manual verification notes for the examples phase.
   - [ ] Publish/install each Knowledge package from prod.
   - [ ] Verify context-mode inspect output for `@zack/support-response-handbook`.
   - [ ] Verify vector-mode inspect/query output for `@zack/devwork-maintainer-guide`.
   - [ ] Verify realistic inspect/query demos for `@zack/agentpm-docs`, including an embedding-command query path using the provided adapter script.
+
+## Milestone 12: Direct Agent Install Lockfile Cleanup
+> Scope note: clean up lockfile behavior for repeated direct installs of the same published agent so example apps and normal local projects do not accumulate stale registry roots across agent version upgrades.
+- [ ] Audit direct `agentpm install @ns/agent@version` behavior when the same agent package is installed repeatedly at newer versions in the same workspace.
+- [ ] Decide and document the intended behavior for direct-installed published agent roots.
+  - [ ] If the direct install is acting as the current selected registry root for that package, older versions of the same package should not remain as parallel roots by default.
+  - [ ] Preserve support for multiple versions only when they are intentionally required by distinct roots or manifests, not as an accidental artifact of repeated upgrades.
+- [ ] Update lockfile/root merge behavior so reinstalling `@ns/name` at a newer exact version replaces stale direct-install roots for the same package identity.
+- [ ] Ensure old package entries are pruned when they are no longer referenced by any root after the replacement.
+- [ ] Preserve existing behavior for:
+  - [ ] local `kind: "agent"` manifests
+  - [ ] template/workspace-generated roots
+  - [ ] mixed-version graphs that are genuinely required by separate roots
+- [ ] Add regression tests proving repeated direct installs of the same agent package do not leave `roots` entries for older direct-installed versions.
+- [ ] Add regression tests proving `packages` entries for superseded agent versions are removed when no remaining root references them.
+- [ ] Add regression tests proving Knowledge/Skill/Tool dependencies still remain pinned correctly under the surviving agent root after replacement.
+- [ ] Add a manual verification note using `agent-app-devwork-python` or a similar clean workspace to prove the lockfile no longer accumulates `agent:@...@old-version` roots after upgrading the direct-installed agent.
+
+## Milestone 13: Trending Packages API and Landing Page Integration
+> Scope note: make trending a true mixed-package surface rather than a set of separate per-kind landing queries built on a top-50 global list that can starve newer package kinds.
+- [ ] Audit the current backend trending implementation and document where it limits results to a global top-N before package-kind grouping.
+- [ ] Replace the current landing-page multi-call pattern with a single backend response shape for trending packages.
+  - [ ] The response should include the package kinds needed by the landing page in one request.
+  - [ ] Keep the response typed and explicit rather than returning an unstructured mixed blob.
+- [ ] Ensure the backend trending calculation does not allow one dominant kind (for example, tools) to crowd out all other package kinds from the landing page.
+- [ ] Define and implement the intended balancing strategy.
+  - [ ] For example: per-kind caps, per-kind slices, or a composed response with separate arrays per kind built from kind-aware ranking.
+  - [ ] Keep the strategy simple and explainable in code and tests.
+- [ ] Update the landing page data fetch so it makes one trending request instead of separate requests for each package kind section.
+- [ ] Preserve the distinct landing sections for each package kind while sourcing them from the unified response.
+- [ ] Ensure Knowledge packages participate naturally in the same trending response contract as tools, skills, agents, and templates.
+- [ ] Add backend tests proving:
+  - [ ] trending responses include multiple package kinds in one payload
+  - [ ] one package kind cannot starve all others when enough data exists
+  - [ ] existing ranking behavior within each kind remains sensible
+- [ ] Add frontend tests proving:
+  - [ ] the landing page renders correctly from the unified trending response
+  - [ ] Knowledge sections still render
+  - [ ] package-kind sections do not disappear simply because another kind dominates the global activity list
+- [ ] Add manual verification notes for the landing page showing that mixed trending content appears correctly after publish activity across several package kinds.
