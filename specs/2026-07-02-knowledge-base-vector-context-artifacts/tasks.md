@@ -579,19 +579,32 @@
 ## Milestone 13: Trending Packages API and Landing Page Integration
 > Scope note: make trending a true mixed-package surface rather than a set of separate per-kind landing queries built on a top-50 global list that can starve newer package kinds.
 - [ ] Audit the current backend trending implementation and document where it limits results to a global top-N before package-kind grouping.
+  - [ ] Inspect the `trending_tools` materialized view and document how the current global cap is applied before package-kind grouping.
+  - [ ] Inspect how `tool_search_index` depends on `trending_tools` so the migration plan accounts for downstream search/trending consumers.
 - [ ] Replace the current landing-page multi-call pattern with a single backend response shape for trending packages.
   - [ ] The response should include the package kinds needed by the landing page in one request.
   - [ ] Keep the response typed and explicit rather than returning an unstructured mixed blob.
 - [ ] Ensure the backend trending calculation does not allow one dominant kind (for example, tools) to crowd out all other package kinds from the landing page.
 - [ ] Define and implement the intended balancing strategy.
-  - [ ] For example: per-kind caps, per-kind slices, or a composed response with separate arrays per kind built from kind-aware ranking.
+  - [ ] Update the materialized view or its backing query so trending candidates are selected with kind-aware ranking rather than a single global top-N.
+  - [ ] If `trending_tools` is recreated, update the dependent `tool_search_index` materialized view in the same migration so the dependency chain stays valid.
+  - [ ] Use a per-kind cap in the materialized view or backing query so each package kind retains headroom before the landing-page response is shaped.
+  - [ ] The landing page response should return up to 6 items per package kind.
+  - [ ] The materialized view should keep more than 6 per kind for headroom, but avoid an unnecessarily large per-kind cap.
+  - [ ] For example: use windowed ranking per package kind and then shape a composed response with separate arrays per kind built from kind-aware ranking.
   - [ ] Keep the strategy simple and explainable in code and tests.
+  - [ ] Be explicit about query and refresh performance.
+    - [ ] Keep the request-time query path lightweight on top of the materialized view.
+    - [ ] Keep the scheduled materialized-view refresh query performant enough for routine refresh cadence.
+    - [ ] Avoid introducing a design that requires expensive cross-kind regrouping or sorting on every landing-page request.
+  - [ ] Follow the existing search/trending migration pattern used in migrations like `V1.77` (and earlier `V1.63`) when updating related materialized views and indexes.
 - [ ] Update the landing page data fetch so it makes one trending request instead of separate requests for each package kind section.
 - [ ] Preserve the distinct landing sections for each package kind while sourcing them from the unified response.
 - [ ] Ensure Knowledge packages participate naturally in the same trending response contract as tools, skills, agents, and templates.
 - [ ] Add backend tests proving:
   - [ ] trending responses include multiple package kinds in one payload
   - [ ] one package kind cannot starve all others when enough data exists
+  - [ ] the per-kind cap logic in the materialized view or backing query behaves as intended
   - [ ] existing ranking behavior within each kind remains sensible
 - [ ] Add frontend tests proving:
   - [ ] the landing page renders correctly from the unified trending response
