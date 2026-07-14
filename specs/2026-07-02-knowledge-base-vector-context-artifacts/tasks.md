@@ -502,9 +502,126 @@
 
 ## Milestone 11: Examples and Example-App Integration
 > Scope note: examples only. After Milestone 10 is deployed and verified, add the curated Knowledge examples and wire the example apps against the live public flow.
-- [ ] Add a minimal context-mode example Knowledge package under examples or docs fixtures.
-- [ ] Add a minimal vector-mode example Knowledge package under examples or docs fixtures.
-  - [ ] Maybe AgentPM Docs as a real vector knowledge package.
-  - [ ] Another can be more custom-generated for the research assistant agent or similar.
-- [ ] Add an example embedding command adapter script if `--embedding-command` is implemented and the examples repo should carry it.
-- [ ] Update example apps to consume published Knowledge packages only after Milestone 10 deployment/verification is complete.
+- [ ] Add a new `knowledge-packages/*` area in `agentpm-examples` for publishable Knowledge package source manifests and assets.
+- [ ] Add `@zack/support-response-handbook` as the seeded context-mode Knowledge package.
+  - [ ] Use `mode: "context"`.
+  - [ ] Include more than one declared document file.
+  - [ ] Shape it as a support-response guidance bundle rather than a generic placeholder corpus.
+  - [ ] Include authored files such as response principles, escalation guidance, and reusable message templates.
+  - [ ] Use as much of the context-mode Knowledge manifest surface as naturally fits, including fields such as per-document `content_type`, `role`, `description`, and build-derived bytes/hashes/context summary metadata.
+  - [ ] Run `agentpm knowledge build` so the published artifact includes derived context metadata.
+- [ ] Add `@zack/devwork-maintainer-guide` as the seeded small vector-mode Knowledge package.
+  - [ ] Use `mode: "vector"`.
+  - [ ] Keep it intentionally small and heavily authored rather than generated from a large source corpus.
+  - [ ] Shape it around maintainer/repository review workflows so it fits `devwork-copilot`.
+  - [ ] Include authored source docs plus generated chunks, sources, vectors, and index metadata.
+  - [ ] Use as much of the vector-mode Knowledge manifest surface as naturally fits, including retrieval defaults, chunk/source metadata, chunking metadata when it helps explain the package, and provenance fields where they are meaningful.
+  - [ ] Run `agentpm knowledge build` so the package is publish-ready.
+- [ ] Add `@zack/agentpm-docs` as the seeded larger vector-mode Knowledge package.
+  - [ ] Use real content from `agentpm-api/docs/v0.1/**/*.mdx`.
+  - [ ] Include the original docs files in the published package in addition to `chunks.jsonl`, `sources.jsonl`, and vectors.
+  - [ ] Keep the corpus moderate in size: large enough to demonstrate realistic retrieval, but not so large that it becomes unwieldy as a seeded registry artifact.
+  - [ ] Include provenance/source metadata that ties chunks back to source files and public docs routes where practical.
+  - [ ] Use the richer Knowledge manifest surface where it adds real explanatory value, including provenance fields such as `generated_at`, `builder`, and `sources_manifest_path`, plus retrieval defaults and embedding/index metadata that help the package read as a polished public example rather than a bare minimum artifact.
+  - [ ] Run `agentpm knowledge build` so the package is publish-ready.
+- [ ] Treat the seeded Knowledge packages as public examples of the `knowledge` manifest shape, not just functional corpora.
+  - [ ] Prefer using real, meaningful metadata over leaving optional fields blank when the content naturally supports them.
+  - [ ] Avoid forcing every optional field into every package; use the richer properties where they improve clarity, inspect output, and registry detail pages.
+  - [ ] Make sure at least one package demonstrates provenance fields such as `generated_at` and `builder`.
+  - [ ] Make sure at least one vector package demonstrates retrieval defaults such as `default_top_k`, `default_score_threshold` when appropriate, and `return_citations`.
+  - [ ] Make sure the examples expose chunk/source/document metadata strongly enough that `agentpm knowledge inspect` visibly shows more than the bare minimum contract.
+- [ ] Add a reproducible corpus-preparation pipeline for `@zack/agentpm-docs` in the examples repo.
+  - [ ] Use a common, recognizable chunking library such as `langchain_text_splitters` rather than a custom one-off splitter unless a simpler repo-native option is clearly better.
+  - [ ] Strip or normalize MDX/frontmatter into chunkable content while preserving source traceability.
+  - [ ] Emit AgentPM-compatible `knowledge/chunks.jsonl` and `knowledge/sources.jsonl`.
+  - [ ] Generate embeddings with `text-embedding-3-small`.
+  - [ ] Write the raw little-endian float32 payload expected by AgentPM to `knowledge/embeddings/default.f32`.
+  - [ ] Include a query-time adapter example script for this package so manual `agentpm knowledge query --embedding-command ...` demos use the same embedding family.
+- [ ] Preserve contrast across the seeded examples.
+  - [ ] Keep the context package authored and direct-context oriented.
+  - [ ] Keep the small vector package authored and workflow-specific.
+  - [ ] Use the larger `agentpm-docs` package as the main example of preparing real source content into AgentPM Knowledge shape.
+- [ ] Update published example manifests to consume the new Knowledge packages only after those Knowledge packages are published.
+  - [ ] Add `@zack/support-response-handbook` to `template-packages/support-assistant-workspace` so the generated workspace demonstrates template-driven Knowledge usage.
+  - [ ] Add `@zack/devwork-maintainer-guide` to `agent-packages/devwork-python` so a published agent demonstrates agent-level Knowledge usage.
+  - [ ] Do not require `@zack/agentpm-docs` to be attached to an agent; keep it as the main standalone inspect/query showcase.
+- [ ] Update generated/example app surfaces after package publish so the seeded public flow is visible in real apps.
+  - [ ] Update `agent-app-support-assistant-workspace` to show the context-mode Knowledge dependency in the generated/root manifests and supporting README copy.
+  - [ ] Update `agent-app-devwork-python` to exercise agent-installed vector-mode Knowledge through the SDK-loaded agent graph.
+  - [ ] Keep `agent-app-research-node` independent; do not attach `@zack/agentpm-docs` to it as part of this milestone.
+- [ ] Update example-repo README/documentation so the three Knowledge packages are discoverable alongside tools, skills, agents, and templates.
+- [ ] Add manual verification notes for the examples phase.
+  - [ ] Publish/install each Knowledge package from prod.
+  - [ ] Verify context-mode inspect output for `@zack/support-response-handbook`.
+  - [ ] Verify vector-mode inspect/query output for `@zack/devwork-maintainer-guide`.
+  - [ ] Verify realistic inspect/query demos for `@zack/agentpm-docs`, including an embedding-command query path using the provided adapter script.
+
+## Milestone 12: Direct Agent Install Lockfile Cleanup
+> Scope note: clean up lockfile behavior for repeated direct installs of the same published agent so example apps and normal local projects do not accumulate stale registry roots across agent version upgrades.
+- [ ] Audit direct `agentpm install @ns/agent@version` behavior when the same agent package is installed repeatedly at newer versions in the same workspace.
+- [ ] Decide and document the intended behavior for direct-installed published agent roots.
+  - [ ] If the direct install is acting as the current selected registry root for that package, older versions of the same package should not remain as parallel roots by default.
+  - [ ] Treat "the same package" here as the same package kind plus the same namespace/name, regardless of version.
+  - [ ] When a user runs direct `agentpm install @ns/name@newer-version`, replace any existing direct-installed registry root for that same package kind and package name instead of accumulating multiple versions of the same selected root.
+  - [ ] Preserve support for multiple versions only when they are intentionally required by distinct roots or manifests, not as an accidental artifact of repeated upgrades.
+  - [ ] Do not remove older versions that are still required by a local root, template-generated root, workspace-generated root, or another distinct registry root.
+- [ ] Update lockfile/root merge behavior so reinstalling `@ns/name` at a newer exact version replaces stale direct-install roots for the same package identity.
+- [ ] Ensure old package entries are pruned when they are no longer referenced by any root after the replacement.
+- [ ] Preserve existing behavior for:
+  - [ ] local `kind: "agent"` manifests
+  - [ ] template/workspace-generated roots
+  - [ ] mixed-version graphs that are genuinely required by separate roots
+- [ ] Add regression tests proving repeated direct installs of the same agent package do not leave `roots` entries for older direct-installed versions.
+- [ ] Add regression tests proving `packages` entries for superseded agent versions are removed when no remaining root references them.
+- [ ] Add regression tests proving Knowledge/Skill/Tool dependencies still remain pinned correctly under the surviving agent root after replacement.
+- [ ] Add a manual verification note using `agent-app-devwork-python` or a similar clean workspace to prove the lockfile no longer accumulates `agent:@...@old-version` roots after upgrading the direct-installed agent.
+
+## Milestone 13: Trending Packages API and Landing Page Integration
+> Scope note: make trending a true mixed-package surface rather than a set of separate per-kind landing queries built on a top-50 global list that can starve newer package kinds.
+- [ ] Audit the current backend trending implementation and document where it limits results to a global top-N before package-kind grouping.
+  - [ ] Inspect the `trending_tools` materialized view and document how the current global cap is applied before package-kind grouping.
+  - [ ] Inspect how `tool_search_index` depends on `trending_tools` so the migration plan accounts for downstream search/trending consumers.
+- [ ] Replace the current landing-page multi-call pattern with a single backend response shape for trending packages.
+  - [ ] The response should include the package kinds needed by the landing page in one request.
+  - [ ] Keep the response typed and explicit rather than returning an unstructured mixed blob.
+- [ ] Ensure the backend trending calculation does not allow one dominant kind (for example, tools) to crowd out all other package kinds from the landing page.
+- [ ] Define and implement the intended balancing strategy.
+  - [ ] Update the materialized view or its backing query so trending candidates are selected with kind-aware ranking rather than a single global top-N.
+  - [ ] If `trending_tools` is recreated, update the dependent `tool_search_index` materialized view in the same migration so the dependency chain stays valid.
+  - [ ] Use a per-kind cap in the materialized view or backing query so each package kind retains headroom before the landing-page response is shaped.
+  - [ ] The landing page response should return up to 6 items per package kind.
+  - [ ] The materialized view should keep more than 6 per kind for headroom, but avoid an unnecessarily large per-kind cap.
+  - [ ] For example: use windowed ranking per package kind and then shape a composed response with separate arrays per kind built from kind-aware ranking.
+  - [ ] Keep the strategy simple and explainable in code and tests.
+  - [ ] Be explicit about query and refresh performance.
+    - [ ] Keep the request-time query path lightweight on top of the materialized view.
+    - [ ] Keep the scheduled materialized-view refresh query performant enough for routine refresh cadence.
+    - [ ] Avoid introducing a design that requires expensive cross-kind regrouping or sorting on every landing-page request.
+  - [ ] Follow the existing search/trending migration pattern used in migrations like `V1.77` (and earlier `V1.63`) when updating related materialized views and indexes.
+- [ ] Update the landing page data fetch so it makes one trending request instead of separate requests for each package kind section.
+- [ ] Preserve the distinct landing sections for each package kind while sourcing them from the unified response.
+- [ ] Ensure Knowledge packages participate naturally in the same trending response contract as tools, skills, agents, and templates.
+- [ ] Add backend tests proving:
+  - [ ] trending responses include multiple package kinds in one payload
+  - [ ] one package kind cannot starve all others when enough data exists
+  - [ ] the per-kind cap logic in the materialized view or backing query behaves as intended
+  - [ ] existing ranking behavior within each kind remains sensible
+- [ ] Add frontend tests proving:
+  - [ ] the landing page renders correctly from the unified trending response
+  - [ ] Knowledge sections still render
+  - [ ] package-kind sections do not disappear simply because another kind dominates the global activity list
+- [ ] Add manual verification notes for the landing page showing that mixed trending content appears correctly after publish activity across several package kinds.
+
+## Milestone 14: Lemon Squeezy Production Billing Configuration
+> Scope note: production billing enablement only. Verify and complete the Render-side environment configuration needed for Lemon Squeezy now that production approval is in place, without expanding scope into new billing product features.
+- [ ] Audit the current billing-related configuration surfaces across `agentpm-api`, `agentpm-web`, and the relevant Render production services.
+- [ ] Identify the full set of environment variables required for production Lemon Squeezy billing flows.
+- [ ] Verify that each required production env var is present in Render with the correct prod value.
+- [ ] Verify that no staging, test-mode, placeholder, or legacy billing values are still active in production.
+- [ ] Confirm that any public web env vars point at the correct production URLs, store identifiers, and variant identifiers.
+- [ ] Confirm that server-side billing secrets are configured only on the services that need them and are not exposed to the client.
+- [ ] Document the expected production env var set and which service owns each one.
+- [ ] Run a minimal production-safety verification pass after configuration.
+  - [ ] Confirm billing-gated web UI surfaces behave as enabled when the prod env vars are present.
+  - [ ] Confirm API-side billing or checkout initialization paths resolve against Lemon Squeezy production configuration.
+  - [ ] Confirm there are no obvious prod callback/signing mismatches across app URLs, webhook secrets, store IDs, or variant IDs.

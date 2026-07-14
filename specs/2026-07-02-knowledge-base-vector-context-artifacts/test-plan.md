@@ -167,6 +167,16 @@ Create a minimal vector-mode Knowledge package:
 4. Confirm workspace install includes `.agentpm/knowledge`.
 5. Confirm `agent.lock` includes Knowledge packages and root relationships.
 
+### Direct registry-root upgrade lock cleanup
+
+1. Start from a clean workspace such as `agent-app-devwork-python`.
+2. Run `agentpm install @namespace/example-agent@old-version` or `agentpm install @namespace/example-skill@old-version`.
+3. Confirm `agent.lock` contains a direct registry root for that installed package version.
+4. Run `agentpm install @namespace/example-agent@newer-version` or `agentpm install @namespace/example-skill@newer-version` for the same package name.
+5. Confirm `agent.lock` no longer contains the older direct-installed root for that same kind and package name.
+6. Confirm `agent.lock` retains the newer direct-installed root and the current Tool/Skill/Knowledge package entries required by that surviving root.
+7. Confirm unrelated local roots, template/workspace-generated roots, or distinct registry roots are unchanged.
+
 ### Query and mode failure paths
 
 Verify clear errors for:

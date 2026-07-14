@@ -156,9 +156,6 @@ pub enum LockRoot {
         package_key: String,
         tools: Vec<String>,
     },
-    RegistryKnowledge {
-        package_key: String,
-    },
 }
 
 impl DesiredSet {
@@ -408,19 +405,6 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         name: None,
                         version: None,
                         tools: tools.clone(),
-                        skills: Vec::new(),
-                        knowledge: Vec::new(),
-                        reserved: ReservedReferences::default(),
-                    },
-                );
-            }
-            LockRoot::RegistryKnowledge { package_key } => {
-                root_map.insert(
-                    package_key.clone(),
-                    LockedRoot {
-                        name: None,
-                        version: None,
-                        tools: Vec::new(),
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         reserved: ReservedReferences::default(),
