@@ -625,3 +625,34 @@
   - [ ] Confirm billing-gated web UI surfaces behave as enabled when the prod env vars are present.
   - [ ] Confirm API-side billing or checkout initialization paths resolve against Lemon Squeezy production configuration.
   - [ ] Confirm there are no obvious prod callback/signing mismatches across app URLs, webhook secrets, store IDs, or variant IDs.
+
+## Milestone 15: Lemon Squeezy Canonical Subscription ID Handling
+> Scope note: fix the production billing bug where later Lemon Squeezy `subscription_*` webhook events can overwrite `account_entitlements.billing_subscription_id` with a non-canonical resource ID, causing `Manage billing` to fail even though checkout and entitlement activation succeeded.
+- [ ] Audit Lemon Squeezy webhook payload handling in `agentpm-api/app/billing/application/billing.py`, focusing on which payloads are allowed to set the canonical `billing_subscription_id`.
+- [ ] Confirm which Lemon Squeezy webhook payloads represent a true subscription resource and which `subscription_*` events may carry a different resource ID that should not replace the canonical subscription ID.
+- [ ] Update `_apply_subscription_payload` so `billing_subscription_id` is only written from a payload that identifies the real subscription resource.
+- [ ] Do not overwrite an already-stored canonical `billing_subscription_id` from later payment/refund/recovery events unless the payload explicitly identifies the same canonical subscription resource.
+- [ ] Preserve plan, billing status, customer ID, current period end, and provider metadata updates from later subscription events even when they must not replace the canonical subscription ID.
+- [ ] If a later subscription event does not provide a safe canonical subscription resource ID, leave the existing `billing_subscription_id` unchanged.
+- [ ] Consider a small helper that extracts the canonical subscription ID from a Lemon Squeezy payload so the rule is centralized instead of being implied by `event_name.startswith("subscription_")`.
+- [ ] Tighten `manage_billing` error handling so a bad or missing upstream subscription lookup does not surface as an unhandled `500`.
+  - [ ] Return a clearer operator-facing or user-facing billing-state error when Lemon Squeezy returns `404` for the stored subscription ID.
+  - [ ] Decide whether automatic reconciliation should be attempted there or left as an explicit operator procedure.
+- [ ] Document the operator/manual repair path for already-corrupted production rows where `billing_subscription_id` was set from the wrong webhook resource ID.
+- [ ] Add backend tests proving `subscription_created` stores the canonical subscription ID.
+- [ ] Add backend tests proving a later `subscription_payment_success` event does not overwrite the canonical subscription ID with a different resource ID.
+- [ ] Add backend tests proving `subscription_payment_failed`, `subscription_payment_recovered`, and related follow-on events still update billing status while preserving the canonical subscription ID.
+- [ ] Add backend tests proving a normal live-style webhook sequence keeps `Manage billing` functional after checkout.
+- [ ] Add a regression test reproducing the exact production failure:
+  - [ ] `subscription_created` arrives with canonical subscription resource ID `A`
+  - [ ] a later `subscription_payment_success` arrives with different resource ID `B`
+  - [ ] entitlement must retain `billing_subscription_id == A`
+- [ ] Add regression tests proving order/customer webhook processing still works and does not incorrectly seed or overwrite `billing_subscription_id`.
+- [ ] Add manual verification notes for the live billing flow after the fix.
+  - [ ] Start from a user on an active Pro subscription with a working `Manage billing` button.
+  - [ ] Click `Manage billing` and confirm Lemon Squeezy opens a valid customer/subscription management view rather than failing lookup.
+  - [ ] From Lemon Squeezy, upgrade the subscription from Pro to Team.
+  - [ ] Confirm the relevant Team upgrade/change webhook events are delivered successfully.
+  - [ ] Reload `/profile#billing` and confirm the entitlement now reflects Team.
+  - [ ] Verify Team-gated product behavior after the upgrade, including private org namespace eligibility if applicable.
+  - [ ] Confirm `Manage billing` still works after the Pro-to-Team transition and that the canonical `billing_subscription_id` remains stable.
