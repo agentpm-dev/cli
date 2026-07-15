@@ -634,6 +634,9 @@
 - [ ] Do not overwrite an already-stored canonical `billing_subscription_id` from later payment/refund/recovery events unless the payload explicitly identifies the same canonical subscription resource.
 - [ ] Preserve plan, billing status, customer ID, current period end, and provider metadata updates from later subscription events even when they must not replace the canonical subscription ID.
 - [ ] If a later subscription event does not provide a safe canonical subscription resource ID, leave the existing `billing_subscription_id` unchanged.
+- [ ] Define and enforce the canonical-subscription rule when multiple Lemon Squeezy subscriptions may briefly exist for one account during an upgrade path.
+  - [ ] If a user purchases Team while Pro is still active, AgentPM must not let a later cancellation or status change on the older Pro subscription downgrade or cancel the canonical Team entitlement.
+  - [ ] Decide whether canonicality is determined by matching the stored subscription ID, highest active plan tier, latest valid upgrade event, or another explicit rule, and encode that rule in one place.
 - [ ] Consider a small helper that extracts the canonical subscription ID from a Lemon Squeezy payload so the rule is centralized instead of being implied by `event_name.startswith("subscription_")`.
 - [ ] Tighten `manage_billing` error handling so a bad or missing upstream subscription lookup does not surface as an unhandled `500`.
   - [ ] Return a clearer operator-facing or user-facing billing-state error when Lemon Squeezy returns `404` for the stored subscription ID.
@@ -647,6 +650,11 @@
   - [ ] `subscription_created` arrives with canonical subscription resource ID `A`
   - [ ] a later `subscription_payment_success` arrives with different resource ID `B`
   - [ ] entitlement must retain `billing_subscription_id == A`
+- [ ] Add backend tests proving a Pro-to-Team upgrade path remains active and canonical even if the older Pro subscription later emits `subscription_cancelled`.
+  - [ ] Seed entitlement on active Pro
+  - [ ] Apply Team purchase/upgrade event sequence
+  - [ ] Apply cancellation event for the older Pro subscription
+  - [ ] Entitlement must remain Team and active, and `Manage billing` must continue to target the canonical Team subscription
 - [ ] Add regression tests proving order/customer webhook processing still works and does not incorrectly seed or overwrite `billing_subscription_id`.
 - [ ] Add manual verification notes for the live billing flow after the fix.
   - [ ] Start from a user on an active Pro subscription with a working `Manage billing` button.
@@ -654,5 +662,6 @@
   - [ ] From Lemon Squeezy, upgrade the subscription from Pro to Team.
   - [ ] Confirm the relevant Team upgrade/change webhook events are delivered successfully.
   - [ ] Reload `/profile#billing` and confirm the entitlement now reflects Team.
+  - [ ] If Lemon Squeezy leaves the original Pro subscription visible, cancel that older Pro subscription and confirm the Team entitlement remains active afterward.
   - [ ] Verify Team-gated product behavior after the upgrade, including private org namespace eligibility if applicable.
   - [ ] Confirm `Manage billing` still works after the Pro-to-Team transition and that the canonical `billing_subscription_id` remains stable.
