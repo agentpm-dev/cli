@@ -829,12 +829,19 @@ Public SDK types should include Memory Blueprint manifest metadata and generated
 The SDK may expose the canonical logical `MemoryRecord` type for future compatibility, but a runtime record validator is optional and should only be included if it fits existing SDK patterns without introducing substantial new JSON Schema infrastructure.
 
 ### Backend and registry
-- Add `memory` to backend package-kind validation, models, serialization, publish routes, install/download flows, private namespace checks, search, and detail APIs.
+- Add memory to backend package-kind validation, models, serialization, publish routes, install/download flows, private namespace checks, search, and detail APIs.
 - Memory packages follow the same public/private namespace access rules as other package kinds.
-- Publish/finalize must preserve the uploaded built package and metadata.
-- Registry detail responses must expose enough manifest and generated-contract information for the frontend Memory Model view.
-- Prefer using the package manifest and generated contract index as the source of truth rather than duplicating the entire blueprint into new database columns unless the existing architecture requires normalized metadata.
-- Do not add a live memory API.
+- During publish finalization, perform server-side structural defense-in-depth validation of the uploaded Memory package after generic artifact validation.
+- Backend validation must require and safely parse memory/build.json and memory/contracts/index.json, verify supported metadata formats, require every indexed contract and declared source schema to exist in the archive, reject unsafe or duplicate paths, and enforce bounded file-count and file-size limits.
+- Backend validation is not the authoritative freshness check. It must not regenerate resolved contracts, recompute the full Memory build, or duplicate the CLI’s MemoryBuildMode::Check logic.
+- Publish/finalize must preserve the uploaded built package unchanged.
+- Extract the Memory build metadata, contract index, and indexed resolved contract schemas during publish finalization and persist a bounded registry-facing representation on the package version.
+- The uploaded archive remains the canonical package artifact. Persisted Memory metadata and contract schemas are derived presentation/API data used so detail requests do not need to reopen and scan the package archive from object storage.
+- Prefer a compact Memory-specific JSONB representation on the package version unless the implementation deliberately introduces a reusable package-file persistence model. Do not add one database column per contract.
+- Registry detail responses must expose Memory Blueprint manifest metadata and the generated contract index needed for the frontend Memory Model view.
+- Provide an authorized API path for retrieving individual resolved contracts without requiring every contract schema to be included in the base package-detail response.
+- Apply normal package visibility and private-namespace authorization to all Memory metadata and contract responses.
+- Do not add a live memory API, persistence store, record CRUD operations, trigger execution, retention enforcement, or lifecycle-operation execution.
 
 ### Registry UI
 Add a Memory Blueprint-specific package detail presentation that reuses existing package-detail layout, typography, cards, badges, tabs, code viewers, and responsive behavior.
