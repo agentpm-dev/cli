@@ -135,6 +135,7 @@ pub struct TemplateDependencies {
     pub agents: Vec<PackageReference>,
     pub skills: Vec<PackageReference>,
     pub knowledge: Vec<PackageReference>,
+    pub memory: Vec<PackageReference>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -311,6 +312,167 @@ pub struct KnowledgeManifest {
     pub knowledge: KnowledgeMetadata,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MemoryScope {
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MemoryRecordType {
+    pub version: String,
+    pub description: String,
+    pub schema: String,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySpaceModel {
+    Document,
+    Collection,
+    Sequence,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryRetrievalMode {
+    Key,
+    Filter,
+    Chronological,
+    FullText,
+    Semantic,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MemoryRetrieval {
+    pub modes: Vec<MemoryRetrievalMode>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MemoryCapacity {
+    pub max_records: u64,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryRetentionAction {
+    Delete,
+    Archive,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MemoryRetention {
+    pub ttl: String,
+    pub on_expire: MemoryRetentionAction,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct MemoryConstraints {
+    pub append_only: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MemorySpace {
+    pub description: String,
+    pub model: MemorySpaceModel,
+    pub record_types: Vec<String>,
+    pub scope: Vec<String>,
+    pub retrieval: MemoryRetrieval,
+    pub capacity: Option<MemoryCapacity>,
+    pub retention: Option<MemoryRetention>,
+    pub constraints: Option<MemoryConstraints>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MemoryOperationRef {
+    pub space: String,
+    pub record_type: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MemoryOperationTarget {
+    pub space: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum MemoryTrigger {
+    External,
+    RecordCount { space: String, threshold: u64 },
+    Capacity { space: String },
+    Interval { every: String },
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySourceHandling {
+    Retain,
+    RetainUntilExpiration,
+    DeleteAfterSuccess,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum MemoryOperation {
+    Consolidate {
+        description: String,
+        trigger: MemoryTrigger,
+        inputs: Vec<MemoryOperationRef>,
+        output: MemoryOperationRef,
+        source_handling: MemorySourceHandling,
+        preserve_provenance: bool,
+    },
+    Transform {
+        description: String,
+        trigger: MemoryTrigger,
+        // Schema validation enforces exactly one input for transform operations.
+        // Keep semantic validation explicit in later milestones rather than
+        // assuming deserialization alone preserves that invariant.
+        inputs: Vec<MemoryOperationRef>,
+        output: MemoryOperationRef,
+        source_handling: MemorySourceHandling,
+        preserve_provenance: bool,
+    },
+    Delete {
+        description: String,
+        trigger: MemoryTrigger,
+        targets: Vec<MemoryOperationTarget>,
+        cascade_derived_records: bool,
+    },
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MemoryMetadata {
+    pub scopes: HashMap<String, MemoryScope>,
+    pub record_types: HashMap<String, MemoryRecordType>,
+    pub spaces: HashMap<String, MemorySpace>,
+    #[serde(default)]
+    pub operations: HashMap<String, MemoryOperation>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct MemoryManifest {
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+    pub memory: MemoryMetadata,
+}
+
 #[derive(Debug)]
 pub enum PublishManifest {
     Tool(Box<ToolManifest>),
@@ -318,6 +480,7 @@ pub enum PublishManifest {
     Template(Box<TemplateManifest>),
     Skill(Box<SkillManifest>),
     Knowledge(Box<KnowledgeManifest>),
+    Memory(Box<MemoryManifest>),
 }
 
 /// Resolve the schema source (local file if present; else hosted URL)
@@ -416,7 +579,7 @@ pub fn validate_manifest_value(
     }
 
     if value.get("kind").and_then(Value::as_str) == Some("agent") {
-        for field in ["memory", "profiles"] {
+        for field in ["profiles"] {
             if value
                 .get(field)
                 .and_then(Value::as_array)
@@ -601,7 +764,7 @@ pub fn parse_tool_manifest(value: &Value) -> Result<ToolManifest> {
         serde_json::from_value(value.clone()).context("parsing manifest into ToolManifest")?;
     if mf.kind != "tool" {
         return Err(anyhow!(format!(
-            "parse_tool_manifest requires kind=\"tool\" (got kind=\"{}\"); `agentpm publish` supports kind=\"tool\", \"skill\", \"knowledge\", \"agent\", and \"template\"",
+            "parse_tool_manifest requires kind=\"tool\" (got kind=\"{}\"); `agentpm publish` supports kind=\"tool\", \"skill\", \"knowledge\", \"memory\", \"agent\", and \"template\"",
             mf.kind
         )));
     }
@@ -630,8 +793,11 @@ pub fn parse_publish_manifest(value: &Value) -> Result<PublishManifest> {
         "knowledge" => Ok(PublishManifest::Knowledge(Box::new(
             parse_knowledge_manifest(value)?,
         ))),
+        "memory" => Ok(PublishManifest::Memory(Box::new(parse_memory_manifest(
+            value,
+        )?))),
         other => Err(anyhow!(format!(
-            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", and kind=\"knowledge\" manifests (got kind=\"{}\")",
+            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", and kind=\"memory\" manifests (got kind=\"{}\")",
             other
         ))),
     }
@@ -668,6 +834,18 @@ pub fn parse_knowledge_manifest(value: &Value) -> Result<KnowledgeManifest> {
     if mf.kind != "knowledge" {
         return Err(anyhow!(format!(
             "expected kind=\"knowledge\" manifest (got kind=\"{}\")",
+            mf.kind
+        )));
+    }
+    Ok(mf)
+}
+
+pub fn parse_memory_manifest(value: &Value) -> Result<MemoryManifest> {
+    let mf: MemoryManifest =
+        serde_json::from_value(value.clone()).context("parsing manifest into MemoryManifest")?;
+    if mf.kind != "memory" {
+        return Err(anyhow!(format!(
+            "expected kind=\"memory\" manifest (got kind=\"{}\")",
             mf.kind
         )));
     }
@@ -720,7 +898,7 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
                 .unwrap(),
-            vec!["agent", "tool", "template", "skill", "knowledge"]
+            vec!["agent", "tool", "template", "skill", "knowledge", "memory"]
         );
     }
 
@@ -994,6 +1172,205 @@ mod tests {
     }
 
     #[test]
+    fn valid_agent_manifest_with_memory_dependencies_validates() {
+        assert_manifest_ok(json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "description": "Agent with a memory blueprint dependency.",
+            "tools": [],
+            "memory": [
+                { "name": "@zack/conversation-continuity", "version": "0.1.0" }
+            ]
+        }));
+    }
+
+    #[test]
+    fn valid_template_manifest_with_memory_dependencies_validates() {
+        assert_manifest_ok(json!({
+            "kind": "template",
+            "name": "memory-workspace",
+            "version": "0.1.0",
+            "description": "Workspace starter with a Memory Blueprint dependency.",
+            "template": {
+                "display_name": "Memory Workspace",
+                "use_case": "assistant",
+                "execution_surfaces": ["multi-agent-workspace"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "memory": [
+                        {
+                            "name": "@zack/conversation-continuity",
+                            "version": "0.1.0"
+                        }
+                    ]
+                },
+                "entrypoints": [
+                    {
+                        "label": "Open workspace",
+                        "command": "agentpm run"
+                    }
+                ]
+            }
+        }));
+    }
+
+    #[test]
+    fn valid_minimal_memory_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "memory",
+            "name": "conversation-continuity",
+            "version": "0.1.0",
+            "description": "Portable structure for conversational continuity memory.",
+            "memory": {
+                "scopes": {
+                    "user": {
+                        "description": "The user whose memory is being retained."
+                    }
+                },
+                "record_types": {
+                    "user_preference": {
+                        "version": "1.0.0",
+                        "description": "Durable structured preferences for one user.",
+                        "schema": "schemas/user-preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "The current durable profile for one user.",
+                        "model": "document",
+                        "record_types": ["user_preference"],
+                        "scope": ["user"],
+                        "retrieval": {
+                            "modes": ["key"]
+                        }
+                    }
+                }
+            }
+        }));
+    }
+
+    #[test]
+    fn valid_advanced_memory_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "memory",
+            "name": "support-memory",
+            "version": "0.1.0",
+            "description": "Structured durable memory blueprint for support workflows.",
+            "memory": {
+                "scopes": {
+                    "user": { "description": "The current user." },
+                    "conversation": { "description": "The active conversation thread." }
+                },
+                "record_types": {
+                    "interaction": {
+                        "version": "1.0.0",
+                        "description": "One interaction in a conversation.",
+                        "schema": "schemas/interaction.schema.json"
+                    },
+                    "conversation_summary": {
+                        "version": "1.2.0",
+                        "description": "Derived durable summary of a conversation.",
+                        "schema": "schemas/conversation-summary.schema.json"
+                    }
+                },
+                "spaces": {
+                    "recent_interactions": {
+                        "description": "Short-term ordered interaction history.",
+                        "model": "sequence",
+                        "record_types": ["interaction"],
+                        "scope": ["user", "conversation"],
+                        "retrieval": {
+                            "modes": ["chronological", "semantic"]
+                        },
+                        "capacity": {
+                            "max_records": 20
+                        },
+                        "retention": {
+                            "ttl": "P7D",
+                            "on_expire": "delete"
+                        },
+                        "constraints": {
+                            "append_only": true
+                        }
+                    },
+                    "conversation_history": {
+                        "description": "Durable summary document for a conversation.",
+                        "model": "document",
+                        "record_types": ["conversation_summary"],
+                        "scope": ["user", "conversation"],
+                        "retrieval": {
+                            "modes": ["key", "semantic"]
+                        },
+                        "retention": {
+                            "ttl": "P30D",
+                            "on_expire": "archive"
+                        }
+                    }
+                },
+                "operations": {
+                    "consolidate_recent_interactions": {
+                        "type": "consolidate",
+                        "description": "Convert recent interactions into a durable summary.",
+                        "trigger": {
+                            "type": "record_count",
+                            "space": "recent_interactions",
+                            "threshold": 20
+                        },
+                        "inputs": [
+                            {
+                                "space": "recent_interactions",
+                                "record_type": "interaction"
+                            }
+                        ],
+                        "output": {
+                            "space": "conversation_history",
+                            "record_type": "conversation_summary"
+                        },
+                        "source_handling": "delete_after_success",
+                        "preserve_provenance": true
+                    },
+                    "transform_interaction_summary": {
+                        "type": "transform",
+                        "description": "Convert one interaction record into a normalized summary record.",
+                        "trigger": {
+                            "type": "interval",
+                            "every": "P1D"
+                        },
+                        "inputs": [
+                            {
+                                "space": "recent_interactions",
+                                "record_type": "interaction"
+                            }
+                        ],
+                        "output": {
+                            "space": "conversation_history",
+                            "record_type": "conversation_summary"
+                        },
+                        "source_handling": "retain",
+                        "preserve_provenance": true
+                    },
+                    "delete_user_memory": {
+                        "type": "delete",
+                        "description": "Delete durable memory for a user conversation.",
+                        "trigger": {
+                            "type": "external"
+                        },
+                        "targets": [
+                            { "space": "conversation_history" },
+                            { "space": "recent_interactions" }
+                        ],
+                        "cascade_derived_records": true
+                    }
+                }
+            }
+        }));
+    }
+
+    #[test]
     fn valid_minimal_context_mode_knowledge_manifest_validates() {
         assert_manifest_ok(json!({
             "kind": "knowledge",
@@ -1223,6 +1600,10 @@ mod tests {
                 .iter()
                 .all(|issue| issue.instance_path != "/knowledge"),
             "knowledge should not emit a reserved-field warning, got: {issues:#?}"
+        );
+        assert!(
+            issues.iter().all(|issue| issue.instance_path != "/memory"),
+            "memory should not emit a reserved-field warning, got: {issues:#?}"
         );
     }
 
@@ -1491,6 +1872,604 @@ mod tests {
         assert!(
             issues.iter().any(|issue| issue.instance_path == "/kind"),
             "expected dependency rejection for kind=knowledge, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_dependency_arrays() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "bad-memory",
+            "version": "0.1.0",
+            "description": "Memory packages must not declare dependencies.",
+            "tools": ["@zack/slack-post-message@0.1.0"],
+            "memory": {
+                "scopes": {
+                    "user": { "description": "User scope." }
+                },
+                "record_types": {
+                    "preference": {
+                        "version": "1.0.0",
+                        "description": "Preference record.",
+                        "schema": "schemas/preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "Profile document.",
+                        "model": "document",
+                        "record_types": ["preference"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["key"] }
+                    }
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/kind"),
+            "expected dependency rejection for kind=memory, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn non_agent_non_memory_top_level_memory_fails() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "skill",
+            "name": "bad-skill-memory",
+            "version": "0.1.0",
+            "description": "Only agents and memory packages may use top-level memory.",
+            "memory": [],
+            "skill": {
+                "entrypoint": "SKILL.md"
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path.is_empty())
+                || issues
+                    .iter()
+                    .any(|issue| issue.schema_path == "/dependentSchemas/memory/oneOf"),
+            "expected top-level memory rejection outside agent/memory kinds, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn tool_manifest_with_top_level_memory_fails() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "tool",
+            "name": "bad-tool-memory",
+            "version": "0.1.0",
+            "description": "Tools must not declare top-level memory.",
+            "memory": [],
+            "entrypoint": {
+                "command": "python",
+                "args": ["main.py"]
+            },
+            "inputs": { "type": "object" },
+            "outputs": { "type": "object" },
+            "files": ["main.py"]
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path.is_empty())
+                || issues
+                    .iter()
+                    .any(|issue| issue.schema_path == "/dependentSchemas/memory/oneOf"),
+            "expected top-level memory rejection for kind=tool, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn template_manifest_with_top_level_memory_fails() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "bad-template-memory",
+            "version": "0.1.0",
+            "description": "Templates must not declare top-level memory.",
+            "memory": [],
+            "template": {
+                "display_name": "Bad Template Memory",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path.is_empty())
+                || issues
+                    .iter()
+                    .any(|issue| issue.schema_path == "/dependentSchemas/memory/oneOf"),
+            "expected top-level memory rejection for kind=template, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn knowledge_manifest_with_top_level_memory_fails() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "knowledge",
+            "name": "bad-knowledge-memory",
+            "version": "0.1.0",
+            "description": "Knowledge packages must not declare top-level memory.",
+            "memory": [],
+            "knowledge": {
+                "mode": "context"
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path.is_empty())
+                || issues
+                    .iter()
+                    .any(|issue| issue.schema_path == "/dependentSchemas/memory/oneOf"),
+            "expected top-level memory rejection for kind=knowledge, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_kind_with_dependency_array_fails() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "bad-memory-shape",
+            "version": "0.1.0",
+            "description": "Memory packages must use metadata objects, not dependency arrays.",
+            "memory": [
+                { "name": "@zack/other-memory", "version": "0.1.0" }
+            ]
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.schema_path == "/dependentSchemas/memory/oneOf"),
+            "expected overloaded memory property rejection for kind=memory, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_requires_scopes_record_types_and_spaces() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "missing-sections",
+            "version": "0.1.0",
+            "description": "Memory manifests must declare the required top-level sections.",
+            "memory": {
+                "record_types": {},
+                "spaces": {}
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected missing required memory sections failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_invalid_space_model() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "bad-model",
+            "version": "0.1.0",
+            "description": "Invalid model should fail.",
+            "memory": {
+                "scopes": {
+                    "user": { "description": "User scope." }
+                },
+                "record_types": {
+                    "preference": {
+                        "version": "1.0.0",
+                        "description": "Preference record.",
+                        "schema": "schemas/preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "Profile document.",
+                        "model": "graph",
+                        "record_types": ["preference"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["key"] }
+                    }
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected invalid model failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_invalid_retrieval_mode() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "bad-retrieval",
+            "version": "0.1.0",
+            "description": "Invalid retrieval mode should fail.",
+            "memory": {
+                "scopes": {
+                    "user": { "description": "User scope." }
+                },
+                "record_types": {
+                    "preference": {
+                        "version": "1.0.0",
+                        "description": "Preference record.",
+                        "schema": "schemas/preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "Profile document.",
+                        "model": "document",
+                        "record_types": ["preference"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["ranking"] }
+                    }
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected invalid retrieval mode failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_invalid_retention_action() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "bad-retention",
+            "version": "0.1.0",
+            "description": "Invalid retention action should fail.",
+            "memory": {
+                "scopes": {
+                    "user": { "description": "User scope." }
+                },
+                "record_types": {
+                    "preference": {
+                        "version": "1.0.0",
+                        "description": "Preference record.",
+                        "schema": "schemas/preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "Profile document.",
+                        "model": "document",
+                        "record_types": ["preference"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["key"] },
+                        "retention": {
+                            "ttl": "P30D",
+                            "on_expire": "compact"
+                        }
+                    }
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected invalid retention action failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_invalid_operation_type() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "bad-operation",
+            "version": "0.1.0",
+            "description": "Invalid operation type should fail.",
+            "memory": {
+                "scopes": {
+                    "user": { "description": "User scope." }
+                },
+                "record_types": {
+                    "preference": {
+                        "version": "1.0.0",
+                        "description": "Preference record.",
+                        "schema": "schemas/preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "Profile document.",
+                        "model": "document",
+                        "record_types": ["preference"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["key"] }
+                    }
+                },
+                "operations": {
+                    "refresh_profile": {
+                        "type": "upsert",
+                        "description": "Unsupported operation type.",
+                        "trigger": { "type": "external" },
+                        "inputs": [
+                            {
+                                "space": "profile",
+                                "record_type": "preference"
+                            }
+                        ],
+                        "output": {
+                            "space": "profile",
+                            "record_type": "preference"
+                        },
+                        "source_handling": "retain",
+                        "preserve_provenance": true
+                    }
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected invalid operation type failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_transform_with_multiple_inputs() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "bad-transform",
+            "version": "0.1.0",
+            "description": "Transform operations must declare exactly one input pairing.",
+            "memory": {
+                "scopes": {
+                    "user": { "description": "User scope." }
+                },
+                "record_types": {
+                    "interaction": {
+                        "version": "1.0.0",
+                        "description": "Interaction record.",
+                        "schema": "schemas/interaction.schema.json"
+                    },
+                    "summary": {
+                        "version": "1.0.0",
+                        "description": "Summary record.",
+                        "schema": "schemas/summary.schema.json"
+                    }
+                },
+                "spaces": {
+                    "recent_interactions": {
+                        "description": "Recent interactions.",
+                        "model": "sequence",
+                        "record_types": ["interaction"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["chronological"] }
+                    },
+                    "conversation_history": {
+                        "description": "Conversation summary document.",
+                        "model": "document",
+                        "record_types": ["summary"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["key"] }
+                    }
+                },
+                "operations": {
+                    "transform_summary": {
+                        "type": "transform",
+                        "description": "Bad transform with too many inputs.",
+                        "trigger": { "type": "external" },
+                        "inputs": [
+                            {
+                                "space": "recent_interactions",
+                                "record_type": "interaction"
+                            },
+                            {
+                                "space": "recent_interactions",
+                                "record_type": "interaction"
+                            }
+                        ],
+                        "output": {
+                            "space": "conversation_history",
+                            "record_type": "summary"
+                        },
+                        "source_handling": "retain",
+                        "preserve_provenance": true
+                    }
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected transform input-count rejection, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_invalid_trigger_type() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "bad-trigger",
+            "version": "0.1.0",
+            "description": "Invalid trigger type should fail.",
+            "memory": {
+                "scopes": {
+                    "user": { "description": "User scope." }
+                },
+                "record_types": {
+                    "preference": {
+                        "version": "1.0.0",
+                        "description": "Preference record.",
+                        "schema": "schemas/preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "Profile document.",
+                        "model": "document",
+                        "record_types": ["preference"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["key"] }
+                    }
+                },
+                "operations": {
+                    "delete_profile": {
+                        "type": "delete",
+                        "description": "Bad trigger type.",
+                        "trigger": { "type": "cron" },
+                        "targets": [
+                            { "space": "profile" }
+                        ],
+                        "cascade_derived_records": false
+                    }
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected invalid trigger type failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_unsafe_schema_path() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "unsafe-schema",
+            "version": "0.1.0",
+            "description": "Unsafe schema path should fail.",
+            "memory": {
+                "scopes": {
+                    "user": { "description": "User scope." }
+                },
+                "record_types": {
+                    "preference": {
+                        "version": "1.0.0",
+                        "description": "Preference record.",
+                        "schema": "../schemas/preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "Profile document.",
+                        "model": "document",
+                        "record_types": ["preference"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["key"] }
+                    }
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected unsafe schema path failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_invalid_key_names() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "bad-keys",
+            "version": "0.1.0",
+            "description": "Invalid key names should fail.",
+            "memory": {
+                "scopes": {
+                    "User": { "description": "User scope." }
+                },
+                "record_types": {
+                    "preference": {
+                        "version": "1.0.0",
+                        "description": "Preference record.",
+                        "schema": "schemas/preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "Profile document.",
+                        "model": "document",
+                        "record_types": ["preference"],
+                        "scope": ["User"],
+                        "retrieval": { "modes": ["key"] }
+                    }
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected invalid key-name failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_unsupported_additional_properties() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "memory",
+            "name": "extra-fields",
+            "version": "0.1.0",
+            "description": "Unsupported extra properties should fail.",
+            "memory": {
+                "scopes": {
+                    "user": {
+                        "description": "User scope.",
+                        "label": "User"
+                    }
+                },
+                "record_types": {
+                    "preference": {
+                        "version": "1.0.0",
+                        "description": "Preference record.",
+                        "schema": "schemas/preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "Profile document.",
+                        "model": "document",
+                        "record_types": ["preference"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["key"] }
+                    }
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected unsupported extra property failure, got: {issues:#?}"
         );
     }
 
@@ -1820,7 +2799,8 @@ mod tests {
             PublishManifest::Agent(_)
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
-            | PublishManifest::Knowledge(_) => {
+            | PublishManifest::Knowledge(_)
+            | PublishManifest::Memory(_) => {
                 panic!("expected tool publish manifest")
             }
         }
@@ -1849,7 +2829,8 @@ mod tests {
             PublishManifest::Tool(_)
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
-            | PublishManifest::Knowledge(_) => {
+            | PublishManifest::Knowledge(_)
+            | PublishManifest::Memory(_) => {
                 panic!("expected agent publish manifest")
             }
         }
@@ -1885,7 +2866,8 @@ mod tests {
             PublishManifest::Tool(_)
             | PublishManifest::Agent(_)
             | PublishManifest::Template(_)
-            | PublishManifest::Knowledge(_) => {
+            | PublishManifest::Knowledge(_)
+            | PublishManifest::Memory(_) => {
                 panic!("expected skill publish manifest")
             }
         }
@@ -1924,11 +2906,13 @@ mod tests {
                 assert_eq!(mf.template.files_root, "template");
                 assert!(mf.template.dependencies.skills.is_empty());
                 assert!(mf.template.dependencies.knowledge.is_empty());
+                assert!(mf.template.dependencies.memory.is_empty());
             }
             PublishManifest::Tool(_)
             | PublishManifest::Agent(_)
             | PublishManifest::Skill(_)
-            | PublishManifest::Knowledge(_) => {
+            | PublishManifest::Knowledge(_)
+            | PublishManifest::Memory(_) => {
                 panic!("expected template publish manifest")
             }
         }
@@ -1961,8 +2945,61 @@ mod tests {
             PublishManifest::Tool(_)
             | PublishManifest::Agent(_)
             | PublishManifest::Template(_)
-            | PublishManifest::Skill(_) => {
+            | PublishManifest::Skill(_)
+            | PublishManifest::Memory(_) => {
                 panic!("expected knowledge publish manifest")
+            }
+        }
+    }
+
+    #[test]
+    fn parse_publish_manifest_dispatches_memory_kind() {
+        let manifest = json!({
+            "kind": "memory",
+            "name": "conversation-continuity",
+            "version": "0.1.0",
+            "description": "Portable structure for conversational continuity memory.",
+            "memory": {
+                "scopes": {
+                    "user": {
+                        "description": "The user whose memory is being retained."
+                    }
+                },
+                "record_types": {
+                    "user_preference": {
+                        "version": "1.0.0",
+                        "description": "Durable structured preferences for one user.",
+                        "schema": "schemas/user-preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "The current durable profile for one user.",
+                        "model": "document",
+                        "record_types": ["user_preference"],
+                        "scope": ["user"],
+                        "retrieval": {
+                            "modes": ["key"]
+                        }
+                    }
+                }
+            }
+        });
+
+        match parse_publish_manifest(&manifest).unwrap() {
+            PublishManifest::Memory(mf) => {
+                assert_eq!(mf.kind, "memory");
+                assert_eq!(mf.name, "conversation-continuity");
+                assert_eq!(mf.memory.scopes.len(), 1);
+                assert_eq!(mf.memory.record_types.len(), 1);
+                assert_eq!(mf.memory.spaces.len(), 1);
+            }
+            PublishManifest::Tool(_)
+            | PublishManifest::Agent(_)
+            | PublishManifest::Template(_)
+            | PublishManifest::Skill(_)
+            | PublishManifest::Knowledge(_) => {
+                panic!("expected memory publish manifest")
             }
         }
     }
@@ -1978,7 +3015,7 @@ mod tests {
         let err = parse_publish_manifest(&manifest).unwrap_err().to_string();
         assert!(
             err.contains(
-                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", and kind=\"knowledge\""
+                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", and kind=\"memory\""
             ),
             "unexpected error: {err}"
         );
@@ -2015,6 +3052,7 @@ mod tests {
         assert_eq!(parsed.name, "starter-template");
         assert!(parsed.template.dependencies.skills.is_empty());
         assert!(parsed.template.dependencies.knowledge.is_empty());
+        assert!(parsed.template.dependencies.memory.is_empty());
     }
 
     #[test]
@@ -2097,6 +3135,49 @@ mod tests {
         match &parsed.template.dependencies.knowledge[0] {
             PackageReference::Object { name, version } => {
                 assert_eq!(name, "@zack/python-docs");
+                assert_eq!(version.as_deref(), Some("0.1.0"));
+            }
+            PackageReference::String(_) => panic!("expected object dependency reference"),
+        }
+    }
+
+    #[test]
+    fn parse_template_manifest_preserves_memory_dependencies() {
+        let manifest = json!({
+            "kind": "template",
+            "name": "starter-template",
+            "version": "0.1.0",
+            "description": "Starter template.",
+            "template": {
+                "display_name": "Starter Template",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "memory": [
+                        {
+                            "name": "@zack/conversation-continuity",
+                            "version": "0.1.0"
+                        }
+                    ]
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        });
+
+        let parsed = parse_template_manifest(&manifest).unwrap();
+        assert_eq!(parsed.template.dependencies.memory.len(), 1);
+        match &parsed.template.dependencies.memory[0] {
+            PackageReference::Object { name, version } => {
+                assert_eq!(name, "@zack/conversation-continuity");
                 assert_eq!(version.as_deref(), Some("0.1.0"));
             }
             PackageReference::String(_) => panic!("expected object dependency reference"),

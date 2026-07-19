@@ -159,6 +159,11 @@ impl PublishArgs {
                 package_knowledge(mf, &manifest_path, &manifest_value)
                     .context("packaging knowledge into tar.gz")?
             }
+            PublishManifest::Memory(_) => {
+                bail!(
+                    "Memory Blueprint publishing is not yet available. Run `agentpm memory build` to verify your blueprint compiles and check the AgentPM changelog for publish support."
+                )
+            }
         };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
         if size_bytes > MAX_ARTIFACT_BYTES {
@@ -335,6 +340,7 @@ impl PublishArgs {
             PublishManifest::Template(mf) => artifact_filename(&mf.name, &mf.version, None),
             PublishManifest::Skill(mf) => artifact_filename(&mf.name, &mf.version, None),
             PublishManifest::Knowledge(mf) => artifact_filename(&mf.name, &mf.version, None),
+            PublishManifest::Memory(mf) => artifact_filename(&mf.name, &mf.version, None),
         };
 
         // Build optional finalize_extra
@@ -1628,6 +1634,7 @@ fn manifest_kind(manifest: &PublishManifest) -> &str {
         PublishManifest::Template(mf) => &mf.kind,
         PublishManifest::Skill(mf) => &mf.kind,
         PublishManifest::Knowledge(mf) => &mf.kind,
+        PublishManifest::Memory(mf) => &mf.kind,
     }
 }
 
@@ -1638,6 +1645,7 @@ fn manifest_name(manifest: &PublishManifest) -> &str {
         PublishManifest::Template(mf) => &mf.name,
         PublishManifest::Skill(mf) => &mf.name,
         PublishManifest::Knowledge(mf) => &mf.name,
+        PublishManifest::Memory(mf) => &mf.name,
     }
 }
 
@@ -1648,6 +1656,7 @@ fn manifest_version(manifest: &PublishManifest) -> &str {
         PublishManifest::Template(mf) => &mf.version,
         PublishManifest::Skill(mf) => &mf.version,
         PublishManifest::Knowledge(mf) => &mf.version,
+        PublishManifest::Memory(mf) => &mf.version,
     }
 }
 
