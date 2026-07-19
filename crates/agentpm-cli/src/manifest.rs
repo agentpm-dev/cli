@@ -334,7 +334,7 @@ pub enum MemorySpaceModel {
     Sequence,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryRetrievalMode {
     Key,
@@ -645,8 +645,978 @@ pub fn validate_manifest_value(
         }
     }
 
+    if value.get("kind").and_then(Value::as_str) == Some("memory")
+        && let Ok(manifest) = parse_memory_manifest(value)
+    {
+        let manifest_path = resolve_existing_manifest_path(file_label);
+        issues.extend(validate_memory_manifest_semantics(
+            file_label,
+            value,
+            &manifest,
+            manifest_path.as_deref(),
+        ));
+    }
+
     let has_error = issues.iter().any(|i| i.level == "error");
     Ok((!has_error, issues))
+}
+
+fn resolve_existing_manifest_path(file_label: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(file_label);
+    path.exists().then_some(path)
+}
+
+fn validate_memory_manifest_semantics(
+    file_label: &str,
+    value: &Value,
+    manifest: &MemoryManifest,
+    manifest_path: Option<&Path>,
+) -> Vec<LintIssue> {
+    let mut issues = Vec::new();
+
+    validate_memory_keys(
+        file_label,
+        "scopes",
+        manifest.memory.scopes.keys(),
+        &mut issues,
+    );
+    validate_memory_keys(
+        file_label,
+        "record_types",
+        manifest.memory.record_types.keys(),
+        &mut issues,
+    );
+    validate_memory_keys(
+        file_label,
+        "spaces",
+        manifest.memory.spaces.keys(),
+        &mut issues,
+    );
+    validate_memory_keys(
+        file_label,
+        "operations",
+        manifest.memory.operations.keys(),
+        &mut issues,
+    );
+
+    let mut pairings = HashSet::new();
+    for (space_key, space) in &manifest.memory.spaces {
+        validate_unique_strings(
+            file_label,
+            &format!("/memory/spaces/{space_key}/scope"),
+            "scope",
+            &space.scope,
+            &mut issues,
+        );
+        validate_unique_strings(
+            file_label,
+            &format!("/memory/spaces/{space_key}/record_types"),
+            "record type",
+            &space.record_types,
+            &mut issues,
+        );
+        validate_unique_retrieval_modes(file_label, space_key, &space.retrieval.modes, &mut issues);
+
+        for (idx, scope_key) in space.scope.iter().enumerate() {
+            if !manifest.memory.scopes.contains_key(scope_key) {
+                push_manifest_error(
+                    file_label,
+                    &format!("/memory/spaces/{space_key}/scope/{idx}"),
+                    format!("unknown scope `{scope_key}` referenced by space `{space_key}`"),
+                    &mut issues,
+                );
+            }
+        }
+
+        for (idx, record_type_key) in space.record_types.iter().enumerate() {
+            if !manifest.memory.record_types.contains_key(record_type_key) {
+                push_manifest_error(
+                    file_label,
+                    &format!("/memory/spaces/{space_key}/record_types/{idx}"),
+                    format!(
+                        "unknown record type `{record_type_key}` referenced by space `{space_key}`"
+                    ),
+                    &mut issues,
+                );
+                continue;
+            }
+            if !pairings.insert((space_key.clone(), record_type_key.clone())) {
+                push_manifest_error(
+                    file_label,
+                    &format!("/memory/spaces/{space_key}/record_types/{idx}"),
+                    format!(
+                        "duplicate space-and-record-type pairing `{space_key}` + `{record_type_key}`"
+                    ),
+                    &mut issues,
+                );
+            }
+        }
+
+        match space.model {
+            MemorySpaceModel::Document => {
+                if !space.retrieval.modes.contains(&MemoryRetrievalMode::Key) {
+                    push_manifest_error(
+                        file_label,
+                        &format!("/memory/spaces/{space_key}/retrieval/modes"),
+                        format!("document space `{space_key}` must include retrieval mode `key`"),
+                        &mut issues,
+                    );
+                }
+                if matches!(
+                    space
+                        .constraints
+                        .as_ref()
+                        .and_then(|constraints| constraints.append_only),
+                    Some(true)
+                ) {
+                    push_manifest_error(
+                        file_label,
+                        &format!("/memory/spaces/{space_key}/constraints/append_only"),
+                        format!("document space `{space_key}` cannot be append-only"),
+                        &mut issues,
+                    );
+                }
+            }
+            MemorySpaceModel::Sequence => {
+                if !space
+                    .retrieval
+                    .modes
+                    .contains(&MemoryRetrievalMode::Chronological)
+                {
+                    push_manifest_error(
+                        file_label,
+                        &format!("/memory/spaces/{space_key}/retrieval/modes"),
+                        format!(
+                            "sequence space `{space_key}` must include retrieval mode `chronological`"
+                        ),
+                        &mut issues,
+                    );
+                }
+            }
+            MemorySpaceModel::Collection => {}
+        }
+
+        if let Some(capacity) = &space.capacity
+            && capacity.max_records == 0
+        {
+            push_manifest_error(
+                file_label,
+                &format!("/memory/spaces/{space_key}/capacity/max_records"),
+                format!("space `{space_key}` capacity.max_records must be greater than zero"),
+                &mut issues,
+            );
+        }
+
+        if let Some(retention) = &space.retention
+            && !is_supported_positive_iso8601_duration(&retention.ttl)
+        {
+            push_manifest_error(
+                file_label,
+                &format!("/memory/spaces/{space_key}/retention/ttl"),
+                format!(
+                    "space `{space_key}` retention.ttl must use the supported positive ISO 8601 duration subset"
+                ),
+                &mut issues,
+            );
+        }
+    }
+
+    for (operation_key, operation) in &manifest.memory.operations {
+        validate_memory_operation_raw(file_label, value, operation_key, &mut issues);
+
+        match operation {
+            MemoryOperation::Consolidate {
+                inputs,
+                output,
+                source_handling: _,
+                preserve_provenance: _,
+                trigger,
+                ..
+            } => {
+                validate_unique_operation_refs(
+                    file_label,
+                    operation_key,
+                    inputs,
+                    &format!("/memory/operations/{operation_key}/inputs"),
+                    &mut issues,
+                );
+                validate_operation_refs(
+                    file_label,
+                    operation_key,
+                    inputs,
+                    &manifest.memory.spaces,
+                    &format!("/memory/operations/{operation_key}/inputs"),
+                    &mut issues,
+                );
+                validate_operation_ref(
+                    file_label,
+                    operation_key,
+                    output,
+                    &manifest.memory.spaces,
+                    &format!("/memory/operations/{operation_key}/output"),
+                    &mut issues,
+                );
+                validate_memory_trigger(
+                    file_label,
+                    operation_key,
+                    trigger,
+                    &manifest.memory.spaces,
+                    &mut issues,
+                );
+            }
+            MemoryOperation::Transform {
+                inputs,
+                output,
+                source_handling: _,
+                preserve_provenance: _,
+                trigger,
+                ..
+            } => {
+                if inputs.len() != 1 {
+                    push_manifest_error(
+                        file_label,
+                        &format!("/memory/operations/{operation_key}/inputs"),
+                        format!(
+                            "transform operation `{operation_key}` must declare exactly one input pairing"
+                        ),
+                        &mut issues,
+                    );
+                }
+                validate_unique_operation_refs(
+                    file_label,
+                    operation_key,
+                    inputs,
+                    &format!("/memory/operations/{operation_key}/inputs"),
+                    &mut issues,
+                );
+                validate_operation_refs(
+                    file_label,
+                    operation_key,
+                    inputs,
+                    &manifest.memory.spaces,
+                    &format!("/memory/operations/{operation_key}/inputs"),
+                    &mut issues,
+                );
+                validate_operation_ref(
+                    file_label,
+                    operation_key,
+                    output,
+                    &manifest.memory.spaces,
+                    &format!("/memory/operations/{operation_key}/output"),
+                    &mut issues,
+                );
+                validate_memory_trigger(
+                    file_label,
+                    operation_key,
+                    trigger,
+                    &manifest.memory.spaces,
+                    &mut issues,
+                );
+            }
+            MemoryOperation::Delete {
+                targets,
+                trigger,
+                cascade_derived_records: _,
+                ..
+            } => {
+                validate_unique_operation_targets(file_label, operation_key, targets, &mut issues);
+                for (idx, target) in targets.iter().enumerate() {
+                    if !manifest.memory.spaces.contains_key(&target.space) {
+                        push_manifest_error(
+                            file_label,
+                            &format!("/memory/operations/{operation_key}/targets/{idx}/space"),
+                            format!(
+                                "delete operation `{operation_key}` references unknown target space `{}`",
+                                target.space
+                            ),
+                            &mut issues,
+                        );
+                    }
+                }
+                validate_memory_trigger(
+                    file_label,
+                    operation_key,
+                    trigger,
+                    &manifest.memory.spaces,
+                    &mut issues,
+                );
+            }
+        }
+    }
+
+    if let Some(manifest_path) = manifest_path
+        && let Ok(package_root) = manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .canonicalize()
+    {
+        for (record_type_key, record_type) in &manifest.memory.record_types {
+            match resolve_existing_relative_file(&package_root, &record_type.schema) {
+                Ok(schema_path) => validate_source_schema_file(
+                    file_label,
+                    record_type_key,
+                    &schema_path,
+                    &mut issues,
+                ),
+                Err(err) => push_manifest_error(
+                    file_label,
+                    &format!("/memory/record_types/{record_type_key}/schema"),
+                    format!(
+                        "record type `{record_type_key}` schema `{}` is invalid: {err}",
+                        record_type.schema
+                    ),
+                    &mut issues,
+                ),
+            }
+        }
+    }
+
+    issues
+}
+
+fn validate_memory_keys<'a>(
+    file_label: &str,
+    section: &str,
+    keys: impl Iterator<Item = &'a String>,
+    issues: &mut Vec<LintIssue>,
+) {
+    for key in keys {
+        if !is_valid_memory_key(key) {
+            push_manifest_error(
+                file_label,
+                &format!("/memory/{section}/{key}"),
+                format!("`{key}` is not a valid Memory Blueprint identifier"),
+                issues,
+            );
+        }
+    }
+}
+
+fn validate_unique_strings(
+    file_label: &str,
+    pointer: &str,
+    label: &str,
+    values: &[String],
+    issues: &mut Vec<LintIssue>,
+) {
+    let mut seen = HashSet::new();
+    for value in values {
+        if !seen.insert(value.clone()) {
+            push_manifest_error(
+                file_label,
+                pointer,
+                format!("duplicate {label} `{value}` is not allowed"),
+                issues,
+            );
+        }
+    }
+}
+
+fn validate_unique_retrieval_modes(
+    file_label: &str,
+    space_key: &str,
+    values: &[MemoryRetrievalMode],
+    issues: &mut Vec<LintIssue>,
+) {
+    let mut seen = HashSet::new();
+    for value in values {
+        if !seen.insert(value.clone()) {
+            push_manifest_error(
+                file_label,
+                &format!("/memory/spaces/{space_key}/retrieval/modes"),
+                format!(
+                    "duplicate retrieval mode `{}` is not allowed",
+                    memory_retrieval_mode_name(value)
+                ),
+                issues,
+            );
+        }
+    }
+}
+
+fn memory_retrieval_mode_name(value: &MemoryRetrievalMode) -> &'static str {
+    match value {
+        MemoryRetrievalMode::Key => "key",
+        MemoryRetrievalMode::Filter => "filter",
+        MemoryRetrievalMode::Chronological => "chronological",
+        MemoryRetrievalMode::FullText => "full_text",
+        MemoryRetrievalMode::Semantic => "semantic",
+    }
+}
+
+fn validate_unique_operation_refs(
+    file_label: &str,
+    operation_key: &str,
+    refs: &[MemoryOperationRef],
+    pointer: &str,
+    issues: &mut Vec<LintIssue>,
+) {
+    let mut seen = HashSet::new();
+    for reference in refs {
+        let identity = (reference.space.clone(), reference.record_type.clone());
+        if !seen.insert(identity.clone()) {
+            push_manifest_error(
+                file_label,
+                pointer,
+                format!(
+                    "operation `{operation_key}` repeats input pair `{}` + `{}`",
+                    identity.0, identity.1
+                ),
+                issues,
+            );
+        }
+    }
+}
+
+fn validate_unique_operation_targets(
+    file_label: &str,
+    operation_key: &str,
+    targets: &[MemoryOperationTarget],
+    issues: &mut Vec<LintIssue>,
+) {
+    let mut seen = HashSet::new();
+    for target in targets {
+        if !seen.insert(target.space.clone()) {
+            push_manifest_error(
+                file_label,
+                &format!("/memory/operations/{operation_key}/targets"),
+                format!(
+                    "delete operation `{operation_key}` repeats target space `{}`",
+                    target.space
+                ),
+                issues,
+            );
+        }
+    }
+}
+
+fn validate_operation_refs(
+    file_label: &str,
+    operation_key: &str,
+    refs: &[MemoryOperationRef],
+    spaces: &HashMap<String, MemorySpace>,
+    pointer: &str,
+    issues: &mut Vec<LintIssue>,
+) {
+    for reference in refs {
+        validate_operation_ref(
+            file_label,
+            operation_key,
+            reference,
+            spaces,
+            pointer,
+            issues,
+        );
+    }
+}
+
+fn validate_operation_ref(
+    file_label: &str,
+    operation_key: &str,
+    reference: &MemoryOperationRef,
+    spaces: &HashMap<String, MemorySpace>,
+    pointer: &str,
+    issues: &mut Vec<LintIssue>,
+) {
+    let Some(space) = spaces.get(&reference.space) else {
+        push_manifest_error(
+            file_label,
+            pointer,
+            format!(
+                "operation `{operation_key}` references unknown space `{}`",
+                reference.space
+            ),
+            issues,
+        );
+        return;
+    };
+
+    if !space.record_types.contains(&reference.record_type) {
+        push_manifest_error(
+            file_label,
+            pointer,
+            format!(
+                "operation `{operation_key}` references record type `{}` that is not permitted by space `{}`",
+                reference.record_type, reference.space
+            ),
+            issues,
+        );
+    }
+}
+
+fn validate_memory_trigger(
+    file_label: &str,
+    operation_key: &str,
+    trigger: &MemoryTrigger,
+    spaces: &HashMap<String, MemorySpace>,
+    issues: &mut Vec<LintIssue>,
+) {
+    match trigger {
+        MemoryTrigger::External => {}
+        MemoryTrigger::RecordCount { space, threshold } => {
+            if *threshold == 0 {
+                push_manifest_error(
+                    file_label,
+                    &format!("/memory/operations/{operation_key}/trigger/threshold"),
+                    format!(
+                        "record_count trigger for operation `{operation_key}` must use a positive threshold"
+                    ),
+                    issues,
+                );
+            }
+            if !spaces.contains_key(space) {
+                push_manifest_error(
+                    file_label,
+                    &format!("/memory/operations/{operation_key}/trigger/space"),
+                    format!(
+                        "record_count trigger for operation `{operation_key}` references unknown space `{space}`"
+                    ),
+                    issues,
+                );
+            }
+        }
+        MemoryTrigger::Capacity { space } => match spaces.get(space) {
+            Some(target_space)
+                if target_space
+                    .capacity
+                    .as_ref()
+                    .map(|capacity| capacity.max_records > 0)
+                    .unwrap_or(false) => {}
+            Some(_) => push_manifest_error(
+                file_label,
+                &format!("/memory/operations/{operation_key}/trigger/space"),
+                format!(
+                    "capacity trigger for operation `{operation_key}` requires space `{space}` to declare capacity.max_records"
+                ),
+                issues,
+            ),
+            None => push_manifest_error(
+                file_label,
+                &format!("/memory/operations/{operation_key}/trigger/space"),
+                format!(
+                    "capacity trigger for operation `{operation_key}` references unknown space `{space}`"
+                ),
+                issues,
+            ),
+        },
+        MemoryTrigger::Interval { every } => {
+            if !is_supported_positive_iso8601_duration(every) {
+                push_manifest_error(
+                    file_label,
+                    &format!("/memory/operations/{operation_key}/trigger/every"),
+                    format!(
+                        "interval trigger for operation `{operation_key}` must use the supported positive ISO 8601 duration subset"
+                    ),
+                    issues,
+                );
+            }
+        }
+    }
+}
+
+fn validate_memory_operation_raw(
+    file_label: &str,
+    value: &Value,
+    operation_key: &str,
+    issues: &mut Vec<LintIssue>,
+) {
+    let Some(operation) = value
+        .get("memory")
+        .and_then(Value::as_object)
+        .and_then(|memory| memory.get("operations"))
+        .and_then(Value::as_object)
+        .and_then(|operations| operations.get(operation_key))
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+
+    let Some(operation_type) = operation.get("type").and_then(Value::as_str) else {
+        return;
+    };
+
+    let required: &[&str];
+    let forbidden: &[&str];
+    match operation_type {
+        "consolidate" => {
+            required = &[
+                "type",
+                "description",
+                "trigger",
+                "inputs",
+                "output",
+                "source_handling",
+                "preserve_provenance",
+            ];
+            forbidden = &["targets", "cascade_derived_records"];
+        }
+        "transform" => {
+            required = &[
+                "type",
+                "description",
+                "trigger",
+                "inputs",
+                "output",
+                "source_handling",
+                "preserve_provenance",
+            ];
+            forbidden = &["targets", "cascade_derived_records"];
+        }
+        "delete" => {
+            required = &[
+                "type",
+                "description",
+                "trigger",
+                "targets",
+                "cascade_derived_records",
+            ];
+            forbidden = &["inputs", "output", "source_handling", "preserve_provenance"];
+        }
+        _ => return,
+    }
+
+    for field in required {
+        if !operation.contains_key(*field) {
+            push_manifest_error(
+                file_label,
+                &format!("/memory/operations/{operation_key}"),
+                format!("operation `{operation_key}` is missing required field `{field}`"),
+                issues,
+            );
+        }
+    }
+
+    for field in forbidden {
+        if operation.contains_key(*field) {
+            push_manifest_error(
+                file_label,
+                &format!("/memory/operations/{operation_key}/{field}"),
+                format!(
+                    "operation `{operation_key}` of type `{operation_type}` must not declare `{field}`"
+                ),
+                issues,
+            );
+        }
+    }
+
+    if let Some(trigger) = operation.get("trigger").and_then(Value::as_object)
+        && let Some(trigger_type) = trigger.get("type").and_then(Value::as_str)
+    {
+        let allowed_fields: &[&str] = match trigger_type {
+            "external" => &["type"],
+            "record_count" => &["type", "space", "threshold"],
+            "capacity" => &["type", "space"],
+            "interval" => &["type", "every"],
+            _ => return,
+        };
+
+        for key in trigger.keys() {
+            if !allowed_fields.contains(&key.as_str()) {
+                push_manifest_error(
+                    file_label,
+                    &format!("/memory/operations/{operation_key}/trigger/{key}"),
+                    format!(
+                        "trigger type `{trigger_type}` for operation `{operation_key}` must not declare `{key}`"
+                    ),
+                    issues,
+                );
+            }
+        }
+    }
+}
+
+fn validate_source_schema_file(
+    _file_label: &str,
+    _record_type_key: &str,
+    schema_path: &Path,
+    issues: &mut Vec<LintIssue>,
+) {
+    let schema_file = schema_path.to_string_lossy().to_string();
+    let text = match fs::read_to_string(schema_path) {
+        Ok(text) => text,
+        Err(err) => {
+            issues.push(LintIssue {
+                file: schema_file,
+                level: "error",
+                message: format!("failed to read source schema: {err}"),
+                instance_path: "".into(),
+                schema_path: "".into(),
+            });
+            return;
+        }
+    };
+
+    let schema_value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(err) => {
+            issues.push(LintIssue {
+                file: schema_file,
+                level: "error",
+                message: format!("source schema is not valid JSON: {err}"),
+                instance_path: "".into(),
+                schema_path: "".into(),
+            });
+            return;
+        }
+    };
+
+    let schema_static: &'static Value = Box::leak(Box::new(schema_value.clone()));
+    if let Err(err) = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(schema_static)
+    {
+        issues.push(LintIssue {
+            file: schema_file.clone(),
+            level: "error",
+            message: format!("source schema is not valid JSON Schema Draft 2020-12: {err}"),
+            instance_path: "".into(),
+            schema_path: "".into(),
+        });
+    }
+
+    validate_source_schema_tree(&schema_file, "", &schema_value, issues);
+}
+
+fn validate_source_schema_tree(
+    schema_file: &str,
+    pointer: &str,
+    value: &Value,
+    issues: &mut Vec<LintIssue>,
+) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                let child_pointer = json_pointer_child(pointer, key);
+                if key.starts_with("x-agentpm-") {
+                    match key.as_str() {
+                        "x-agentpm-data-class" => {
+                            if !matches!(
+                                child.as_str(),
+                                Some(
+                                    "public"
+                                        | "internal"
+                                        | "personal"
+                                        | "authentication"
+                                        | "financial"
+                                        | "health"
+                                        | "legal"
+                                        | "operational"
+                                        | "other"
+                                )
+                            ) {
+                                issues.push(LintIssue {
+                                    file: schema_file.to_string(),
+                                    level: "error",
+                                    message: format!(
+                                        "`{key}` must be one of the supported AgentPM data-class values"
+                                    ),
+                                    instance_path: child_pointer.clone(),
+                                    schema_path: "".into(),
+                                });
+                            }
+                        }
+                        "x-agentpm-sensitivity" => {
+                            if !matches!(
+                                child.as_str(),
+                                Some("low" | "moderate" | "high" | "critical")
+                            ) {
+                                issues.push(LintIssue {
+                                    file: schema_file.to_string(),
+                                    level: "error",
+                                    message: format!(
+                                        "`{key}` must be one of the supported AgentPM sensitivity values"
+                                    ),
+                                    instance_path: child_pointer.clone(),
+                                    schema_path: "".into(),
+                                });
+                            }
+                        }
+                        "x-agentpm-persist" | "x-agentpm-shareable" => {
+                            if !child.is_boolean() {
+                                issues.push(LintIssue {
+                                    file: schema_file.to_string(),
+                                    level: "error",
+                                    message: format!("`{key}` must be a boolean"),
+                                    instance_path: child_pointer.clone(),
+                                    schema_path: "".into(),
+                                });
+                            }
+                        }
+                        _ => issues.push(LintIssue {
+                            file: schema_file.to_string(),
+                            level: "error",
+                            message: format!("unsupported AgentPM governance keyword `{key}`"),
+                            instance_path: child_pointer.clone(),
+                            schema_path: "".into(),
+                        }),
+                    }
+                }
+
+                if key == "$ref"
+                    && let Some(reference) = child.as_str()
+                    && !reference.starts_with('#')
+                {
+                    issues.push(LintIssue {
+                        file: schema_file.to_string(),
+                        level: "error",
+                        message: "only in-document `#...` JSON Schema references are supported in Memory Blueprint source schemas".into(),
+                        instance_path: child_pointer.clone(),
+                        schema_path: "".into(),
+                    });
+                }
+
+                validate_source_schema_tree(schema_file, &child_pointer, child, issues);
+            }
+        }
+        Value::Array(items) => {
+            for (idx, child) in items.iter().enumerate() {
+                validate_source_schema_tree(
+                    schema_file,
+                    &json_pointer_child(pointer, &idx.to_string()),
+                    child,
+                    issues,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn resolve_existing_relative_file(root: &Path, relative: &str) -> Result<PathBuf> {
+    let candidate = root.join(relative);
+    let resolved = candidate
+        .canonicalize()
+        .with_context(|| format!("reading {}", candidate.display()))?;
+    if !resolved.starts_with(root) {
+        return Err(anyhow!(
+            "resolved path escapes the package root: {}",
+            candidate.display()
+        ));
+    }
+    if !resolved.is_file() {
+        return Err(anyhow!("not a file: {}", candidate.display()));
+    }
+    Ok(resolved)
+}
+
+fn push_manifest_error(
+    file_label: &str,
+    instance_path: &str,
+    message: String,
+    issues: &mut Vec<LintIssue>,
+) {
+    issues.push(LintIssue {
+        file: file_label.to_string(),
+        level: "error",
+        message,
+        instance_path: instance_path.to_string(),
+        schema_path: "".into(),
+    });
+}
+
+fn json_pointer_child(base: &str, key: &str) -> String {
+    let escaped = key.replace('~', "~0").replace('/', "~1");
+    if base.is_empty() {
+        format!("/{escaped}")
+    } else {
+        format!("{base}/{escaped}")
+    }
+}
+
+fn is_valid_memory_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_lowercase() => {}
+        _ => return false,
+    }
+    chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+}
+
+fn is_supported_positive_iso8601_duration(value: &str) -> bool {
+    if !value.starts_with('P') {
+        return false;
+    }
+    let body = &value[1..];
+    if body.is_empty() {
+        return false;
+    }
+    if let Some(weeks) = body.strip_suffix('W') {
+        return is_positive_integer(weeks);
+    }
+
+    let (date_part, time_part) = match body.split_once('T') {
+        Some((date, time)) => (date, Some(time)),
+        None => (body, None),
+    };
+
+    let mut seen_any = false;
+    let mut seen_positive = false;
+
+    if !date_part.is_empty()
+        && !consume_duration_section(date_part, &['D'], &mut seen_any, &mut seen_positive)
+    {
+        return false;
+    }
+
+    if let Some(time_part) = time_part {
+        if time_part.is_empty() {
+            return false;
+        }
+        if !consume_duration_section(
+            time_part,
+            &['H', 'M', 'S'],
+            &mut seen_any,
+            &mut seen_positive,
+        ) {
+            return false;
+        }
+    }
+
+    seen_any && seen_positive
+}
+
+fn consume_duration_section(
+    section: &str,
+    allowed_units: &[char],
+    seen_any: &mut bool,
+    seen_positive: &mut bool,
+) -> bool {
+    let mut idx = 0usize;
+    let bytes = section.as_bytes();
+    let mut used_units = HashSet::new();
+
+    while idx < bytes.len() {
+        let start = idx;
+        while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+            idx += 1;
+        }
+        if start == idx || idx >= bytes.len() {
+            return false;
+        }
+
+        let value = &section[start..idx];
+        let unit = section.as_bytes()[idx] as char;
+        idx += 1;
+
+        if !allowed_units.contains(&unit) || !used_units.insert(unit) {
+            return false;
+        }
+        *seen_any = true;
+        if !is_positive_integer(value) {
+            return false;
+        }
+        if value != "0" {
+            *seen_positive = true;
+        }
+    }
+
+    true
+}
+
+fn is_positive_integer(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().all(|ch| ch.is_ascii_digit())
+        && value.parse::<u64>().map(|num| num > 0).unwrap_or(false)
 }
 
 fn canonical_interpreter(cmd: &str) -> String {
@@ -921,6 +1891,116 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("agentpm-{label}-{nanos}.json"))
+    }
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("agentpm-{label}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_fixture_file(dir: &Path, relative: &str, contents: &str) {
+        let path = dir.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, contents).unwrap();
+    }
+
+    fn assert_manifest_file_ok(dir: &Path, manifest: Value, extra_files: &[(&str, &str)]) {
+        for (relative, contents) in extra_files {
+            write_fixture_file(dir, relative, contents);
+        }
+        let manifest_path = dir.join("agent.json");
+        write_manifest_pretty(&manifest_path, &manifest).unwrap();
+        let (mut loaded, _) = load_manifest_value(&manifest_path).unwrap();
+        let (ok, issues) = validate_manifest_value(
+            &schema_path(),
+            &manifest_path.to_string_lossy(),
+            &mut loaded,
+            false,
+        )
+        .unwrap();
+        assert!(ok, "expected manifest to validate, got issues: {issues:#?}");
+    }
+
+    fn assert_manifest_file_invalid(
+        dir: &Path,
+        manifest: Value,
+        extra_files: &[(&str, &str)],
+    ) -> Vec<LintIssue> {
+        for (relative, contents) in extra_files {
+            write_fixture_file(dir, relative, contents);
+        }
+        let manifest_path = dir.join("agent.json");
+        write_manifest_pretty(&manifest_path, &manifest).unwrap();
+        let (mut loaded, _) = load_manifest_value(&manifest_path).unwrap();
+        let (ok, issues) = validate_manifest_value(
+            &schema_path(),
+            &manifest_path.to_string_lossy(),
+            &mut loaded,
+            false,
+        )
+        .unwrap();
+        assert!(!ok, "expected manifest to fail validation");
+        issues
+    }
+
+    fn base_memory_manifest() -> Value {
+        json!({
+            "kind": "memory",
+            "name": "conversation-continuity",
+            "version": "0.1.0",
+            "description": "Portable structure for conversational continuity memory.",
+            "memory": {
+                "scopes": {
+                    "user": {
+                        "description": "The user whose memory is being retained."
+                    }
+                },
+                "record_types": {
+                    "user_preference": {
+                        "version": "1.0.0",
+                        "description": "Durable structured preferences for one user.",
+                        "schema": "schemas/user-preference.schema.json"
+                    }
+                },
+                "spaces": {
+                    "profile": {
+                        "description": "The current durable profile for one user.",
+                        "model": "document",
+                        "record_types": ["user_preference"],
+                        "scope": ["user"],
+                        "retrieval": {
+                            "modes": ["key"]
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    fn valid_memory_schema() -> &'static str {
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "favorite_color": {
+      "type": "string",
+      "x-agentpm-data-class": "personal",
+      "x-agentpm-sensitivity": "moderate",
+      "x-agentpm-persist": true,
+      "x-agentpm-shareable": false
+    }
+  },
+  "required": ["favorite_color"],
+  "additionalProperties": false
+}
+"#
     }
 
     #[test]
@@ -1368,6 +2448,559 @@ mod tests {
                 }
             }
         }));
+    }
+
+    #[test]
+    fn valid_memory_manifest_with_source_schema_and_governance_annotations_validates() {
+        let dir = temp_dir("memory-valid-schema");
+        assert_manifest_file_ok(
+            &dir,
+            base_memory_manifest(),
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_unknown_scope_reference() {
+        let dir = temp_dir("memory-unknown-scope");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["scope"] = json!(["account"]);
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/memory/spaces/profile/scope/0"),
+            "expected unknown scope failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_unknown_record_type_reference() {
+        let dir = temp_dir("memory-unknown-record-type");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["record_types"] = json!(["missing_type"]);
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| { issue.instance_path == "/memory/spaces/profile/record_types/0" }),
+            "expected unknown record type failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_document_without_key_retrieval() {
+        let dir = temp_dir("memory-document-without-key");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["retrieval"]["modes"] = json!(["filter"]);
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/memory/spaces/profile/retrieval/modes"),
+            "expected document retrieval semantic failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_sequence_without_chronological_retrieval() {
+        let dir = temp_dir("memory-sequence-without-chronological");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["model"] = json!("sequence");
+        manifest["memory"]["spaces"]["profile"]["retrieval"]["modes"] = json!(["key"]);
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/memory/spaces/profile/retrieval/modes"),
+            "expected sequence retrieval semantic failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_document_append_only() {
+        let dir = temp_dir("memory-document-append-only");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["constraints"] = json!({ "append_only": true });
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory/spaces/profile/constraints/append_only"
+            }),
+            "expected document append_only semantic failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_accept_collection_append_only() {
+        let dir = temp_dir("memory-collection-append-only");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["model"] = json!("collection");
+        manifest["memory"]["spaces"]["profile"]["constraints"] = json!({ "append_only": true });
+
+        assert_manifest_file_ok(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_accept_sequence_append_only() {
+        let dir = temp_dir("memory-sequence-append-only");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["model"] = json!("sequence");
+        manifest["memory"]["spaces"]["profile"]["retrieval"]["modes"] = json!(["chronological"]);
+        manifest["memory"]["spaces"]["profile"]["constraints"] = json!({ "append_only": true });
+
+        assert_manifest_file_ok(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_missing_source_schema_file() {
+        let dir = temp_dir("memory-missing-schema-file");
+        let issues = assert_manifest_file_invalid(&dir, base_memory_manifest(), &[]);
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory/record_types/user_preference/schema"
+            }),
+            "expected missing schema file failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_invalid_source_schema_json() {
+        let dir = temp_dir("memory-invalid-schema-json");
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            base_memory_manifest(),
+            &[("schemas/user-preference.schema.json", "{ not-json }")],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.message.contains("source schema is not valid JSON")),
+            "expected invalid JSON schema failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_invalid_source_schema_draft() {
+        let dir = temp_dir("memory-invalid-schema-draft");
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            base_memory_manifest(),
+            &[(
+                "schemas/user-preference.schema.json",
+                r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": 7
+}
+"#,
+            )],
+        );
+
+        assert!(
+            issues.iter().any(|issue| issue
+                .message
+                .contains("source schema is not valid JSON Schema Draft 2020-12")),
+            "expected invalid Draft 2020-12 schema failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_unknown_governance_keyword() {
+        let dir = temp_dir("memory-unknown-governance-keyword");
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            base_memory_manifest(),
+            &[(
+                "schemas/user-preference.schema.json",
+                r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "favorite_color": {
+      "type": "string",
+      "x-agentpm-unknown": "nope"
+    }
+  }
+}
+"#,
+            )],
+        );
+
+        assert!(
+            issues.iter().any(
+                |issue| issue.file.ends_with("schemas/user-preference.schema.json")
+                    && issue.instance_path == "/properties/favorite_color/x-agentpm-unknown"
+            ),
+            "expected unknown governance keyword failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_invalid_governance_value_types() {
+        let dir = temp_dir("memory-invalid-governance-values");
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            base_memory_manifest(),
+            &[(
+                "schemas/user-preference.schema.json",
+                r##"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "$defs": {
+    "detail": {
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "string",
+          "x-agentpm-data-class": "secret",
+          "x-agentpm-shareable": "sometimes"
+        }
+      }
+    }
+  },
+  "properties": {
+    "detail": {
+      "allOf": [
+        { "$ref": "#/$defs/detail" }
+      ],
+      "x-agentpm-persist": "yes"
+    }
+  }
+}
+"##,
+            )],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path
+                    == "/$defs/detail/properties/note/x-agentpm-data-class")
+                && issues
+                    .iter()
+                    .any(|issue| issue.instance_path == "/properties/detail/x-agentpm-persist")
+                && issues.iter().any(|issue| issue.instance_path
+                    == "/$defs/detail/properties/note/x-agentpm-shareable"),
+            "expected invalid governance values failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_external_schema_refs() {
+        let dir = temp_dir("memory-external-schema-ref");
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            base_memory_manifest(),
+            &[(
+                "schemas/user-preference.schema.json",
+                r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "https://example.com/schema.json"
+}
+"#,
+            )],
+        );
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/$ref"),
+            "expected external $ref rejection, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_ambiguous_retention_duration() {
+        let dir = temp_dir("memory-ambiguous-retention-duration");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["retention"] = json!({
+            "ttl": "P1M",
+            "on_expire": "delete"
+        });
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/memory/spaces/profile/retention/ttl"),
+            "expected retention duration failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_interval_trigger_invalid_duration() {
+        let dir = temp_dir("memory-invalid-interval-trigger");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["operations"] = json!({
+            "transform_profile": {
+                "type": "transform",
+                "description": "Transform profile memory.",
+                "trigger": {
+                    "type": "interval",
+                    "every": "P1M"
+                },
+                "inputs": [
+                    {
+                        "space": "profile",
+                        "record_type": "user_preference"
+                    }
+                ],
+                "output": {
+                    "space": "profile",
+                    "record_type": "user_preference"
+                },
+                "source_handling": "retain",
+                "preserve_provenance": true
+            }
+        });
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory/operations/transform_profile/trigger/every"
+            }),
+            "expected interval duration failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_record_count_trigger_zero_threshold() {
+        let dir = temp_dir("memory-zero-record-count-threshold");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["history"] = json!({
+            "description": "History records for one user.",
+            "model": "sequence",
+            "record_types": ["user_preference"],
+            "scope": ["user"],
+            "retrieval": {
+                "modes": ["chronological"]
+            }
+        });
+        manifest["memory"]["operations"] = json!({
+            "consolidate_history": {
+                "type": "consolidate",
+                "description": "Consolidate history records.",
+                "trigger": {
+                    "type": "record_count",
+                    "space": "history",
+                    "threshold": 0
+                },
+                "inputs": [
+                    {
+                        "space": "history",
+                        "record_type": "user_preference"
+                    }
+                ],
+                "output": {
+                    "space": "profile",
+                    "record_type": "user_preference"
+                },
+                "source_handling": "retain",
+                "preserve_provenance": true
+            }
+        });
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory/operations/consolidate_history/trigger/threshold"
+            }),
+            "expected record_count threshold failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_duplicate_scope_in_space() {
+        let dir = temp_dir("memory-duplicate-scope");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["scope"] = json!(["user", "user"]);
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/memory/spaces/profile/scope"),
+            "expected duplicate scope failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_duplicate_record_type_in_space() {
+        let dir = temp_dir("memory-duplicate-record-type");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["record_types"] =
+            json!(["user_preference", "user_preference"]);
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/memory/spaces/profile/record_types"),
+            "expected duplicate record_type failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_capacity_trigger_without_capacity() {
+        let dir = temp_dir("memory-capacity-trigger-without-capacity");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["operations"] = json!({
+            "compact_profile": {
+                "type": "delete",
+                "description": "Delete profile records.",
+                "trigger": {
+                    "type": "capacity",
+                    "space": "profile"
+                },
+                "targets": [
+                    { "space": "profile" }
+                ],
+                "cascade_derived_records": false
+            }
+        });
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+        );
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory/operations/compact_profile/trigger/space"
+            }),
+            "expected capacity trigger semantic failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_operation_record_type_not_permitted_by_space() {
+        let dir = temp_dir("memory-operation-record-type-mismatch");
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["record_types"]["summary"] = json!({
+            "version": "1.0.0",
+            "description": "Summary record.",
+            "schema": "schemas/summary.schema.json"
+        });
+        manifest["memory"]["operations"] = json!({
+            "transform_profile": {
+                "type": "transform",
+                "description": "Transform profile memory.",
+                "trigger": { "type": "external" },
+                "inputs": [
+                    {
+                        "space": "profile",
+                        "record_type": "summary"
+                    }
+                ],
+                "output": {
+                    "space": "profile",
+                    "record_type": "user_preference"
+                },
+                "source_handling": "retain",
+                "preserve_provenance": true
+            }
+        });
+
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            manifest,
+            &[
+                ("schemas/user-preference.schema.json", valid_memory_schema()),
+                ("schemas/summary.schema.json", valid_memory_schema()),
+            ],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/memory/operations/transform_profile/inputs"),
+            "expected operation record-type compatibility failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
