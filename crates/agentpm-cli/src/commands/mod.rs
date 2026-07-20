@@ -6,6 +6,7 @@ pub mod keys;
 pub mod knowledge;
 pub mod lint;
 pub mod login;
+pub mod memory;
 pub mod namespace;
 pub mod new;
 pub mod publish;
@@ -24,11 +25,14 @@ pub enum Commands {
     /// Scaffold agent.json (tool, agent, template, skill, or knowledge)
     Init(init::InitArgs),
 
-    /// Lint agent.json (tool, agent, template, skill, or knowledge)
+    /// Lint agent.json (tool, agent, template, skill, knowledge, or memory)
     Lint(lint::LintArgs),
 
     /// Build or inspect a Knowledge package
     Knowledge(knowledge::KnowledgeArgs),
+
+    /// Build resolved contracts for a Memory Blueprint
+    Memory(memory::MemoryArgs),
 
     /// Publish a tool to the registry
     Publish(publish::PublishArgs),

@@ -1,5 +1,5 @@
 use crate::semver::types::Lock;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::{
     fs,
     io::Write,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 const DEFAULT_MANIFEST_SCHEMA_URL: &str = "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json";
@@ -663,7 +663,11 @@ pub fn validate_manifest_value(
 
 fn resolve_existing_manifest_path(file_label: &str) -> Option<PathBuf> {
     let path = PathBuf::from(file_label);
-    path.exists().then_some(path)
+    if !path.exists() {
+        return None;
+    }
+
+    path.canonicalize().ok().or(Some(path))
 }
 
 fn validate_memory_manifest_semantics(
@@ -1482,12 +1486,16 @@ fn validate_source_schema_tree(
     }
 }
 
-fn resolve_existing_relative_file(root: &Path, relative: &str) -> Result<PathBuf> {
-    let candidate = root.join(relative);
+pub(crate) fn resolve_existing_relative_file(root: &Path, relative: &str) -> Result<PathBuf> {
+    let safe_rel = parse_safe_relative_path(relative)?;
+    let canonical_root = root
+        .canonicalize()
+        .with_context(|| format!("reading package root {}", root.display()))?;
+    let candidate = canonical_root.join(&safe_rel);
     let resolved = candidate
         .canonicalize()
         .with_context(|| format!("reading {}", candidate.display()))?;
-    if !resolved.starts_with(root) {
+    if !resolved.starts_with(&canonical_root) {
         return Err(anyhow!(
             "resolved path escapes the package root: {}",
             candidate.display()
@@ -1497,6 +1505,28 @@ fn resolve_existing_relative_file(root: &Path, relative: &str) -> Result<PathBuf
         return Err(anyhow!("not a file: {}", candidate.display()));
     }
     Ok(resolved)
+}
+
+pub(crate) fn parse_safe_relative_path(path: &str) -> Result<PathBuf> {
+    if path.trim().is_empty() {
+        bail!("path must not be empty");
+    }
+
+    let parsed = PathBuf::from(path);
+    if parsed.is_absolute() {
+        bail!("path must be package-relative");
+    }
+
+    for component in parsed.components() {
+        match component {
+            Component::Normal(_) => {}
+            Component::CurDir => {}
+            Component::ParentDir => bail!("path must not contain `..`"),
+            Component::RootDir | Component::Prefix(_) => bail!("path must be package-relative"),
+        }
+    }
+
+    Ok(parsed)
 }
 
 fn push_manifest_error(
@@ -2677,6 +2707,50 @@ mod tests {
             )],
         );
 
+        assert!(
+            issues.iter().any(
+                |issue| issue.file.ends_with("schemas/user-preference.schema.json")
+                    && issue.instance_path == "/properties/favorite_color/x-agentpm-unknown"
+            ),
+            "expected unknown governance keyword failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_unknown_governance_keyword_for_default_agent_json_path() {
+        let dir = temp_dir("memory-unknown-governance-default-path");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "favorite_color": {
+      "type": "string",
+      "x-agentpm-unknown": "nope"
+    }
+  }
+}
+"#,
+        );
+
+        let manifest_path = dir.join("agent.json");
+        write_manifest_pretty(&manifest_path, &base_memory_manifest()).unwrap();
+
+        let cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&dir).unwrap();
+
+        let result = {
+            let (mut loaded, _) = load_manifest_value(Path::new("agent.json")).unwrap();
+            validate_manifest_value(&schema_path(), "agent.json", &mut loaded, false).unwrap()
+        };
+
+        std::env::set_current_dir(cwd).unwrap();
+
+        let (ok, issues) = result;
+        assert!(!ok, "expected manifest to fail validation");
         assert!(
             issues.iter().any(
                 |issue| issue.file.ends_with("schemas/user-preference.schema.json")
