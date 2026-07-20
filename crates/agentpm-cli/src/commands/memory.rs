@@ -625,7 +625,7 @@ mod tests {
                     "user_preference": {
                         "version": "1.0.0",
                         "description": "A durable user preference record.",
-                        "schema": "schemas/user-preference.schema.json"
+                        "schema": "schemas/interaction.schema.json"
                     }
                 },
                 "spaces": {
@@ -744,12 +744,12 @@ mod tests {
         let dir = temp_dir("simple-document");
         write_fixture_file(
             &dir,
-            "schemas/user-preference.schema.json",
+            "schemas/interaction.schema.json",
             preference_schema(),
         );
         let manifest_path = write_manifest(&dir, simple_memory_manifest());
         let manifest_before = fs::read(&manifest_path).unwrap();
-        let schema_before = fs::read(dir.join("schemas/user-preference.schema.json")).unwrap();
+        let schema_before = fs::read(dir.join("schemas/interaction.schema.json")).unwrap();
 
         let summary = execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
         assert_eq!(summary.contract_count, 1);
@@ -767,7 +767,7 @@ mod tests {
         assert_eq!(index_value["contracts"].as_array().unwrap().len(), 1);
         assert_eq!(
             index_value["contracts"][0]["source_schema"],
-            "schemas/user-preference.schema.json"
+            "schemas/interaction.schema.json"
         );
         assert_eq!(
             index_value["contracts"][0]["path"],
@@ -813,7 +813,7 @@ mod tests {
 
         assert_eq!(fs::read(&manifest_path).unwrap(), manifest_before);
         assert_eq!(
-            fs::read(dir.join("schemas/user-preference.schema.json")).unwrap(),
+            fs::read(dir.join("schemas/interaction.schema.json")).unwrap(),
             schema_before
         );
         let _ = fs::remove_dir_all(dir);
@@ -977,7 +977,7 @@ mod tests {
         let dir = temp_dir("self-contained");
         write_fixture_file(
             &dir,
-            "schemas/user-preference.schema.json",
+            "schemas/interaction.schema.json",
             preference_schema(),
         );
         let manifest_path = write_manifest(&dir, simple_memory_manifest());
@@ -1042,7 +1042,7 @@ mod tests {
         let dir = temp_dir("remove-stale");
         write_fixture_file(
             &dir,
-            "schemas/user-preference.schema.json",
+            "schemas/interaction.schema.json",
             preference_schema(),
         );
         let manifest_path = write_manifest(&dir, simple_memory_manifest());
@@ -1072,7 +1072,7 @@ mod tests {
         let dir = temp_dir("identical-rebuild");
         write_fixture_file(
             &dir,
-            "schemas/user-preference.schema.json",
+            "schemas/interaction.schema.json",
             preference_schema(),
         );
         let manifest_path = write_manifest(&dir, simple_memory_manifest());
@@ -1098,7 +1098,7 @@ mod tests {
         let dir = temp_dir("preserve-on-failure");
         write_fixture_file(
             &dir,
-            "schemas/user-preference.schema.json",
+            "schemas/interaction.schema.json",
             preference_schema(),
         );
         let manifest_path = write_manifest(&dir, simple_memory_manifest());
@@ -1136,7 +1136,7 @@ mod tests {
         let dir = temp_dir("check-no-write");
         write_fixture_file(
             &dir,
-            "schemas/user-preference.schema.json",
+            "schemas/interaction.schema.json",
             preference_schema(),
         );
         let manifest_path = write_manifest(&dir, simple_memory_manifest());

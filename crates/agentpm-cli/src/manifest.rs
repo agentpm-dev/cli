@@ -1996,7 +1996,7 @@ mod tests {
                     "user_preference": {
                         "version": "1.0.0",
                         "description": "Durable structured preferences for one user.",
-                        "schema": "schemas/user-preference.schema.json"
+                        "schema": "schemas/interaction.schema.json"
                     }
                 },
                 "spaces": {
@@ -2345,7 +2345,7 @@ mod tests {
                     "user_preference": {
                         "version": "1.0.0",
                         "description": "Durable structured preferences for one user.",
-                        "schema": "schemas/user-preference.schema.json"
+                        "schema": "schemas/interaction.schema.json"
                     }
                 },
                 "spaces": {
@@ -2486,7 +2486,7 @@ mod tests {
         assert_manifest_file_ok(
             &dir,
             base_memory_manifest(),
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -2500,7 +2500,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -2521,7 +2521,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -2542,7 +2542,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -2564,7 +2564,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -2585,7 +2585,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -2607,7 +2607,7 @@ mod tests {
         assert_manifest_file_ok(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -2623,7 +2623,7 @@ mod tests {
         assert_manifest_file_ok(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -2648,7 +2648,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             base_memory_manifest(),
-            &[("schemas/user-preference.schema.json", "{ not-json }")],
+            &[("schemas/interaction.schema.json", "{ not-json }")],
         );
 
         assert!(
@@ -2667,7 +2667,7 @@ mod tests {
             &dir,
             base_memory_manifest(),
             &[(
-                "schemas/user-preference.schema.json",
+                "schemas/interaction.schema.json",
                 r#"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": 7
@@ -2692,7 +2692,7 @@ mod tests {
             &dir,
             base_memory_manifest(),
             &[(
-                "schemas/user-preference.schema.json",
+                "schemas/interaction.schema.json",
                 r#"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -2709,7 +2709,7 @@ mod tests {
 
         assert!(
             issues.iter().any(
-                |issue| issue.file.ends_with("schemas/user-preference.schema.json")
+                |issue| issue.file.ends_with("schemas/interaction.schema.json")
                     && issue.instance_path == "/properties/favorite_color/x-agentpm-unknown"
             ),
             "expected unknown governance keyword failure, got: {issues:#?}"
@@ -2722,7 +2722,7 @@ mod tests {
         let dir = temp_dir("memory-unknown-governance-default-path");
         write_fixture_file(
             &dir,
-            "schemas/user-preference.schema.json",
+            "schemas/interaction.schema.json",
             r#"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -2753,7 +2753,7 @@ mod tests {
         assert!(!ok, "expected manifest to fail validation");
         assert!(
             issues.iter().any(
-                |issue| issue.file.ends_with("schemas/user-preference.schema.json")
+                |issue| issue.file.ends_with("schemas/interaction.schema.json")
                     && issue.instance_path == "/properties/favorite_color/x-agentpm-unknown"
             ),
             "expected unknown governance keyword failure, got: {issues:#?}"
@@ -2768,7 +2768,7 @@ mod tests {
             &dir,
             base_memory_manifest(),
             &[(
-                "schemas/user-preference.schema.json",
+                "schemas/interaction.schema.json",
                 r##"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -2819,7 +2819,7 @@ mod tests {
             &dir,
             base_memory_manifest(),
             &[(
-                "schemas/user-preference.schema.json",
+                "schemas/interaction.schema.json",
                 r#"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$ref": "https://example.com/schema.json"
@@ -2847,7 +2847,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -2889,7 +2889,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -2941,7 +2941,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -2962,7 +2962,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -2984,7 +2984,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -3018,7 +3018,7 @@ mod tests {
         let issues = assert_manifest_file_invalid(
             &dir,
             manifest,
-            &[("schemas/user-preference.schema.json", valid_memory_schema())],
+            &[("schemas/interaction.schema.json", valid_memory_schema())],
         );
 
         assert!(
@@ -3063,7 +3063,7 @@ mod tests {
             &dir,
             manifest,
             &[
-                ("schemas/user-preference.schema.json", valid_memory_schema()),
+                ("schemas/interaction.schema.json", valid_memory_schema()),
                 ("schemas/summary.schema.json", valid_memory_schema()),
             ],
         );
@@ -4676,7 +4676,7 @@ mod tests {
                     "user_preference": {
                         "version": "1.0.0",
                         "description": "Durable structured preferences for one user.",
-                        "schema": "schemas/user-preference.schema.json"
+                        "schema": "schemas/interaction.schema.json"
                     }
                 },
                 "spaces": {
