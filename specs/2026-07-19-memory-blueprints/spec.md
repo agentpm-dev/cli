@@ -731,7 +731,7 @@ Starter manifest:
       "user_preference": {
         "version": "1.0.0",
         "description": "Durable structured preferences for one user.",
-        "schema": "schemas/interaction.schema.json"
+        "schema": "schemas/user-preference.schema.json"
       }
     },
     "spaces": {
