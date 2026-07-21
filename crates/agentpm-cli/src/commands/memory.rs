@@ -5,14 +5,18 @@ use crate::manifest::{
 };
 use crate::prelude::*;
 use anyhow::{Context, anyhow, bail};
+use chrono::{SecondsFormat, Utc};
 use jsonschema::{Draft, JSONSchema};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeSet;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const MEMORY_BUILD_METADATA_TYPE: &str = "agentpm-memory-contracts";
+const MEMORY_BUILD_METADATA_FORMAT_VERSION: u64 = 1;
 const MEMORY_CONTRACT_INDEX_TYPE: &str = "agentpm-memory-contract-index";
 const MEMORY_CONTRACT_INDEX_FORMAT_VERSION: u64 = 1;
 
@@ -42,7 +46,7 @@ pub(crate) enum MemoryBuildMode {
     Write,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct MemoryContractIndexEntry {
     pub space: String,
     pub record_type: String,
@@ -50,9 +54,10 @@ pub(crate) struct MemoryContractIndexEntry {
     pub model: String,
     pub source_schema: String,
     pub path: String,
+    pub sha256: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct MemoryContractIndex {
     pub r#type: String,
     pub format_version: u64,
@@ -62,14 +67,79 @@ pub(crate) struct MemoryContractIndex {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GeneratedMemoryContract {
     pub path: String,
+    pub sha256: String,
     pub schema_bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GeneratedMemorySourceSchema {
+    pub path: String,
+    pub sha256: String,
+    pub bytes: Vec<u8>,
+    pub canonical_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GeneratedMemoryBuild {
+    pub source_schemas: Vec<GeneratedMemorySourceSchema>,
     pub index: MemoryContractIndex,
     pub index_bytes: Vec<u8>,
     pub contracts: Vec<GeneratedMemoryContract>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct MemoryBuildSourceSchemaEntry {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct MemoryBuildMetadata {
+    pub r#type: String,
+    pub format_version: u64,
+    pub built_at: String,
+    pub agentpm_version: String,
+    pub manifest_path: String,
+    pub source_manifest_hash: String,
+    pub source_schemas: Vec<MemoryBuildSourceSchemaEntry>,
+    pub source_schemas_hash: String,
+    pub source_contract_inputs_hash: String,
+    pub contracts_index_hash: String,
+    pub contracts_hash: String,
+    pub contract_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MemoryBuildMismatchKind {
+    MissingBuild,
+    UnsupportedFormat,
+    StaleSourceInput,
+    MissingOutput,
+    ModifiedOutput,
+    UnexpectedOutput,
+    InconsistentMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MemoryBuildMismatch {
+    pub kind: MemoryBuildMismatchKind,
+    pub path: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MemoryBuildCheckResult {
+    pub mismatches: Vec<MemoryBuildMismatch>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) struct ExecutedMemoryBuild {
+    pub manifest: MemoryManifest,
+    pub summary: MemoryBuildSummary,
+    pub output: GeneratedMemoryBuild,
+    pub build_metadata: MemoryBuildMetadata,
+    pub check: Option<MemoryBuildCheckResult>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,14 +175,13 @@ pub(crate) fn execute_memory_build(
     manifest_path: &Path,
     mode: MemoryBuildMode,
 ) -> Result<MemoryBuildSummary> {
-    let (_, summary, _) = execute_memory_build_with_output(manifest_path, mode)?;
-    Ok(summary)
+    Ok(execute_memory_build_with_output(manifest_path, mode)?.summary)
 }
 
 pub(crate) fn execute_memory_build_with_output(
     manifest_path: &Path,
     mode: MemoryBuildMode,
-) -> Result<(MemoryManifest, MemoryBuildSummary, GeneratedMemoryBuild)> {
+) -> Result<ExecutedMemoryBuild> {
     let manifest_path = resolve_manifest_path(manifest_path)?;
     let package_root = manifest_path
         .parent()
@@ -135,9 +204,19 @@ pub(crate) fn execute_memory_build_with_output(
 
     let manifest = parse_memory_manifest(&manifest_value)?;
     let output = generate_memory_build(&package_root, &manifest)?;
+    let build_metadata = generate_memory_build_metadata(&manifest_path, &manifest_value, &output)?;
+    let check = if mode == MemoryBuildMode::Check {
+        Some(check_memory_build_freshness(
+            &package_root,
+            &output,
+            &build_metadata,
+        )?)
+    } else {
+        None
+    };
 
     if mode == MemoryBuildMode::Write {
-        write_generated_memory_build(&package_root, &output)?;
+        write_generated_memory_build(&package_root, &output, &build_metadata)?;
     }
 
     let summary = MemoryBuildSummary {
@@ -151,7 +230,13 @@ pub(crate) fn execute_memory_build_with_output(
         contracts_dir: "memory/contracts".to_string(),
     };
 
-    Ok((manifest, summary, output))
+    Ok(ExecutedMemoryBuild {
+        manifest,
+        summary,
+        output,
+        build_metadata,
+        check,
+    })
 }
 
 fn print_build_summary(summary: &MemoryBuildSummary) {
@@ -220,6 +305,7 @@ fn generate_memory_build(
 ) -> Result<GeneratedMemoryBuild> {
     let mut contracts = Vec::new();
     let mut index_entries = Vec::new();
+    let mut source_schemas = BTreeMap::new();
     let mut seen_paths = BTreeSet::new();
     let mut seen_identities = BTreeSet::new();
 
@@ -260,10 +346,18 @@ fn generate_memory_build(
 
             let source_schema_path =
                 resolve_existing_relative_file(package_root, &record_type.schema)?;
-            let source_schema_text = fs::read_to_string(&source_schema_path)
+            let source_schema_bytes = fs::read(&source_schema_path)
                 .with_context(|| format!("reading {}", source_schema_path.display()))?;
-            let source_schema: Value = serde_json::from_str(&source_schema_text)
+            let source_schema: Value = serde_json::from_slice(&source_schema_bytes)
                 .with_context(|| format!("parsing JSON from {}", source_schema_path.display()))?;
+            source_schemas
+                .entry(record_type.schema.clone())
+                .or_insert_with(|| GeneratedMemorySourceSchema {
+                    path: record_type.schema.clone(),
+                    sha256: sha256_prefixed(&source_schema_bytes),
+                    canonical_bytes: canonical_json_bytes(&source_schema),
+                    bytes: source_schema_bytes.clone(),
+                });
 
             let contract = generate_contract_schema(
                 manifest,
@@ -284,8 +378,10 @@ fn generate_memory_build(
                 })?;
 
             let schema_bytes = pretty_json_bytes(&contract)?;
+            let contract_sha256 = sha256_prefixed(&schema_bytes);
             contracts.push(GeneratedMemoryContract {
                 path: contract_path.clone(),
+                sha256: contract_sha256.clone(),
                 schema_bytes,
             });
             index_entries.push(MemoryContractIndexEntry {
@@ -295,6 +391,7 @@ fn generate_memory_build(
                 model: memory_space_model_name(&space.model).to_string(),
                 source_schema: record_type.schema.clone(),
                 path: contract_path,
+                sha256: contract_sha256,
             });
         }
     }
@@ -311,9 +408,10 @@ fn generate_memory_build(
         format_version: MEMORY_CONTRACT_INDEX_FORMAT_VERSION,
         contracts: index_entries,
     };
-    let index_bytes = pretty_json_bytes(&index)?;
+    let index_bytes = pretty_json_bytes(&serde_json::to_value(&index)?)?;
 
     Ok(GeneratedMemoryBuild {
+        source_schemas: source_schemas.into_values().collect(),
         index,
         index_bytes,
         contracts,
@@ -484,6 +582,487 @@ fn pretty_json_bytes(value: &impl Serialize) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn canonical_json_bytes(value: &Value) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_canonical_json(value, &mut out);
+    out
+}
+
+fn write_canonical_json(value: &Value, out: &mut Vec<u8>) {
+    match value {
+        Value::Null => out.extend_from_slice(b"null"),
+        Value::Bool(value) => {
+            if *value {
+                out.extend_from_slice(b"true");
+            } else {
+                out.extend_from_slice(b"false");
+            }
+        }
+        Value::Number(value) => out.extend_from_slice(value.to_string().as_bytes()),
+        Value::String(value) => out.extend_from_slice(
+            serde_json::to_string(value)
+                .expect("serializing JSON string")
+                .as_bytes(),
+        ),
+        Value::Array(values) => {
+            out.push(b'[');
+            for (idx, item) in values.iter().enumerate() {
+                if idx > 0 {
+                    out.push(b',');
+                }
+                write_canonical_json(item, out);
+            }
+            out.push(b']');
+        }
+        Value::Object(map) => {
+            out.push(b'{');
+            let mut entries = map.iter().collect::<Vec<_>>();
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+            for (idx, (key, item)) in entries.into_iter().enumerate() {
+                if idx > 0 {
+                    out.push(b',');
+                }
+                out.extend_from_slice(
+                    serde_json::to_string(key)
+                        .expect("serializing JSON object key")
+                        .as_bytes(),
+                );
+                out.push(b':');
+                write_canonical_json(item, out);
+            }
+            out.push(b'}');
+        }
+    }
+}
+
+fn aggregate_named_bytes(entries: &[(&str, &[u8])]) -> String {
+    let mut hasher = Sha256::new();
+    for (name, bytes) in entries {
+        hasher.update(name.as_bytes());
+        hasher.update([0]);
+        hasher.update(bytes);
+        hasher.update([0xff]);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn sha256_prefixed(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn generate_memory_build_metadata(
+    manifest_path: &Path,
+    manifest_value: &Value,
+    output: &GeneratedMemoryBuild,
+) -> Result<MemoryBuildMetadata> {
+    let manifest_bytes =
+        fs::read(manifest_path).with_context(|| format!("reading {}", manifest_path.display()))?;
+    let manifest_sha256 = sha256_prefixed(&manifest_bytes);
+    let memory_value = manifest_value
+        .get("memory")
+        .ok_or_else(|| anyhow!("manifest is missing top-level memory object"))?;
+    let memory_canonical = canonical_json_bytes(memory_value);
+
+    let source_schemas_hash = aggregate_named_bytes(
+        &output
+            .source_schemas
+            .iter()
+            .map(|source| (source.path.as_str(), source.bytes.as_slice()))
+            .collect::<Vec<_>>(),
+    );
+    let source_schemas = output
+        .source_schemas
+        .iter()
+        .map(|source| MemoryBuildSourceSchemaEntry {
+            path: source.path.clone(),
+            sha256: source.sha256.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let mut contract_input_entries = Vec::with_capacity(output.source_schemas.len() + 1);
+    contract_input_entries.push(("memory", memory_canonical.as_slice()));
+    let source_canonical_entries = output
+        .source_schemas
+        .iter()
+        .map(|source| (source.path.as_str(), source.canonical_bytes.as_slice()))
+        .collect::<Vec<_>>();
+    contract_input_entries.extend(source_canonical_entries);
+    let source_contract_inputs_hash = aggregate_named_bytes(&contract_input_entries);
+
+    let contracts_index_hash = sha256_prefixed(&output.index_bytes);
+    let contracts_hash = aggregate_named_bytes(
+        &output
+            .contracts
+            .iter()
+            .map(|contract| (contract.path.as_str(), contract.schema_bytes.as_slice()))
+            .collect::<Vec<_>>(),
+    );
+
+    Ok(MemoryBuildMetadata {
+        r#type: MEMORY_BUILD_METADATA_TYPE.to_string(),
+        format_version: MEMORY_BUILD_METADATA_FORMAT_VERSION,
+        built_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        agentpm_version: env!("CARGO_PKG_VERSION").to_string(),
+        manifest_path: "agent.json".to_string(),
+        source_manifest_hash: manifest_sha256,
+        source_schemas,
+        source_schemas_hash,
+        source_contract_inputs_hash,
+        contracts_index_hash,
+        contracts_hash,
+        contract_count: output.contracts.len() as u64,
+    })
+}
+
+fn check_memory_build_freshness(
+    package_root: &Path,
+    output: &GeneratedMemoryBuild,
+    expected_metadata: &MemoryBuildMetadata,
+) -> Result<MemoryBuildCheckResult> {
+    let mut mismatches = Vec::new();
+    let memory_dir = package_root.join("memory");
+    let build_path = memory_dir.join("build.json");
+    let contracts_dir = memory_dir.join("contracts");
+    let index_path = contracts_dir.join("index.json");
+    let expected_contracts = output
+        .contracts
+        .iter()
+        .map(|contract| (contract.path.clone(), contract))
+        .collect::<BTreeMap<_, _>>();
+
+    let build_metadata = load_memory_build_metadata(&build_path, &mut mismatches)?;
+
+    if let Some(metadata) = build_metadata.as_ref() {
+        compare_build_metadata(metadata, expected_metadata, &mut mismatches);
+    }
+
+    if !contracts_dir.exists() {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::MissingOutput,
+            path: "memory/contracts".to_string(),
+            detail: "generated contracts directory is missing".to_string(),
+        });
+        return Ok(MemoryBuildCheckResult { mismatches });
+    }
+
+    let actual_index = load_contract_index(&index_path, &mut mismatches)?;
+    let actual_index_hash = fs::read(&index_path)
+        .ok()
+        .map(|bytes| sha256_prefixed(&bytes));
+    if let (Some(actual_hash), Some(metadata)) =
+        (actual_index_hash.as_ref(), build_metadata.as_ref())
+        && metadata.contracts_index_hash != *actual_hash
+    {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::InconsistentMetadata,
+            path: "memory/build.json".to_string(),
+            detail: "contracts_index_hash does not match memory/contracts/index.json".to_string(),
+        });
+    }
+
+    if let Some(index) = actual_index.as_ref() {
+        if index.contracts.len() as u64 != expected_metadata.contract_count {
+            mismatches.push(MemoryBuildMismatch {
+                kind: MemoryBuildMismatchKind::InconsistentMetadata,
+                path: "memory/contracts/index.json".to_string(),
+                detail: format!(
+                    "contract count {} does not match expected {}",
+                    index.contracts.len(),
+                    expected_metadata.contract_count
+                ),
+            });
+        }
+        if index.contracts != output.index.contracts {
+            mismatches.push(MemoryBuildMismatch {
+                kind: MemoryBuildMismatchKind::ModifiedOutput,
+                path: "memory/contracts/index.json".to_string(),
+                detail: "contract index entries do not match the expected generated output"
+                    .to_string(),
+            });
+        }
+    }
+
+    let mut actual_contract_hash_entries = Vec::new();
+    for (contract_path, expected_contract) in &expected_contracts {
+        let relative = contract_path
+            .strip_prefix("memory/contracts/")
+            .unwrap_or(contract_path.as_str());
+        let file_path = contracts_dir.join(relative);
+        if !file_path.exists() {
+            mismatches.push(MemoryBuildMismatch {
+                kind: MemoryBuildMismatchKind::MissingOutput,
+                path: contract_path.clone(),
+                detail: "generated contract file is missing".to_string(),
+            });
+            continue;
+        }
+        let bytes =
+            fs::read(&file_path).with_context(|| format!("reading {}", file_path.display()))?;
+        let actual_hash = sha256_prefixed(&bytes);
+        actual_contract_hash_entries.push((contract_path.as_str(), bytes));
+        if actual_hash != expected_contract.sha256 {
+            mismatches.push(MemoryBuildMismatch {
+                kind: MemoryBuildMismatchKind::ModifiedOutput,
+                path: contract_path.clone(),
+                detail: format!(
+                    "generated contract hash {} does not match expected {}",
+                    actual_hash, expected_contract.sha256
+                ),
+            });
+        }
+    }
+
+    let actual_generated_contracts_hash = aggregate_named_bytes(
+        &actual_contract_hash_entries
+            .iter()
+            .map(|(path, bytes)| (*path, bytes.as_slice()))
+            .collect::<Vec<_>>(),
+    );
+    if let Some(metadata) = build_metadata.as_ref()
+        && metadata.contracts_hash != actual_generated_contracts_hash
+    {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::InconsistentMetadata,
+            path: "memory/build.json".to_string(),
+            detail: "contracts_hash does not match the current generated contracts".to_string(),
+        });
+    }
+
+    let expected_files = expected_contracts
+        .keys()
+        .map(|path| {
+            path.strip_prefix("memory/contracts/")
+                .unwrap_or(path.as_str())
+                .to_string()
+        })
+        .chain(std::iter::once("index.json".to_string()))
+        .collect::<BTreeSet<_>>();
+    for entry in fs::read_dir(&contracts_dir)
+        .with_context(|| format!("reading {}", contracts_dir.display()))?
+    {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            mismatches.push(MemoryBuildMismatch {
+                kind: MemoryBuildMismatchKind::UnexpectedOutput,
+                path: format!("memory/contracts/{name}"),
+                detail: "unexpected generated subdirectory".to_string(),
+            });
+            continue;
+        }
+        if !expected_files.contains(&name) {
+            mismatches.push(MemoryBuildMismatch {
+                kind: MemoryBuildMismatchKind::UnexpectedOutput,
+                path: format!("memory/contracts/{name}"),
+                detail: "unexpected generated file".to_string(),
+            });
+        }
+    }
+
+    Ok(MemoryBuildCheckResult { mismatches })
+}
+
+fn load_memory_build_metadata(
+    build_path: &Path,
+    mismatches: &mut Vec<MemoryBuildMismatch>,
+) -> Result<Option<MemoryBuildMetadata>> {
+    if !build_path.exists() {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::MissingBuild,
+            path: "memory/build.json".to_string(),
+            detail: "build metadata file is missing".to_string(),
+        });
+        return Ok(None);
+    }
+    let bytes =
+        fs::read(build_path).with_context(|| format!("reading {}", build_path.display()))?;
+    let metadata: MemoryBuildMetadata = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(err) => {
+            mismatches.push(MemoryBuildMismatch {
+                kind: MemoryBuildMismatchKind::InconsistentMetadata,
+                path: "memory/build.json".to_string(),
+                detail: format!("invalid build metadata JSON: {err}"),
+            });
+            return Ok(None);
+        }
+    };
+    if metadata.r#type != MEMORY_BUILD_METADATA_TYPE {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::UnsupportedFormat,
+            path: "memory/build.json".to_string(),
+            detail: format!("unsupported build metadata type `{}`", metadata.r#type),
+        });
+    }
+    if metadata.format_version != MEMORY_BUILD_METADATA_FORMAT_VERSION {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::UnsupportedFormat,
+            path: "memory/build.json".to_string(),
+            detail: format!(
+                "unsupported build metadata format_version `{}`",
+                metadata.format_version
+            ),
+        });
+    }
+    Ok(Some(metadata))
+}
+
+fn load_contract_index(
+    index_path: &Path,
+    mismatches: &mut Vec<MemoryBuildMismatch>,
+) -> Result<Option<MemoryContractIndex>> {
+    if !index_path.exists() {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::MissingOutput,
+            path: "memory/contracts/index.json".to_string(),
+            detail: "generated contract index is missing".to_string(),
+        });
+        return Ok(None);
+    }
+    let bytes =
+        fs::read(index_path).with_context(|| format!("reading {}", index_path.display()))?;
+    let index: MemoryContractIndex = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(err) => {
+            mismatches.push(MemoryBuildMismatch {
+                kind: MemoryBuildMismatchKind::ModifiedOutput,
+                path: "memory/contracts/index.json".to_string(),
+                detail: format!("invalid contract index JSON: {err}"),
+            });
+            return Ok(None);
+        }
+    };
+    if index.r#type != MEMORY_CONTRACT_INDEX_TYPE {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::UnsupportedFormat,
+            path: "memory/contracts/index.json".to_string(),
+            detail: format!("unsupported contract index type `{}`", index.r#type),
+        });
+    }
+    if index.format_version != MEMORY_CONTRACT_INDEX_FORMAT_VERSION {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::UnsupportedFormat,
+            path: "memory/contracts/index.json".to_string(),
+            detail: format!(
+                "unsupported contract index format_version `{}`",
+                index.format_version
+            ),
+        });
+    }
+    Ok(Some(index))
+}
+
+fn compare_build_metadata(
+    actual: &MemoryBuildMetadata,
+    expected: &MemoryBuildMetadata,
+    mismatches: &mut Vec<MemoryBuildMismatch>,
+) {
+    if actual.manifest_path != expected.manifest_path {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::InconsistentMetadata,
+            path: "memory/build.json".to_string(),
+            detail: "manifest_path is incorrect".to_string(),
+        });
+    }
+    if actual.source_manifest_hash != expected.source_manifest_hash {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::StaleSourceInput,
+            path: "agent.json".to_string(),
+            detail: "source_manifest_hash does not match the current manifest bytes".to_string(),
+        });
+    }
+    compare_source_schema_entries(&actual.source_schemas, &expected.source_schemas, mismatches);
+    if actual.source_schemas_hash != expected.source_schemas_hash {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::StaleSourceInput,
+            path: "memory/build.json".to_string(),
+            detail: "source_schemas_hash does not match the current source schema contents"
+                .to_string(),
+        });
+    }
+    if actual.source_contract_inputs_hash != expected.source_contract_inputs_hash {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::StaleSourceInput,
+            path: "memory/build.json".to_string(),
+            detail: "source_contract_inputs_hash does not match the current contract inputs"
+                .to_string(),
+        });
+    }
+    if actual.contract_count != expected.contract_count {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::InconsistentMetadata,
+            path: "memory/build.json".to_string(),
+            detail: format!(
+                "contract_count {} does not match expected {}",
+                actual.contract_count, expected.contract_count
+            ),
+        });
+    }
+    if actual.contracts_index_hash != expected.contracts_index_hash {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::InconsistentMetadata,
+            path: "memory/build.json".to_string(),
+            detail: "contracts_index_hash does not match the expected contract index bytes"
+                .to_string(),
+        });
+    }
+    if actual.contracts_hash != expected.contracts_hash {
+        mismatches.push(MemoryBuildMismatch {
+            kind: MemoryBuildMismatchKind::InconsistentMetadata,
+            path: "memory/build.json".to_string(),
+            detail: "contracts_hash does not match the expected generated contracts".to_string(),
+        });
+    }
+}
+
+fn compare_source_schema_entries(
+    actual: &[MemoryBuildSourceSchemaEntry],
+    expected: &[MemoryBuildSourceSchemaEntry],
+    mismatches: &mut Vec<MemoryBuildMismatch>,
+) {
+    let actual_map = actual
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let expected_map = expected
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+
+    for expected_entry in expected {
+        match actual_map.get(expected_entry.path.as_str()) {
+            None => mismatches.push(MemoryBuildMismatch {
+                kind: MemoryBuildMismatchKind::StaleSourceInput,
+                path: expected_entry.path.clone(),
+                detail: "source schema entry is missing from build metadata".to_string(),
+            }),
+            Some(actual_sha) if *actual_sha != expected_entry.sha256 => {
+                mismatches.push(MemoryBuildMismatch {
+                    kind: MemoryBuildMismatchKind::StaleSourceInput,
+                    path: expected_entry.path.clone(),
+                    detail: format!(
+                        "source schema sha256 {} does not match expected {}",
+                        actual_sha, expected_entry.sha256
+                    ),
+                });
+            }
+            _ => {}
+        }
+    }
+    for actual_entry in actual {
+        if !expected_map.contains_key(actual_entry.path.as_str()) {
+            mismatches.push(MemoryBuildMismatch {
+                kind: MemoryBuildMismatchKind::InconsistentMetadata,
+                path: actual_entry.path.clone(),
+                detail: "unexpected source schema entry in build metadata".to_string(),
+            });
+        }
+    }
+}
+
 fn memory_space_model_name(model: &MemorySpaceModel) -> &'static str {
     match model {
         MemorySpaceModel::Document => "document",
@@ -505,7 +1084,11 @@ fn encode_uri_component(value: &str) -> String {
     out
 }
 
-fn write_generated_memory_build(package_root: &Path, output: &GeneratedMemoryBuild) -> Result<()> {
+fn write_generated_memory_build(
+    package_root: &Path,
+    output: &GeneratedMemoryBuild,
+    build_metadata: &MemoryBuildMetadata,
+) -> Result<()> {
     let memory_dir = package_root.join("memory");
     fs::create_dir_all(&memory_dir)
         .with_context(|| format!("creating {}", memory_dir.display()))?;
@@ -514,10 +1097,7 @@ fn write_generated_memory_build(package_root: &Path, output: &GeneratedMemoryBui
     let stage_dir = memory_dir.join(format!(".contracts-stage-{}", unique_suffix()));
     fs::create_dir_all(&stage_dir).with_context(|| format!("creating {}", stage_dir.display()))?;
 
-    write_manifest_pretty_atomic(
-        &stage_dir.join("index.json"),
-        &serde_json::to_value(&output.index)?,
-    )?;
+    write_bytes_atomic(&stage_dir.join("index.json"), &output.index_bytes)?;
 
     for contract in &output.contracts {
         let filename = Path::new(&contract.path).file_name().ok_or_else(|| {
@@ -527,12 +1107,46 @@ fn write_generated_memory_build(package_root: &Path, output: &GeneratedMemoryBui
             )
         })?;
         let file_path = stage_dir.join(filename);
-        let value: Value = serde_json::from_slice(&contract.schema_bytes)
-            .with_context(|| format!("parsing generated contract {}", contract.path))?;
-        write_manifest_pretty_atomic(&file_path, &value)?;
+        write_bytes_atomic(&file_path, &contract.schema_bytes)?;
     }
 
-    replace_dir_atomically(&stage_dir, &contracts_dir)
+    replace_dir_atomically(&stage_dir, &contracts_dir)?;
+    write_manifest_pretty_atomic(
+        &memory_dir.join("build.json"),
+        &serde_json::to_value(build_metadata)?,
+    )
+    .with_context(|| format!("writing {}", memory_dir.join("build.json").display()))?;
+    Ok(())
+}
+
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+
+    let tmp = path.with_extension("tmp");
+    {
+        let mut f = fs::File::create(&tmp)
+            .with_context(|| format!("opening temp file {}", tmp.display()))?;
+        use std::io::Write as _;
+        f.write_all(bytes)
+            .with_context(|| format!("writing {}", tmp.display()))?;
+        let _ = f.sync_all();
+    }
+
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+    fs::rename(&tmp, path)
+        .with_context(|| format!("renaming {} -> {}", tmp.display(), path.display()))?;
+
+    if let Some(parent) = path.parent()
+        && let Ok(dirf) = fs::File::open(parent)
+    {
+        let _ = dirf.sync_all();
+    }
+
+    Ok(())
 }
 
 fn replace_dir_atomically(stage_dir: &Path, target_dir: &Path) -> Result<()> {
@@ -739,6 +1353,18 @@ mod tests {
         );
     }
 
+    fn mismatch_paths(
+        check: &MemoryBuildCheckResult,
+        kind: MemoryBuildMismatchKind,
+    ) -> Vec<String> {
+        check
+            .mismatches
+            .iter()
+            .filter(|mismatch| mismatch.kind == kind)
+            .map(|mismatch| mismatch.path.clone())
+            .collect()
+    }
+
     #[test]
     fn memory_build_writes_simple_document_contract_and_index() {
         let dir = temp_dir("simple-document");
@@ -868,8 +1494,9 @@ mod tests {
             }),
         );
 
-        let (_, _, output) =
+        let executed =
             execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let output = executed.output;
         assert_eq!(output.contracts.len(), 2);
 
         let history: Value = serde_json::from_slice(
@@ -958,8 +1585,9 @@ mod tests {
             }),
         );
 
-        let (_, _, output) =
-            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let output = execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check)
+            .unwrap()
+            .output;
         assert_eq!(output.index.contracts.len(), 3);
         let entries = &output.index.contracts;
         assert_eq!(entries[0].space, "a_space");
@@ -1141,14 +1769,481 @@ mod tests {
         );
         let manifest_path = write_manifest(&dir, simple_memory_manifest());
 
-        let (_, summary, output) =
+        let executed =
             execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
-        assert_eq!(summary.contract_count, 1);
-        assert_eq!(output.contracts.len(), 1);
+        assert_eq!(executed.summary.contract_count, 1);
+        assert_eq!(executed.output.contracts.len(), 1);
+        let check = executed.check.unwrap();
+        assert_eq!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::MissingBuild),
+            vec!["memory/build.json".to_string()]
+        );
         assert!(!dir.join("memory/contracts/index.json").exists());
         assert!(
             !dir.join("memory/contracts/profile.user_preference.schema.json")
                 .exists()
+        );
+        assert!(!dir.join("memory/build.json").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_write_writes_build_metadata_and_contract_hashes() {
+        let dir = temp_dir("build-metadata");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Write).unwrap();
+        let build_json: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("memory/build.json")).unwrap())
+                .unwrap();
+        let index_json: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("memory/contracts/index.json")).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(build_json["type"], MEMORY_BUILD_METADATA_TYPE);
+        assert_eq!(build_json["format_version"], 1);
+        assert_eq!(build_json["manifest_path"], "agent.json");
+        assert_eq!(build_json["contract_count"], Value::from(1));
+        assert!(
+            build_json["source_manifest_hash"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        assert!(
+            build_json["source_schemas"][0]["sha256"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        assert_eq!(
+            build_json["source_schemas"][0]["path"],
+            "schemas/user-preference.schema.json"
+        );
+        assert!(
+            build_json["source_schemas_hash"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        assert!(
+            build_json["source_contract_inputs_hash"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        assert!(
+            build_json["contracts_index_hash"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        assert!(
+            build_json["contracts_hash"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        assert_eq!(
+            index_json["contracts"][0]["sha256"],
+            Value::String(executed.output.contracts[0].sha256.clone())
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_fresh_after_successful_build() {
+        let dir = temp_dir("check-fresh");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(check.mismatches.is_empty(), "{:#?}", check.mismatches);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_stale_manifest_bytes() {
+        let dir = temp_dir("check-stale-manifest");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        let original = fs::read_to_string(&manifest_path).unwrap();
+        fs::write(&manifest_path, original.replace("  ", "    ")).unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::StaleSourceInput)
+                .contains(&"agent.json".to_string())
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_stale_source_schema() {
+        let dir = temp_dir("check-stale-source");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema()
+                .replace(
+                    "\"x-agentpm-sensitivity\": \"low\"",
+                    "\"x-agentpm-sensitivity\": \"critical\"",
+                )
+                .as_str(),
+        );
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::StaleSourceInput)
+                .contains(&"schemas/user-preference.schema.json".to_string()),
+            "{:#?}",
+            check.mismatches
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_modified_contract() {
+        let dir = temp_dir("check-modified-contract");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        fs::write(
+            dir.join("memory/contracts/profile.user_preference.schema.json"),
+            "{\n  \"tampered\": true\n}\n",
+        )
+        .unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::ModifiedOutput)
+                .contains(&"memory/contracts/profile.user_preference.schema.json".to_string())
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_tampered_per_contract_hash_in_index() {
+        let dir = temp_dir("check-index-contract-hash");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        let mut index_json: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("memory/contracts/index.json")).unwrap(),
+        )
+        .unwrap();
+        index_json["contracts"][0]["sha256"] = Value::String("sha256:deadbeef".to_string());
+        write_manifest_pretty(&dir.join("memory/contracts/index.json"), &index_json).unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::ModifiedOutput)
+                .contains(&"memory/contracts/index.json".to_string()),
+            "{:#?}",
+            check.mismatches
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_tampered_index_identity_fields() {
+        let dir = temp_dir("check-index-identity");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        let mut index_json: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("memory/contracts/index.json")).unwrap(),
+        )
+        .unwrap();
+        index_json["contracts"][0]["space"] = Value::String("profile_renamed".to_string());
+        write_manifest_pretty(&dir.join("memory/contracts/index.json"), &index_json).unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::ModifiedOutput)
+                .contains(&"memory/contracts/index.json".to_string()),
+            "{:#?}",
+            check.mismatches
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_tampered_aggregate_contract_hash() {
+        let dir = temp_dir("check-aggregate-contract-hash");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        let mut build_json: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("memory/build.json")).unwrap())
+                .unwrap();
+        build_json["contracts_hash"] = Value::String("sha256:deadbeef".to_string());
+        write_manifest_pretty(&dir.join("memory/build.json"), &build_json).unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::InconsistentMetadata)
+                .contains(&"memory/build.json".to_string()),
+            "{:#?}",
+            check.mismatches
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_missing_and_unexpected_outputs() {
+        let dir = temp_dir("check-missing-extra");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        fs::remove_file(dir.join("memory/contracts/profile.user_preference.schema.json")).unwrap();
+        fs::write(dir.join("memory/contracts/extra.schema.json"), "{}\n").unwrap();
+        fs::create_dir_all(dir.join("memory/contracts/unexpected-dir")).unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::MissingOutput)
+                .contains(&"memory/contracts/profile.user_preference.schema.json".to_string())
+        );
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::UnexpectedOutput)
+                .contains(&"memory/contracts/extra.schema.json".to_string())
+        );
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::UnexpectedOutput)
+                .contains(&"memory/contracts/unexpected-dir".to_string())
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_missing_build_metadata_file() {
+        let dir = temp_dir("check-missing-build-json");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        fs::remove_file(dir.join("memory/build.json")).unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::MissingBuild)
+                .contains(&"memory/build.json".to_string()),
+            "{:#?}",
+            check.mismatches
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_incomplete_build_metadata_json() {
+        let dir = temp_dir("check-incomplete-build-json");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        fs::write(
+            dir.join("memory/build.json"),
+            "{\"type\":\"agentpm-memory-contracts\"}\n",
+        )
+        .unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::InconsistentMetadata)
+                .contains(&"memory/build.json".to_string()),
+            "{:#?}",
+            check.mismatches
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_unsupported_build_metadata_and_index_formats() {
+        let dir = temp_dir("check-unsupported-format");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        let mut build_json: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("memory/build.json")).unwrap())
+                .unwrap();
+        build_json["format_version"] = Value::from(99);
+        write_manifest_pretty(&dir.join("memory/build.json"), &build_json).unwrap();
+
+        let mut index_json: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("memory/contracts/index.json")).unwrap(),
+        )
+        .unwrap();
+        index_json["format_version"] = Value::from(99);
+        write_manifest_pretty(&dir.join("memory/contracts/index.json"), &index_json).unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        let unsupported = mismatch_paths(&check, MemoryBuildMismatchKind::UnsupportedFormat);
+        assert!(unsupported.contains(&"memory/build.json".to_string()));
+        assert!(unsupported.contains(&"memory/contracts/index.json".to_string()));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_ignores_informational_metadata_changes() {
+        let dir = temp_dir("check-informational-metadata");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        let original_contract =
+            fs::read(dir.join("memory/contracts/profile.user_preference.schema.json")).unwrap();
+        let original_index = fs::read(dir.join("memory/contracts/index.json")).unwrap();
+
+        let mut build_json: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("memory/build.json")).unwrap())
+                .unwrap();
+        build_json["built_at"] = Value::String("2099-01-01T00:00:00Z".to_string());
+        build_json["agentpm_version"] = Value::String("9.9.9".to_string());
+        write_manifest_pretty(&dir.join("memory/build.json"), &build_json).unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(check.mismatches.is_empty(), "{:#?}", check.mismatches);
+        assert_eq!(
+            fs::read(dir.join("memory/contracts/profile.user_preference.schema.json")).unwrap(),
+            original_contract
+        );
+        assert_eq!(
+            fs::read(dir.join("memory/contracts/index.json")).unwrap(),
+            original_index
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_build_check_mode_reports_inconsistent_contract_count_metadata() {
+        let dir = temp_dir("check-count-mismatch");
+        write_fixture_file(
+            &dir,
+            "schemas/user-preference.schema.json",
+            preference_schema(),
+        );
+        let manifest_path = write_manifest(&dir, simple_memory_manifest());
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        let mut build_json: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("memory/build.json")).unwrap())
+                .unwrap();
+        build_json["contract_count"] = Value::from(99);
+        write_manifest_pretty(&dir.join("memory/build.json"), &build_json).unwrap();
+
+        let executed =
+            execute_memory_build_with_output(&manifest_path, MemoryBuildMode::Check).unwrap();
+        let check = executed.check.unwrap();
+        assert!(
+            mismatch_paths(&check, MemoryBuildMismatchKind::InconsistentMetadata)
+                .contains(&"memory/build.json".to_string())
         );
 
         let _ = fs::remove_dir_all(dir);

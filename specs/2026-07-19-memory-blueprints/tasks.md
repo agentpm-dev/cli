@@ -151,6 +151,7 @@
 - [ ] Ensure publish preparation never rebuilds, repairs, normalizes, or rewrites Memory output.
 - [ ] Ensure publish preparation preserves the contents and modification times of `agent.json`, source schemas, generated contracts, the contract index, and `memory/build.json`.
 - [ ] Map Memory check failures to actionable publish errors for never-built, stale-source, modified-output, unsupported-format, inconsistent-metadata, and invalid-source states.
+- [ ] When stale authored input is the root cause, prioritize stale-source publish errors over downstream generated-output inconsistency signals so authors are told to rebuild rather than being overwhelmed by secondary hash/index mismatches.
 - [ ] Instruct authors to run `agentpm memory build` only where rebuilding is the appropriate recovery.
 - [ ] Include every declared source schema, `memory/build.json`, `memory/contracts/index.json`, and every indexed resolved contract in the package archive.
 - [ ] Fail archive preparation if required Memory files are excluded by archive filters, ignore rules, or path handling.
