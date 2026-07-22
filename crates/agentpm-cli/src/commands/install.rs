@@ -199,12 +199,14 @@ impl InstallArgs {
         let agents_dir = project_root.join(".agentpm/agents");
         let skills_dir = project_root.join(".agentpm/skills");
         let knowledge_dir = project_root.join(".agentpm/knowledge");
+        let memory_dir = project_root.join(".agentpm/memory");
         fs::ensure_dirs(&[
             &dl_dir,
             &tools_dir,
             &agents_dir,
             &skills_dir,
             &knowledge_dir,
+            &memory_dir,
         ])?;
         download_and_extract_all(
             &init,
@@ -214,6 +216,7 @@ impl InstallArgs {
                 agents_dir: &agents_dir,
                 skills_dir: &skills_dir,
                 knowledge_dir: &knowledge_dir,
+                memory_dir: &memory_dir,
             },
             self.refresh,
             quiet,
@@ -252,6 +255,13 @@ impl InstallArgs {
                     manifest_value,
                     "knowledge",
                     "Knowledge",
+                    spec,
+                    self.update_range,
+                )?,
+                PackageKind::Memory => maybe_update_manifest_dependency(
+                    manifest_value,
+                    "memory",
+                    "Memory",
                     spec,
                     self.update_range,
                 )?,
@@ -457,7 +467,7 @@ fn remove_superseded_direct_registry_roots(
         let expected_prefix = match kind {
             PackageKind::Agent => "agent:",
             PackageKind::Skill => "skill:",
-            PackageKind::Knowledge | PackageKind::Tool => return true,
+            PackageKind::Knowledge | PackageKind::Memory | PackageKind::Tool => return true,
         };
         if !key.starts_with(expected_prefix) {
             return true;
@@ -557,7 +567,7 @@ fn enqueue_manifest_dependencies(
                 )?);
             }
         }
-        PackageKind::Knowledge | PackageKind::Tool => {}
+        PackageKind::Knowledge | PackageKind::Memory | PackageKind::Tool => {}
     }
     Ok(())
 }
@@ -571,7 +581,7 @@ fn load_installed_manifest_value(
     let manifest_path = match kind {
         PackageKind::Agent => installed_agent_manifest_path(install_root, name, version)?,
         PackageKind::Skill => installed_skill_manifest_path(install_root, name, version)?,
-        PackageKind::Knowledge | PackageKind::Tool => return Ok(None),
+        PackageKind::Knowledge | PackageKind::Memory | PackageKind::Tool => return Ok(None),
     };
     if !manifest_path.exists() {
         return Err(anyhow!(
@@ -744,6 +754,7 @@ fn build_registry_package_roots(
                 }
             }
             PackageKind::Knowledge => unreachable!(),
+            PackageKind::Memory => unreachable!(),
             PackageKind::Tool => unreachable!(),
         };
 

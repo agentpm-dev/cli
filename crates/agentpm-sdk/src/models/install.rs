@@ -8,6 +8,7 @@ pub enum PackageKind {
     Agent,
     Skill,
     Knowledge,
+    Memory,
     Template,
 }
 

@@ -12,6 +12,7 @@ pub enum PackageKind {
     Agent,
     Skill,
     Knowledge,
+    Memory,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -186,6 +187,11 @@ impl DesiredSet {
                         meta,
                         "knowledge",
                         PackageKind::Knowledge,
+                    )?);
+                    items.extend(parse_manifest_requirements(
+                        meta,
+                        "memory",
+                        PackageKind::Memory,
                     )?);
                     Ok(DesiredSet { items })
                 }
@@ -605,6 +611,7 @@ impl PackageKind {
             PackageKind::Agent => "agent",
             PackageKind::Skill => "skill",
             PackageKind::Knowledge => "knowledge",
+            PackageKind::Memory => "memory",
         }
     }
 }

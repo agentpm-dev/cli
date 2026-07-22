@@ -143,12 +143,14 @@ impl NewArgs {
                 let agents_dir = target_dir.join(".agentpm/agents");
                 let skills_dir = target_dir.join(".agentpm/skills");
                 let knowledge_dir = target_dir.join(".agentpm/knowledge");
+                let memory_dir = target_dir.join(".agentpm/memory");
                 fs::ensure_dirs(&[
                     &cache_dir,
                     &tools_dir,
                     &agents_dir,
                     &skills_dir,
                     &knowledge_dir,
+                    &memory_dir,
                 ])?;
                 download_and_extract_all(
                     &init,
@@ -158,6 +160,7 @@ impl NewArgs {
                         agents_dir: &agents_dir,
                         skills_dir: &skills_dir,
                         knowledge_dir: &knowledge_dir,
+                        memory_dir: &memory_dir,
                     },
                     false,
                     quiet,
@@ -796,6 +799,7 @@ fn local_manifest_dependency_items(
                     PackageKind::Agent => agentpm_sdk::models::install::PackageKind::Agent,
                     PackageKind::Skill => agentpm_sdk::models::install::PackageKind::Skill,
                     PackageKind::Knowledge => agentpm_sdk::models::install::PackageKind::Knowledge,
+                    PackageKind::Memory => agentpm_sdk::models::install::PackageKind::Memory,
                 },
                 name: item.name,
                 range: item.range,

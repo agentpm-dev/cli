@@ -55,6 +55,7 @@ fn to_sdk_kind(kind: PackageKind) -> sdkm::PackageKind {
         PackageKind::Agent => sdkm::PackageKind::Agent,
         PackageKind::Skill => sdkm::PackageKind::Skill,
         PackageKind::Knowledge => sdkm::PackageKind::Knowledge,
+        PackageKind::Memory => sdkm::PackageKind::Memory,
     }
 }
 
@@ -64,6 +65,7 @@ fn from_sdk_kind(kind: sdkm::PackageKind) -> PackageKind {
         sdkm::PackageKind::Agent => PackageKind::Agent,
         sdkm::PackageKind::Skill => PackageKind::Skill,
         sdkm::PackageKind::Knowledge => PackageKind::Knowledge,
+        sdkm::PackageKind::Memory => PackageKind::Memory,
         sdkm::PackageKind::Template => {
             panic!("template packages are not supported in install resolution yet")
         }

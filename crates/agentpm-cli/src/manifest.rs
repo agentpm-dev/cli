@@ -312,13 +312,13 @@ pub struct KnowledgeManifest {
     pub knowledge: KnowledgeMetadata,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct MemoryScope {
     pub description: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct MemoryRecordType {
     pub version: String,
@@ -326,7 +326,7 @@ pub struct MemoryRecordType {
     pub schema: String,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MemorySpaceModel {
     Document,
@@ -334,7 +334,7 @@ pub enum MemorySpaceModel {
     Sequence,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryRetrievalMode {
     Key,
@@ -344,40 +344,40 @@ pub enum MemoryRetrievalMode {
     Semantic,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct MemoryRetrieval {
     pub modes: Vec<MemoryRetrievalMode>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct MemoryCapacity {
     pub max_records: u64,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryRetentionAction {
     Delete,
     Archive,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct MemoryRetention {
     pub ttl: String,
     pub on_expire: MemoryRetentionAction,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
 #[allow(dead_code)]
 pub struct MemoryConstraints {
     pub append_only: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct MemorySpace {
     pub description: String,
@@ -390,20 +390,20 @@ pub struct MemorySpace {
     pub constraints: Option<MemoryConstraints>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct MemoryOperationRef {
     pub space: String,
     pub record_type: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct MemoryOperationTarget {
     pub space: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(dead_code)]
 pub enum MemoryTrigger {
@@ -413,7 +413,7 @@ pub enum MemoryTrigger {
     Interval { every: String },
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MemorySourceHandling {
     Retain,
@@ -421,7 +421,7 @@ pub enum MemorySourceHandling {
     DeleteAfterSuccess,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(dead_code)]
 pub enum MemoryOperation {
@@ -452,7 +452,7 @@ pub enum MemoryOperation {
     },
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct MemoryMetadata {
     pub scopes: HashMap<String, MemoryScope>,
@@ -462,7 +462,7 @@ pub struct MemoryMetadata {
     pub operations: HashMap<String, MemoryOperation>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct MemoryManifest {
     pub kind: String,
