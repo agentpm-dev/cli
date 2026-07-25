@@ -4,13 +4,17 @@ use crate::commands::knowledge::{
     KnowledgeBuildMode, KnowledgeBuildSummary, execute_knowledge_build_with_manifest,
     parse_safe_relative_path, resolve_existing_file,
 };
+use crate::commands::memory::{
+    ExecutedMemoryBuild, MemoryBuildMismatch, MemoryBuildMismatchKind, MemoryBuildMode,
+    execute_memory_build_with_output,
+};
 use crate::keys::signing::{
     StoredKeyV1, decrypt_private, keystore_dir, prompt_passphrase_with_fallback,
 };
 use crate::manifest::{
-    AgentManifest, Entrypoint, KnowledgeManifest, PublishManifest, SkillManifest, TemplateManifest,
-    ToolManifest, load_manifest_value, parse_publish_manifest, resolve_schema_source,
-    validate_manifest_value,
+    AgentManifest, Entrypoint, KnowledgeManifest, MemoryManifest, PublishManifest, SkillManifest,
+    TemplateManifest, ToolManifest, load_manifest_value, parse_publish_manifest,
+    resolve_schema_source, validate_manifest_value,
 };
 use crate::prelude::*;
 use crate::ui::Step;
@@ -159,11 +163,8 @@ impl PublishArgs {
                 package_knowledge(mf, &manifest_path, &manifest_value)
                     .context("packaging knowledge into tar.gz")?
             }
-            PublishManifest::Memory(_) => {
-                bail!(
-                    "Memory Blueprint publishing is not yet available. Run `agentpm memory build` to verify your blueprint compiles and check the AgentPM changelog for publish support."
-                )
-            }
+            PublishManifest::Memory(mf) => package_memory(mf, &manifest_path, &manifest_value)
+                .context("packaging memory into tar.gz")?,
         };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
         if size_bytes > MAX_ARTIFACT_BYTES {
@@ -804,6 +805,82 @@ fn package_knowledge(
     Ok(out_path)
 }
 
+fn package_memory(
+    manifest: &MemoryManifest,
+    manifest_path: &Path,
+    manifest_value: &serde_json::Value,
+) -> Result<PathBuf> {
+    let root = manifest_path.parent().unwrap_or(Path::new("."));
+    let out_dir = root.join("target").join("agentpm");
+    fs::create_dir_all(&out_dir).ok();
+
+    let executed = run_memory_publish_build_check(manifest_path, manifest_value)?;
+
+    let out_path = out_dir.join(artifact_filename(&manifest.name, &manifest.version, None));
+    write_artifact_atomically(&out_path, |tar| {
+        let mut member_count: usize = 0;
+
+        let manifest_bytes = fs::read(manifest_path)?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        ensure_safe_tar_name("agent.json")?;
+        member_count += 1;
+        tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+
+        for record_type in executed.manifest.memory.record_types.values() {
+            append_declared_memory_file(
+                tar,
+                root,
+                &record_type.schema,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        append_declared_memory_file(tar, root, "memory/build.json", &mut member_count, &mut seen)?;
+        append_declared_memory_file(
+            tar,
+            root,
+            "memory/contracts/index.json",
+            &mut member_count,
+            &mut seen,
+        )?;
+
+        for contract in &executed.output.index.contracts {
+            append_declared_memory_file(tar, root, &contract.path, &mut member_count, &mut seen)?;
+        }
+
+        if let Some(readme_path) = manifest_value.get("readme").and_then(|v| v.as_str()) {
+            append_optional_memory_file(
+                tar,
+                root,
+                "readme",
+                readme_path,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        if let Some(license_file) = pick_license_paths(manifest_value).1 {
+            append_optional_memory_file(
+                tar,
+                root,
+                "license.file",
+                license_file,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        Ok(())
+    })?;
+    Ok(out_path)
+}
+
 fn run_knowledge_publish_build_check(manifest_path: &Path) -> Result<()> {
     let (knowledge_manifest, summary) =
         execute_knowledge_build_with_manifest(manifest_path, KnowledgeBuildMode::Check)?;
@@ -820,11 +897,129 @@ fn run_knowledge_publish_build_check(manifest_path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn run_memory_publish_build_check(
+    manifest_path: &Path,
+    manifest_value: &serde_json::Value,
+) -> Result<ExecutedMemoryBuild> {
+    reject_memory_publish_dependencies(manifest_value)?;
+
+    let executed = execute_memory_build_with_output(manifest_path, MemoryBuildMode::Check)?;
+    let mismatches = executed
+        .check
+        .as_ref()
+        .map(|check| check.mismatches.as_slice())
+        .unwrap_or(&[]);
+    if mismatches.is_empty() {
+        return Ok(executed);
+    }
+
+    if let Some(mismatch) = mismatches
+        .iter()
+        .find(|mismatch| mismatch.kind == MemoryBuildMismatchKind::StaleSourceInput)
+    {
+        return Err(memory_stale(mismatch));
+    }
+    if let Some(mismatch) = mismatches
+        .iter()
+        .find(|mismatch| mismatch.kind == MemoryBuildMismatchKind::MissingBuild)
+    {
+        return Err(memory_not_built(mismatch));
+    }
+    if let Some(mismatch) = mismatches
+        .iter()
+        .find(|mismatch| mismatch.kind == MemoryBuildMismatchKind::UnsupportedFormat)
+    {
+        return Err(memory_unsupported(mismatch));
+    }
+    if let Some(mismatch) = mismatches.iter().find(|mismatch| {
+        matches!(
+            mismatch.kind,
+            MemoryBuildMismatchKind::MissingOutput
+                | MemoryBuildMismatchKind::ModifiedOutput
+                | MemoryBuildMismatchKind::UnexpectedOutput
+                | MemoryBuildMismatchKind::InconsistentMetadata
+        )
+    }) {
+        return Err(memory_invalid_output(mismatch));
+    }
+
+    Ok(executed)
+}
+
+fn reject_memory_publish_dependencies(manifest_value: &serde_json::Value) -> Result<()> {
+    let Some(obj) = manifest_value.as_object() else {
+        return Ok(());
+    };
+
+    for field in ["tools", "skills", "knowledge", "agents", "profiles"] {
+        if obj.get(field).and_then(|value| value.as_array()).is_some() {
+            bail!(
+                "Memory packages cannot declare `{field}` dependencies. Remove that field before publishing."
+            );
+        }
+    }
+
+    if obj
+        .get("memory")
+        .and_then(|value| value.as_array())
+        .is_some()
+    {
+        bail!(
+            "Memory packages cannot declare `memory` dependency arrays. Remove that field before publishing."
+        );
+    }
+
+    if obj
+        .get("template")
+        .and_then(|value| value.as_object())
+        .and_then(|value| value.get("dependencies"))
+        .is_some()
+    {
+        bail!(
+            "Memory packages cannot declare template dependency groups. Remove `template.dependencies` before publishing."
+        );
+    }
+
+    Ok(())
+}
+
 fn knowledge_not_built(message: impl Into<String>) -> anyhow::Error {
     anyhow!(
         "Knowledge package is not built.\n\n{}\n\nRun:\nagentpm knowledge build\n\nThen publish again.",
         message.into()
     )
+}
+
+fn memory_not_built(mismatch: &MemoryBuildMismatch) -> anyhow::Error {
+    anyhow!(
+        "Memory Blueprint is not built.\n\n{}\n\nRun:\nagentpm memory build\n\nThen publish again.",
+        describe_memory_mismatch(mismatch)
+    )
+}
+
+fn memory_stale(mismatch: &MemoryBuildMismatch) -> anyhow::Error {
+    anyhow!(
+        "Memory Blueprint build metadata is stale.\n\n{}\n\nRun:\nagentpm memory build\n\nThen publish again.",
+        describe_memory_mismatch(mismatch)
+    )
+}
+
+fn memory_unsupported(mismatch: &MemoryBuildMismatch) -> anyhow::Error {
+    anyhow!(
+        "Memory Blueprint build output uses an unsupported format.\n\n{}\n\nRun:\nagentpm memory build\n\nThen publish again.",
+        describe_memory_mismatch(mismatch)
+    )
+}
+
+fn memory_invalid_output(mismatch: &MemoryBuildMismatch) -> anyhow::Error {
+    anyhow!(
+        "Memory Blueprint generated output is missing, modified, or inconsistent.\n\n{}\n\nInspect the generated files and rerun:\nagentpm memory build\n\nThen publish again.",
+        describe_memory_mismatch(mismatch)
+    )
+}
+
+fn describe_memory_mismatch(mismatch: &MemoryBuildMismatch) -> String {
+    format!("{} — {}", mismatch.path, mismatch.detail)
 }
 
 fn knowledge_stale(message: impl Into<String>) -> anyhow::Error {
@@ -1145,7 +1340,45 @@ fn append_declared_knowledge_file<W: Write>(
 ) -> Result<()> {
     let abs = resolve_existing_file(root, rel)
         .with_context(|| format!("declared Knowledge file not found or invalid: {}", rel))?;
-    let tar_name = tar_name_for_declared_knowledge_path(rel)?;
+    let tar_name = normalize_archive_entry_path(rel)?;
+    if seen.insert(tar_name.clone()) {
+        append_checked(tar, &abs, &tar_name, member_count)?;
+    }
+    Ok(())
+}
+
+fn append_declared_memory_file<W: Write>(
+    tar: &mut TarBuilder<W>,
+    root: &Path,
+    rel: &str,
+    member_count: &mut usize,
+    seen: &mut HashSet<String>,
+) -> Result<()> {
+    let abs = resolve_existing_file(root, rel)
+        .with_context(|| format!("declared Memory file not found or invalid: {}", rel))?;
+    let tar_name = normalize_archive_entry_path(rel)?;
+    if seen.insert(tar_name.clone()) {
+        append_checked(tar, &abs, &tar_name, member_count)?;
+    }
+    Ok(())
+}
+
+fn append_optional_memory_file<W: Write>(
+    tar: &mut TarBuilder<W>,
+    root: &Path,
+    field_label: &str,
+    rel: &str,
+    member_count: &mut usize,
+    seen: &mut HashSet<String>,
+) -> Result<()> {
+    let abs = match resolve_existing_file(root, rel) {
+        Ok(ok) => ok,
+        Err(err) => {
+            eprintln!("Warning: skipping {} '{}' ({}).", field_label, rel, err);
+            return Ok(());
+        }
+    };
+    let tar_name = normalize_archive_entry_path(rel)?;
     if seen.insert(tar_name.clone()) {
         append_checked(tar, &abs, &tar_name, member_count)?;
     }
@@ -1167,7 +1400,7 @@ fn append_optional_knowledge_file<W: Write>(
             return Ok(());
         }
     };
-    let tar_name = tar_name_for_declared_knowledge_path(rel)?;
+    let tar_name = normalize_archive_entry_path(rel)?;
     if seen.insert(tar_name.clone()) {
         append_checked(tar, &abs, &tar_name, member_count)?;
     }
@@ -1237,7 +1470,7 @@ fn resolve_declared_knowledge_path_for_packaging(
     Ok((canon, tar_name, md.is_dir()))
 }
 
-fn tar_name_for_declared_knowledge_path(rel: &str) -> Result<String> {
+fn normalize_archive_entry_path(rel: &str) -> Result<String> {
     let rel_path = parse_safe_relative_path(rel)?;
     let tar_name = rel_to_tar_name(&rel_path);
     ensure_safe_tar_name(&tar_name)?;
@@ -1773,6 +2006,7 @@ fn pick_license_paths(manifest_json: &serde_json::Value) -> (Option<&str>, Optio
 mod tests {
     use super::*;
     use crate::commands::knowledge::{KnowledgeBuildMode, execute_knowledge_build};
+    use crate::commands::memory::{MemoryBuildMode, execute_memory_build};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(prefix: &str) -> PathBuf {
@@ -1908,6 +2142,73 @@ mod tests {
                         "metric": "cosine",
                         "normalized": true,
                         "vectors_path": "knowledge/embeddings/default.f32"
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        manifest_path
+    }
+
+    fn preference_schema() -> &'static str {
+        r##"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "favorite_color": {
+      "type": "string",
+      "x-agentpm-data-class": "personal",
+      "x-agentpm-sensitivity": "low",
+      "x-agentpm-persist": true,
+      "x-agentpm-shareable": false
+    }
+  },
+  "required": ["favorite_color"],
+  "additionalProperties": false
+}
+"##
+    }
+
+    fn write_simple_memory_manifest(dir: &Path) -> PathBuf {
+        let manifest_path = dir.join("agent.json");
+        fs::create_dir_all(dir.join("schemas")).unwrap();
+        fs::write(
+            dir.join("schemas/user-preference.schema.json"),
+            preference_schema(),
+        )
+        .unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "memory",
+                "name": "conversation-continuity",
+                "version": "0.1.0",
+                "description": "Remember durable user preferences.",
+                "memory": {
+                    "scopes": {
+                        "user": {
+                            "description": "The end user."
+                        }
+                    },
+                    "record_types": {
+                        "user_preference": {
+                            "version": "1.0.0",
+                            "description": "A durable user preference record.",
+                            "schema": "schemas/user-preference.schema.json"
+                        }
+                    },
+                    "spaces": {
+                        "profile": {
+                            "description": "One preference document per user.",
+                            "model": "document",
+                            "record_types": ["user_preference"],
+                            "scope": ["user"],
+                            "retrieval": {
+                                "modes": ["key"]
+                            }
+                        }
                     }
                 }
             }))
@@ -2579,6 +2880,407 @@ mod tests {
         );
         assert!(
             err_text.contains("metadata.json source_chunks_hash"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_built_memory_manifest() {
+        let dir = temp_dir("publish-memory-built");
+        let manifest_path = write_simple_memory_manifest(&dir);
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+        let schema_path = dir.join("schemas/user-preference.schema.json");
+        let contract_path = dir.join("memory/contracts/profile.user_preference.schema.json");
+        let build_path = dir.join("memory/build.json");
+        let index_path = dir.join("memory/contracts/index.json");
+        let manifest_before = fs::read(&manifest_path).unwrap();
+        let schema_before = fs::read(&schema_path).unwrap();
+        let contract_before = fs::read(&contract_path).unwrap();
+        let build_before = fs::read(&build_path).unwrap();
+        let index_before = fs::read(&index_path).unwrap();
+        let manifest_mtime = fs::metadata(&manifest_path).unwrap().modified().unwrap();
+        let schema_mtime = fs::metadata(&schema_path).unwrap().modified().unwrap();
+        let contract_mtime = fs::metadata(&contract_path).unwrap().modified().unwrap();
+        let build_mtime = fs::metadata(&build_path).unwrap().modified().unwrap();
+        let index_mtime = fs::metadata(&index_path).unwrap().modified().unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        assert_eq!(fs::read(&manifest_path).unwrap(), manifest_before);
+        assert_eq!(fs::read(&schema_path).unwrap(), schema_before);
+        assert_eq!(fs::read(&contract_path).unwrap(), contract_before);
+        assert_eq!(fs::read(&build_path).unwrap(), build_before);
+        assert_eq!(fs::read(&index_path).unwrap(), index_before);
+        assert_eq!(
+            fs::metadata(&manifest_path).unwrap().modified().unwrap(),
+            manifest_mtime
+        );
+        assert_eq!(
+            fs::metadata(&schema_path).unwrap().modified().unwrap(),
+            schema_mtime
+        );
+        assert_eq!(
+            fs::metadata(&contract_path).unwrap().modified().unwrap(),
+            contract_mtime
+        );
+        assert_eq!(
+            fs::metadata(&build_path).unwrap().modified().unwrap(),
+            build_mtime
+        );
+        assert_eq!(
+            fs::metadata(&index_path).unwrap().modified().unwrap(),
+            index_mtime
+        );
+
+        let tar_path = dir.join("target/agentpm/conversation-continuity-0.1.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"schemas/user-preference.schema.json".to_string()));
+        assert!(entries.contains(&"memory/build.json".to_string()));
+        assert!(entries.contains(&"memory/contracts/index.json".to_string()));
+        assert!(
+            entries.contains(&"memory/contracts/profile.user_preference.schema.json".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_includes_memory_readme_and_license_file() {
+        let dir = temp_dir("publish-memory-readme-license");
+        let manifest_path = write_simple_memory_manifest(&dir);
+        fs::write(dir.join("README.md"), "# Memory\n").unwrap();
+        fs::write(dir.join("LICENSE"), "MIT License\n").unwrap();
+        let mut manifest: JsonValue =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        manifest["readme"] = JsonValue::from("README.md");
+        manifest["license"] = serde_json::json!({
+            "spdx": "MIT",
+            "file": "LICENSE"
+        });
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).unwrap() + "\n",
+        )
+        .unwrap();
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let tar_path = dir.join("target/agentpm/conversation-continuity-0.1.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"README.md".to_string()));
+        assert!(entries.contains(&"LICENSE".to_string()));
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_unbuilt_memory_manifest() {
+        let dir = temp_dir("publish-memory-unbuilt");
+        let manifest_path = write_simple_memory_manifest(&dir);
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Memory Blueprint is not built"),
+            "{err_text}"
+        );
+        assert!(err_text.contains("memory/build.json"), "{err_text}");
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_stale_memory_source_schema() {
+        let dir = temp_dir("publish-memory-stale-source");
+        let manifest_path = write_simple_memory_manifest(&dir);
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+        fs::write(
+            dir.join("schemas/user-preference.schema.json"),
+            preference_schema().replace("\"low\"", "\"moderate\""),
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Memory Blueprint build metadata is stale"),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("schemas/user-preference.schema.json"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_modified_memory_contract() {
+        let dir = temp_dir("publish-memory-modified-contract");
+        let manifest_path = write_simple_memory_manifest(&dir);
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+        fs::write(
+            dir.join("memory/contracts/profile.user_preference.schema.json"),
+            "{\n  \"tampered\": true\n}\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains(
+                "Memory Blueprint generated output is missing, modified, or inconsistent"
+            ),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("memory/contracts/profile.user_preference.schema.json"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_missing_memory_contract() {
+        let dir = temp_dir("publish-memory-missing-contract");
+        let manifest_path = write_simple_memory_manifest(&dir);
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+        fs::remove_file(dir.join("memory/contracts/profile.user_preference.schema.json")).unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains(
+                "Memory Blueprint generated output is missing, modified, or inconsistent"
+            ),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("memory/contracts/profile.user_preference.schema.json"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_extra_unindexed_memory_contract() {
+        let dir = temp_dir("publish-memory-extra-contract");
+        let manifest_path = write_simple_memory_manifest(&dir);
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+        fs::write(
+            dir.join("memory/contracts/unexpected.schema.json"),
+            "{\n  \"type\": \"object\"\n}\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains(
+                "Memory Blueprint generated output is missing, modified, or inconsistent"
+            ),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("memory/contracts/unexpected.schema.json"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_unsupported_memory_build_metadata() {
+        let dir = temp_dir("publish-memory-unsupported-build");
+        let manifest_path = write_simple_memory_manifest(&dir);
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+        let build_path = dir.join("memory/build.json");
+        let mut build_json: JsonValue =
+            serde_json::from_str(&fs::read_to_string(&build_path).unwrap()).unwrap();
+        build_json["format_version"] = JsonValue::from(99);
+        fs::write(
+            &build_path,
+            serde_json::to_string_pretty(&build_json).unwrap() + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Memory Blueprint build output uses an unsupported format"),
+            "{err_text}"
+        );
+        assert!(err_text.contains("memory/build.json"), "{err_text}");
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_inconsistent_memory_hashes() {
+        let dir = temp_dir("publish-memory-inconsistent-hash");
+        let manifest_path = write_simple_memory_manifest(&dir);
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+        let build_path = dir.join("memory/build.json");
+        let mut build_json: JsonValue =
+            serde_json::from_str(&fs::read_to_string(&build_path).unwrap()).unwrap();
+        build_json["contracts_hash"] = JsonValue::from("sha256:deadbeef");
+        fs::write(
+            &build_path,
+            serde_json::to_string_pretty(&build_json).unwrap() + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains(
+                "Memory Blueprint generated output is missing, modified, or inconsistent"
+            ),
+            "{err_text}"
+        );
+        assert!(err_text.contains("contracts_hash"), "{err_text}");
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_malformed_memory_contract_index() {
+        let dir = temp_dir("publish-memory-malformed-index");
+        let manifest_path = write_simple_memory_manifest(&dir);
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+        fs::write(dir.join("memory/contracts/index.json"), "{not-json\n").unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains(
+                "Memory Blueprint generated output is missing, modified, or inconsistent"
+            ),
+            "{err_text}"
+        );
+        assert!(
+            err_text.contains("memory/contracts/index.json"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_memory_manifest_with_dependencies() {
+        let dir = temp_dir("publish-memory-dependencies");
+        let manifest_path = dir.join("agent.json");
+        fs::create_dir_all(dir.join("schemas")).unwrap();
+        fs::write(
+            dir.join("schemas/user-preference.schema.json"),
+            preference_schema(),
+        )
+        .unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "memory",
+                "name": "conversation-continuity",
+                "version": "0.1.0",
+                "description": "Invalid memory package.",
+                "tools": ["@zack/some-tool@0.1.0"],
+                "memory": {
+                    "scopes": {
+                        "user": { "description": "The end user." }
+                    },
+                    "record_types": {
+                        "user_preference": {
+                            "version": "1.0.0",
+                            "description": "A durable user preference record.",
+                            "schema": "schemas/user-preference.schema.json"
+                        }
+                    },
+                    "spaces": {
+                        "profile": {
+                            "description": "One preference document per user.",
+                            "model": "document",
+                            "record_types": ["user_preference"],
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["key"] }
+                        }
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Manifest validation failed"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_unsafe_memory_schema_path() {
+        let dir = temp_dir("publish-memory-unsafe-schema");
+        let manifest_path = dir.join("agent.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "memory",
+                "name": "conversation-continuity",
+                "version": "0.1.0",
+                "description": "Unsafe schema path should fail.",
+                "memory": {
+                    "scopes": {
+                        "user": { "description": "The end user." }
+                    },
+                    "record_types": {
+                        "user_preference": {
+                            "version": "1.0.0",
+                            "description": "A durable user preference record.",
+                            "schema": "../secret.schema.json"
+                        }
+                    },
+                    "spaces": {
+                        "profile": {
+                            "description": "One preference document per user.",
+                            "model": "document",
+                            "record_types": ["user_preference"],
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["key"] }
+                        }
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Manifest validation failed"),
             "{err_text}"
         );
     }
