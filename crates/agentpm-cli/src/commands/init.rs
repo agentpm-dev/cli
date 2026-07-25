@@ -1,8 +1,8 @@
 use crate::assets::{
     AGENT_JSON_TPL, KNOWLEDGE_CONTEXT_AGENT_JSON_TPL, KNOWLEDGE_CONTEXT_README_MD_TPL,
-    KNOWLEDGE_VECTOR_AGENT_JSON_TPL, KNOWLEDGE_VECTOR_README_MD_TPL, SKILL_AGENT_JSON_TPL,
-    SKILL_INIT_MD_TPL, TEMPLATE_GENERATED_README_MD_TPL, TEMPLATE_PACKAGE_AGENT_JSON_TPL,
-    TOOL_AGENT_JSON_TPL,
+    KNOWLEDGE_VECTOR_AGENT_JSON_TPL, KNOWLEDGE_VECTOR_README_MD_TPL, MEMORY_AGENT_JSON_TPL,
+    MEMORY_README_MD_TPL, MEMORY_SCHEMA_JSON_TPL, SKILL_AGENT_JSON_TPL, SKILL_INIT_MD_TPL,
+    TEMPLATE_GENERATED_README_MD_TPL, TEMPLATE_PACKAGE_AGENT_JSON_TPL, TOOL_AGENT_JSON_TPL,
 };
 use crate::io::fs::{ensure_dirs, write_atomic};
 use crate::prelude::*;
@@ -16,6 +16,7 @@ pub enum InitKind {
     Template,
     Skill,
     Knowledge,
+    Memory,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -26,7 +27,7 @@ pub enum KnowledgeInitMode {
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// What to scaffold: a single-tool package, a composed agent, a workflow template, a skill, or a knowledge package
+    /// What to scaffold: a single-tool package, a composed agent, a workflow template, a skill, a knowledge package, or a memory blueprint
     #[arg(long, value_enum, default_value = "tool")]
     kind: InitKind,
 
@@ -196,6 +197,28 @@ impl InitArgs {
                     }
                 }
             }
+            InitKind::Memory => {
+                let rendered = render(
+                    MEMORY_AGENT_JSON_TPL,
+                    &[
+                        ("MEMORY_NAME", &self.name),
+                        ("MEMORY_DESCRIPTION", &self.description),
+                    ],
+                );
+                let path = out.join("agent.json");
+                write_atomic(&path, &rendered)?;
+                println!("Created {}", path.display());
+
+                let title = humanize_name(&self.name);
+                let readme = render(MEMORY_README_MD_TPL, &[("MEMORY_TITLE", &title)]);
+                let readme_path = out.join("README.md");
+                write_atomic(&readme_path, &readme)?;
+                println!("Created {}", readme_path.display());
+
+                let schema_path = out.join("schemas").join("user-preference.schema.json");
+                write_atomic(&schema_path, MEMORY_SCHEMA_JSON_TPL)?;
+                println!("Created {}", schema_path.display());
+            }
         }
         Ok(())
     }
@@ -231,6 +254,7 @@ fn humanize_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::memory::{MemoryBuildMode, execute_memory_build};
     use crate::manifest::{load_manifest_value, validate_manifest_value};
     use serde_json::Value;
     use std::path::Path;
@@ -451,12 +475,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn init_memory_creates_valid_named_manifest_readme_and_schema_only() {
+        let out = temp_dir("memory-named");
+        let args = InitArgs {
+            kind: InitKind::Memory,
+            mode: KnowledgeInitMode::Context,
+            name: "conversation-continuity".into(),
+            description: "Describe the durable memory contract this blueprint provides.".into(),
+            out_dir: Some(out.clone()),
+        };
+
+        args.run("http://example.invalid".into()).await.unwrap();
+
+        let manifest_path = out.join("agent.json");
+        let readme_path = out.join("README.md");
+        let schema_path = out.join("schemas").join("user-preference.schema.json");
+
+        assert!(manifest_path.exists());
+        assert!(readme_path.exists());
+        assert!(schema_path.exists());
+        assert!(!out.join("memory").exists());
+
+        validate(&manifest_path);
+
+        let manifest_json: Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        assert_eq!(manifest_json["kind"], "memory");
+        assert_eq!(manifest_json["name"], "conversation-continuity");
+        assert_eq!(manifest_json["readme"], "README.md");
+        assert_eq!(
+            manifest_json["memory"]["record_types"]["user_preference"]["schema"],
+            "schemas/user-preference.schema.json"
+        );
+        assert_eq!(
+            manifest_json["memory"]["spaces"]["profile"]["record_types"][0],
+            "user_preference"
+        );
+
+        let readme_text = std::fs::read_to_string(&readme_path).unwrap();
+        assert!(readme_text.contains("# Conversation Continuity"));
+        assert!(readme_text.contains("agentpm memory build"));
+        assert!(readme_text.contains("agentpm memory inspect ."));
+        assert!(readme_text.contains("does not provide a live memory store"));
+
+        let schema_json: Value =
+            serde_json::from_str(&std::fs::read_to_string(&schema_path).unwrap()).unwrap();
+        assert_eq!(
+            schema_json["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
+        assert_eq!(
+            schema_json["properties"]["favorite_color"]["x-agentpm-data-class"],
+            "personal"
+        );
+        assert_eq!(
+            schema_json["properties"]["favorite_color"]["x-agentpm-persist"],
+            true
+        );
+
+        let _ = std::fs::remove_dir_all(out);
+    }
+
+    #[tokio::test]
+    async fn init_memory_default_name_still_creates_buildable_starter() {
+        let out = temp_dir("memory-default");
+        let args = InitArgs {
+            kind: InitKind::Memory,
+            mode: KnowledgeInitMode::Context,
+            name: "my-tool".into(),
+            description: "Starter AgentPM project".into(),
+            out_dir: Some(out.clone()),
+        };
+
+        args.run("http://example.invalid".into()).await.unwrap();
+
+        let manifest_path = out.join("agent.json");
+        let schema_path = out.join("schemas").join("user-preference.schema.json");
+        assert!(manifest_path.exists());
+        assert!(schema_path.exists());
+        assert!(!out.join("memory").exists());
+
+        validate(&manifest_path);
+        execute_memory_build(&manifest_path, MemoryBuildMode::Write).unwrap();
+
+        assert!(out.join("memory").join("build.json").exists());
+        assert!(
+            out.join("memory")
+                .join("contracts")
+                .join("index.json")
+                .exists()
+        );
+        assert!(
+            out.join("memory")
+                .join("contracts")
+                .join("profile.user_preference.schema.json")
+                .exists()
+        );
+
+        let _ = std::fs::remove_dir_all(out);
+    }
+
+    #[tokio::test]
     async fn init_tool_agent_template_and_skill_behavior_still_work() {
         for (kind, label, expected_kind) in [
             (InitKind::Tool, "tool", "tool"),
             (InitKind::Agent, "agent", "agent"),
             (InitKind::Template, "template", "template"),
             (InitKind::Skill, "skill", "skill"),
+            (InitKind::Memory, "memory", "memory"),
         ] {
             let out = temp_dir(label);
             let args = InitArgs {
@@ -488,6 +614,16 @@ mod tests {
             }
             if expected_kind == "skill" {
                 assert!(out.join("SKILL.md").exists());
+            }
+            if expected_kind == "memory" {
+                validate(&manifest_path);
+                assert!(out.join("README.md").exists());
+                assert!(
+                    out.join("schemas")
+                        .join("user-preference.schema.json")
+                        .exists()
+                );
+                assert!(!out.join("memory").exists());
             }
 
             let _ = std::fs::remove_dir_all(out);

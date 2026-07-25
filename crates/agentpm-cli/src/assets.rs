@@ -4,6 +4,7 @@ pub const KNOWLEDGE_CONTEXT_AGENT_JSON_TPL: &str =
     include_str!("../assets/templates/knowledge_context_agent.json.tpl");
 pub const KNOWLEDGE_VECTOR_AGENT_JSON_TPL: &str =
     include_str!("../assets/templates/knowledge_vector_agent.json.tpl");
+pub const MEMORY_AGENT_JSON_TPL: &str = include_str!("../assets/templates/memory_agent.json.tpl");
 pub const SKILL_AGENT_JSON_TPL: &str = include_str!("../assets/templates/skill_agent.json.tpl");
 pub const TEMPLATE_PACKAGE_AGENT_JSON_TPL: &str =
     include_str!("../assets/templates/template_package_agent.json.tpl");
@@ -11,6 +12,9 @@ pub const KNOWLEDGE_CONTEXT_README_MD_TPL: &str =
     include_str!("../assets/templates/knowledge_context_README.md.tpl");
 pub const KNOWLEDGE_VECTOR_README_MD_TPL: &str =
     include_str!("../assets/templates/knowledge_vector_README.md.tpl");
+pub const MEMORY_README_MD_TPL: &str = include_str!("../assets/templates/memory_README.md.tpl");
+pub const MEMORY_SCHEMA_JSON_TPL: &str =
+    include_str!("../assets/templates/memory_user-preference.schema.json.tpl");
 pub const TEMPLATE_GENERATED_README_MD_TPL: &str =
     include_str!("../assets/templates/template_generated_README.md.tpl");
 pub const SKILL_INIT_MD_TPL: &str = include_str!("../assets/templates/skill_init_SKILL.md.tpl");
