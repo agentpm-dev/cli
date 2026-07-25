@@ -355,14 +355,26 @@ fn validate_frozen_lock_compatibility(
         .items
         .iter()
         .any(|item| item.kind == PackageKind::Knowledge);
+    let desired_has_memory = desired
+        .items
+        .iter()
+        .any(|item| item.kind == PackageKind::Memory);
     let manifest_has_knowledge = manifest_value
         .and_then(|value| value.get("knowledge"))
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty());
+    let manifest_has_memory = manifest_value
+        .and_then(|value| value.get("memory"))
         .and_then(Value::as_array)
         .is_some_and(|items| !items.is_empty());
 
     let requires_v3 = manifest_is_skill
         || desired_has_skill
-        || (manifest_is_agent && (manifest_has_knowledge || desired_has_knowledge));
+        || (manifest_is_agent
+            && (manifest_has_knowledge
+                || desired_has_knowledge
+                || manifest_has_memory
+                || desired_has_memory));
     if (manifest_is_agent || desired_has_agent) && lock.is_v1() {
         return Err(anyhow!(
             "--frozen cannot use lockfile v1 for agent dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v2"
@@ -370,7 +382,7 @@ fn validate_frozen_lock_compatibility(
     }
     if requires_v3 && lock.lockfile_version() < 3 {
         return Err(anyhow!(
-            "--frozen cannot use lockfile v{} for Skill or Knowledge dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v3",
+            "--frozen cannot use lockfile v{} for Skill, Knowledge, or Memory dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v3",
             lock.lockfile_version()
         ));
     }
@@ -522,6 +534,7 @@ fn enqueue_root_dependencies(root: &LockedRoot, queue: &mut VecDeque<String>) {
     queue.extend(root.tools.iter().cloned());
     queue.extend(root.skills.iter().cloned());
     queue.extend(root.knowledge.iter().cloned());
+    queue.extend(root.memory.iter().cloned());
 }
 
 fn enqueue_manifest_dependencies(
@@ -552,6 +565,12 @@ fn enqueue_manifest_dependencies(
                     packages,
                     &format!("registry agent {}@{}", pkg.name, pkg.version),
                     PackageKind::Knowledge,
+                )?);
+                queue.extend(resolve_declared_packages_from_manifest(
+                    &manifest_value,
+                    packages,
+                    &format!("registry agent {}@{}", pkg.name, pkg.version),
+                    PackageKind::Memory,
                 )?);
             }
         }
@@ -626,6 +645,7 @@ fn build_lock_roots(
                     tools: root.tools,
                     skills: root.skills,
                     knowledge: root.knowledge,
+                    memory: root.memory,
                     reserved: root.reserved,
                 },
             },
@@ -678,6 +698,21 @@ fn installed_knowledge_manifest_path(
         .join("agent.json"))
 }
 
+#[cfg(test)]
+fn installed_memory_manifest_path(
+    install_root: &std::path::Path,
+    package: &str,
+    version: &str,
+) -> Result<PathBuf> {
+    let (owner, name) = split_package_ref(package)?;
+    Ok(install_root
+        .join("memory")
+        .join(owner)
+        .join(name)
+        .join(version)
+        .join("agent.json"))
+}
+
 fn build_registry_package_roots(
     spec: Option<&str>,
     plan: &ResolvePlan,
@@ -720,6 +755,12 @@ fn build_registry_package_roots(
                             &format!("registry agent {}@{}", item.name, item.version),
                             PackageKind::Knowledge,
                         )?,
+                        memory: resolve_declared_packages_from_manifest(
+                            &manifest_value,
+                            &packages,
+                            &format!("registry agent {}@{}", item.name, item.version),
+                            PackageKind::Memory,
+                        )?,
                         reserved: reserved_refs_from_manifest(&manifest_value),
                     }
                 } else {
@@ -728,6 +769,7 @@ fn build_registry_package_roots(
                         tools: Vec::new(),
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: ReservedReferences::default(),
                     }
                 }
@@ -839,6 +881,16 @@ fn build_local_lock_root(manifest_value: &Value, plan: &ResolvePlan) -> Result<L
         } else {
             Vec::new()
         },
+        memory: if manifest_value.get("kind").and_then(Value::as_str) == Some("agent") {
+            resolve_declared_packages_from_manifest(
+                manifest_value,
+                &packages,
+                "local manifest",
+                PackageKind::Memory,
+            )?
+        } else {
+            Vec::new()
+        },
         reserved: reserved_refs_from_manifest(manifest_value),
     })
 }
@@ -877,7 +929,7 @@ fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {
     ReservedReferences {
         skills: Vec::new(),
         knowledge: Vec::new(),
-        memory: manifest_array_or_empty(manifest_value, "memory"),
+        memory: Vec::new(),
         profiles: manifest_array_or_empty(manifest_value, "profiles"),
     }
 }
@@ -907,6 +959,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
             tools,
             skills,
             knowledge,
+            memory,
             reserved,
         } => (
             key,
@@ -916,6 +969,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 tools,
                 skills,
                 knowledge,
+                memory,
                 reserved,
             },
         ),
@@ -924,6 +978,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
             tools,
             skills,
             knowledge,
+            memory,
             reserved,
         } => (
             package_key,
@@ -933,6 +988,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 tools,
                 skills,
                 knowledge,
+                memory,
                 reserved,
             },
         ),
@@ -949,6 +1005,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 tools,
                 skills: Vec::new(),
                 knowledge: Vec::new(),
+                memory: Vec::new(),
                 reserved: ReservedReferences::default(),
             },
         ),
@@ -960,6 +1017,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 tools,
                 skills: Vec::new(),
                 knowledge: Vec::new(),
+                memory: Vec::new(),
                 reserved: ReservedReferences::default(),
             },
         ),
@@ -979,8 +1037,8 @@ mod tests {
     use super::{
         InstallArgs, build_lock_roots, build_updated_lock, ensure_supported_install_kinds,
         installed_agent_manifest_path, installed_knowledge_manifest_path,
-        installed_skill_manifest_path, should_load_manifest_for_install,
-        validate_frozen_lock_compatibility,
+        installed_memory_manifest_path, installed_skill_manifest_path,
+        should_load_manifest_for_install, validate_frozen_lock_compatibility,
     };
     use crate::semver::types::{
         DesiredSet, Lock, LockRoot, LockV1, LockV2, LockedDependency, LockedPackage, LockedRoot,
@@ -1146,7 +1204,7 @@ mod tests {
             "version": "0.1.0",
             "skills": ["@zack/triage-skill@0.1.0"],
             "knowledge": ["@zack/python-docs@0.1.0"],
-            "memory": [],
+            "memory": ["@zack/session-memory@0.1.0"],
             "profiles": [],
             "tools": ["@zack/slack-post-message@0.1.0"]
         });
@@ -1170,6 +1228,12 @@ mod tests {
                     version: "0.1.0".to_string(),
                     integrity: "sha256-knowledge".to_string(),
                 },
+                ResolvedPackage {
+                    kind: PackageKind::Memory,
+                    name: "@zack/session-memory".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-memory".to_string(),
+                },
             ],
         };
 
@@ -1184,6 +1248,7 @@ mod tests {
             tools,
             skills,
             knowledge,
+            memory,
             reserved,
         } = &roots[0]
         else {
@@ -1200,6 +1265,10 @@ mod tests {
         assert_eq!(
             knowledge,
             &vec!["knowledge:@zack/python-docs@0.1.0".to_string()]
+        );
+        assert_eq!(
+            memory,
+            &vec!["memory:@zack/session-memory@0.1.0".to_string()]
         );
         assert!(reserved.skills.is_empty());
     }
@@ -1244,6 +1313,92 @@ mod tests {
     }
 
     #[test]
+    fn manifest_driven_agent_install_resolves_memory_version_ranges_to_pinned_version() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "memory": ["@zack/session-memory@^0.1"]
+        });
+        let plan = ResolvePlan {
+            items: vec![
+                ResolvedPackage {
+                    kind: PackageKind::Memory,
+                    name: "@zack/session-memory".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-memory-1".to_string(),
+                },
+                ResolvedPackage {
+                    kind: PackageKind::Memory,
+                    name: "@zack/session-memory".to_string(),
+                    version: "0.1.7".to_string(),
+                    integrity: "sha256-memory-2".to_string(),
+                },
+            ],
+        };
+
+        let root = temp_root("local-memory-range");
+        let roots = build_lock_roots(Some(&manifest), None, &plan, &root).unwrap();
+
+        let LockRoot::LocalAgent { memory, .. } = &roots[0] else {
+            panic!("expected local agent root");
+        };
+        assert_eq!(
+            memory,
+            &vec!["memory:@zack/session-memory@0.1.7".to_string()]
+        );
+    }
+
+    #[test]
+    fn manifest_driven_agent_install_rejects_wrong_kind_for_memory_dependency() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "memory": ["@zack/session-memory@0.1.0"]
+        });
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Knowledge,
+                name: "@zack/session-memory".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-knowledge".to_string(),
+            }],
+        };
+
+        let root = temp_root("local-memory-wrong-kind");
+        let err = build_lock_roots(Some(&manifest), None, &plan, &root).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains(
+                "declared memory dependency @zack/session-memory@0.1.0 is missing from the resolved package set"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn manifest_driven_agent_install_rejects_missing_memory_dependency() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "memory": ["@zack/session-memory@0.1.0"]
+        });
+        let plan = ResolvePlan { items: Vec::new() };
+
+        let root = temp_root("local-memory-missing");
+        let err = build_lock_roots(Some(&manifest), None, &plan, &root).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains(
+                "declared memory dependency @zack/session-memory@0.1.0 is missing from the resolved package set"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn direct_agent_install_builds_registry_root_from_installed_agent_manifest() {
         let root = temp_root("registry-root");
         let manifest_path =
@@ -1258,7 +1413,7 @@ mod tests {
                 "tools": ["@zack/slack-post-message@0.1.0"],
                 "skills": ["@zack/triage-skill@0.1.0"],
                 "knowledge": ["@zack/python-docs@0.1.0"],
-                "memory": [],
+                "memory": ["@zack/session-memory@0.1.0"],
                 "profiles": []
             }))
             .unwrap(),
@@ -1291,6 +1446,12 @@ mod tests {
                     version: "0.1.0".to_string(),
                     integrity: "sha256-knowledge".to_string(),
                 },
+                ResolvedPackage {
+                    kind: PackageKind::Memory,
+                    name: "@zack/session-memory".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-memory".to_string(),
+                },
             ],
         };
 
@@ -1303,6 +1464,7 @@ mod tests {
             tools,
             skills,
             knowledge,
+            memory,
             reserved,
         } = &roots[0]
         else {
@@ -1317,6 +1479,10 @@ mod tests {
         assert_eq!(
             knowledge,
             &vec!["knowledge:@zack/python-docs@0.1.0".to_string()]
+        );
+        assert_eq!(
+            memory,
+            &vec!["memory:@zack/session-memory@0.1.0".to_string()]
         );
         assert!(reserved.skills.is_empty());
     }
@@ -1428,6 +1594,60 @@ mod tests {
     }
 
     #[test]
+    fn direct_memory_install_does_not_build_registry_root() {
+        let root = temp_root("registry-memory-root");
+        let manifest_path =
+            installed_memory_manifest_path(&root, "@zack/session-memory", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "memory",
+                "name": "session-memory",
+                "version": "0.1.0",
+                "description": "Memory",
+                "memory": {
+                    "scopes": {
+                        "user": { "description": "User scope." }
+                    },
+                    "record_types": {
+                        "user_preference": {
+                            "description": "Preference record.",
+                            "schema": "schemas/user-preference.schema.json",
+                            "version": "1.0.0"
+                        }
+                    },
+                    "spaces": {
+                        "profile": {
+                            "description": "Profile space.",
+                            "model": "document",
+                            "scope": ["user"],
+                            "record_types": ["user_preference"],
+                            "retrieval": { "modes": ["key"] }
+                        }
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Memory,
+                name: "@zack/session-memory".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-memory".to_string(),
+            }],
+        };
+
+        let roots =
+            build_lock_roots(None, Some("@zack/session-memory@0.1.0"), &plan, &root).unwrap();
+
+        assert!(roots.is_empty());
+    }
+
+    #[test]
     fn direct_agent_install_replaces_existing_registry_root_for_same_package() {
         let root = temp_root("replace-registry-root");
         let existing = Lock::V2(LockV2 {
@@ -1480,6 +1700,7 @@ mod tests {
                         tools: vec!["tool:@zack/old-tool@0.1.0".to_string()],
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1491,6 +1712,7 @@ mod tests {
                         tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1671,6 +1893,7 @@ mod tests {
                         tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1682,6 +1905,7 @@ mod tests {
                         tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1803,6 +2027,7 @@ mod tests {
                         tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1814,6 +2039,7 @@ mod tests {
                         tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1955,6 +2181,7 @@ mod tests {
                         tools: Vec::new(),
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -1966,6 +2193,7 @@ mod tests {
                         tools: Vec::new(),
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -2030,6 +2258,7 @@ mod tests {
                     tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -2106,6 +2335,7 @@ mod tests {
                     tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -2188,6 +2418,7 @@ mod tests {
                         tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -2199,6 +2430,7 @@ mod tests {
                         tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: Default::default(),
                     },
                 ),
@@ -2268,6 +2500,7 @@ mod tests {
                     tools: vec!["tool:@zack/capitalize@0.1.0".to_string()],
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -2397,6 +2630,79 @@ mod tests {
     }
 
     #[test]
+    fn direct_memory_install_without_local_manifest_keeps_package_only_v2_lock() {
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::new(),
+            roots: BTreeMap::new(),
+        });
+        let root = temp_root("direct-memory-package-only");
+        let manifest_path =
+            installed_memory_manifest_path(&root, "@zack/session-memory", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "memory",
+                "name": "session-memory",
+                "version": "0.1.0",
+                "description": "Memory",
+                "memory": {
+                    "scopes": {
+                        "user": { "description": "User scope." }
+                    },
+                    "record_types": {
+                        "user_preference": {
+                            "description": "Preference record.",
+                            "schema": "schemas/user-preference.schema.json",
+                            "version": "1.0.0"
+                        }
+                    },
+                    "spaces": {
+                        "profile": {
+                            "description": "Profile space.",
+                            "model": "document",
+                            "scope": ["user"],
+                            "record_types": ["user_preference"],
+                            "retrieval": { "modes": ["key"] }
+                        }
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Memory,
+                name: "@zack/session-memory".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-memory".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            None,
+            Some("@zack/session-memory@0.1.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(lock.lockfile_version, 2);
+        assert!(lock.roots.is_empty());
+        assert!(
+            lock.packages
+                .contains_key("memory:@zack/session-memory@0.1.0")
+        );
+    }
+
+    #[test]
     fn direct_knowledge_install_prunes_standalone_knowledge_roots_from_existing_lock() {
         let existing = Lock::V2(LockV2 {
             lockfile_version: 3,
@@ -2418,6 +2724,7 @@ mod tests {
                     tools: Vec::new(),
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
                     reserved: Default::default(),
                 },
             )]),
@@ -3073,6 +3380,207 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[tokio::test]
+    async fn direct_memory_install_updates_local_agent_manifest_without_standalone_root() {
+        let root = temp_root("install-local-agent-memory");
+        fs::create_dir_all(&root).unwrap();
+        crate::manifest::write_manifest_pretty_atomic(
+            &root.join("agent.json"),
+            &json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0",
+                "tools": [{"name":"@zack/echo","version":"0.1.0"}],
+                "memory": []
+            }),
+        )
+        .unwrap();
+        crate::manifest::write_lock(
+            &root,
+            &Lock::V2(LockV2 {
+                lockfile_version: 2,
+                generated: Utc::now(),
+                packages: BTreeMap::from([(
+                    "tool:@zack/echo@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/echo".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-echo".to_string(),
+                    },
+                )]),
+                roots: BTreeMap::new(),
+            }),
+        )
+        .unwrap();
+
+        let memory_tar = build_tarball(&[
+            (
+                "agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"memory",
+                    "name":"session-memory",
+                    "version":"0.1.0",
+                    "description":"Memory",
+                    "memory":{
+                        "scopes":{"user":{"description":"User scope."}},
+                        "record_types":{
+                            "user_preference":{
+                                "description":"Preference record.",
+                                "schema":"schemas/user-preference.schema.json",
+                                "version":"1.0.0"
+                            }
+                        },
+                        "spaces":{
+                            "profile":{
+                                "description":"Profile space.",
+                                "model":"document",
+                                "scope":["user"],
+                                "record_types":["user_preference"],
+                                "retrieval":{"modes":["key"]}
+                            }
+                        }
+                    }
+                }))
+                .unwrap(),
+            ),
+            (
+                "schemas/user-preference.schema.json",
+                serde_json::to_string_pretty(&json!({
+                    "$schema":"https://json-schema.org/draft/2020-12/schema",
+                    "type":"object"
+                }))
+                .unwrap(),
+            ),
+            (
+                "memory/build.json",
+                serde_json::to_string_pretty(&json!({
+                    "type":"agentpm-memory-contracts",
+                    "format_version":1,
+                    "manifest_path":"agent.json",
+                    "source_manifest_hash":"sha256:manifest",
+                    "source_schemas_hash":"sha256:schemas",
+                    "source_contract_inputs_hash":"sha256:inputs",
+                    "contracts_index_hash":"sha256:index",
+                    "contracts_hash":"sha256:contracts",
+                    "contract_count":1,
+                    "source_schemas":[{
+                        "path":"schemas/user-preference.schema.json",
+                        "sha256":"sha256:schema-file"
+                    }]
+                }))
+                .unwrap(),
+            ),
+            (
+                "memory/contracts/index.json",
+                serde_json::to_string_pretty(&json!({
+                    "type":"agentpm-memory-contract-index",
+                    "format_version":1,
+                    "contracts":[{
+                        "space":"profile",
+                        "record_type":"user_preference",
+                        "schema_version":"1.0.0",
+                        "path":"memory/contracts/profile.user_preference.schema.json",
+                        "sha256":"sha256:contract-file"
+                    }]
+                }))
+                .unwrap(),
+            ),
+            (
+                "memory/contracts/profile.user_preference.schema.json",
+                serde_json::to_string_pretty(&json!({
+                    "$schema":"https://json-schema.org/draft/2020-12/schema",
+                    "type":"object",
+                    "properties":{"id":{"type":"string"}},
+                    "required":["id"]
+                }))
+                .unwrap(),
+            ),
+        ]);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(DirectMemoryInstallTestState {
+            base_url: base_url.clone(),
+            memory_tar: memory_tar.clone(),
+            memory_sha: sha_hex(&memory_tar),
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(direct_memory_resolve))
+            .route("/v1/tools/install/init", post(direct_memory_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/direct-memory", get(get_direct_memory))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let args = InstallArgs {
+            manifest: root.join("agent.json").to_string_lossy().into_owned(),
+            spec: Some("@zack/session-memory@0.1.0".to_string()),
+            frozen: false,
+            refresh: false,
+            update_range: false,
+            quiet: true,
+            require_attestation: false,
+            token: None,
+        };
+
+        args.run(base_url).await.unwrap();
+
+        let manifest_after: Value =
+            serde_json::from_str(&fs::read_to_string(root.join("agent.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest_after["memory"],
+            json!([{"name":"@zack/session-memory","version":"0.1.0"}])
+        );
+
+        let lock_after = crate::manifest::read_lock_or_default(&root).unwrap();
+        let Lock::V2(lock_after) = lock_after else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(lock_after.lockfile_version, 3);
+        assert!(
+            lock_after
+                .packages
+                .contains_key("memory:@zack/session-memory@0.1.0")
+        );
+        assert!(
+            !lock_after
+                .roots
+                .contains_key("memory:@zack/session-memory@0.1.0")
+        );
+        assert_eq!(
+            lock_after
+                .roots
+                .get("local:agent")
+                .expect("local agent root missing")
+                .memory,
+            vec!["memory:@zack/session-memory@0.1.0".to_string()]
+        );
+        let installed_manifest =
+            installed_memory_manifest_path(&root.join(".agentpm"), "@zack/session-memory", "0.1.0")
+                .unwrap();
+        let installed_root = installed_manifest.parent().expect("installed memory root");
+        assert!(installed_manifest.exists());
+        assert!(
+            installed_root
+                .join("schemas/user-preference.schema.json")
+                .exists()
+        );
+        assert!(installed_root.join("memory/build.json").exists());
+        assert!(installed_root.join("memory/contracts/index.json").exists());
+        assert!(
+            installed_root
+                .join("memory/contracts/profile.user_preference.schema.json")
+                .exists()
+        );
+
+        server.abort();
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn temp_root(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3114,6 +3622,13 @@ mod tests {
         base_url: String,
         knowledge_tar: Vec<u8>,
         knowledge_sha: String,
+    }
+
+    #[derive(Clone)]
+    struct DirectMemoryInstallTestState {
+        base_url: String,
+        memory_tar: Vec<u8>,
+        memory_sha: String,
     }
 
     async fn test_resolve(
@@ -3359,6 +3874,53 @@ mod tests {
             .unwrap())
     }
 
+    async fn direct_memory_resolve(
+        State(state): State<Arc<DirectMemoryInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "items": [{
+                "kind": "memory",
+                "name": item["name"],
+                "version": "0.1.0",
+                "integrity": state.memory_sha,
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
+    async fn direct_memory_init(
+        State(state): State<Arc<DirectMemoryInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "session_id":"session-1",
+            "expires_at":"2026-06-01T00:00:00Z",
+            "artifacts": [{
+                "kind": "memory",
+                "name": item["name"],
+                "version": item["version"],
+                "integrity": state.memory_sha,
+                "presigned_url": format!("{}/artifact/direct-memory", state.base_url),
+                "size": 12,
+                "content_type":"application/gzip"
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
     async fn get_echo(State(state): State<Arc<InstallTestState>>) -> Response<Body> {
         Response::builder()
             .status(StatusCode::OK)
@@ -3409,6 +3971,15 @@ mod tests {
         Response::builder()
             .status(StatusCode::OK)
             .body(Body::from(state.knowledge_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_direct_memory(
+        State(state): State<Arc<DirectMemoryInstallTestState>>,
+    ) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.memory_tar.clone()))
             .unwrap()
     }
 

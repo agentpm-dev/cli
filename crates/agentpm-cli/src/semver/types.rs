@@ -103,6 +103,8 @@ pub struct LockedRoot {
     pub skills: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub knowledge: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory: Vec<String>,
     #[serde(default, skip_serializing_if = "ReservedReferences::is_empty")]
     pub reserved: ReservedReferences,
 }
@@ -138,6 +140,7 @@ pub enum LockRoot {
         tools: Vec<String>,
         skills: Vec<String>,
         knowledge: Vec<String>,
+        memory: Vec<String>,
         reserved: ReservedReferences,
     },
     RegistryAgent {
@@ -145,6 +148,7 @@ pub enum LockRoot {
         tools: Vec<String>,
         skills: Vec<String>,
         knowledge: Vec<String>,
+        memory: Vec<String>,
         reserved: ReservedReferences,
     },
     LocalSkill {
@@ -353,6 +357,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                 tools,
                 skills,
                 knowledge,
+                memory,
                 reserved,
             } => {
                 root_map.insert(
@@ -363,6 +368,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         tools: tools.clone(),
                         skills: skills.clone(),
                         knowledge: knowledge.clone(),
+                        memory: memory.clone(),
                         reserved: reserved.clone(),
                     },
                 );
@@ -372,6 +378,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                 tools,
                 skills,
                 knowledge,
+                memory,
                 reserved,
             } => {
                 root_map.insert(
@@ -382,6 +389,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         tools: tools.clone(),
                         skills: skills.clone(),
                         knowledge: knowledge.clone(),
+                        memory: memory.clone(),
                         reserved: reserved.clone(),
                     },
                 );
@@ -400,6 +408,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         tools: tools.clone(),
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: ReservedReferences::default(),
                     },
                 );
@@ -413,6 +422,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         tools: tools.clone(),
                         skills: Vec::new(),
                         knowledge: Vec::new(),
+                        memory: Vec::new(),
                         reserved: ReservedReferences::default(),
                     },
                 );
@@ -427,9 +437,10 @@ pub fn lock_from_packages_and_roots(
     packages: BTreeMap<String, LockedPackage>,
     mut roots: BTreeMap<String, LockedRoot>,
 ) -> Lock {
-    prune_standalone_knowledge_roots(&mut roots);
+    prune_standalone_leaf_roots(&mut roots);
     migrate_reserved_skills(&packages, &mut roots);
     migrate_reserved_knowledge(&packages, &mut roots);
+    migrate_reserved_memory(&packages, &mut roots);
     let lockfile_version = if requires_v3_lock(&packages, &roots) {
         3
     } else {
@@ -443,8 +454,8 @@ pub fn lock_from_packages_and_roots(
     })
 }
 
-fn prune_standalone_knowledge_roots(roots: &mut BTreeMap<String, LockedRoot>) {
-    roots.retain(|key, _| !key.starts_with("knowledge:"));
+fn prune_standalone_leaf_roots(roots: &mut BTreeMap<String, LockedRoot>) {
+    roots.retain(|key, _| !key.starts_with("knowledge:") && !key.starts_with("memory:"));
 }
 
 fn requires_v3_lock(
@@ -459,6 +470,8 @@ fn requires_v3_lock(
                 || !root.skills.is_empty()
                 || key.starts_with("knowledge:")
                 || !root.knowledge.is_empty()
+                || key.starts_with("memory:")
+                || !root.memory.is_empty()
         })
 }
 
@@ -520,6 +533,34 @@ fn migrate_reserved_knowledge(
         }
 
         root.reserved.knowledge = unresolved;
+    }
+}
+
+fn migrate_reserved_memory(
+    packages: &BTreeMap<String, LockedPackage>,
+    roots: &mut BTreeMap<String, LockedRoot>,
+) {
+    for root in roots.values_mut() {
+        if root.reserved.memory.is_empty() {
+            continue;
+        }
+
+        let mut unresolved = Vec::new();
+        for raw in root.reserved.memory.drain(..) {
+            match parse_locked_reserved_package_ref(&raw).and_then(|(name, range)| {
+                resolve_declared_package_from_packages(packages, &name, &range, PackageKind::Memory)
+            }) {
+                Ok(Some(pkg)) => {
+                    let key = package_key(pkg.kind, &pkg.name, &pkg.version);
+                    if !root.memory.contains(&key) {
+                        root.memory.push(key);
+                    }
+                }
+                Ok(None) | Err(_) => unresolved.push(raw),
+            }
+        }
+
+        root.reserved.memory = unresolved;
     }
 }
 
@@ -867,6 +908,7 @@ mod tests {
                 tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],
                 skills: Vec::new(),
                 knowledge: Vec::new(),
+                memory: Vec::new(),
                 reserved: ReservedReferences {
                     skills: vec![json!("@zack/triage-skill@0.1.0")],
                     knowledge: vec![],
@@ -917,6 +959,7 @@ mod tests {
                 tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],
                 skills: Vec::new(),
                 knowledge: Vec::new(),
+                memory: Vec::new(),
                 reserved: ReservedReferences::default(),
             }],
         );
@@ -951,6 +994,7 @@ mod tests {
                     tools: Vec::new(),
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
                     reserved: ReservedReferences {
                         skills: vec![json!("@zack/triage-skill@0.1.0")],
                         knowledge: Vec::new(),
@@ -985,6 +1029,7 @@ mod tests {
                     tools: Vec::new(),
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
                     reserved: ReservedReferences {
                         skills: vec![json!("@zack/missing-skill@0.1.0")],
                         knowledge: Vec::new(),
@@ -1026,6 +1071,7 @@ mod tests {
                     tools: Vec::new(),
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
                         knowledge: vec![json!("@zack/python-docs@0.1.0")],
@@ -1060,6 +1106,7 @@ mod tests {
                     tools: Vec::new(),
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
                         knowledge: vec![json!("@zack/missing-knowledge@0.1.0")],
@@ -1078,6 +1125,139 @@ mod tests {
         assert_eq!(
             root.reserved.knowledge,
             vec![json!("@zack/missing-knowledge@0.1.0")]
+        );
+    }
+
+    #[test]
+    fn lock_from_packages_and_roots_migrates_reserved_memory_to_first_class_root_field() {
+        let lock = lock_from_packages_and_roots(
+            BTreeMap::from([(
+                "memory:@zack/session-memory@0.1.0".to_string(),
+                LockedPackage {
+                    kind: PackageKind::Memory,
+                    name: "@zack/session-memory".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-memory".to_string(),
+                },
+            )]),
+            BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    reserved: ReservedReferences {
+                        skills: Vec::new(),
+                        knowledge: Vec::new(),
+                        memory: vec![json!("@zack/session-memory@0.1.0")],
+                        profiles: Vec::new(),
+                    },
+                },
+            )]),
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected modern lockfile");
+        };
+        assert_eq!(lock.lockfile_version, 3);
+        let root = lock.roots.get("local:agent").unwrap();
+        assert_eq!(
+            root.memory,
+            vec!["memory:@zack/session-memory@0.1.0".to_string()]
+        );
+        assert!(root.reserved.memory.is_empty());
+    }
+
+    #[test]
+    fn lock_from_packages_and_roots_preserves_unresolvable_reserved_memory() {
+        let lock = lock_from_packages_and_roots(
+            BTreeMap::new(),
+            BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    reserved: ReservedReferences {
+                        skills: Vec::new(),
+                        knowledge: Vec::new(),
+                        memory: vec![json!("@zack/missing-memory@0.1.0")],
+                        profiles: Vec::new(),
+                    },
+                },
+            )]),
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected modern lockfile");
+        };
+        let root = lock.roots.get("local:agent").unwrap();
+        assert!(root.memory.is_empty());
+        assert_eq!(
+            root.reserved.memory,
+            vec![json!("@zack/missing-memory@0.1.0")]
+        );
+    }
+
+    #[test]
+    fn lock_from_plan_deduplicates_shared_memory_package_across_multiple_agent_roots() {
+        let lock = lock_from_plan(
+            &ResolvePlan {
+                items: vec![ResolvedPackage {
+                    kind: PackageKind::Memory,
+                    name: "@zack/session-memory".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-memory".to_string(),
+                }],
+            },
+            &[
+                LockRoot::LocalAgent {
+                    key: "local:agent".to_string(),
+                    name: "support-agent".to_string(),
+                    version: "0.1.0".to_string(),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: vec!["memory:@zack/session-memory@0.1.0".to_string()],
+                    reserved: ReservedReferences::default(),
+                },
+                LockRoot::LocalAgent {
+                    key: "local:agent:agents/reviewer.agent.json".to_string(),
+                    name: "reviewer".to_string(),
+                    version: "0.1.0".to_string(),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: vec!["memory:@zack/session-memory@0.1.0".to_string()],
+                    reserved: ReservedReferences::default(),
+                },
+            ],
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected v2 lockfile");
+        };
+        assert_eq!(lock.lockfile_version, 3);
+        assert_eq!(
+            lock.packages
+                .keys()
+                .filter(|key| key.as_str() == "memory:@zack/session-memory@0.1.0")
+                .count(),
+            1
+        );
+        assert_eq!(
+            lock.roots["local:agent"].memory,
+            vec!["memory:@zack/session-memory@0.1.0".to_string()]
+        );
+        assert_eq!(
+            lock.roots["local:agent:agents/reviewer.agent.json"].memory,
+            vec!["memory:@zack/session-memory@0.1.0".to_string()]
         );
     }
 
@@ -1153,6 +1333,7 @@ mod tests {
                     tools: vec!["tool:@zack/slack-post-message@0.1.0".to_string()],
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
                 LockRoot::RegistryAgent {
@@ -1160,6 +1341,7 @@ mod tests {
                     tools: vec!["tool:@zack/slack-post-message@0.2.0".to_string()],
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
             ],
