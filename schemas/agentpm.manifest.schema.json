@@ -86,6 +86,468 @@
       "minLength": 1,
       "pattern": "^(?!/)(?!\\\\\\\\)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
     },
+    "memoryKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Stable identifier used for Memory Blueprint scopes, record types, spaces, and operations."
+    },
+    "memoryGovernanceDataClass": {
+      "type": "string",
+      "enum": [
+        "public",
+        "internal",
+        "personal",
+        "authentication",
+        "financial",
+        "health",
+        "legal",
+        "operational",
+        "other"
+      ],
+      "description": "Supported AgentPM governance classification value for x-agentpm-data-class annotations in Memory content schemas."
+    },
+    "memoryGovernanceSensitivity": {
+      "type": "string",
+      "enum": ["low", "moderate", "high", "critical"],
+      "description": "Supported AgentPM sensitivity value for x-agentpm-sensitivity annotations in Memory content schemas."
+    },
+    "memoryGovernanceAnnotations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x-agentpm-data-class": {
+          "$ref": "#/$defs/memoryGovernanceDataClass"
+        },
+        "x-agentpm-sensitivity": {
+          "$ref": "#/$defs/memoryGovernanceSensitivity"
+        },
+        "x-agentpm-persist": {
+          "type": "boolean",
+          "description": "Supported AgentPM governance flag for marking values as non-persistable durable memory."
+        },
+        "x-agentpm-shareable": {
+          "type": "boolean",
+          "description": "Supported AgentPM governance flag for restricting cross-boundary sharing."
+        }
+      },
+      "description": "Supported AgentPM-owned governance annotation names and value types for Memory content schemas."
+    },
+    "memoryScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the logical scope key."
+        }
+      }
+    },
+    "memoryScopes": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/memoryKey" },
+      "additionalProperties": { "$ref": "#/$defs/memoryScope" },
+      "description": "Author-declared reusable scope keys for the Memory Blueprint."
+    },
+    "memoryRecordType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "description", "schema"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+          "description": "Required semantic version for the authored record content schema."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the record type."
+        },
+        "schema": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required safe package-relative path to the Draft 2020-12 JSON Schema for the record content payload."
+        }
+      }
+    },
+    "memoryRecordTypes": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/memoryKey" },
+      "additionalProperties": { "$ref": "#/$defs/memoryRecordType" },
+      "description": "Author-declared record type contracts for the Memory Blueprint."
+    },
+    "memoryRetrievalMode": {
+      "type": "string",
+      "enum": ["key", "filter", "chronological", "full_text", "semantic"],
+      "description": "Supported logical retrieval mode for a Memory space."
+    },
+    "memoryRetrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modes"],
+      "properties": {
+        "modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryRetrievalMode" },
+          "description": "Required unique set of logical retrieval capabilities that a compatible runtime must support."
+        }
+      }
+    },
+    "memoryCapacity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_records"],
+      "properties": {
+        "max_records": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional declarative maximum record count for the space."
+        }
+      }
+    },
+    "memoryRetention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ttl", "on_expire"],
+      "properties": {
+        "ttl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required ISO 8601 duration string describing how long active records should remain available."
+        },
+        "on_expire": {
+          "type": "string",
+          "enum": ["delete", "archive"],
+          "description": "Required declarative behavior for expired records."
+        }
+      }
+    },
+    "memoryConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "append_only": {
+          "type": "boolean",
+          "description": "Optional declarative constraint indicating that new records are appended rather than updated in place."
+        }
+      }
+    },
+    "memorySpace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "model", "record_types", "scope", "retrieval"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the logical memory space."
+        },
+        "model": {
+          "type": "string",
+          "enum": ["document", "collection", "sequence"],
+          "description": "Required logical storage model for the space."
+        },
+        "record_types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryKey" },
+          "description": "Required unique list of record types permitted in the space."
+        },
+        "scope": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryKey" },
+          "description": "Required ordered scope keys that define the logical identity of records in the space."
+        },
+        "retrieval": {
+          "$ref": "#/$defs/memoryRetrieval",
+          "description": "Required logical retrieval capabilities for the space."
+        },
+        "capacity": {
+          "$ref": "#/$defs/memoryCapacity",
+          "description": "Optional declarative capacity metadata for the space."
+        },
+        "retention": {
+          "$ref": "#/$defs/memoryRetention",
+          "description": "Optional declarative retention metadata for the space."
+        },
+        "constraints": {
+          "$ref": "#/$defs/memoryConstraints",
+          "description": "Optional declarative constraints for the space."
+        }
+      }
+    },
+    "memorySpaces": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/memoryKey" },
+      "additionalProperties": { "$ref": "#/$defs/memorySpace" },
+      "description": "Author-declared logical spaces in the Memory Blueprint."
+    },
+    "memoryOperationRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["space", "record_type"],
+      "properties": {
+        "space": {
+          "$ref": "#/$defs/memoryKey",
+          "description": "Declared space key referenced by the operation."
+        },
+        "record_type": {
+          "$ref": "#/$defs/memoryKey",
+          "description": "Declared record type key referenced by the operation."
+        }
+      }
+    },
+    "memoryOperationTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["space"],
+      "properties": {
+        "space": {
+          "$ref": "#/$defs/memoryKey",
+          "description": "Declared target space key referenced by a delete operation."
+        }
+      }
+    },
+    "memoryTrigger": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": {
+              "const": "external",
+              "description": "Operation is invoked by an external application, future binding, or harness."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "space", "threshold"],
+          "properties": {
+            "type": {
+              "const": "record_count",
+              "description": "Operation becomes eligible when a space reaches a record threshold."
+            },
+            "space": {
+              "$ref": "#/$defs/memoryKey",
+              "description": "Declared space key monitored by the trigger."
+            },
+            "threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Required positive record threshold."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "space"],
+          "properties": {
+            "type": {
+              "const": "capacity",
+              "description": "Operation becomes eligible when a space reaches its declared capacity."
+            },
+            "space": {
+              "$ref": "#/$defs/memoryKey",
+              "description": "Declared space key monitored by the trigger."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "every"],
+          "properties": {
+            "type": {
+              "const": "interval",
+              "description": "Operation becomes eligible on a recurring elapsed-time interval."
+            },
+            "every": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Required ISO 8601 duration string for the recurring interval."
+            }
+          }
+        }
+      ]
+    },
+    "memorySourceHandling": {
+      "type": "string",
+      "enum": ["retain", "retain_until_expiration", "delete_after_success"],
+      "description": "Supported declarative source-handling policy for lifecycle operations."
+    },
+    "memoryConsolidateOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "description",
+        "trigger",
+        "inputs",
+        "output",
+        "source_handling",
+        "preserve_provenance"
+      ],
+      "properties": {
+        "type": {
+          "const": "consolidate",
+          "description": "Operation converts one or more source records into a destination record."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the operation."
+        },
+        "trigger": {
+          "$ref": "#/$defs/memoryTrigger",
+          "description": "Required declarative trigger for the operation."
+        },
+        "inputs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryOperationRef" },
+          "description": "Required unique source space-and-record-type pairings."
+        },
+        "output": {
+          "$ref": "#/$defs/memoryOperationRef",
+          "description": "Required destination space-and-record-type pairing."
+        },
+        "source_handling": {
+          "$ref": "#/$defs/memorySourceHandling",
+          "description": "Required declarative policy for source records after successful completion."
+        },
+        "preserve_provenance": {
+          "type": "boolean",
+          "description": "Required flag indicating whether derived records should retain source provenance."
+        }
+      }
+    },
+    "memoryTransformOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "description",
+        "trigger",
+        "inputs",
+        "output",
+        "source_handling",
+        "preserve_provenance"
+      ],
+      "properties": {
+        "type": {
+          "const": "transform",
+          "description": "Operation converts one source record contract into another record contract."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the operation."
+        },
+        "trigger": {
+          "$ref": "#/$defs/memoryTrigger",
+          "description": "Required declarative trigger for the operation."
+        },
+        "inputs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryOperationRef" },
+          "description": "Required single source space-and-record-type pairing."
+        },
+        "output": {
+          "$ref": "#/$defs/memoryOperationRef",
+          "description": "Required destination space-and-record-type pairing."
+        },
+        "source_handling": {
+          "$ref": "#/$defs/memorySourceHandling",
+          "description": "Required declarative policy for source records after successful completion."
+        },
+        "preserve_provenance": {
+          "type": "boolean",
+          "description": "Required flag indicating whether derived records should retain source provenance."
+        }
+      }
+    },
+    "memoryDeleteOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "description", "trigger", "targets", "cascade_derived_records"],
+      "properties": {
+        "type": {
+          "const": "delete",
+          "description": "Operation declares a set of spaces that may be deleted as one lifecycle action."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the operation."
+        },
+        "trigger": {
+          "$ref": "#/$defs/memoryTrigger",
+          "description": "Required declarative trigger for the operation."
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryOperationTarget" },
+          "description": "Required unique set of target spaces affected by the delete operation."
+        },
+        "cascade_derived_records": {
+          "type": "boolean",
+          "description": "Required flag indicating whether derived records should also be removed."
+        }
+      }
+    },
+    "memoryOperation": {
+      "oneOf": [
+        { "$ref": "#/$defs/memoryConsolidateOperation" },
+        { "$ref": "#/$defs/memoryTransformOperation" },
+        { "$ref": "#/$defs/memoryDeleteOperation" }
+      ],
+      "description": "Supported declarative lifecycle operation contract for a Memory Blueprint."
+    },
+    "memoryOperations": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/memoryKey" },
+      "additionalProperties": { "$ref": "#/$defs/memoryOperation" },
+      "description": "Optional declarative lifecycle operations for the Memory Blueprint."
+    },
+    "memoryMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scopes", "record_types", "spaces"],
+      "properties": {
+        "scopes": {
+          "$ref": "#/$defs/memoryScopes",
+          "description": "Required reusable scope declarations for the Memory Blueprint."
+        },
+        "record_types": {
+          "$ref": "#/$defs/memoryRecordTypes",
+          "description": "Required record type declarations for the Memory Blueprint."
+        },
+        "spaces": {
+          "$ref": "#/$defs/memorySpaces",
+          "description": "Required logical spaces declared by the Memory Blueprint."
+        },
+        "operations": {
+          "$ref": "#/$defs/memoryOperations",
+          "description": "Optional declarative lifecycle operations for the Memory Blueprint."
+        }
+      }
+    },
     "skillCompatibility": {
       "type": "object",
       "additionalProperties": false,
@@ -482,6 +944,10 @@
         "knowledge": {
           "type": "array",
           "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "memory": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
         }
       }
     },
@@ -571,7 +1037,25 @@
         }
       ]
     },
-    "memory":     { "properties": { "kind": { "const": "agent" } } },
+    "memory":  {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": { "const": "agent" },
+            "memory": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/packageRef" }
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "memory" },
+            "memory": { "$ref": "#/$defs/memoryMetadata" }
+          }
+        }
+      ]
+    },
     "profiles":   { "properties": { "kind": { "const": "agent" } } },
     "entrypoint": {
       "properties": { "kind": { "const": "tool" } }
@@ -586,7 +1070,7 @@
 
   "properties": {
     "$schema": { "type": "string", "format": "uri" },
-    "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill", "knowledge"] },
+    "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill", "knowledge", "memory"] },
     "name": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,63}$" },
     "version": {
       "type": "string",
@@ -613,8 +1097,15 @@
       ]
     },
     "memory": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/packageRef" }
+      "oneOf": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        {
+          "$ref": "#/$defs/memoryMetadata"
+        }
+      ]
     },
     "profiles": {
       "type": "array",
@@ -704,6 +1195,10 @@
     {
       "properties": { "kind": { "const": "knowledge" } },
       "required": ["knowledge"]
+    },
+    {
+      "properties": { "kind": { "const": "memory" } },
+      "required": ["memory"]
     }
   ]
 }

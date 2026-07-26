@@ -16,6 +16,7 @@ pub struct InstallRoots<'a> {
     pub agents_dir: &'a Path,
     pub skills_dir: &'a Path,
     pub knowledge_dir: &'a Path,
+    pub memory_dir: &'a Path,
 }
 
 /// Return canonical + alias command names for a runtime type.
@@ -43,6 +44,7 @@ pub async fn download_and_extract_all(
     fs::create_dir_all(install_roots.agents_dir).await?;
     fs::create_dir_all(install_roots.skills_dir).await?;
     fs::create_dir_all(install_roots.knowledge_dir).await?;
+    fs::create_dir_all(install_roots.memory_dir).await?;
 
     let client = Client::new();
     let mut futs = FuturesUnordered::new();
@@ -75,6 +77,7 @@ pub async fn download_and_extract_all(
             install_roots.agents_dir,
             install_roots.skills_dir,
             install_roots.knowledge_dir,
+            install_roots.memory_dir,
             &pkg,
             &ver,
         )?;
@@ -453,12 +456,14 @@ fn resolved_agent_dir(base: &Path, package: &str, version: &str) -> Result<PathB
     Ok(base.join(owner).join(name).join(version))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolved_package_dir(
     kind: sdkm::PackageKind,
     tools_base: &Path,
     agents_base: &Path,
     skills_base: &Path,
     knowledge_base: &Path,
+    memory_base: &Path,
     package: &str,
     version: &str,
 ) -> Result<PathBuf> {
@@ -467,6 +472,7 @@ fn resolved_package_dir(
         sdkm::PackageKind::Agent => resolved_agent_dir(agents_base, package, version),
         sdkm::PackageKind::Skill => resolved_agent_dir(skills_base, package, version),
         sdkm::PackageKind::Knowledge => resolved_agent_dir(knowledge_base, package, version),
+        sdkm::PackageKind::Memory => resolved_agent_dir(memory_base, package, version),
         sdkm::PackageKind::Template => {
             bail!("template packages are not installable with `agentpm install`; use `agentpm new`")
         }
@@ -497,6 +503,7 @@ mod tests {
             Path::new(".agentpm/agents"),
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
+            Path::new(".agentpm/memory"),
             "@zack/capitalize",
             "0.1.0",
         )
@@ -513,6 +520,7 @@ mod tests {
             Path::new(".agentpm/agents"),
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
+            Path::new(".agentpm/memory"),
             "@zack/support-agent",
             "0.1.0",
         )
@@ -532,6 +540,7 @@ mod tests {
             Path::new(".agentpm/agents"),
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
+            Path::new(".agentpm/memory"),
             "@zack/triage-skill",
             "0.1.0",
         )
@@ -551,6 +560,7 @@ mod tests {
             Path::new(".agentpm/agents"),
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
+            Path::new(".agentpm/memory"),
             "@zack/research-template",
             "0.1.0",
         )
@@ -571,6 +581,7 @@ mod tests {
             Path::new(".agentpm/agents"),
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
+            Path::new(".agentpm/memory"),
             "@zack/python-docs",
             "0.1.0",
         )
@@ -579,6 +590,26 @@ mod tests {
         assert_eq!(
             path,
             PathBuf::from(".agentpm/knowledge/zack/python-docs/0.1.0")
+        );
+    }
+
+    #[test]
+    fn resolves_memory_install_dir_under_memory_layout() {
+        let path = resolved_package_dir(
+            PackageKind::Memory,
+            Path::new(".agentpm/tools"),
+            Path::new(".agentpm/agents"),
+            Path::new(".agentpm/skills"),
+            Path::new(".agentpm/knowledge"),
+            Path::new(".agentpm/memory"),
+            "@zack/support-memory",
+            "0.1.0",
+        )
+        .unwrap();
+
+        assert_eq!(
+            path,
+            PathBuf::from(".agentpm/memory/zack/support-memory/0.1.0")
         );
     }
 

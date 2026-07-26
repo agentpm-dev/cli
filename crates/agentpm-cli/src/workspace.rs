@@ -212,6 +212,12 @@ pub fn build_workspace_lock(
                 &format!("workspace manifest {}", manifest.rel_path),
                 &packages,
             )?,
+            memory: resolve_packages_for_manifest(
+                &manifest.manifest_value,
+                PackageKind::Memory,
+                &format!("workspace manifest {}", manifest.rel_path),
+                &packages,
+            )?,
             reserved: reserved_refs_from_manifest(&manifest.manifest_value),
         });
     }
@@ -395,6 +401,12 @@ fn build_registry_agent_root(
             &format!("registry agent {}@{}", package, version),
             packages,
         )?,
+        memory: resolve_packages_for_manifest(
+            &manifest_value,
+            PackageKind::Memory,
+            &format!("registry agent {}@{}", package, version),
+            packages,
+        )?,
         reserved: reserved_refs_from_manifest(&manifest_value),
     })
 }
@@ -474,7 +486,7 @@ fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {
     ReservedReferences {
         skills: Vec::new(),
         knowledge: Vec::new(),
-        memory: manifest_array_or_empty(manifest_value, "memory"),
+        memory: Vec::new(),
         profiles: manifest_array_or_empty(manifest_value, "profiles"),
     }
 }

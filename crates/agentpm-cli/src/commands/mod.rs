@@ -6,6 +6,7 @@ pub mod keys;
 pub mod knowledge;
 pub mod lint;
 pub mod login;
+pub mod memory;
 pub mod namespace;
 pub mod new;
 pub mod publish;
@@ -21,19 +22,22 @@ pub enum Commands {
     /// Log in and cache credentials
     Login(login::LoginArgs),
 
-    /// Scaffold agent.json (tool, agent, template, skill, or knowledge)
+    /// Scaffold agent.json (tool, agent, template, skill, knowledge, or memory)
     Init(init::InitArgs),
 
-    /// Lint agent.json (tool, agent, template, skill, or knowledge)
+    /// Lint agent.json (tool, agent, template, skill, knowledge, or memory)
     Lint(lint::LintArgs),
 
     /// Build or inspect a Knowledge package
     Knowledge(knowledge::KnowledgeArgs),
 
-    /// Publish a tool to the registry
+    /// Build resolved contracts for a Memory Blueprint
+    Memory(memory::MemoryArgs),
+
+    /// Publish a package to the registry
     Publish(publish::PublishArgs),
 
-    /// Install tool(s) from the registry
+    /// Install package(s) from the registry
     Install(install::InstallArgs),
 
     /// Generate a project from a published or local workflow template

@@ -2,15 +2,16 @@
 
 Command-line tool for building, publishing, installing, and validating AgentPM packages.
 
-AgentPM currently supports five package kinds:
+AgentPM currently supports six package kinds:
 
 - **tools**: executable capabilities with entrypoints, runtime requirements, inputs, and outputs
 - **skills**: procedural packages that capture playbooks, checklists, and reasoning guides around tools
 - **knowledge**: prepared context packages for direct context injection or local vector retrieval
-- **agents**: composition artifacts that declare tool, skill, and knowledge dependencies plus examples and reserved references
+- **memory**: declarative Memory Blueprints that define durable record shapes, retrieval semantics, and lifecycle policy
+- **agents**: composition artifacts that declare tool, skill, knowledge, and memory dependencies plus examples and reserved references
 - **templates**: workflow scaffolds that generate editable AgentPM workspaces
 
-Agent packages are not runnable app bundles. They install as portable composition metadata plus resolved tool, skill, and knowledge dependencies.
+Agent packages are not runnable app bundles. They install as portable composition metadata plus resolved tool, skill, knowledge, and memory dependencies.
 
 [![CI](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml)
 [![Homebrew tap](https://img.shields.io/badge/homebrew-agentpm--dev%2Ftap-blue)](https://github.com/agentpm-dev/homebrew-tap)
@@ -146,6 +147,7 @@ agentpm --help
 agentpm init --kind tool --name demo --description "My first tool"
 agentpm init --kind skill --name triage-playbook --description "My first skill"
 agentpm init --kind knowledge --name docs-corpus --description "My first knowledge package"
+agentpm init --kind memory --name conversation-continuity --description "My first memory blueprint"
 agentpm init --kind agent --name support-agent --description "My first agent"
 agentpm init --kind template --name research-template --description "My workflow template"
 ```
@@ -165,7 +167,7 @@ cd my-project
 `agentpm new`:
 
 - copies and renders scaffold files from the template
-- installs declared tool, skill, agent, and knowledge dependencies into the generated workspace
+- installs declared tool, skill, agent, knowledge, and memory dependencies into the generated workspace
 - writes `agent.json`, `agentpm.workspace.json`, `agent.lock`, and `.agentpm/template.json`
 - does not execute template-provided scripts or generated app code during scaffolding
 
@@ -209,10 +211,11 @@ agentpm install
 
 That:
 
-- resolves the tools, skills, and knowledge packages declared in the local manifest
+- resolves the tools, skills, knowledge, and memory packages declared in the local manifest
 - installs tools under `.agentpm/tools/<namespace>/<name>/<version>/`
 - installs skills under `.agentpm/skills/<namespace>/<name>/<version>/`
 - installs knowledge under `.agentpm/knowledge/<namespace>/<name>/<version>/`
+- installs memory under `.agentpm/memory/<namespace>/<name>/<version>/`
 - writes `agent.lock` (Skill-containing graphs use `lockfile_version: 3`)
 - keeps the local `agent.json` as the source of truth
 
@@ -230,11 +233,19 @@ Install an agent package directly:
 agentpm install @zack/support-agent@0.1.0
 ```
 
+Install a memory package directly:
+
+```bash
+agentpm install @zack/profile-memory@0.1.0
+```
+
 Direct agent install writes:
 
 - the installed agent under `.agentpm/agents/<namespace>/<name>/<version>/`
 - the agent’s resolved skills under `.agentpm/skills/<namespace>/<name>/<version>/`
+- the agent’s resolved knowledge dependencies under `.agentpm/knowledge/<namespace>/<name>/<version>/`
 - the agent’s resolved tools under `.agentpm/tools/<namespace>/<name>/<version>/`
+- the agent’s resolved memory dependencies under `.agentpm/memory/<namespace>/<name>/<version>/`
 - an `agent:@namespace/name@version` root in `agent.lock`
 
 Once a tool is installed, AgentPM can expose the same packaged artifact through the shell, MCP, and Skill scaffolds:

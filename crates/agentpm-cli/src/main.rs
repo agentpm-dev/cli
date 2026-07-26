@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
         commands::Commands::Init(args) => args.run(cli.base_url.clone()).await,
         commands::Commands::Lint(args) => args.run().await,
         commands::Commands::Knowledge(args) => args.run().await,
+        commands::Commands::Memory(args) => args.run().await,
         commands::Commands::Publish(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Install(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::New(arg) => arg.run(cli.base_url.clone()).await,
