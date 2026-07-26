@@ -298,8 +298,10 @@
 - [ ] Add tests for installed package resolution, parsed metadata, on-demand contract loading, safe path handling, duplicate index entries, count mismatches, missing generated metadata, malformed indexes, missing contracts, wrong kinds, and unsupported formats.
 - [ ] Use shared Memory fixtures with the Node SDK and verify equivalent artifact interpretation.
 
-## Milestone 13: Documentation and Examples
-> Scope note: document the complete Memory Blueprint authoring and consumption contract, generated record-envelope model, build/publish workflow, dependency behavior, SDK metadata loading, and Phase 7 boundary. Provide representative packages that demonstrate the supported MVP vocabulary without implying that AgentPM currently stores memory, enforces retention, evaluates triggers, or runs lifecycle operations.
+## Milestone 13: Documentation and Cleanup
+> Scope note: complete every documentation, compatibility, packaging, release-version, and deployment task required before creating real published Memory Blueprint example packages. This milestone closes the feature out across repos, updates public-facing product/docs surfaces, removes stale reserved-memory assumptions, verifies existing workflows remain unchanged, updates released version markers, and deploys the production surfaces that the examples will rely on. Example package creation is intentionally deferred to Milestone 14.
+- [ ] Update repo READMEs and public documentation surfaces across repos where the Memory Blueprint workflow changes what users read or run.
+- [ ] Update the `agentpm-api` MDX documentation set for Memory Blueprints, including both edits to existing pages and brand-new MDX files wherever Memory needs its own dedicated public doc surface.
 - [ ] Add a complete Memory Blueprint manifest reference.
 - [ ] Document scopes, record types, spaces, model semantics, retrieval modes, retention, capacity, constraints, operations, and triggers.
 - [ ] Document all governance annotations and precise semantics.
@@ -310,12 +312,7 @@
 - [ ] Document `loadMemory` and `load_memory` as blueprint metadata loaders only.
 - [ ] Update agent dependency docs for top-level `memory`.
 - [ ] Update template dependency docs for `template.dependencies.memory`.
-- [ ] Add at least one simple user-profile example package.
-- [ ] Add one conversational-continuity reference example exercising sequence, document, collection, retention, semantic retrieval, governance, and consolidation.
 - [ ] Clearly document Phase 6C non-goals and the future Phase 7 binding/harness boundary.
-
-## Milestone 14: Compatibility and Cleanup
-> Scope note: complete the cross-repository package-kind audit, remove obsolete reserved-memory assumptions, verify existing artifact workflows remain unchanged, and run the full test matrix. This milestone should close omissions and regressions only; it must not expand Memory Blueprints into bindings, storage adapters, live record APIs, harness execution, or other Phase 7 functionality.
 - [ ] Audit the CLI for hardcoded `tool|agent|template|skill|knowledge` lists and add `memory` where intended.
 - [ ] Audit backend models, migrations, API clients, and serializers for package-kind lists.
 - [ ] Audit Node SDK public exports and package-kind unions.
@@ -327,4 +324,13 @@
 - [ ] Ensure existing tool, agent, template, skill, and knowledge publishing/install flows remain unchanged.
 - [ ] Ensure existing templates without `memory` remain valid.
 - [ ] Ensure existing agents with empty `memory` arrays remain valid.
+- [ ] Update the CLI version for the Memory Blueprint release.
+- [ ] Update the Node SDK and Python SDK versions for the Memory Blueprint release.
+- [ ] Update the web status page version/date values so the public UI reflects the Memory Blueprint release.
+- [ ] Deploy the required production surfaces after docs, cleanup, and release-version updates are complete, including the registry/backend, web UI, CLI release, and both SDKs.
 - [ ] Run full CLI, backend, frontend, Node SDK, and Python SDK test suites.
+
+## Milestone 14: Examples
+> Scope note: create and publish representative Memory Blueprint packages only after Milestone 13 is complete and production has been updated. These examples are seeded public artifacts, so they should rely on the finalized docs, package-kind support, release versions, and deployed production surfaces from the prior milestone. Examples must demonstrate the supported MVP vocabulary without implying that AgentPM currently stores memory, enforces retention, evaluates triggers, or executes lifecycle operations.
+- [ ] Add at least one simple user-profile example package.
+- [ ] Add one conversational-continuity reference example exercising sequence, document, collection, retention, semantic retrieval, governance, and consolidation.
