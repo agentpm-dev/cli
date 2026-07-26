@@ -22,7 +22,7 @@ pub enum Commands {
     /// Log in and cache credentials
     Login(login::LoginArgs),
 
-    /// Scaffold agent.json (tool, agent, template, skill, or knowledge)
+    /// Scaffold agent.json (tool, agent, template, skill, knowledge, or memory)
     Init(init::InitArgs),
 
     /// Lint agent.json (tool, agent, template, skill, knowledge, or memory)
@@ -34,10 +34,10 @@ pub enum Commands {
     /// Build resolved contracts for a Memory Blueprint
     Memory(memory::MemoryArgs),
 
-    /// Publish a tool to the registry
+    /// Publish a package to the registry
     Publish(publish::PublishArgs),
 
-    /// Install tool(s) from the registry
+    /// Install package(s) from the registry
     Install(install::InstallArgs),
 
     /// Generate a project from a published or local workflow template
