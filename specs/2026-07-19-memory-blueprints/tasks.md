@@ -332,5 +332,33 @@
 
 ## Milestone 14: Examples
 > Scope note: create and publish representative Memory Blueprint packages only after Milestone 13 is complete and production has been updated. These examples are seeded public artifacts, so they should rely on the finalized docs, package-kind support, release versions, and deployed production surfaces from the prior milestone. Examples must demonstrate the supported MVP vocabulary without implying that AgentPM currently stores memory, enforces retention, evaluates triggers, or executes lifecycle operations.
-- [ ] Add at least one simple user-profile example package.
-- [ ] Add one conversational-continuity reference example exercising sequence, document, collection, retention, semantic retrieval, governance, and consolidation.
+- [ ] Add `@zack/support-customer-state` as the seeded simple document-style Memory Blueprint package.
+  - [ ] Place it under `agentpm-examples/memory-packages/support-customer-state`.
+  - [ ] Keep it intentionally narrow and approachable as the first public Memory example.
+  - [ ] Model a durable customer or user profile with document storage, key retrieval, and light lifecycle policy.
+  - [ ] Include more than one authored field in the source schema so the generated contract is visibly useful in the UI and SDKs.
+- [ ] Add `@zack/conversation-continuity` as the seeded flagship multi-space Memory Blueprint package.
+  - [ ] Place it under `agentpm-examples/memory-packages/conversation-continuity`.
+  - [ ] Exercise sequence, document, and collection spaces together in one package.
+  - [ ] Exercise retrieval semantics, retention, capacity, governance annotations, and declarative lifecycle operations.
+  - [ ] Include at least one consolidate operation so the example demonstrates the richer lifecycle vocabulary.
+- [ ] Add `@zack/devwork-maintainer-state` as the seeded workflow-oriented Memory Blueprint package.
+  - [ ] Place it under `agentpm-examples/memory-packages/devwork-maintainer-state`.
+  - [ ] Keep it aligned with the existing devwork package story rather than introducing a disconnected domain.
+  - [ ] Model maintainer continuity such as durable preferences, active work threads, or follow-up notes.
+  - [ ] Include at least one lifecycle operation that fits the devwork workflow story.
+- [ ] Wire example integrations into existing published package flows.
+  - [ ] Add `@zack/support-customer-state` to an existing template package so generated workspaces demonstrate template-driven Memory usage.
+  - [ ] Add `@zack/conversation-continuity` to at least one existing agent package so a published agent demonstrates agent-level Memory usage.
+  - [ ] Add `@zack/devwork-maintainer-state` to the devwork example flow if it fits cleanly without expanding scope beyond the existing story.
+- [ ] Keep the three examples intentionally distinct rather than repeating the same memory model with different nouns.
+  - [ ] `support-customer-state` should represent a simple durable support-state contract.
+  - [ ] `conversation-continuity` should represent the main multi-space continuity example.
+  - [ ] `devwork-maintainer-state` should represent workflow or maintainer continuity.
+- [ ] Verify the seeded examples end to end.
+  - [ ] Run `agentpm lint` and `agentpm memory build` on all three example packages.
+  - [ ] Verify inspect output for the simple document-style package.
+  - [ ] Verify inspect output for the workflow-oriented package.
+  - [ ] Verify inspect output for the flagship multi-space package.
+  - [ ] Verify template-driven install flow for the template example.
+  - [ ] Verify agent-level install/load flow for the agent example.
