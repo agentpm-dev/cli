@@ -768,6 +768,12 @@ pub fn validate_manifest_value(
         ));
     }
 
+    if value.get("kind").and_then(Value::as_str) == Some("profile")
+        && let Ok(manifest) = parse_profile_manifest(value)
+    {
+        issues.extend(validate_profile_manifest_semantics(file_label, &manifest));
+    }
+
     let has_error = issues.iter().any(|i| i.level == "error");
     Ok((!has_error, issues))
 }
@@ -1087,6 +1093,260 @@ fn validate_memory_manifest_semantics(
     }
 
     issues
+}
+
+fn validate_profile_manifest_semantics(
+    file_label: &str,
+    manifest: &ProfileManifest,
+) -> Vec<LintIssue> {
+    let mut issues = Vec::new();
+    let profile = &manifest.profile;
+
+    validate_non_empty_trimmed_string(
+        file_label,
+        "/profile/identity/role",
+        "identity.role",
+        &profile.identity.role,
+        &mut issues,
+    );
+    validate_optional_trimmed_string(
+        file_label,
+        "/profile/identity/description",
+        "identity.description",
+        profile.identity.description.as_deref(),
+        &mut issues,
+    );
+    validate_trimmed_string_list(
+        file_label,
+        "/profile/identity/expertise",
+        "identity.expertise",
+        &profile.identity.expertise,
+        &mut issues,
+    );
+    validate_trimmed_string_list(
+        file_label,
+        "/profile/objectives",
+        "objectives",
+        &profile.objectives,
+        &mut issues,
+    );
+    validate_trimmed_string_list(
+        file_label,
+        "/profile/principles",
+        "principles",
+        &profile.principles,
+        &mut issues,
+    );
+
+    if let Some(audience) = &profile.audience {
+        validate_optional_trimmed_string(
+            file_label,
+            "/profile/audience/description",
+            "audience.description",
+            audience.description.as_deref(),
+            &mut issues,
+        );
+        validate_optional_trimmed_string(
+            file_label,
+            "/profile/audience/assumed_knowledge",
+            "audience.assumed_knowledge",
+            audience.assumed_knowledge.as_deref(),
+            &mut issues,
+        );
+        validate_trimmed_string_list(
+            file_label,
+            "/profile/audience/adaptation",
+            "audience.adaptation",
+            &audience.adaptation,
+            &mut issues,
+        );
+    }
+
+    validate_trimmed_string_list(
+        file_label,
+        "/profile/communication/tone",
+        "communication.tone",
+        &profile.communication.tone,
+        &mut issues,
+    );
+    validate_trimmed_string_list(
+        file_label,
+        "/profile/communication/guidelines",
+        "communication.guidelines",
+        &profile.communication.guidelines,
+        &mut issues,
+    );
+    validate_trimmed_string_list(
+        file_label,
+        "/profile/communication/formatting",
+        "communication.formatting",
+        &profile.communication.formatting,
+        &mut issues,
+    );
+
+    if let Some(vocabulary) = &profile.communication.vocabulary {
+        validate_profile_vocabulary(file_label, vocabulary, &mut issues);
+    }
+
+    validate_trimmed_string_list(
+        file_label,
+        "/profile/boundaries",
+        "boundaries",
+        &profile.boundaries,
+        &mut issues,
+    );
+    validate_profile_constraints(file_label, &profile.constraints, &mut issues);
+
+    issues
+}
+
+fn validate_non_empty_trimmed_string(
+    file_label: &str,
+    pointer: &str,
+    label: &str,
+    value: &str,
+    issues: &mut Vec<LintIssue>,
+) {
+    if value.trim().is_empty() {
+        push_manifest_error(
+            file_label,
+            pointer,
+            format!("`{label}` must not be empty after trimming"),
+            issues,
+        );
+    }
+}
+
+fn validate_optional_trimmed_string(
+    file_label: &str,
+    pointer: &str,
+    label: &str,
+    value: Option<&str>,
+    issues: &mut Vec<LintIssue>,
+) {
+    if let Some(value) = value {
+        validate_non_empty_trimmed_string(file_label, pointer, label, value, issues);
+    }
+}
+
+fn validate_trimmed_string_list(
+    file_label: &str,
+    pointer: &str,
+    label: &str,
+    values: &[String],
+    issues: &mut Vec<LintIssue>,
+) {
+    for (idx, value) in values.iter().enumerate() {
+        validate_non_empty_trimmed_string(
+            file_label,
+            &json_pointer_child(pointer, &idx.to_string()),
+            label,
+            value,
+            issues,
+        );
+    }
+}
+
+fn normalize_profile_term(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn validate_profile_vocabulary(
+    file_label: &str,
+    vocabulary: &ProfileVocabulary,
+    issues: &mut Vec<LintIssue>,
+) {
+    validate_trimmed_string_list(
+        file_label,
+        "/profile/communication/vocabulary/prefer",
+        "communication.vocabulary.prefer",
+        &vocabulary.prefer,
+        issues,
+    );
+    validate_trimmed_string_list(
+        file_label,
+        "/profile/communication/vocabulary/avoid",
+        "communication.vocabulary.avoid",
+        &vocabulary.avoid,
+        issues,
+    );
+
+    let mut prefer_seen: HashMap<String, usize> = HashMap::new();
+    for (idx, value) in vocabulary.prefer.iter().enumerate() {
+        let normalized = normalize_profile_term(value);
+        if normalized.is_empty() {
+            continue;
+        }
+        match prefer_seen.entry(normalized) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(idx);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                push_manifest_error(
+                    file_label,
+                    &format!("/profile/communication/vocabulary/prefer/{idx}"),
+                    "normalized duplicate term in `communication.vocabulary.prefer` is not allowed"
+                        .into(),
+                    issues,
+                );
+            }
+        }
+    }
+
+    let mut avoid_seen: HashMap<String, usize> = HashMap::new();
+    for (idx, value) in vocabulary.avoid.iter().enumerate() {
+        let normalized = normalize_profile_term(value);
+        if normalized.is_empty() {
+            continue;
+        }
+        if prefer_seen.contains_key(&normalized) {
+            push_manifest_error(
+                file_label,
+                &format!("/profile/communication/vocabulary/avoid/{idx}"),
+                "term must not appear in both `communication.vocabulary.prefer` and `communication.vocabulary.avoid` after trimming and case-folding".into(),
+                issues,
+            );
+        }
+        match avoid_seen.entry(normalized) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(idx);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                push_manifest_error(
+                    file_label,
+                    &format!("/profile/communication/vocabulary/avoid/{idx}"),
+                    "normalized duplicate term in `communication.vocabulary.avoid` is not allowed"
+                        .into(),
+                    issues,
+                );
+            }
+        }
+    }
+}
+
+fn validate_profile_constraints(
+    file_label: &str,
+    constraints: &[ProfileConstraint],
+    issues: &mut Vec<LintIssue>,
+) {
+    let mut seen = HashSet::new();
+    for (idx, constraint) in constraints.iter().enumerate() {
+        validate_non_empty_trimmed_string(
+            file_label,
+            &format!("/profile/constraints/{idx}/instruction"),
+            "constraint instruction",
+            &constraint.instruction,
+            issues,
+        );
+        if !seen.insert(constraint.id.clone()) {
+            push_manifest_error(
+                file_label,
+                &format!("/profile/constraints/{idx}/id"),
+                format!("duplicate constraint id `{}` is not allowed", constraint.id),
+                issues,
+            );
+        }
+    }
 }
 
 fn validate_memory_keys<'a>(
@@ -4564,6 +4824,352 @@ mod tests {
                 "expected profile manifest with forbidden field `{field_name}` to fail"
             );
         }
+    }
+
+    #[test]
+    fn profile_semantics_reject_whitespace_only_required_text() {
+        let cases = vec![
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["identity"]["role"] = json!("   ");
+                    manifest
+                },
+                "/profile/identity/role",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["objectives"][0] = json!("  ");
+                    manifest
+                },
+                "/profile/objectives/0",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["communication"]["tone"][0] = json!("\n\t");
+                    manifest
+                },
+                "/profile/communication/tone/0",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["constraints"] = json!([
+                        {
+                            "id": "protect-authentication-data",
+                            "strength": "required",
+                            "instruction": "   "
+                        }
+                    ]);
+                    manifest
+                },
+                "/profile/constraints/0/instruction",
+            ),
+        ];
+
+        for (manifest, expected_path) in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.instance_path == expected_path),
+                "expected whitespace-only failure at {expected_path}, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_semantics_reject_whitespace_only_optional_text() {
+        let cases = vec![
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["identity"]["description"] = json!("  ");
+                    manifest
+                },
+                "/profile/identity/description",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["identity"]["expertise"] = json!(["\t"]);
+                    manifest
+                },
+                "/profile/identity/expertise/0",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["principles"] = json!(["  "]);
+                    manifest
+                },
+                "/profile/principles/0",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["audience"] = json!({
+                        "description": "  ",
+                        "adaptation": ["Match the customer."]
+                    });
+                    manifest
+                },
+                "/profile/audience/description",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["audience"] = json!({
+                        "assumed_knowledge": " ",
+                        "adaptation": ["Match the customer."]
+                    });
+                    manifest
+                },
+                "/profile/audience/assumed_knowledge",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["audience"] = json!({
+                        "description": "Audience",
+                        "adaptation": ["   "]
+                    });
+                    manifest
+                },
+                "/profile/audience/adaptation/0",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["communication"]["guidelines"] = json!([" "]);
+                    manifest
+                },
+                "/profile/communication/guidelines/0",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["communication"]["formatting"] = json!(["\n"]);
+                    manifest
+                },
+                "/profile/communication/formatting/0",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["communication"]["vocabulary"] = json!({
+                        "prefer": ["  "]
+                    });
+                    manifest
+                },
+                "/profile/communication/vocabulary/prefer/0",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["communication"]["vocabulary"] = json!({
+                        "avoid": ["\t"]
+                    });
+                    manifest
+                },
+                "/profile/communication/vocabulary/avoid/0",
+            ),
+            (
+                {
+                    let mut manifest = base_profile_manifest();
+                    manifest["profile"]["boundaries"] = json!(["  "]);
+                    manifest
+                },
+                "/profile/boundaries/0",
+            ),
+        ];
+
+        for (manifest, expected_path) in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.instance_path == expected_path),
+                "expected whitespace-only optional failure at {expected_path}, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_semantics_reject_duplicate_constraint_ids_with_precise_path() {
+        let mut manifest = base_profile_manifest();
+        manifest["profile"]["constraints"] = json!([
+            {
+                "id": "protect-authentication-data",
+                "strength": "required",
+                "instruction": "Never request a raw password."
+            },
+            {
+                "id": "protect-authentication-data",
+                "strength": "preferred",
+                "instruction": "Do not ask for secrets in chat."
+            }
+        ]);
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/profile/constraints/1/id"),
+            "expected precise duplicate constraint id path, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn profile_semantics_reject_normalized_vocabulary_duplicates_and_overlap() {
+        let duplicate_prefer = {
+            let mut manifest = base_profile_manifest();
+            manifest["profile"]["communication"]["vocabulary"] = json!({
+                "prefer": ["Resolve", " resolve  "]
+            });
+            manifest
+        };
+        let issues = assert_manifest_invalid(duplicate_prefer);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/profile/communication/vocabulary/prefer/1"),
+            "expected normalized prefer duplicate path, got: {issues:#?}"
+        );
+
+        let duplicate_avoid = {
+            let mut manifest = base_profile_manifest();
+            manifest["profile"]["communication"]["vocabulary"] = json!({
+                "avoid": ["obviously", " Obviously "]
+            });
+            manifest
+        };
+        let issues = assert_manifest_invalid(duplicate_avoid);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/profile/communication/vocabulary/avoid/1"),
+            "expected normalized avoid duplicate path, got: {issues:#?}"
+        );
+
+        let overlap = {
+            let mut manifest = base_profile_manifest();
+            manifest["profile"]["communication"]["vocabulary"] = json!({
+                "prefer": ["Resolve"],
+                "avoid": [" resolve "]
+            });
+            manifest
+        };
+        let issues = assert_manifest_invalid(overlap);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/profile/communication/vocabulary/avoid/0"),
+            "expected prefer/avoid overlap path, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn profile_semantics_profile_errors_fail_but_schema_warnings_remain_strict_only() {
+        let path = temp_path("profile-strict");
+        let raw = json!({
+            "kind": "profile",
+            "name": "customer-success-advocate",
+            "version": "1.0.0",
+            "description": "Support behavior profile.",
+            "profile": {
+                "identity": {
+                    "role": "Support agent"
+                },
+                "objectives": ["Help."],
+                "communication": {
+                    "tone": ["warm"],
+                    "verbosity": "concise"
+                }
+            }
+        });
+
+        write_manifest_pretty(&path, &raw).unwrap();
+        let (mut manifest, _) = load_manifest_value(&path).unwrap();
+        let (ok, issues) =
+            validate_manifest_value(&schema_path(), "agent.json", &mut manifest, false).unwrap();
+        assert!(
+            ok,
+            "expected non-strict semantic validation to pass with only warning"
+        );
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].level, "warning");
+
+        let invalid = {
+            let mut invalid = raw.clone();
+            invalid["profile"]["communication"]["tone"][0] = json!("   ");
+            invalid
+        };
+        write_manifest_pretty(&path, &invalid).unwrap();
+        let (mut manifest, _) = load_manifest_value(&path).unwrap();
+        let (ok, issues) =
+            validate_manifest_value(&schema_path(), "agent.json", &mut manifest, false).unwrap();
+        assert!(!ok, "expected semantic profile error to fail validation");
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/profile/communication/tone/0"),
+            "expected precise semantic error path, got: {issues:#?}"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn lint_fix_can_add_schema_to_profile_without_rewriting_authored_content() {
+        let path = temp_path("profile-fix");
+        let raw = json!({
+            "kind": "profile",
+            "name": "customer-success-advocate",
+            "version": "1.0.0",
+            "description": "Support behavior profile.",
+            "profile": {
+                "identity": {
+                    "role": "Support agent",
+                    "description": "Represents the team."
+                },
+                "objectives": ["Help."],
+                "communication": {
+                    "tone": ["warm", "professional"],
+                    "verbosity": "concise",
+                    "vocabulary": {
+                        "prefer": ["Resolve", "Next step"]
+                    }
+                }
+            }
+        });
+
+        write_manifest_pretty(&path, &raw).unwrap();
+        let (mut manifest, _) = load_manifest_value(&path).unwrap();
+        let (ok, issues) =
+            validate_manifest_value(&schema_path(), "agent.json", &mut manifest, true).unwrap();
+
+        assert!(
+            ok,
+            "expected lint fix validation to succeed, got: {issues:#?}"
+        );
+        assert_eq!(
+            manifest.get("$schema").and_then(Value::as_str),
+            Some(schema_path().as_str())
+        );
+        assert_eq!(manifest["profile"]["identity"]["role"], "Support agent");
+        assert_eq!(
+            manifest["profile"]["communication"]["vocabulary"]["prefer"][0],
+            "Resolve"
+        );
+        assert_eq!(
+            manifest["profile"]["communication"]["vocabulary"]["prefer"][1],
+            "Next step"
+        );
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
