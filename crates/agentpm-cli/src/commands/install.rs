@@ -200,6 +200,7 @@ impl InstallArgs {
         let skills_dir = project_root.join(".agentpm/skills");
         let knowledge_dir = project_root.join(".agentpm/knowledge");
         let memory_dir = project_root.join(".agentpm/memory");
+        let profiles_dir = project_root.join(".agentpm/profiles");
         fs::ensure_dirs(&[
             &dl_dir,
             &tools_dir,
@@ -207,6 +208,7 @@ impl InstallArgs {
             &skills_dir,
             &knowledge_dir,
             &memory_dir,
+            &profiles_dir,
         ])?;
         download_and_extract_all(
             &init,
@@ -217,6 +219,7 @@ impl InstallArgs {
                 skills_dir: &skills_dir,
                 knowledge_dir: &knowledge_dir,
                 memory_dir: &memory_dir,
+                profiles_dir: &profiles_dir,
             },
             self.refresh,
             quiet,
@@ -265,6 +268,7 @@ impl InstallArgs {
                     spec,
                     self.update_range,
                 )?,
+                PackageKind::Profile => false,
                 PackageKind::Agent => false,
             }
         {
@@ -479,7 +483,10 @@ fn remove_superseded_direct_registry_roots(
         let expected_prefix = match kind {
             PackageKind::Agent => "agent:",
             PackageKind::Skill => "skill:",
-            PackageKind::Knowledge | PackageKind::Memory | PackageKind::Tool => return true,
+            PackageKind::Knowledge
+            | PackageKind::Memory
+            | PackageKind::Profile
+            | PackageKind::Tool => return true,
         };
         if !key.starts_with(expected_prefix) {
             return true;
@@ -586,7 +593,8 @@ fn enqueue_manifest_dependencies(
                 )?);
             }
         }
-        PackageKind::Knowledge | PackageKind::Memory | PackageKind::Tool => {}
+        PackageKind::Knowledge | PackageKind::Memory | PackageKind::Profile | PackageKind::Tool => {
+        }
     }
     Ok(())
 }
@@ -600,7 +608,9 @@ fn load_installed_manifest_value(
     let manifest_path = match kind {
         PackageKind::Agent => installed_agent_manifest_path(install_root, name, version)?,
         PackageKind::Skill => installed_skill_manifest_path(install_root, name, version)?,
-        PackageKind::Knowledge | PackageKind::Memory | PackageKind::Tool => return Ok(None),
+        PackageKind::Knowledge | PackageKind::Memory | PackageKind::Profile | PackageKind::Tool => {
+            return Ok(None);
+        }
     };
     if !manifest_path.exists() {
         return Err(anyhow!(
@@ -713,6 +723,21 @@ fn installed_memory_manifest_path(
         .join("agent.json"))
 }
 
+#[cfg(test)]
+fn installed_profile_manifest_path(
+    install_root: &std::path::Path,
+    package: &str,
+    version: &str,
+) -> Result<PathBuf> {
+    let (owner, name) = split_package_ref(package)?;
+    Ok(install_root
+        .join("profiles")
+        .join(owner)
+        .join(name)
+        .join(version)
+        .join("agent.json"))
+}
+
 fn build_registry_package_roots(
     spec: Option<&str>,
     plan: &ResolvePlan,
@@ -797,6 +822,7 @@ fn build_registry_package_roots(
             }
             PackageKind::Knowledge => unreachable!(),
             PackageKind::Memory => unreachable!(),
+            PackageKind::Profile => unreachable!(),
             PackageKind::Tool => unreachable!(),
         };
 
@@ -1037,8 +1063,9 @@ mod tests {
     use super::{
         InstallArgs, build_lock_roots, build_updated_lock, ensure_supported_install_kinds,
         installed_agent_manifest_path, installed_knowledge_manifest_path,
-        installed_memory_manifest_path, installed_skill_manifest_path,
-        should_load_manifest_for_install, validate_frozen_lock_compatibility,
+        installed_memory_manifest_path, installed_profile_manifest_path,
+        installed_skill_manifest_path, should_load_manifest_for_install,
+        validate_frozen_lock_compatibility,
     };
     use crate::semver::types::{
         DesiredSet, Lock, LockRoot, LockV1, LockV2, LockedDependency, LockedPackage, LockedRoot,
@@ -1116,6 +1143,19 @@ mod tests {
                 name: "@zack/python-docs".to_string(),
                 version: "0.1.0".to_string(),
                 integrity: "sha256-knowledge".to_string(),
+            }],
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn direct_install_allows_profile_packages() {
+        ensure_supported_install_kinds(&sdkm::ResolveResponse {
+            items: vec![sdkm::ResolvedPackage {
+                kind: sdkm::PackageKind::Profile,
+                name: "@zack/support-persona".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-profile".to_string(),
             }],
         })
         .unwrap();
@@ -2699,6 +2739,66 @@ mod tests {
         assert!(
             lock.packages
                 .contains_key("memory:@zack/session-memory@0.1.0")
+        );
+    }
+
+    #[test]
+    fn direct_profile_install_without_local_manifest_keeps_package_only_v2_lock() {
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::new(),
+            roots: BTreeMap::new(),
+        });
+        let root = temp_root("direct-profile-package-only");
+        let manifest_path =
+            installed_profile_manifest_path(&root, "@zack/support-persona", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "profile",
+                "name": "support-persona",
+                "version": "0.1.0",
+                "description": "Profile",
+                "profile": {
+                    "identity": {
+                        "role": "Support specialist"
+                    },
+                    "communication": {
+                        "tone": ["clear", "calm"]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Profile,
+                name: "@zack/support-persona".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-profile".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            None,
+            Some("@zack/support-persona@0.1.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(lock.lockfile_version, 2);
+        assert!(lock.roots.is_empty());
+        assert!(
+            lock.packages
+                .contains_key("profile:@zack/support-persona@0.1.0")
         );
     }
 

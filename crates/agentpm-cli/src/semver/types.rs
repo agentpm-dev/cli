@@ -13,6 +13,7 @@ pub enum PackageKind {
     Skill,
     Knowledge,
     Memory,
+    Profile,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -653,6 +654,7 @@ impl PackageKind {
             PackageKind::Skill => "skill",
             PackageKind::Knowledge => "knowledge",
             PackageKind::Memory => "memory",
+            PackageKind::Profile => "profile",
         }
     }
 }
@@ -820,6 +822,19 @@ mod tests {
         assert_eq!(parsed.kind, PackageKind::Agent);
         assert_eq!(parsed.name, "@zack/support-agent");
         assert_eq!(parsed.range, "^0.1");
+    }
+
+    #[test]
+    fn package_requirement_supports_profile_kind() {
+        let parsed = PackageRequirement::new(PackageKind::Profile, "@zack/support-persona", "^0.1");
+
+        assert_eq!(parsed.kind, PackageKind::Profile);
+        assert_eq!(parsed.name, "@zack/support-persona");
+        assert_eq!(parsed.range, "^0.1");
+        assert_eq!(
+            package_key(parsed.kind, &parsed.name, "0.1.0"),
+            "profile:@zack/support-persona@0.1.0"
+        );
     }
 
     #[test]

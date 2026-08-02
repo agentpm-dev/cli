@@ -9,6 +9,7 @@ pub enum PackageKind {
     Skill,
     Knowledge,
     Memory,
+    Profile,
     Template,
 }
 
@@ -132,6 +133,17 @@ mod tests {
 
         assert_eq!(parsed.kind, PackageKind::Knowledge);
         assert_eq!(parsed.name, "@zack/python-docs");
+    }
+
+    #[test]
+    fn install_dto_supports_explicit_profile_kind() {
+        let parsed: ResolvedPackage = serde_json::from_str(
+            r#"{"kind":"profile","name":"@zack/support-persona","version":"0.1.0","integrity":"abc"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.kind, PackageKind::Profile);
+        assert_eq!(parsed.name, "@zack/support-persona");
     }
 }
 
