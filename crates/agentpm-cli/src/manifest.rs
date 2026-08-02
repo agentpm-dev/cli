@@ -136,6 +136,7 @@ pub struct TemplateDependencies {
     pub skills: Vec<PackageReference>,
     pub knowledge: Vec<PackageReference>,
     pub memory: Vec<PackageReference>,
+    pub profiles: Vec<PackageReference>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -471,6 +472,116 @@ pub struct MemoryManifest {
     #[allow(dead_code)]
     pub description: Option<String>,
     pub memory: MemoryMetadata,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProfileIdentity {
+    pub role: String,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub expertise: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProfileAudience {
+    pub description: Option<String>,
+    pub assumed_knowledge: Option<String>,
+    #[serde(default)]
+    pub adaptation: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProfileVocabulary {
+    #[serde(default)]
+    pub prefer: Vec<String>,
+    #[serde(default)]
+    pub avoid: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileVerbosity {
+    Concise,
+    Balanced,
+    Detailed,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProfileCommunication {
+    pub tone: Vec<String>,
+    pub verbosity: ProfileVerbosity,
+    #[serde(default)]
+    pub guidelines: Vec<String>,
+    #[serde(default)]
+    pub formatting: Vec<String>,
+    pub vocabulary: Option<ProfileVocabulary>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileConstraintStrength {
+    Required,
+    Preferred,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProfileConstraint {
+    pub id: String,
+    pub strength: ProfileConstraintStrength,
+    pub instruction: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct ProfileCapabilityHints {
+    pub tool_use: Option<bool>,
+    pub structured_output: Option<bool>,
+    pub multimodal_input: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct ProfileCompatibility {
+    pub minimum_context_tokens: Option<u64>,
+    pub requires: Option<ProfileCapabilityHints>,
+    pub recommends: Option<ProfileCapabilityHints>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProfileMetadata {
+    pub identity: ProfileIdentity,
+    pub objectives: Vec<String>,
+    #[serde(default)]
+    pub principles: Vec<String>,
+    pub audience: Option<ProfileAudience>,
+    pub communication: ProfileCommunication,
+    #[serde(default)]
+    pub boundaries: Vec<String>,
+    #[serde(default)]
+    pub constraints: Vec<ProfileConstraint>,
+    pub compatibility: Option<ProfileCompatibility>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct ProfileManifest {
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+    pub readme: Option<String>,
+    #[serde(default)]
+    pub license: Option<Value>,
+    pub profile: ProfileMetadata,
 }
 
 #[derive(Debug)]
@@ -1852,6 +1963,19 @@ pub fn parse_memory_manifest(value: &Value) -> Result<MemoryManifest> {
     Ok(mf)
 }
 
+#[allow(dead_code)]
+pub fn parse_profile_manifest(value: &Value) -> Result<ProfileManifest> {
+    let mf: ProfileManifest =
+        serde_json::from_value(value.clone()).context("parsing manifest into ProfileManifest")?;
+    if mf.kind != "profile" {
+        return Err(anyhow!(format!(
+            "expected kind=\"profile\" manifest (got kind=\"{}\")",
+            mf.kind
+        )));
+    }
+    Ok(mf)
+}
+
 /// Lock files
 pub fn write_lock<P: AsRef<Path>>(dir: P, lock: &Lock) -> Result<()> {
     let path = dir.as_ref().join("agent.lock");
@@ -1898,7 +2022,15 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
                 .unwrap(),
-            vec!["agent", "tool", "template", "skill", "knowledge", "memory"]
+            vec![
+                "agent",
+                "tool",
+                "template",
+                "skill",
+                "knowledge",
+                "memory",
+                "profile",
+            ]
         );
     }
 
@@ -2009,6 +2141,27 @@ mod tests {
                             "modes": ["key"]
                         }
                     }
+                }
+            }
+        })
+    }
+
+    fn base_profile_manifest() -> Value {
+        json!({
+            "kind": "profile",
+            "name": "customer-success-advocate",
+            "version": "1.0.0",
+            "description": "A warm, professional behavior profile for customer-facing support agents.",
+            "profile": {
+                "identity": {
+                    "role": "Senior Customer Success Advocate"
+                },
+                "objectives": [
+                    "Help customers reach a clear resolution or next step."
+                ],
+                "communication": {
+                    "tone": ["warm"],
+                    "verbosity": "concise"
                 }
             }
         })
@@ -2249,6 +2402,24 @@ mod tests {
     }
 
     #[test]
+    fn valid_agent_manifest_with_profile_dependencies_validates() {
+        assert_manifest_ok(json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "description": "Agent with Instruction Profile dependencies.",
+            "tools": [],
+            "profiles": [
+                "@zack/customer-success-advocate@1.0.0",
+                {
+                    "name": "@zack/escalation-manager",
+                    "version": "1.0.0"
+                }
+            ]
+        }));
+    }
+
+    #[test]
     fn valid_template_manifest_with_knowledge_dependencies_validates() {
         assert_manifest_ok(json!({
             "kind": "template",
@@ -2279,6 +2450,736 @@ mod tests {
                 ]
             }
         }));
+    }
+
+    #[test]
+    fn valid_template_manifest_with_profile_dependencies_validates() {
+        assert_manifest_ok(json!({
+            "kind": "template",
+            "name": "support-workspace",
+            "version": "0.1.0",
+            "description": "Workspace starter with Instruction Profile dependencies.",
+            "template": {
+                "display_name": "Support Workspace",
+                "use_case": "support",
+                "execution_surfaces": ["multi-agent-workspace"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "profiles": [
+                        "@zack/customer-success-advocate@1.0.0"
+                    ]
+                },
+                "entrypoints": [
+                    {
+                        "label": "Open workspace",
+                        "command": "agentpm run"
+                    }
+                ]
+            }
+        }));
+    }
+
+    #[test]
+    fn valid_minimal_profile_manifest_validates() {
+        assert_manifest_ok(base_profile_manifest());
+    }
+
+    #[test]
+    fn valid_full_profile_manifest_validates_and_parses() {
+        let manifest = json!({
+            "kind": "profile",
+            "name": "customer-success-advocate",
+            "version": "1.0.0",
+            "description": "A warm, professional behavior profile for customer-facing SaaS support agents.",
+            "readme": "README.md",
+            "license": {
+                "spdx": "MIT",
+                "file": "LICENSE"
+            },
+            "profile": {
+                "identity": {
+                    "role": "Senior Customer Success Advocate",
+                    "description": "Represents the company while helping customers resolve product and account issues.",
+                    "expertise": [
+                        "Customer communication",
+                        "Subscription billing"
+                    ]
+                },
+                "objectives": [
+                    "Help customers reach a clear resolution or next step.",
+                    "Protect customer trust and sensitive information."
+                ],
+                "principles": [
+                    "Acknowledge uncertainty instead of presenting guesses as facts."
+                ],
+                "audience": {
+                    "description": "Customers ranging from non-technical administrators to experienced developers.",
+                    "assumed_knowledge": "Basic familiarity with common software interfaces.",
+                    "adaptation": [
+                        "Match the technical depth demonstrated by the customer."
+                    ]
+                },
+                "communication": {
+                    "tone": ["warm", "professional", "solution-oriented"],
+                    "verbosity": "balanced",
+                    "guidelines": [
+                        "State the most useful next action early."
+                    ],
+                    "formatting": [
+                        "Use numbered lists when presenting multiple actions."
+                    ],
+                    "vocabulary": {
+                        "prefer": ["resolve", "next step"],
+                        "avoid": ["obviously", "as an AI"]
+                    }
+                },
+                "boundaries": [
+                    "Do not claim access to systems that are not actually available."
+                ],
+                "constraints": [
+                    {
+                        "id": "protect-authentication-data",
+                        "strength": "required",
+                        "instruction": "Never request a raw password."
+                    },
+                    {
+                        "id": "avoid-generic-ai-disclaimers",
+                        "strength": "preferred",
+                        "instruction": "Do not introduce responses with generic AI disclaimers."
+                    }
+                ],
+                "compatibility": {
+                    "minimum_context_tokens": 8000,
+                    "requires": {
+                        "tool_use": false,
+                        "structured_output": false,
+                        "multimodal_input": false
+                    },
+                    "recommends": {
+                        "tool_use": true,
+                        "structured_output": true,
+                        "multimodal_input": false
+                    }
+                }
+            }
+        });
+
+        assert_manifest_ok(manifest.clone());
+        let parsed = parse_profile_manifest(&manifest).unwrap();
+        assert_eq!(parsed.kind, "profile");
+        assert_eq!(
+            parsed.profile.identity.role,
+            "Senior Customer Success Advocate"
+        );
+        assert_eq!(
+            parsed.profile.communication.verbosity,
+            ProfileVerbosity::Balanced
+        );
+        assert_eq!(parsed.profile.constraints.len(), 2);
+    }
+
+    #[test]
+    fn profile_manifest_rejects_missing_required_core_fields() {
+        let cases = vec![
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "missing-profile",
+                    "version": "1.0.0",
+                    "description": "Missing profile object."
+                }),
+                "/oneOf",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "missing-identity",
+                    "version": "1.0.0",
+                    "description": "Missing identity.",
+                    "profile": {
+                        "objectives": ["Help."],
+                        "communication": {
+                            "tone": ["warm"],
+                            "verbosity": "concise"
+                        }
+                    }
+                }),
+                "/properties/profile",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "missing-role",
+                    "version": "1.0.0",
+                    "description": "Missing role.",
+                    "profile": {
+                        "identity": {},
+                        "objectives": ["Help."],
+                        "communication": {
+                            "tone": ["warm"],
+                            "verbosity": "concise"
+                        }
+                    }
+                }),
+                "/profile/identity",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "missing-objectives",
+                    "version": "1.0.0",
+                    "description": "Missing objectives.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "communication": {
+                            "tone": ["warm"],
+                            "verbosity": "concise"
+                        }
+                    }
+                }),
+                "/profile",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "missing-communication",
+                    "version": "1.0.0",
+                    "description": "Missing communication.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."]
+                    }
+                }),
+                "/profile",
+            ),
+        ];
+
+        for (manifest, expected_path) in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues.iter().any(|issue| {
+                    issue.instance_path == expected_path
+                        || issue.schema_path.contains(expected_path)
+                }),
+                "expected missing core field failure at {expected_path}, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_manifest_rejects_empty_required_and_optional_fields() {
+        let cases = vec![
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-objectives",
+                    "version": "1.0.0",
+                    "description": "Objectives must not be empty.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": [],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" }
+                    }
+                }),
+                "/profile/objectives",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-tone",
+                    "version": "1.0.0",
+                    "description": "Tone must not be empty.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": [], "verbosity": "concise" }
+                    }
+                }),
+                "/profile/communication/tone",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-audience",
+                    "version": "1.0.0",
+                    "description": "Audience must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "audience": {},
+                        "communication": { "tone": ["warm"], "verbosity": "concise" }
+                    }
+                }),
+                "/profile/audience",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-vocabulary",
+                    "version": "1.0.0",
+                    "description": "Vocabulary must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": {
+                            "tone": ["warm"],
+                            "verbosity": "concise",
+                            "vocabulary": {}
+                        }
+                    }
+                }),
+                "/profile/communication/vocabulary",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-compatibility",
+                    "version": "1.0.0",
+                    "description": "Compatibility must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" },
+                        "compatibility": {}
+                    }
+                }),
+                "/profile/compatibility",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-principles",
+                    "version": "1.0.0",
+                    "description": "Principles must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "principles": [],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" }
+                    }
+                }),
+                "/profile/principles",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-boundaries",
+                    "version": "1.0.0",
+                    "description": "Boundaries must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" },
+                        "boundaries": []
+                    }
+                }),
+                "/profile/boundaries",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-constraints",
+                    "version": "1.0.0",
+                    "description": "Constraints must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" },
+                        "constraints": []
+                    }
+                }),
+                "/profile/constraints",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-expertise",
+                    "version": "1.0.0",
+                    "description": "Identity expertise must not be empty when present.",
+                    "profile": {
+                        "identity": {
+                            "role": "Support agent",
+                            "expertise": []
+                        },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" }
+                    }
+                }),
+                "/profile/identity/expertise",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-guidelines",
+                    "version": "1.0.0",
+                    "description": "Communication guidelines must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": {
+                            "tone": ["warm"],
+                            "verbosity": "concise",
+                            "guidelines": []
+                        }
+                    }
+                }),
+                "/profile/communication/guidelines",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-formatting",
+                    "version": "1.0.0",
+                    "description": "Communication formatting must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": {
+                            "tone": ["warm"],
+                            "verbosity": "concise",
+                            "formatting": []
+                        }
+                    }
+                }),
+                "/profile/communication/formatting",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-adaptation",
+                    "version": "1.0.0",
+                    "description": "Audience adaptation must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "audience": {
+                            "adaptation": []
+                        },
+                        "communication": { "tone": ["warm"], "verbosity": "concise" }
+                    }
+                }),
+                "/profile/audience/adaptation",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-prefer",
+                    "version": "1.0.0",
+                    "description": "Vocabulary prefer terms must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": {
+                            "tone": ["warm"],
+                            "verbosity": "concise",
+                            "vocabulary": {
+                                "prefer": []
+                            }
+                        }
+                    }
+                }),
+                "/profile/communication/vocabulary/prefer",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-avoid",
+                    "version": "1.0.0",
+                    "description": "Vocabulary avoid terms must not be empty when present.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": {
+                            "tone": ["warm"],
+                            "verbosity": "concise",
+                            "vocabulary": {
+                                "avoid": []
+                            }
+                        }
+                    }
+                }),
+                "/profile/communication/vocabulary/avoid",
+            ),
+        ];
+
+        for (manifest, expected_path) in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.instance_path == expected_path),
+                "expected empty-field failure at {expected_path}, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_manifest_rejects_invalid_enums_constraint_ids_and_duplicates() {
+        let constraint_id_cases = vec![
+            "Bad-Constraint",
+            "bad_constraint",
+            "-bad-constraint",
+            "bad-constraint-",
+            "bad--constraint",
+            "a2345678901234567890123456789012345678901234567890123456789012345",
+        ];
+        for invalid_id in constraint_id_cases {
+            let mut manifest = base_profile_manifest();
+            manifest["profile"]["constraints"] = json!([
+                {
+                    "id": invalid_id,
+                    "strength": "required",
+                    "instruction": "Never expose secrets."
+                }
+            ]);
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.instance_path == "/profile/constraints/0/id"),
+                "expected invalid constraint id failure for {invalid_id}, got: {issues:#?}"
+            );
+        }
+
+        let cases = vec![
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "bad-verbosity",
+                    "version": "1.0.0",
+                    "description": "Invalid verbosity should fail.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "brief" }
+                    }
+                }),
+                "/profile/communication/verbosity",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "bad-strength",
+                    "version": "1.0.0",
+                    "description": "Invalid constraint strength should fail.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" },
+                        "constraints": [
+                            {
+                                "id": "protect-secrets",
+                                "strength": "advisory",
+                                "instruction": "Never expose secrets."
+                            }
+                        ]
+                    }
+                }),
+                "/profile/constraints/0/strength",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-instruction",
+                    "version": "1.0.0",
+                    "description": "Empty constraint instruction should fail.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" },
+                        "constraints": [
+                            {
+                                "id": "protect-secrets",
+                                "strength": "required",
+                                "instruction": ""
+                            }
+                        ]
+                    }
+                }),
+                "/profile/constraints/0/instruction",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "duplicate-objectives",
+                    "version": "1.0.0",
+                    "description": "Duplicate objectives should fail.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help.", "Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" }
+                    }
+                }),
+                "/profile/objectives",
+            ),
+        ];
+
+        for (manifest, expected_path) in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.instance_path == expected_path),
+                "expected profile validation failure at {expected_path}, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_manifest_rejects_invalid_compatibility_metadata() {
+        let cases = vec![
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "zero-min-context",
+                    "version": "1.0.0",
+                    "description": "Zero minimum context should fail.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" },
+                        "compatibility": {
+                            "minimum_context_tokens": 0
+                        }
+                    }
+                }),
+                "/profile/compatibility/minimum_context_tokens",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "negative-min-context",
+                    "version": "1.0.0",
+                    "description": "Negative minimum context should fail.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" },
+                        "compatibility": {
+                            "minimum_context_tokens": -1
+                        }
+                    }
+                }),
+                "/profile/compatibility/minimum_context_tokens",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "unknown-capability",
+                    "version": "1.0.0",
+                    "description": "Unknown capability names should fail.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" },
+                        "compatibility": {
+                            "requires": {
+                                "telepathy": true
+                            }
+                        }
+                    }
+                }),
+                "/profile/compatibility/requires",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "non-boolean-capability",
+                    "version": "1.0.0",
+                    "description": "Capability values must be booleans.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" },
+                        "compatibility": {
+                            "recommends": {
+                                "tool_use": "yes"
+                            }
+                        }
+                    }
+                }),
+                "/profile/compatibility/recommends/tool_use",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "empty-capability-group",
+                    "version": "1.0.0",
+                    "description": "Capability groups must not be empty.",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" },
+                        "compatibility": {
+                            "requires": {}
+                        }
+                    }
+                }),
+                "/profile/compatibility/requires",
+            ),
+        ];
+
+        for (manifest, expected_path) in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.instance_path == expected_path),
+                "expected compatibility failure at {expected_path}, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_manifest_rejects_additional_properties_and_display_name() {
+        let cases = vec![
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "bad-display-name",
+                    "version": "1.0.0",
+                    "description": "Profiles must not declare display_name.",
+                    "display_name": "Support Persona",
+                    "profile": {
+                        "identity": { "role": "Support agent" },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" }
+                    }
+                }),
+                "/display_name",
+            ),
+            (
+                json!({
+                    "kind": "profile",
+                    "name": "bad-extra-property",
+                    "version": "1.0.0",
+                    "description": "Unsupported nested profile properties should fail.",
+                    "profile": {
+                        "identity": {
+                            "role": "Support agent",
+                            "alias": "helper"
+                        },
+                        "objectives": ["Help."],
+                        "communication": { "tone": ["warm"], "verbosity": "concise" }
+                    }
+                }),
+                "/profile/identity",
+            ),
+        ];
+
+        for (manifest, expected_path) in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.instance_path == expected_path
+                        || issue.instance_path.is_empty()),
+                "expected additional-property rejection at {expected_path}, got: {issues:#?}"
+            );
+        }
     }
 
     #[test]
@@ -3620,6 +4521,268 @@ mod tests {
     }
 
     #[test]
+    fn profile_manifest_rejects_dependency_arrays_and_foreign_package_fields() {
+        let base = json!({
+            "kind": "profile",
+            "name": "bad-profile",
+            "version": "1.0.0",
+            "description": "Profiles must not declare package dependencies or foreign package metadata.",
+            "profile": {
+                "identity": { "role": "Support agent" },
+                "objectives": ["Help."],
+                "communication": { "tone": ["warm"], "verbosity": "concise" }
+            }
+        });
+        let cases = vec![
+            ("tools", json!(["@zack/slack-post-message@0.1.0"])),
+            ("agents", json!(["@zack/ops-console@0.1.0"])),
+            ("skills", json!(["@zack/triage-skill@0.1.0"])),
+            ("knowledge", json!(["@zack/python-docs@0.1.0"])),
+            ("memory", json!(["@zack/conversation-continuity@0.1.0"])),
+            ("profiles", json!(["@zack/other-profile@1.0.0"])),
+            ("skill", json!({ "entrypoint": "SKILL.md" })),
+            (
+                "template",
+                json!({
+                    "display_name": "Bad",
+                    "use_case": "support",
+                    "execution_surfaces": ["python-sdk"],
+                    "files_root": "template",
+                    "variables": [],
+                    "dependencies": { "tools": [], "agents": [] },
+                    "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+                }),
+            ),
+        ];
+
+        for (field_name, field_value) in cases {
+            let mut manifest = base.clone();
+            manifest[field_name] = field_value;
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                !issues.is_empty(),
+                "expected profile manifest with forbidden field `{field_name}` to fail"
+            );
+        }
+    }
+
+    #[test]
+    fn top_level_profile_is_rejected_for_every_non_profile_kind() {
+        let cases = vec![
+            json!({
+                "kind": "agent",
+                "name": "bad-agent-profile",
+                "version": "0.1.0",
+                "description": "Agents must not use singular profile metadata.",
+                "tools": [],
+                "profile": {
+                    "identity": { "role": "Support agent" },
+                    "objectives": ["Help."],
+                    "communication": { "tone": ["warm"], "verbosity": "concise" }
+                }
+            }),
+            json!({
+                "kind": "tool",
+                "name": "bad-tool-profile",
+                "version": "0.1.0",
+                "description": "Tools must not use singular profile metadata.",
+                "entrypoint": { "command": "python", "args": ["main.py"] },
+                "inputs": { "type": "object" },
+                "outputs": { "type": "object" },
+                "files": ["main.py"],
+                "profile": {
+                    "identity": { "role": "Support agent" },
+                    "objectives": ["Help."],
+                    "communication": { "tone": ["warm"], "verbosity": "concise" }
+                }
+            }),
+            json!({
+                "kind": "template",
+                "name": "bad-template-profile",
+                "version": "0.1.0",
+                "description": "Templates must not use singular profile metadata.",
+                "template": {
+                    "display_name": "Bad Template",
+                    "use_case": "support",
+                    "execution_surfaces": ["python-sdk"],
+                    "files_root": "template",
+                    "variables": [],
+                    "dependencies": { "tools": [], "agents": [] },
+                    "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+                },
+                "profile": {
+                    "identity": { "role": "Support agent" },
+                    "objectives": ["Help."],
+                    "communication": { "tone": ["warm"], "verbosity": "concise" }
+                }
+            }),
+            json!({
+                "kind": "skill",
+                "name": "bad-skill-profile",
+                "version": "0.1.0",
+                "description": "Skills must not use singular profile metadata.",
+                "skill": { "entrypoint": "SKILL.md" },
+                "profile": {
+                    "identity": { "role": "Support agent" },
+                    "objectives": ["Help."],
+                    "communication": { "tone": ["warm"], "verbosity": "concise" }
+                }
+            }),
+            json!({
+                "kind": "knowledge",
+                "name": "bad-knowledge-profile",
+                "version": "0.1.0",
+                "description": "Knowledge packages must not use singular profile metadata.",
+                "knowledge": { "mode": "context" },
+                "profile": {
+                    "identity": { "role": "Support agent" },
+                    "objectives": ["Help."],
+                    "communication": { "tone": ["warm"], "verbosity": "concise" }
+                }
+            }),
+            json!({
+                "kind": "memory",
+                "name": "bad-memory-profile",
+                "version": "0.1.0",
+                "description": "Memory packages must not use singular profile metadata.",
+                "memory": {
+                    "scopes": { "user": { "description": "User scope." } },
+                    "record_types": {
+                        "preference": {
+                            "version": "1.0.0",
+                            "description": "Preference record.",
+                            "schema": "schemas/preference.schema.json"
+                        }
+                    },
+                    "spaces": {
+                        "profile": {
+                            "description": "Profile document.",
+                            "model": "document",
+                            "record_types": ["preference"],
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["key"] }
+                        }
+                    }
+                },
+                "profile": {
+                    "identity": { "role": "Support agent" },
+                    "objectives": ["Help."],
+                    "communication": { "tone": ["warm"], "verbosity": "concise" }
+                }
+            }),
+        ];
+
+        for manifest in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.schema_path
+                        == "/dependentSchemas/profile/properties/kind/const"),
+                "expected singular profile rejection outside kind=profile, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn top_level_profiles_is_rejected_for_every_non_agent_kind() {
+        let cases = vec![
+            json!({
+                "kind": "tool",
+                "name": "bad-tool-profiles",
+                "version": "0.1.0",
+                "description": "Tools must not declare top-level profiles.",
+                "entrypoint": { "command": "python", "args": ["main.py"] },
+                "inputs": { "type": "object" },
+                "outputs": { "type": "object" },
+                "files": ["main.py"],
+                "profiles": ["@zack/customer-success-advocate@1.0.0"]
+            }),
+            json!({
+                "kind": "template",
+                "name": "bad-template-profiles",
+                "version": "0.1.0",
+                "description": "Templates must not declare top-level profiles.",
+                "template": {
+                    "display_name": "Bad Template",
+                    "use_case": "support",
+                    "execution_surfaces": ["python-sdk"],
+                    "files_root": "template",
+                    "variables": [],
+                    "dependencies": { "tools": [], "agents": [] },
+                    "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+                },
+                "profiles": ["@zack/customer-success-advocate@1.0.0"]
+            }),
+            json!({
+                "kind": "skill",
+                "name": "bad-skill-profiles",
+                "version": "0.1.0",
+                "description": "Skills must not declare top-level profiles.",
+                "skill": { "entrypoint": "SKILL.md" },
+                "profiles": ["@zack/customer-success-advocate@1.0.0"]
+            }),
+            json!({
+                "kind": "knowledge",
+                "name": "bad-knowledge-profiles",
+                "version": "0.1.0",
+                "description": "Knowledge must not declare top-level profiles.",
+                "knowledge": { "mode": "context" },
+                "profiles": ["@zack/customer-success-advocate@1.0.0"]
+            }),
+            json!({
+                "kind": "memory",
+                "name": "bad-memory-profiles",
+                "version": "0.1.0",
+                "description": "Memory must not declare top-level profiles.",
+                "memory": {
+                    "scopes": { "user": { "description": "User scope." } },
+                    "record_types": {
+                        "preference": {
+                            "version": "1.0.0",
+                            "description": "Preference record.",
+                            "schema": "schemas/preference.schema.json"
+                        }
+                    },
+                    "spaces": {
+                        "profile": {
+                            "description": "Profile document.",
+                            "model": "document",
+                            "record_types": ["preference"],
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["key"] }
+                        }
+                    }
+                },
+                "profiles": ["@zack/customer-success-advocate@1.0.0"]
+            }),
+            json!({
+                "kind": "profile",
+                "name": "bad-profile-profiles",
+                "version": "1.0.0",
+                "description": "Profiles must not declare top-level profiles.",
+                "profile": {
+                    "identity": { "role": "Support agent" },
+                    "objectives": ["Help."],
+                    "communication": { "tone": ["warm"], "verbosity": "concise" }
+                },
+                "profiles": ["@zack/customer-success-advocate@1.0.0"]
+            }),
+        ];
+
+        for manifest in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.schema_path
+                        == "/dependentSchemas/profiles/properties/kind/const"),
+                "expected plural profiles rejection outside kind=agent, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
     fn non_agent_non_memory_top_level_memory_fails() {
         let issues = assert_manifest_invalid(json!({
             "kind": "skill",
@@ -4760,6 +5923,7 @@ mod tests {
         assert!(parsed.template.dependencies.skills.is_empty());
         assert!(parsed.template.dependencies.knowledge.is_empty());
         assert!(parsed.template.dependencies.memory.is_empty());
+        assert!(parsed.template.dependencies.profiles.is_empty());
     }
 
     #[test]
@@ -4889,5 +6053,113 @@ mod tests {
             }
             PackageReference::String(_) => panic!("expected object dependency reference"),
         }
+    }
+
+    #[test]
+    fn parse_template_manifest_preserves_profile_dependencies() {
+        let manifest = json!({
+            "kind": "template",
+            "name": "starter-template",
+            "version": "0.1.0",
+            "description": "Starter template.",
+            "template": {
+                "display_name": "Starter Template",
+                "use_case": "research",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "profiles": [
+                        "@zack/customer-success-advocate@1.0.0",
+                        {
+                            "name": "@zack/escalation-manager",
+                            "version": "1.2.0"
+                        }
+                    ]
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        });
+
+        let parsed = parse_template_manifest(&manifest).unwrap();
+        assert_eq!(parsed.template.dependencies.profiles.len(), 2);
+        match &parsed.template.dependencies.profiles[0] {
+            PackageReference::String(value) => {
+                assert_eq!(value, "@zack/customer-success-advocate@1.0.0");
+            }
+            PackageReference::Object { .. } => panic!("expected string dependency reference"),
+        }
+        match &parsed.template.dependencies.profiles[1] {
+            PackageReference::Object { name, version } => {
+                assert_eq!(name, "@zack/escalation-manager");
+                assert_eq!(version.as_deref(), Some("1.2.0"));
+            }
+            PackageReference::String(_) => panic!("expected object dependency reference"),
+        }
+    }
+
+    #[test]
+    fn parse_profile_manifest_accepts_profile_kind() {
+        let manifest = json!({
+            "kind": "profile",
+            "name": "customer-success-advocate",
+            "version": "1.0.0",
+            "description": "Support behavior profile.",
+            "profile": {
+                "identity": {
+                    "role": "Senior Customer Success Advocate"
+                },
+                "objectives": ["Help the customer reach a clear next step."],
+                "communication": {
+                    "tone": ["warm"],
+                    "verbosity": "concise"
+                }
+            }
+        });
+
+        let parsed = parse_profile_manifest(&manifest).unwrap();
+        assert_eq!(parsed.kind, "profile");
+        assert_eq!(parsed.name, "customer-success-advocate");
+        assert_eq!(
+            parsed.profile.identity.role,
+            "Senior Customer Success Advocate"
+        );
+        assert_eq!(
+            parsed.profile.communication.verbosity,
+            ProfileVerbosity::Concise
+        );
+    }
+
+    #[test]
+    fn parse_profile_manifest_rejects_wrong_kind() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "description": "Support agent.",
+            "profile": {
+                "identity": {
+                    "role": "Support agent"
+                },
+                "objectives": ["Help."],
+                "communication": {
+                    "tone": ["warm"],
+                    "verbosity": "concise"
+                }
+            }
+        });
+
+        let err = parse_profile_manifest(&manifest).unwrap_err().to_string();
+        assert!(
+            err.contains("expected kind=\"profile\" manifest"),
+            "unexpected error: {err}"
+        );
     }
 }

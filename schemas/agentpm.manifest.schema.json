@@ -948,6 +948,10 @@
         "memory": {
           "type": "array",
           "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
         }
       }
     },
@@ -1011,6 +1015,235 @@
           "items": { "$ref": "#/$defs/templateEntrypoint" }
         }
       }
+    },
+    "profileConstraintId": {
+      "type": "string",
+      "pattern": "^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){0,63}$",
+      "description": "Stable lowercase kebab-case identifier for a declared Instruction Profile constraint."
+    },
+    "profileIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role"],
+      "description": "Required role-level identity metadata for an Instruction Profile.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required role the agent should adopt when this Instruction Profile is selected by a consuming runtime."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional additional description of the role and what it represents."
+        },
+        "expertise": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique authored areas of familiarity or perspective for the role."
+        }
+      }
+    },
+    "profileAudience": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Optional audience metadata describing who the Instruction Profile is intended to interact with.",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional high-level description of the intended audience."
+        },
+        "assumed_knowledge": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional description of the baseline knowledge the audience is assumed to have."
+        },
+        "adaptation": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique authored guidance for how communication should adapt to the audience."
+        }
+      }
+    },
+    "profileVocabulary": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Optional vocabulary guidance for preferred and avoided wording.",
+      "properties": {
+        "prefer": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique terms or phrases the authored behavior prefers to use."
+        },
+        "avoid": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique terms or phrases the authored behavior prefers to avoid."
+        }
+      }
+    },
+    "profileCommunication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tone", "verbosity"],
+      "description": "Required communication guidance describing how the agent should speak and present information.",
+      "properties": {
+        "tone": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Required unique open-ended tone labels for the Instruction Profile."
+        },
+        "verbosity": {
+          "type": "string",
+          "enum": ["concise", "balanced", "detailed"],
+          "description": "Required closed verbosity hint for the authored communication style."
+        },
+        "guidelines": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique authored communication guidelines that should generally apply across responses."
+        },
+        "formatting": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique authored formatting guidance for how responses should be structured."
+        },
+        "vocabulary": {
+          "$ref": "#/$defs/profileVocabulary",
+          "description": "Optional preferred and avoided vocabulary guidance."
+        }
+      }
+    },
+    "profileConstraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "strength", "instruction"],
+      "description": "Optional declared behavioral constraint associated with an Instruction Profile.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/profileConstraintId",
+          "description": "Required stable identifier for the declared constraint."
+        },
+        "strength": {
+          "type": "string",
+          "enum": ["required", "preferred"],
+          "description": "Required author-intent strength label for the declared constraint."
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required behavioral instruction expressed by the declared constraint."
+        }
+      }
+    },
+    "profileCapabilityHints": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Optional advisory capability hints describing what a consuming runtime may need or benefit from.",
+      "properties": {
+        "tool_use": {
+          "type": "boolean",
+          "description": "Optional advisory flag describing whether tool use is required or recommended."
+        },
+        "structured_output": {
+          "type": "boolean",
+          "description": "Optional advisory flag describing whether structured output is required or recommended."
+        },
+        "multimodal_input": {
+          "type": "boolean",
+          "description": "Optional advisory flag describing whether multimodal input is required or recommended."
+        }
+      }
+    },
+    "profileCompatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Optional vendor-neutral compatibility hints for consumers of the Instruction Profile.",
+      "properties": {
+        "minimum_context_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional advisory minimum context-window size the authored behavior expects to work comfortably with."
+        },
+        "requires": {
+          "$ref": "#/$defs/profileCapabilityHints",
+          "description": "Optional capability hints the author considers required for best use of the profile."
+        },
+        "recommends": {
+          "$ref": "#/$defs/profileCapabilityHints",
+          "description": "Optional capability hints the author considers beneficial but not strictly required."
+        }
+      }
+    },
+    "profileMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "objectives", "communication"],
+      "description": "Structured Instruction Profile metadata describing role, priorities, communication posture, boundaries, and advisory constraints.",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/profileIdentity",
+          "description": "Required role-level identity the profile defines."
+        },
+        "objectives": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Required unique durable outcomes the role should generally prioritize across tasks."
+        },
+        "principles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique general decision-making principles that should apply across tasks."
+        },
+        "audience": {
+          "$ref": "#/$defs/profileAudience",
+          "description": "Optional audience metadata describing who this profile is intended to interact with."
+        },
+        "communication": {
+          "$ref": "#/$defs/profileCommunication",
+          "description": "Required communication posture for the authored behavior."
+        },
+        "boundaries": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique authority, representation, or capability boundaries the role should not overstep."
+        },
+        "constraints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/profileConstraint" },
+          "description": "Optional declared behavioral constraints expressing required or preferred author intent."
+        },
+        "compatibility": {
+          "$ref": "#/$defs/profileCompatibility",
+          "description": "Optional advisory compatibility metadata for consumers."
+        }
+      }
     }
   },
 
@@ -1056,6 +1289,7 @@
         }
       ]
     },
+    "profile":    { "properties": { "kind": { "const": "profile" } } },
     "profiles":   { "properties": { "kind": { "const": "agent" } } },
     "entrypoint": {
       "properties": { "kind": { "const": "tool" } }
@@ -1070,7 +1304,7 @@
 
   "properties": {
     "$schema": { "type": "string", "format": "uri" },
-    "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill", "knowledge", "memory"] },
+    "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill", "knowledge", "memory", "profile"] },
     "name": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,63}$" },
     "version": {
       "type": "string",
@@ -1107,6 +1341,7 @@
         }
       ]
     },
+    "profile": { "$ref": "#/$defs/profileMetadata" },
     "profiles": {
       "type": "array",
       "items": { "$ref": "#/$defs/packageRef" }
@@ -1199,6 +1434,10 @@
     {
       "properties": { "kind": { "const": "memory" } },
       "required": ["memory"]
+    },
+    {
+      "properties": { "kind": { "const": "profile" } },
+      "required": ["profile"]
     }
   ]
 }
