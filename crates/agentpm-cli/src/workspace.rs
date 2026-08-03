@@ -218,7 +218,13 @@ pub fn build_workspace_lock(
                 &format!("workspace manifest {}", manifest.rel_path),
                 &packages,
             )?,
-            reserved: reserved_refs_from_manifest(&manifest.manifest_value),
+            profiles: resolve_packages_for_manifest(
+                &manifest.manifest_value,
+                PackageKind::Profile,
+                &format!("workspace manifest {}", manifest.rel_path),
+                &packages,
+            )?,
+            reserved: reserved_refs_from_manifest(),
         });
     }
 
@@ -407,7 +413,13 @@ fn build_registry_agent_root(
             &format!("registry agent {}@{}", package, version),
             packages,
         )?,
-        reserved: reserved_refs_from_manifest(&manifest_value),
+        profiles: resolve_packages_for_manifest(
+            &manifest_value,
+            PackageKind::Profile,
+            &format!("registry agent {}@{}", package, version),
+            packages,
+        )?,
+        reserved: reserved_refs_from_manifest(),
     })
 }
 
@@ -482,21 +494,8 @@ fn resolve_packages_for_manifest(
     Ok(resolved)
 }
 
-fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {
-    ReservedReferences {
-        skills: Vec::new(),
-        knowledge: Vec::new(),
-        memory: Vec::new(),
-        profiles: manifest_array_or_empty(manifest_value, "profiles"),
-    }
-}
-
-fn manifest_array_or_empty(manifest_value: &Value, field: &str) -> Vec<Value> {
-    manifest_value
-        .get(field)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
+fn reserved_refs_from_manifest() -> ReservedReferences {
+    ReservedReferences::default()
 }
 
 #[cfg(test)]

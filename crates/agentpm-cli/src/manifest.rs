@@ -689,27 +689,6 @@ pub fn validate_manifest_value(
         });
     }
 
-    if value.get("kind").and_then(Value::as_str) == Some("agent") {
-        for field in ["profiles"] {
-            if value
-                .get(field)
-                .and_then(Value::as_array)
-                .map(|items| !items.is_empty())
-                .unwrap_or(false)
-            {
-                issues.push(LintIssue {
-                    file: file_label.to_string(),
-                    level: "warning",
-                    message: format!(
-                        "`{field}` is validated and preserved, but not resolved in Phase 3."
-                    ),
-                    instance_path: format!("/{field}"),
-                    schema_path: "".into(),
-                });
-            }
-        }
-    }
-
     if value.get("kind").and_then(Value::as_str) == Some("template")
         && let Some(Value::Object(template)) = value.get("template")
         && let Some(Value::Array(variables)) = template.get("variables")
