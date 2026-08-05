@@ -592,6 +592,7 @@ pub enum PublishManifest {
     Skill(Box<SkillManifest>),
     Knowledge(Box<KnowledgeManifest>),
     Memory(Box<MemoryManifest>),
+    Profile(Box<ProfileManifest>),
 }
 
 /// Resolve the schema source (local file if present; else hosted URL)
@@ -2146,8 +2147,11 @@ pub fn parse_publish_manifest(value: &Value) -> Result<PublishManifest> {
         "memory" => Ok(PublishManifest::Memory(Box::new(parse_memory_manifest(
             value,
         )?))),
+        "profile" => Ok(PublishManifest::Profile(Box::new(parse_profile_manifest(
+            value,
+        )?))),
         other => Err(anyhow!(format!(
-            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", and kind=\"memory\" manifests (got kind=\"{}\")",
+            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", kind=\"memory\", and kind=\"profile\" manifests (got kind=\"{}\")",
             other
         ))),
     }
@@ -6255,7 +6259,8 @@ mod tests {
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
-            | PublishManifest::Memory(_) => {
+            | PublishManifest::Memory(_)
+            | PublishManifest::Profile(_) => {
                 panic!("expected tool publish manifest")
             }
         }
@@ -6285,7 +6290,8 @@ mod tests {
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
-            | PublishManifest::Memory(_) => {
+            | PublishManifest::Memory(_)
+            | PublishManifest::Profile(_) => {
                 panic!("expected agent publish manifest")
             }
         }
@@ -6322,7 +6328,8 @@ mod tests {
             | PublishManifest::Agent(_)
             | PublishManifest::Template(_)
             | PublishManifest::Knowledge(_)
-            | PublishManifest::Memory(_) => {
+            | PublishManifest::Memory(_)
+            | PublishManifest::Profile(_) => {
                 panic!("expected skill publish manifest")
             }
         }
@@ -6367,7 +6374,8 @@ mod tests {
             | PublishManifest::Agent(_)
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
-            | PublishManifest::Memory(_) => {
+            | PublishManifest::Memory(_)
+            | PublishManifest::Profile(_) => {
                 panic!("expected template publish manifest")
             }
         }
@@ -6401,7 +6409,8 @@ mod tests {
             | PublishManifest::Agent(_)
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
-            | PublishManifest::Memory(_) => {
+            | PublishManifest::Memory(_)
+            | PublishManifest::Profile(_) => {
                 panic!("expected knowledge publish manifest")
             }
         }
@@ -6453,8 +6462,45 @@ mod tests {
             | PublishManifest::Agent(_)
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
-            | PublishManifest::Knowledge(_) => {
+            | PublishManifest::Knowledge(_)
+            | PublishManifest::Profile(_) => {
                 panic!("expected memory publish manifest")
+            }
+        }
+    }
+
+    #[test]
+    fn parse_publish_manifest_dispatches_profile_kind() {
+        let manifest = json!({
+            "kind": "profile",
+            "name": "customer-success-advocate",
+            "version": "1.0.0",
+            "description": "Support behavior profile.",
+            "profile": {
+                "identity": {
+                    "role": "Senior Customer Success Advocate"
+                },
+                "objectives": ["Help the customer reach a clear next step."],
+                "communication": {
+                    "tone": ["warm"],
+                    "verbosity": "concise"
+                }
+            }
+        });
+
+        match parse_publish_manifest(&manifest).unwrap() {
+            PublishManifest::Profile(mf) => {
+                assert_eq!(mf.kind, "profile");
+                assert_eq!(mf.name, "customer-success-advocate");
+                assert_eq!(mf.profile.identity.role, "Senior Customer Success Advocate");
+            }
+            PublishManifest::Tool(_)
+            | PublishManifest::Agent(_)
+            | PublishManifest::Template(_)
+            | PublishManifest::Skill(_)
+            | PublishManifest::Knowledge(_)
+            | PublishManifest::Memory(_) => {
+                panic!("expected profile publish manifest")
             }
         }
     }
@@ -6470,7 +6516,7 @@ mod tests {
         let err = parse_publish_manifest(&manifest).unwrap_err().to_string();
         assert!(
             err.contains(
-                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", and kind=\"memory\""
+                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", kind=\"memory\", and kind=\"profile\""
             ),
             "unexpected error: {err}"
         );

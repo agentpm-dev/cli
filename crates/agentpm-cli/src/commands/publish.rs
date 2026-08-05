@@ -13,7 +13,7 @@ use crate::keys::signing::{
 };
 use crate::manifest::{
     AgentManifest, Entrypoint, KnowledgeManifest, MemoryManifest, PublishManifest, SkillManifest,
-    TemplateManifest, ToolManifest, load_manifest_value, parse_publish_manifest,
+    ProfileManifest, TemplateManifest, ToolManifest, load_manifest_value, parse_publish_manifest,
     resolve_schema_source, validate_manifest_value,
 };
 use crate::prelude::*;
@@ -165,6 +165,8 @@ impl PublishArgs {
             }
             PublishManifest::Memory(mf) => package_memory(mf, &manifest_path, &manifest_value)
                 .context("packaging memory into tar.gz")?,
+            PublishManifest::Profile(mf) => package_profile(mf, &manifest_path, &manifest_value)
+                .context("packaging profile into tar.gz")?,
         };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
         if size_bytes > MAX_ARTIFACT_BYTES {
@@ -342,6 +344,7 @@ impl PublishArgs {
             PublishManifest::Skill(mf) => artifact_filename(&mf.name, &mf.version, None),
             PublishManifest::Knowledge(mf) => artifact_filename(&mf.name, &mf.version, None),
             PublishManifest::Memory(mf) => artifact_filename(&mf.name, &mf.version, None),
+            PublishManifest::Profile(mf) => artifact_filename(&mf.name, &mf.version, None),
         };
 
         // Build optional finalize_extra
@@ -647,7 +650,7 @@ fn package_skill(
         }
 
         if let Some(readme_path) = manifest_value.get("readme").and_then(|v| v.as_str()) {
-            append_optional_skill_file(
+            append_optional_declared_file(
                 tar,
                 root,
                 "readme",
@@ -658,7 +661,7 @@ fn package_skill(
         }
 
         if let Some(license_file) = pick_license_paths(manifest_value).1 {
-            append_optional_skill_file(
+            append_optional_declared_file(
                 tar,
                 root,
                 "license.file",
@@ -867,6 +870,57 @@ fn package_memory(
 
         if let Some(license_file) = pick_license_paths(manifest_value).1 {
             append_optional_memory_file(
+                tar,
+                root,
+                "license.file",
+                license_file,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        Ok(())
+    })?;
+    Ok(out_path)
+}
+
+fn package_profile(
+    manifest: &ProfileManifest,
+    manifest_path: &Path,
+    manifest_value: &serde_json::Value,
+) -> Result<PathBuf> {
+    let root = manifest_path.parent().unwrap_or(Path::new("."));
+    let out_dir = root.join("target").join("agentpm");
+    fs::create_dir_all(&out_dir).ok();
+
+    let out_path = out_dir.join(artifact_filename(&manifest.name, &manifest.version, None));
+    write_artifact_atomically(&out_path, |tar| {
+        let mut member_count: usize = 0;
+
+        let manifest_bytes = fs::read(manifest_path)?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        ensure_safe_tar_name("agent.json")?;
+        member_count += 1;
+        tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+
+        if let Some(readme_path) = manifest_value.get("readme").and_then(|v| v.as_str()) {
+            append_optional_declared_file(
+                tar,
+                root,
+                "readme",
+                readme_path,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        if let Some(license_file) = pick_license_paths(manifest_value).1 {
+            append_optional_declared_file(
                 tar,
                 root,
                 "license.file",
@@ -1528,7 +1582,7 @@ fn append_declared_skill_file<W: Write>(
     Ok(())
 }
 
-fn append_optional_skill_file<W: Write>(
+fn append_optional_declared_file<W: Write>(
     tar: &mut TarBuilder<W>,
     root: &Path,
     field_label: &str,
@@ -1868,6 +1922,7 @@ fn manifest_kind(manifest: &PublishManifest) -> &str {
         PublishManifest::Skill(mf) => &mf.kind,
         PublishManifest::Knowledge(mf) => &mf.kind,
         PublishManifest::Memory(mf) => &mf.kind,
+        PublishManifest::Profile(mf) => &mf.kind,
     }
 }
 
@@ -1879,6 +1934,7 @@ fn manifest_name(manifest: &PublishManifest) -> &str {
         PublishManifest::Skill(mf) => &mf.name,
         PublishManifest::Knowledge(mf) => &mf.name,
         PublishManifest::Memory(mf) => &mf.name,
+        PublishManifest::Profile(mf) => &mf.name,
     }
 }
 
@@ -1890,6 +1946,7 @@ fn manifest_version(manifest: &PublishManifest) -> &str {
         PublishManifest::Skill(mf) => &mf.version,
         PublishManifest::Knowledge(mf) => &mf.version,
         PublishManifest::Memory(mf) => &mf.version,
+        PublishManifest::Profile(mf) => &mf.version,
     }
 }
 
@@ -2435,6 +2492,176 @@ mod tests {
             .run("https://example.com".into())
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_profile_manifest() {
+        let dir = temp_dir("publish-profile");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "profile",
+                "name": "customer-success-advocate",
+                "version": "1.0.0",
+                "description": "Support behavior profile.",
+                "profile": {
+                    "identity": {
+                        "role": "Senior Customer Success Advocate"
+                    },
+                    "objectives": ["Help the customer reach a clear next step."],
+                    "communication": {
+                        "tone": ["warm", "professional"],
+                        "verbosity": "concise"
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let tar_path = dir.join("target/agentpm/customer-success-advocate-1.0.0.tar.gz");
+        assert!(tar_path.exists(), "expected {}", tar_path.display());
+        let entries = tar_entries(&tar_path);
+        assert_eq!(entries, vec!["agent.json".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_includes_profile_readme_and_license_file() {
+        let dir = temp_dir("publish-profile-readme-license");
+        let manifest_path = dir.join("agent.json");
+        fs::write(dir.join("README.md"), "# Profile\n").unwrap();
+        fs::write(dir.join("LICENSE"), "MIT License\n").unwrap();
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "profile",
+                "name": "customer-success-advocate",
+                "version": "1.0.0",
+                "description": "Support behavior profile.",
+                "readme": "README.md",
+                "license": {
+                    "spdx": "MIT",
+                    "file": "LICENSE"
+                },
+                "profile": {
+                    "identity": {
+                        "role": "Senior Customer Success Advocate"
+                    },
+                    "objectives": ["Help the customer reach a clear next step."],
+                    "communication": {
+                        "tone": ["warm", "professional"],
+                        "verbosity": "concise"
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let tar_path = dir.join("target/agentpm/customer-success-advocate-1.0.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"README.md".to_string()));
+        assert!(entries.contains(&"LICENSE".to_string()));
+        assert_eq!(entries.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_skips_unsafe_profile_declared_files() {
+        let dir = temp_dir("publish-profile-unsafe-declared-files");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "profile",
+                "name": "customer-success-advocate",
+                "version": "1.0.0",
+                "description": "Support behavior profile.",
+                "readme": "../README.md",
+                "license": {
+                    "spdx": "MIT",
+                    "file": "../LICENSE"
+                },
+                "profile": {
+                    "identity": {
+                        "role": "Senior Customer Success Advocate"
+                    },
+                    "objectives": ["Help the customer reach a clear next step."],
+                    "communication": {
+                        "tone": ["warm", "professional"],
+                        "verbosity": "concise"
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let tar_path = dir.join("target/agentpm/customer-success-advocate-1.0.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert_eq!(entries, vec!["agent.json".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_profile_manifest_with_dependencies() {
+        let dir = temp_dir("publish-profile-dependencies");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "profile",
+                "name": "customer-success-advocate",
+                "version": "1.0.0",
+                "description": "Invalid profile package.",
+                "tools": ["@zack/some-tool@0.1.0"],
+                "profile": {
+                    "identity": {
+                        "role": "Senior Customer Success Advocate"
+                    },
+                    "objectives": ["Help the customer reach a clear next step."],
+                    "communication": {
+                        "tone": ["warm", "professional"],
+                        "verbosity": "concise"
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Manifest validation failed"),
+            "{err_text}"
+        );
     }
 
     #[tokio::test]
