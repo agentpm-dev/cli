@@ -147,7 +147,7 @@
 - [ ] Add `profile` to remaining backend package-kind enums, Literals, DTOs, serializers, application-service types, route validators, and hardcoded read-side allowlists.
 - [ ] Ensure generic package and version detail APIs support public and authorized private Profiles and preserve `kind: "profile"` in responses.
 - [ ] Return the complete structured Profile contract through the stored manifest without adding Profile-specific database columns or duplicated response fields.
-- [ ] Support common README, license, signing, security, version-listing, latest-version, yanking, and unyanking behavior for Profiles.
+- [ ] Support common README, license, signing, security, version-listing, latest-version behavior for Profiles.
 - [ ] Add Profile support to namespace package listings and apply existing namespace visibility, membership, and authorization behavior.
 - [ ] Add `profile` to search filters and results, including existing query, sort, pagination, visibility, and private-access behavior.
 - [ ] Keep search indexing limited to the existing package name, namespace, and description fields; do not index nested Profile metadata.
