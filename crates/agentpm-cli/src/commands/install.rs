@@ -161,6 +161,19 @@ impl InstallArgs {
         };
         s.ok("");
 
+        let precomputed_next_lock =
+            if !self.frozen && self.spec.is_none() && workspace_metadata.is_none() {
+                Some(build_updated_lock(
+                    &lock,
+                    manifest_value.as_ref(),
+                    self.spec.as_deref(),
+                    &plan,
+                    project_root.join(".agentpm").as_path(),
+                )?)
+            } else {
+                None
+            };
+
         // 4) Init download session → presigned URLs
         let mut s = Step::new("Requesting download URLs", quiet);
         let init = client.install_init(&plan_to_sdk_resolve(&plan)).await?; // includes per-artifact presigned URL + expected hash
@@ -283,7 +296,9 @@ impl InstallArgs {
 
         // 8) Update lockfile (unless --frozen)
         if !self.frozen {
-            let next_lock = if let Some(metadata) = workspace_metadata.as_ref() {
+            let next_lock = if let Some(next_lock) = precomputed_next_lock {
+                next_lock
+            } else if let Some(metadata) = workspace_metadata.as_ref() {
                 let manifests = workspace_manifests
                     .as_ref()
                     .ok_or_else(|| anyhow!("workspace manifests failed to load"))?;
@@ -4286,6 +4301,122 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    async fn assert_manifest_dependency_failure_happens_before_init_and_download(
+        label: &str,
+        manifest: Value,
+        resolve_items: Value,
+        expected_error: &str,
+    ) {
+        let root = temp_root(label);
+        fs::create_dir_all(&root).unwrap();
+        crate::manifest::write_manifest_pretty_atomic(&root.join("agent.json"), &manifest).unwrap();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(ManifestDependencyFailureState { resolve_items });
+        let app = Router::new()
+            .route(
+                "/v1/tools/install/resolve",
+                post(manifest_dependency_failure_resolve),
+            )
+            .route(
+                "/v1/tools/install/init",
+                post(manifest_dependency_failure_init_should_not_run),
+            )
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let args = InstallArgs {
+            manifest: root.join("agent.json").to_string_lossy().into_owned(),
+            spec: None,
+            frozen: false,
+            refresh: false,
+            update_range: false,
+            quiet: true,
+            require_attestation: false,
+            token: None,
+        };
+
+        let err = args.run(base_url).await.unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(err_text.contains(expected_error), "{err_text}");
+        assert!(
+            !err_text.contains("install_init_called_unexpectedly"),
+            "{err_text}"
+        );
+        assert!(!root.join(".agentpm").exists());
+        assert!(!root.join("agent.lock").exists());
+
+        server.abort();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn manifest_driven_profile_dependency_failure_happens_before_init_and_download() {
+        assert_manifest_dependency_failure_happens_before_init_and_download(
+            "install-local-agent-profile-wrong-kind",
+            json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0",
+                "profiles": ["@zack/capitalize-skill@*"]
+            }),
+            json!([{
+                "kind": "skill",
+                "name": "@zack/capitalize-skill",
+                "version": "0.1.0",
+                "integrity": "sha256-skill"
+            }]),
+            "declared profile dependency @zack/capitalize-skill@* is missing from the resolved package set",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn manifest_driven_tool_dependency_failure_happens_before_init_and_download() {
+        assert_manifest_dependency_failure_happens_before_init_and_download(
+            "install-local-agent-tool-wrong-kind",
+            json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0",
+                "tools": ["@zack/capitalize@*"]
+            }),
+            json!([{
+                "kind": "skill",
+                "name": "@zack/capitalize",
+                "version": "0.1.0",
+                "integrity": "sha256-skill"
+            }]),
+            "declared tool dependency @zack/capitalize@* is missing from the resolved package set",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn manifest_driven_memory_dependency_failure_happens_before_init_and_download() {
+        assert_manifest_dependency_failure_happens_before_init_and_download(
+            "install-local-agent-memory-wrong-kind",
+            json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0",
+                "memory": ["@zack/session-memory@*"]
+            }),
+            json!([{
+                "kind": "knowledge",
+                "name": "@zack/session-memory",
+                "version": "0.1.0",
+                "integrity": "sha256-knowledge"
+            }]),
+            "declared memory dependency @zack/session-memory@* is missing from the resolved package set",
+        )
+        .await;
+    }
+
     fn temp_root(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -4341,6 +4472,11 @@ mod tests {
         base_url: String,
         profile_tar: Vec<u8>,
         profile_sha: String,
+    }
+
+    #[derive(Clone)]
+    struct ManifestDependencyFailureState {
+        resolve_items: Value,
     }
 
     async fn test_resolve(
@@ -4626,6 +4762,28 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::from(response.to_string()))
             .unwrap())
+    }
+
+    async fn manifest_dependency_failure_resolve(
+        State(state): State<Arc<ManifestDependencyFailureState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let response = json!({
+            "items": state.resolve_items
+        });
+        let _req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
+    async fn manifest_dependency_failure_init_should_not_run() -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(Body::from("install_init_called_unexpectedly"))
+            .unwrap()
     }
 
     async fn direct_memory_init(

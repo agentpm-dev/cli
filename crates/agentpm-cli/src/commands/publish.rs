@@ -12,8 +12,8 @@ use crate::keys::signing::{
     StoredKeyV1, decrypt_private, keystore_dir, prompt_passphrase_with_fallback,
 };
 use crate::manifest::{
-    AgentManifest, Entrypoint, KnowledgeManifest, MemoryManifest, PublishManifest, SkillManifest,
-    ProfileManifest, TemplateManifest, ToolManifest, load_manifest_value, parse_publish_manifest,
+    AgentManifest, Entrypoint, KnowledgeManifest, MemoryManifest, ProfileManifest, PublishManifest,
+    SkillManifest, TemplateManifest, ToolManifest, load_manifest_value, parse_publish_manifest,
     resolve_schema_source, validate_manifest_value,
 };
 use crate::prelude::*;
@@ -239,24 +239,21 @@ impl PublishArgs {
         let license_payload = {
             // Prefer file content if provided; spdx is added if present
             let mut file_block: Option<serde_json::Value> = None;
-            if let Some(rel) = license_file_opt {
-                let p = manifest_dir.join(rel);
-                if p.exists() {
-                    match read_utf8_with_cap(&p, MAX_LICENSE_BYTES) {
-                        Ok(text) => {
-                            let sha = hex_sha256(text.as_bytes());
-                            file_block = Some(serde_json::json!({
-                                "path": rel,
-                                "sha256": sha,
-                                "content": text
-                            }));
-                        }
-                        Err(e) => {
-                            eprintln!("Warning: skipping license.file ({}).", e);
-                        }
+            if let Some(rel) = license_file_opt
+                && let Ok((p, tar_name)) = validate_declared_manifest_file_path(manifest_dir, rel)
+            {
+                match read_utf8_with_cap(&p, MAX_LICENSE_BYTES) {
+                    Ok(text) => {
+                        let sha = hex_sha256(text.as_bytes());
+                        file_block = Some(serde_json::json!({
+                            "path": tar_name,
+                            "sha256": sha,
+                            "content": text
+                        }));
                     }
-                } else {
-                    eprintln!("Warning: license.file '{}' not found.", rel);
+                    Err(e) => {
+                        eprintln!("Warning: skipping license.file ({}).", e);
+                    }
                 }
             }
 
@@ -1575,7 +1572,7 @@ fn append_declared_skill_file<W: Write>(
     member_count: &mut usize,
     seen: &mut HashSet<String>,
 ) -> Result<()> {
-    let (abs, tar_name) = validate_declared_skill_path(root, rel)?;
+    let (abs, tar_name) = validate_declared_manifest_file_path(root, rel)?;
     if seen.insert(tar_name.clone()) {
         append_checked(tar, &abs, &tar_name, member_count)?;
     }
@@ -1590,7 +1587,7 @@ fn append_optional_declared_file<W: Write>(
     member_count: &mut usize,
     seen: &mut HashSet<String>,
 ) -> Result<()> {
-    let (abs, tar_name) = match validate_declared_skill_path(root, rel) {
+    let (abs, tar_name) = match validate_declared_manifest_file_path(root, rel) {
         Ok(ok) => ok,
         Err(err) => {
             eprintln!("Warning: skipping {} '{}' ({}).", field_label, rel, err);
@@ -1603,27 +1600,33 @@ fn append_optional_declared_file<W: Write>(
     Ok(())
 }
 
-fn validate_declared_skill_path(root: &Path, rel: &str) -> Result<(PathBuf, String)> {
+fn validate_declared_manifest_file_path(root: &Path, rel: &str) -> Result<(PathBuf, String)> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute() {
-        bail!("skill file path must be relative: {}", rel_path.display());
+        bail!(
+            "declared file path must be relative: {}",
+            rel_path.display()
+        );
     }
     for component in rel_path.components() {
         if matches!(
             component,
             Component::ParentDir | Component::RootDir | Component::Prefix(_)
         ) {
-            bail!("skill file path must stay within the package root: {}", rel);
+            bail!(
+                "declared file path must stay within the package root: {}",
+                rel
+            );
         }
     }
 
     let abs = root.join(rel_path);
     if !abs.exists() {
-        bail!("declared skill file not found: {}", abs.display());
+        bail!("declared file not found: {}", abs.display());
     }
     let md = fs::metadata(&abs).with_context(|| format!("stat {}", abs.display()))?;
     if !md.is_file() {
-        bail!("declared skill path is not a file: {}", abs.display());
+        bail!("declared file path is not a file: {}", abs.display());
     }
 
     let tar_name = rel_to_tar_name(rel_path);
@@ -2027,9 +2030,8 @@ fn read_utf8_with_cap(path: &Path, max_bytes: usize) -> Result<String> {
 
 fn discover_readme(base: &Path, from_manifest: Option<&str>) -> Option<(PathBuf, String)> {
     if let Some(p) = from_manifest {
-        let abs = base.join(p);
-        if abs.exists() {
-            return Some((abs, p.to_string()));
+        if let Ok((abs, tar_name)) = validate_declared_manifest_file_path(base, p) {
+            return Some((abs, tar_name));
         }
         return None;
     }
@@ -2277,24 +2279,37 @@ mod tests {
     }
 
     #[test]
-    fn validate_declared_skill_path_rejects_parent_dir_component() {
+    fn validate_declared_manifest_file_path_rejects_parent_dir_component() {
         let dir = temp_dir("skill-path-parent");
-        let err = validate_declared_skill_path(&dir, "../secret.md").unwrap_err();
-        assert!(format!("{err:#}").contains("skill file path must stay within the package root"));
+        let err = validate_declared_manifest_file_path(&dir, "../secret.md").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("declared file path must stay within the package root")
+        );
     }
 
     #[test]
-    fn validate_declared_skill_path_rejects_parent_dir_only_path() {
+    fn validate_declared_manifest_file_path_rejects_parent_dir_only_path() {
         let dir = temp_dir("skill-path-dotdot");
-        let err = validate_declared_skill_path(&dir, "..").unwrap_err();
-        assert!(format!("{err:#}").contains("skill file path must stay within the package root"));
+        let err = validate_declared_manifest_file_path(&dir, "..").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("declared file path must stay within the package root")
+        );
     }
 
     #[test]
-    fn validate_declared_skill_path_rejects_absolute_path() {
+    fn validate_declared_manifest_file_path_rejects_absolute_path() {
         let dir = temp_dir("skill-path-absolute");
-        let err = validate_declared_skill_path(&dir, "/etc/passwd").unwrap_err();
-        assert!(format!("{err:#}").contains("skill file path must be relative"));
+        let err = validate_declared_manifest_file_path(&dir, "/etc/passwd").unwrap_err();
+        assert!(format!("{err:#}").contains("declared file path must be relative"));
+    }
+
+    #[test]
+    fn discover_readme_rejects_unsafe_manifest_path() {
+        let dir = temp_dir("discover-readme-unsafe");
+        fs::write(dir.join("README.md"), "# Safe\n").unwrap();
+        assert!(discover_readme(&dir, Some("../README.md")).is_none());
+        let discovered = discover_readme(&dir, None).unwrap();
+        assert_eq!(discovered.1, "README.md");
     }
 
     #[test]
@@ -3785,7 +3800,7 @@ mod tests {
         };
 
         let err = args.run("https://example.com".into()).await.unwrap_err();
-        assert!(format!("{err:#}").contains("declared skill file not found"));
+        assert!(format!("{err:#}").contains("declared file not found"));
         assert!(
             !dir.join("target/agentpm/missing-file-skill-0.1.0.tar.gz")
                 .exists(),
