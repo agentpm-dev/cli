@@ -3491,6 +3491,8 @@ mod tests {
                 }],
                 skills: Vec::new(),
                 knowledge: Vec::new(),
+                memory: Vec::new(),
+                profiles: Vec::new(),
             },
         };
         crate::workspace::write_workspace_metadata(&root, &workspace).unwrap();

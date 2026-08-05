@@ -194,6 +194,8 @@ impl NewArgs {
                     agents: resolved_agent_package_roots(&downloaded_manifest, &plan)?,
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    profiles: Vec::new(),
                 },
             };
             write_workspace_metadata(&target_dir, &workspace_metadata)?;
@@ -2060,12 +2062,14 @@ mod tests {
         .unwrap();
         assert_eq!(workspace["manifests"][0], "agent.json");
         assert_eq!(workspace["manifests"][1], "agents/reviewer.agent.json");
-        assert!(
-            workspace["package_roots"]["memory"].is_null(),
+        assert_eq!(
+            workspace["package_roots"]["memory"],
+            json!([]),
             "template package roots should not gain standalone memory roots: {workspace:#}"
         );
-        assert!(
-            workspace["package_roots"].get("profiles").is_none(),
+        assert_eq!(
+            workspace["package_roots"]["profiles"],
+            json!([]),
             "template package roots should not gain standalone profile roots: {workspace:#}"
         );
 
