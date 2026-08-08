@@ -257,7 +257,22 @@
 
 ## Milestone 12: Examples
 > Scope note: seed real published Instruction Profile examples only after Milestone 11 documentation, compatibility audit, and verification are complete. These examples should reinforce the established product story, exercise different optional Profile fields, and be suitable to publish to AgentPM production without expanding the phase beyond the implemented Profile contract.
-- [ ] Add at least two complete example Profile packages using different optional fields and communication patterns.
-- [ ] Ensure the example set reflects the established AgentPM package story and fits cleanly with existing agents, templates, or example apps where appropriate.
+- [ ] Add a new `profile-packages/` directory in `agentpm-examples` for published Instruction Profile examples, following the same organizational pattern used for other package kinds.
+- [ ] Build **3 to 4** complete Profile package examples rather than the previous minimum of two.
+- [ ] Make the example set production-worthy and realistic enough to publish to AgentPM production as seeded content, while still exercising as many optional Profile fields as fit naturally.
+- [ ] Prefer concrete examples that extend the existing AgentPM story instead of isolated toy artifacts.
+- [ ] Add `@zack/support-response-style` as a customer-support communication Profile with strong use of communication, vocabulary, boundaries, constraints, and compatibility metadata.
+- [ ] Publish `@zack/support-response-style`, then add it to the support-oriented template package flow where it fits cleanly, and finally update the corresponding `agent-app-*` example so the installed Profile is visible through the SDK/example app path.
+- [ ] Add `@zack/incident-operator-style` as an operations-facing Profile for incident updates, risk communication, and escalation language, using a different communication pattern from the support example.
+- [ ] Publish `@zack/incident-operator-style`, then add it to the relevant existing operations agent package and update the matching `agent-app-*` example so resolved Profile dependencies are exercised end to end.
+- [ ] Add `@zack/devwork-maintainer-style` as a maintainer-facing Profile that fits the devwork example story and emphasizes concise operational judgment, review posture, and handoff expectations.
+- [ ] Publish `@zack/devwork-maintainer-style`, then add it to the relevant existing devwork agent package and update the matching `agent-app-*` example if it fits cleanly without expanding scope beyond the current story.
+- [ ] Optionally add a fourth standalone Profile example only if it adds clear seeded value and distinct optional-field coverage without forcing a contrived integration path.
+- [ ] Ensure at least one example is wired through a Template, at least one is wired through an Agent package, and the resulting installed Profiles are surfaced in at least one updated `agent-app-*` directory.
+- [ ] Ensure the example set explicitly covers both template-consumed Profiles and agent-consumed Profiles rather than only one integration style.
+- [ ] Ensure at least one updated `agent-app-*` example surfaces loaded Profile metadata in a human-visible way so the end-to-end SDK loading path is demonstrated, not just the manifest and lockfile dependency edges.
+- [ ] Use a broad mix of implemented optional fields across the example set, including realistic use of principles, audience, expertise, communication guidelines, formatting preferences, vocabulary prefer/avoid lists, boundaries, constraints, and compatibility hints where appropriate.
+- [ ] Keep examples within the implemented Profile contract only; do not imply runtime enforcement, prompt compilation, profile layering, profile composition, variable interpolation, or other unimplemented behavior.
 - [ ] Use only implemented Profile contract fields and current product behavior; do not introduce speculative binding, layering, enforcement, or prompt-compilation concepts through the examples.
+- [ ] Ensure each example’s README explains what the Profile is for, how it differs from a Skill in the same story, and that the structured `profile` object is the portable contract while the README remains package documentation.
 - [ ] Validate each example with the normal lint, publish, install, registry-display, and SDK loading flows before treating the phase as complete.
