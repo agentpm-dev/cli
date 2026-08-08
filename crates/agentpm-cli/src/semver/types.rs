@@ -13,6 +13,7 @@ pub enum PackageKind {
     Skill,
     Knowledge,
     Memory,
+    Profile,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -105,6 +106,8 @@ pub struct LockedRoot {
     pub knowledge: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<String>,
     #[serde(default, skip_serializing_if = "ReservedReferences::is_empty")]
     pub reserved: ReservedReferences,
 }
@@ -141,6 +144,7 @@ pub enum LockRoot {
         skills: Vec<String>,
         knowledge: Vec<String>,
         memory: Vec<String>,
+        profiles: Vec<String>,
         reserved: ReservedReferences,
     },
     RegistryAgent {
@@ -149,6 +153,7 @@ pub enum LockRoot {
         skills: Vec<String>,
         knowledge: Vec<String>,
         memory: Vec<String>,
+        profiles: Vec<String>,
         reserved: ReservedReferences,
     },
     LocalSkill {
@@ -196,6 +201,11 @@ impl DesiredSet {
                         meta,
                         "memory",
                         PackageKind::Memory,
+                    )?);
+                    items.extend(parse_manifest_requirements(
+                        meta,
+                        "profiles",
+                        PackageKind::Profile,
                     )?);
                     Ok(DesiredSet { items })
                 }
@@ -358,6 +368,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                 skills,
                 knowledge,
                 memory,
+                profiles,
                 reserved,
             } => {
                 root_map.insert(
@@ -369,6 +380,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         skills: skills.clone(),
                         knowledge: knowledge.clone(),
                         memory: memory.clone(),
+                        profiles: profiles.clone(),
                         reserved: reserved.clone(),
                     },
                 );
@@ -379,6 +391,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                 skills,
                 knowledge,
                 memory,
+                profiles,
                 reserved,
             } => {
                 root_map.insert(
@@ -390,6 +403,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         skills: skills.clone(),
                         knowledge: knowledge.clone(),
                         memory: memory.clone(),
+                        profiles: profiles.clone(),
                         reserved: reserved.clone(),
                     },
                 );
@@ -409,6 +423,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        profiles: Vec::new(),
                         reserved: ReservedReferences::default(),
                     },
                 );
@@ -423,6 +438,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        profiles: Vec::new(),
                         reserved: ReservedReferences::default(),
                     },
                 );
@@ -441,6 +457,7 @@ pub fn lock_from_packages_and_roots(
     migrate_reserved_skills(&packages, &mut roots);
     migrate_reserved_knowledge(&packages, &mut roots);
     migrate_reserved_memory(&packages, &mut roots);
+    migrate_reserved_profiles(&packages, &mut roots);
     let lockfile_version = if requires_v3_lock(&packages, &roots) {
         3
     } else {
@@ -472,6 +489,8 @@ fn requires_v3_lock(
                 || !root.knowledge.is_empty()
                 || key.starts_with("memory:")
                 || !root.memory.is_empty()
+                || key.starts_with("profile:")
+                || !root.profiles.is_empty()
         })
 }
 
@@ -564,6 +583,39 @@ fn migrate_reserved_memory(
     }
 }
 
+fn migrate_reserved_profiles(
+    packages: &BTreeMap<String, LockedPackage>,
+    roots: &mut BTreeMap<String, LockedRoot>,
+) {
+    for root in roots.values_mut() {
+        if root.reserved.profiles.is_empty() {
+            continue;
+        }
+
+        let mut unresolved = Vec::new();
+        for raw in root.reserved.profiles.drain(..) {
+            match parse_locked_reserved_package_ref(&raw).and_then(|(name, range)| {
+                resolve_declared_package_from_packages(
+                    packages,
+                    &name,
+                    &range,
+                    PackageKind::Profile,
+                )
+            }) {
+                Ok(Some(pkg)) => {
+                    let key = package_key(pkg.kind, &pkg.name, &pkg.version);
+                    if !root.profiles.contains(&key) {
+                        root.profiles.push(key);
+                    }
+                }
+                Ok(None) | Err(_) => unresolved.push(raw),
+            }
+        }
+
+        root.reserved.profiles = unresolved;
+    }
+}
+
 fn parse_locked_reserved_package_ref(raw: &Value) -> Result<(String, String)> {
     match raw {
         Value::String(s) => parse_tool_str(s),
@@ -653,6 +705,7 @@ impl PackageKind {
             PackageKind::Skill => "skill",
             PackageKind::Knowledge => "knowledge",
             PackageKind::Memory => "memory",
+            PackageKind::Profile => "profile",
         }
     }
 }
@@ -823,6 +876,19 @@ mod tests {
     }
 
     #[test]
+    fn package_requirement_supports_profile_kind() {
+        let parsed = PackageRequirement::new(PackageKind::Profile, "@zack/support-persona", "^0.1");
+
+        assert_eq!(parsed.kind, PackageKind::Profile);
+        assert_eq!(parsed.name, "@zack/support-persona");
+        assert_eq!(parsed.range, "^0.1");
+        assert_eq!(
+            package_key(parsed.kind, &parsed.name, "0.1.0"),
+            "profile:@zack/support-persona@0.1.0"
+        );
+    }
+
+    #[test]
     fn desired_set_from_agent_json_tools_marks_tool_kind() {
         let desired = DesiredSet::from_cli_or_agent_json(
             &json!({
@@ -883,7 +949,7 @@ mod tests {
     }
 
     #[test]
-    fn lock_from_plan_records_local_agent_root_and_reserved_refs() {
+    fn lock_from_plan_records_local_agent_root_and_profiles() {
         let lock = lock_from_plan(
             &ResolvePlan {
                 items: vec![
@@ -899,6 +965,12 @@ mod tests {
                         version: "0.1.0".to_string(),
                         integrity: "sha256-skill".to_string(),
                     },
+                    ResolvedPackage {
+                        kind: PackageKind::Profile,
+                        name: "@zack/support-persona".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-profile".to_string(),
+                    },
                 ],
             },
             &[LockRoot::LocalAgent {
@@ -909,6 +981,7 @@ mod tests {
                 skills: Vec::new(),
                 knowledge: Vec::new(),
                 memory: Vec::new(),
+                profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
                 reserved: ReservedReferences {
                     skills: vec![json!("@zack/triage-skill@0.1.0")],
                     knowledge: vec![],
@@ -931,6 +1004,10 @@ mod tests {
         assert_eq!(
             root.skills,
             vec!["skill:@zack/triage-skill@0.1.0".to_string()]
+        );
+        assert_eq!(
+            root.profiles,
+            vec!["profile:@zack/support-persona@0.1.0".to_string()]
         );
         assert!(root.reserved.skills.is_empty());
     }
@@ -960,6 +1037,7 @@ mod tests {
                 skills: Vec::new(),
                 knowledge: Vec::new(),
                 memory: Vec::new(),
+                profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
                 reserved: ReservedReferences::default(),
             }],
         );
@@ -972,6 +1050,10 @@ mod tests {
                 .contains_key("agent:@zack/support-agent@0.1.0")
         );
         assert!(lock.roots.contains_key("agent:@zack/support-agent@0.1.0"));
+        assert_eq!(
+            lock.roots["agent:@zack/support-agent@0.1.0"].profiles,
+            vec!["profile:@zack/support-persona@0.1.0".to_string()]
+        );
     }
 
     #[test]
@@ -995,6 +1077,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: vec![json!("@zack/triage-skill@0.1.0")],
                         knowledge: Vec::new(),
@@ -1030,6 +1113,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: vec![json!("@zack/missing-skill@0.1.0")],
                         knowledge: Vec::new(),
@@ -1072,6 +1156,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
                         knowledge: vec![json!("@zack/python-docs@0.1.0")],
@@ -1107,6 +1192,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
                         knowledge: vec![json!("@zack/missing-knowledge@0.1.0")],
@@ -1149,6 +1235,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
@@ -1184,6 +1271,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
@@ -1225,6 +1313,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: vec!["memory:@zack/session-memory@0.1.0".to_string()],
+                    profiles: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
                 LockRoot::LocalAgent {
@@ -1235,6 +1324,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: vec!["memory:@zack/session-memory@0.1.0".to_string()],
+                    profiles: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
             ],
@@ -1258,6 +1348,143 @@ mod tests {
         assert_eq!(
             lock.roots["local:agent:agents/reviewer.agent.json"].memory,
             vec!["memory:@zack/session-memory@0.1.0".to_string()]
+        );
+    }
+
+    #[test]
+    fn lock_from_plan_deduplicates_shared_profile_package_across_multiple_agent_roots() {
+        let lock = lock_from_plan(
+            &ResolvePlan {
+                items: vec![ResolvedPackage {
+                    kind: PackageKind::Profile,
+                    name: "@zack/support-persona".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-profile".to_string(),
+                }],
+            },
+            &[
+                LockRoot::LocalAgent {
+                    key: "local:agent".to_string(),
+                    name: "support-agent".to_string(),
+                    version: "0.1.0".to_string(),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
+                    reserved: ReservedReferences::default(),
+                },
+                LockRoot::LocalAgent {
+                    key: "local:agent:agents/reviewer.agent.json".to_string(),
+                    name: "reviewer".to_string(),
+                    version: "0.1.0".to_string(),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
+                    reserved: ReservedReferences::default(),
+                },
+            ],
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected v2 lockfile");
+        };
+        assert_eq!(lock.lockfile_version, 3);
+        assert_eq!(
+            lock.packages
+                .keys()
+                .filter(|key| key.as_str() == "profile:@zack/support-persona@0.1.0")
+                .count(),
+            1
+        );
+        assert_eq!(
+            lock.roots["local:agent"].profiles,
+            vec!["profile:@zack/support-persona@0.1.0".to_string()]
+        );
+        assert_eq!(
+            lock.roots["local:agent:agents/reviewer.agent.json"].profiles,
+            vec!["profile:@zack/support-persona@0.1.0".to_string()]
+        );
+    }
+
+    #[test]
+    fn lock_from_packages_and_roots_migrates_reserved_profiles_to_first_class_root_field() {
+        let lock = lock_from_packages_and_roots(
+            BTreeMap::from([(
+                "profile:@zack/support-persona@0.1.0".to_string(),
+                LockedPackage {
+                    kind: PackageKind::Profile,
+                    name: "@zack/support-persona".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-profile".to_string(),
+                },
+            )]),
+            BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    profiles: Vec::new(),
+                    reserved: ReservedReferences {
+                        skills: Vec::new(),
+                        knowledge: Vec::new(),
+                        memory: Vec::new(),
+                        profiles: vec![json!("@zack/support-persona@0.1.0")],
+                    },
+                },
+            )]),
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected modern lockfile");
+        };
+        assert_eq!(lock.lockfile_version, 3);
+        let root = lock.roots.get("local:agent").unwrap();
+        assert_eq!(
+            root.profiles,
+            vec!["profile:@zack/support-persona@0.1.0".to_string()]
+        );
+        assert!(root.reserved.profiles.is_empty());
+    }
+
+    #[test]
+    fn lock_from_packages_and_roots_preserves_unresolvable_reserved_profiles() {
+        let lock = lock_from_packages_and_roots(
+            BTreeMap::new(),
+            BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    profiles: Vec::new(),
+                    reserved: ReservedReferences {
+                        skills: Vec::new(),
+                        knowledge: Vec::new(),
+                        memory: Vec::new(),
+                        profiles: vec![json!("@zack/missing-profile@0.1.0")],
+                    },
+                },
+            )]),
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected modern lockfile");
+        };
+        let root = lock.roots.get("local:agent").unwrap();
+        assert!(root.profiles.is_empty());
+        assert_eq!(
+            root.reserved.profiles,
+            vec![json!("@zack/missing-profile@0.1.0")]
         );
     }
 
@@ -1334,6 +1561,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    profiles: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
                 LockRoot::RegistryAgent {
@@ -1342,6 +1570,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    profiles: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
             ],

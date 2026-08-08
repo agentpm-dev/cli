@@ -144,6 +144,7 @@ impl NewArgs {
                 let skills_dir = target_dir.join(".agentpm/skills");
                 let knowledge_dir = target_dir.join(".agentpm/knowledge");
                 let memory_dir = target_dir.join(".agentpm/memory");
+                let profiles_dir = target_dir.join(".agentpm/profiles");
                 fs::ensure_dirs(&[
                     &cache_dir,
                     &tools_dir,
@@ -151,6 +152,7 @@ impl NewArgs {
                     &skills_dir,
                     &knowledge_dir,
                     &memory_dir,
+                    &profiles_dir,
                 ])?;
                 download_and_extract_all(
                     &init,
@@ -161,6 +163,7 @@ impl NewArgs {
                         skills_dir: &skills_dir,
                         knowledge_dir: &knowledge_dir,
                         memory_dir: &memory_dir,
+                        profiles_dir: &profiles_dir,
                     },
                     false,
                     quiet,
@@ -191,6 +194,8 @@ impl NewArgs {
                     agents: resolved_agent_package_roots(&downloaded_manifest, &plan)?,
                     skills: Vec::new(),
                     knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    profiles: Vec::new(),
                 },
             };
             write_workspace_metadata(&target_dir, &workspace_metadata)?;
@@ -777,6 +782,14 @@ fn build_dependency_request(
             range,
         });
     }
+    for profile in &manifest.template.dependencies.profiles {
+        let (name, range) = package_ref_parts(profile)?;
+        items.push(agentpm_sdk::models::install::PackageRequirement {
+            kind: agentpm_sdk::models::install::PackageKind::Profile,
+            name,
+            range,
+        });
+    }
 
     for item in local_manifest_dependency_items(target_dir, extra_local_manifests)? {
         items.push(item);
@@ -808,6 +821,7 @@ fn local_manifest_dependency_items(
                     PackageKind::Skill => agentpm_sdk::models::install::PackageKind::Skill,
                     PackageKind::Knowledge => agentpm_sdk::models::install::PackageKind::Knowledge,
                     PackageKind::Memory => agentpm_sdk::models::install::PackageKind::Memory,
+                    PackageKind::Profile => agentpm_sdk::models::install::PackageKind::Profile,
                 },
                 name: item.name,
                 range: item.range,
@@ -845,6 +859,7 @@ fn synthesize_root_manifest(
     let skill_refs = resolved_skill_manifest_refs(template_manifest, plan)?;
     let knowledge_refs = resolved_knowledge_manifest_refs(template_manifest, plan)?;
     let memory_refs = resolved_memory_manifest_refs(template_manifest, plan)?;
+    let profile_refs = resolved_profile_manifest_refs(template_manifest, plan)?;
     Ok(json!({
         "kind": "agent",
         "name": resolved_vars
@@ -860,7 +875,7 @@ fn synthesize_root_manifest(
         "skills": skill_refs,
         "knowledge": knowledge_refs,
         "memory": memory_refs,
-        "profiles": []
+        "profiles": profile_refs
     }))
 }
 
@@ -998,6 +1013,35 @@ fn resolved_memory_manifest_refs(
         let resolved = resolve_matching_plan_item(&packages, &name, &range)?.ok_or_else(|| {
             anyhow!(
                 "resolved memory dependency {}@{} missing from plan",
+                name,
+                range
+            )
+        })?;
+        refs.push(json!({
+            "name": resolved.name,
+            "version": resolved.version,
+        }));
+    }
+    Ok(refs)
+}
+
+fn resolved_profile_manifest_refs(
+    template_manifest: &TemplateManifest,
+    plan: &ResolvePlan,
+) -> Result<Vec<Value>> {
+    let direct_profile_refs = template_manifest
+        .template
+        .dependencies
+        .profiles
+        .iter()
+        .map(package_ref_parts)
+        .collect::<Result<Vec<_>>>()?;
+    let packages = plan_packages_by_name(plan, PackageKind::Profile);
+    let mut refs = Vec::new();
+    for (name, range) in direct_profile_refs {
+        let resolved = resolve_matching_plan_item(&packages, &name, &range)?.ok_or_else(|| {
+            anyhow!(
+                "resolved profile dependency {}@{} missing from plan",
                 name,
                 range
             )
@@ -1364,6 +1408,41 @@ mod tests {
     }
 
     #[test]
+    fn build_dependency_request_includes_template_profile_dependencies() {
+        let manifest = parse_template_manifest(&json!({
+            "kind": "template",
+            "name": "support-workspace",
+            "version": "0.1.0",
+            "description": "Template",
+            "template": {
+                "display_name": "Support Workspace",
+                "use_case": "support",
+                "execution_surfaces": ["python-sdk"],
+                "stack": ["python"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "profiles": ["@zack/support-style@^0.2"]
+                },
+                "entrypoints": []
+            }
+        }))
+        .unwrap();
+
+        let request = build_dependency_request(&manifest, Path::new("."), &[]).unwrap();
+
+        assert_eq!(request.items.len(), 1);
+        assert_eq!(
+            request.items[0].kind,
+            agentpm_sdk::models::install::PackageKind::Profile
+        );
+        assert_eq!(request.items[0].name, "@zack/support-style");
+        assert_eq!(request.items[0].range, "^0.2");
+    }
+
+    #[test]
     fn prompts_interactively_for_required_variable_without_default() {
         let manifest = parse_template_manifest(&json!({
             "kind": "template",
@@ -1668,6 +1747,8 @@ mod tests {
             knowledge_sha: "3".repeat(64),
             memory_tar: Vec::new(),
             memory_sha: "4".repeat(64),
+            profile_tar: Vec::new(),
+            profile_sha: "5".repeat(64),
         });
         let app = Router::new()
             .route("/v1/tools/install/resolve", post(test_resolve))
@@ -1678,6 +1759,7 @@ mod tests {
             .route("/artifact/agent", get(get_agent))
             .route("/artifact/knowledge", get(get_knowledge))
             .route("/artifact/memory", get(get_memory))
+            .route("/artifact/profile", get(get_profile))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -1725,7 +1807,8 @@ mod tests {
                                 "tools":[{"name":"@zack/echo","version":"0.1.0"}],
                                 "agents":[{"name":"@zack/support-agent","version":"0.1.0"}],
                                 "knowledge":[{"name":"@zack/python-docs","version":"0.1.0"}],
-                                "memory":[{"name":"@zack/session-memory","version":"0.1.0"}]
+                                "memory":[{"name":"@zack/session-memory","version":"0.1.0"}],
+                                "profiles":[{"name":"@zack/support-style","version":"0.1.0"}]
                             },
                             "entrypoints":[{"label":"Run","command":"python main.py"}]
                         }
@@ -1751,7 +1834,7 @@ mod tests {
                         "skills":[],
                         "knowledge":[],
                         "memory":[],
-                        "profiles":[]
+                        "profiles":[{"name":"@zack/escalation-style","version":"0.1.0"}]
                     }))
                     .unwrap(),
                 ),
@@ -1892,6 +1975,31 @@ mod tests {
                 .unwrap(),
             ),
         ]);
+        let profile_tar = build_tarball(&[
+            (
+                "agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"profile",
+                    "name":"support-style",
+                    "version":"0.1.0",
+                    "description":"Support response style profile.",
+                    "profile":{
+                        "identity":{"role":"Support responder"},
+                        "objectives":["Acknowledge the issue clearly."],
+                        "communication":{
+                            "tone":"calm",
+                            "verbosity":"moderate"
+                        }
+                    },
+                    "readme":"README.md"
+                }))
+                .unwrap(),
+            ),
+            (
+                "README.md",
+                "Keep installed placeholders literal: {{ project_name }}\n".to_string(),
+            ),
+        ]);
         let initial_state = TestState {
             base_url: String::new(),
             template_sha: template_sha.clone(),
@@ -1904,6 +2012,8 @@ mod tests {
             knowledge_tar,
             memory_sha: sha_hex(&memory_tar),
             memory_tar,
+            profile_sha: sha_hex(&profile_tar),
+            profile_tar,
         };
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1922,6 +2032,7 @@ mod tests {
             .route("/artifact/agent", get(get_agent))
             .route("/artifact/knowledge", get(get_knowledge))
             .route("/artifact/memory", get(get_memory))
+            .route("/artifact/profile", get(get_profile))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -1951,9 +2062,15 @@ mod tests {
         .unwrap();
         assert_eq!(workspace["manifests"][0], "agent.json");
         assert_eq!(workspace["manifests"][1], "agents/reviewer.agent.json");
-        assert!(
-            workspace["package_roots"]["memory"].is_null(),
+        assert_eq!(
+            workspace["package_roots"]["memory"],
+            json!([]),
             "template package roots should not gain standalone memory roots: {workspace:#}"
+        );
+        assert_eq!(
+            workspace["package_roots"]["profiles"],
+            json!([]),
+            "template package roots should not gain standalone profile roots: {workspace:#}"
         );
 
         let lock: Value =
@@ -1969,6 +2086,16 @@ mod tests {
         assert!(
             lock["packages"]
                 .get("memory:@zack/session-memory@0.1.0")
+                .is_some()
+        );
+        assert!(
+            lock["packages"]
+                .get("profile:@zack/support-style@0.1.0")
+                .is_some()
+        );
+        assert!(
+            lock["packages"]
+                .get("profile:@zack/escalation-style@0.1.0")
                 .is_some()
         );
         assert!(
@@ -2002,6 +2129,14 @@ mod tests {
             lock["roots"]["local:agent"]["memory"],
             json!(["memory:@zack/session-memory@0.1.0"])
         );
+        assert_eq!(
+            lock["roots"]["local:agent"]["profiles"],
+            json!(["profile:@zack/support-style@0.1.0"])
+        );
+        assert_eq!(
+            lock["roots"]["local:agent:agents/reviewer.agent.json"]["profiles"],
+            json!(["profile:@zack/escalation-style@0.1.0"])
+        );
         assert!(
             target
                 .join(".agentpm/knowledge/zack/python-docs/0.1.0/agent.json")
@@ -2011,6 +2146,23 @@ mod tests {
             target
                 .join(".agentpm/memory/zack/session-memory/0.1.0/agent.json")
                 .exists()
+        );
+        assert!(
+            target
+                .join(".agentpm/profiles/zack/support-style/0.1.0/agent.json")
+                .exists()
+        );
+        assert!(
+            target
+                .join(".agentpm/profiles/zack/escalation-style/0.1.0/agent.json")
+                .exists()
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                target.join(".agentpm/profiles/zack/support-style/0.1.0/README.md")
+            )
+            .unwrap(),
+            "Keep installed placeholders literal: {{ project_name }}\n"
         );
         let root_manifest: Value =
             serde_json::from_str(&std::fs::read_to_string(target.join("agent.json")).unwrap())
@@ -2022,6 +2174,18 @@ mod tests {
         assert_eq!(
             root_manifest["memory"],
             json!([{"name":"@zack/session-memory","version":"0.1.0"}])
+        );
+        assert_eq!(
+            root_manifest["profiles"],
+            json!([{"name":"@zack/support-style","version":"0.1.0"}])
+        );
+        let reviewer_manifest: Value = serde_json::from_str(
+            &std::fs::read_to_string(target.join("agents/reviewer.agent.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            reviewer_manifest["profiles"],
+            json!([{"name":"@zack/escalation-style","version":"0.1.0"}])
         );
         assert!(
             lock["packages"]
@@ -2045,6 +2209,119 @@ mod tests {
         assert_eq!(template_meta["integrity"], Value::String(template_sha));
         assert!(template_meta.get("path").is_none());
         assert_eq!(template_meta["variables"]["project_name"], "generated");
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn rejects_wrong_kind_template_profile_dependency() {
+        let root = temp_dir("wrong-kind-profile-dep");
+        let template_tar = build_tarball(&[
+            (
+                "agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"template",
+                    "name":"support-template",
+                    "version":"0.1.0",
+                    "description":"A template.",
+                    "template":{
+                        "display_name":"Support Template",
+                        "use_case":"support",
+                        "execution_surfaces":["multi-agent-workspace"],
+                        "stack":["python"],
+                        "files_root":"template",
+                        "variables":[{"name":"project_name","required":true,"default":"generated"}],
+                        "dependencies":{
+                            "tools":[],
+                            "agents":[],
+                            "profiles":[{"name":"@zack/not-a-profile","version":"0.1.0"}]
+                        },
+                        "entrypoints":[]
+                    }
+                }))
+                .unwrap(),
+            ),
+            ("template/README.md", "# generated\n".to_string()),
+        ]);
+        let memory_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"memory",
+                "name":"not-a-profile",
+                "version":"0.1.0",
+                "description":"Actually memory.",
+                "memory":{
+                    "scopes":{"user":{"description":"User scope."}},
+                    "record_types":{
+                        "note":{
+                            "description":"Note.",
+                            "schema":"schemas/note.schema.json",
+                            "version":"1.0.0"
+                        }
+                    },
+                    "spaces":{
+                        "profile":{
+                            "description":"Profile space.",
+                            "model":"document",
+                            "scope":["user"],
+                            "record_types":["note"],
+                            "retrieval":{"modes":["key"]}
+                        }
+                    }
+                }
+            }))
+            .unwrap(),
+        )]);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(TestState {
+            base_url: base_url.clone(),
+            template_sha: sha_hex(&template_tar),
+            template_tar,
+            tool_tar: Vec::new(),
+            tool_sha: "1".repeat(64),
+            agent_tar: Vec::new(),
+            agent_sha: "2".repeat(64),
+            knowledge_tar: Vec::new(),
+            knowledge_sha: "3".repeat(64),
+            memory_sha: sha_hex(&memory_tar),
+            memory_tar,
+            profile_tar: Vec::new(),
+            profile_sha: "5".repeat(64),
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(test_resolve))
+            .route("/v1/tools/install/init", post(test_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/template", get(get_template))
+            .route("/artifact/tool", get(get_tool))
+            .route("/artifact/agent", get(get_agent))
+            .route("/artifact/knowledge", get(get_knowledge))
+            .route("/artifact/memory", get(get_memory))
+            .route("/artifact/profile", get(get_profile))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let target = root.join("generated");
+        let args = NewArgs {
+            template_ref: "@zack/support-template@0.1.0".to_string(),
+            target_dir: Some(target),
+            vars: Vec::new(),
+            quiet: true,
+            token: None,
+        };
+
+        let err = args.run(base_url).await.unwrap_err();
+        assert!(
+            format!("{err:#}").contains(
+                "resolved profile dependency @zack/not-a-profile@0.1.0 missing from plan"
+            ),
+            "{err:#}"
+        );
 
         server.abort();
         let _ = std::fs::remove_dir_all(root);
@@ -2112,6 +2389,8 @@ mod tests {
             knowledge_tar: Vec::new(),
             memory_sha: "4".repeat(64),
             memory_tar: Vec::new(),
+            profile_sha: "5".repeat(64),
+            profile_tar: Vec::new(),
         });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2129,6 +2408,7 @@ mod tests {
             .route("/artifact/agent", get(get_agent))
             .route("/artifact/knowledge", get(get_knowledge))
             .route("/artifact/memory", get(get_memory))
+            .route("/artifact/profile", get(get_profile))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -2233,6 +2513,8 @@ mod tests {
             knowledge_tar: Vec::new(),
             memory_sha: "4".repeat(64),
             memory_tar: Vec::new(),
+            profile_sha: "5".repeat(64),
+            profile_tar: Vec::new(),
         });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2250,6 +2532,7 @@ mod tests {
             .route("/artifact/agent", get(get_agent))
             .route("/artifact/knowledge", get(get_knowledge))
             .route("/artifact/memory", get(get_memory))
+            .route("/artifact/profile", get(get_profile))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -2531,6 +2814,8 @@ mod tests {
         knowledge_sha: String,
         memory_tar: Vec<u8>,
         memory_sha: String,
+        profile_tar: Vec<u8>,
+        profile_sha: String,
     }
 
     async fn test_resolve(
@@ -2574,6 +2859,18 @@ mod tests {
                     "version":"0.1.0",
                     "integrity":state.memory_sha
                 })),
+                "profile" if name == "@zack/not-a-profile" => items.push(json!({
+                    "kind":"memory",
+                    "name":name,
+                    "version":"0.1.0",
+                    "integrity":state.memory_sha
+                })),
+                "profile" => items.push(json!({
+                    "kind":"profile",
+                    "name":name,
+                    "version":"0.1.0",
+                    "integrity":state.profile_sha
+                })),
                 "agent" => {
                     items.push(json!({
                         "kind":"agent",
@@ -2614,6 +2911,7 @@ mod tests {
                 "agent" => format!("{}/artifact/agent", state.base_url),
                 "knowledge" => format!("{}/artifact/knowledge", state.base_url),
                 "memory" => format!("{}/artifact/memory", state.base_url),
+                "profile" => format!("{}/artifact/profile", state.base_url),
                 _ => return Err(StatusCode::BAD_REQUEST),
             };
             let integrity = match kind {
@@ -2622,6 +2920,7 @@ mod tests {
                 "agent" => state.agent_sha.as_str(),
                 "knowledge" => state.knowledge_sha.as_str(),
                 "memory" => state.memory_sha.as_str(),
+                "profile" => state.profile_sha.as_str(),
                 _ => return Err(StatusCode::BAD_REQUEST),
             };
             artifacts.push(json!({
@@ -2679,6 +2978,13 @@ mod tests {
         Response::builder()
             .status(StatusCode::OK)
             .body(Body::from(state.memory_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_profile(State(state): State<Arc<TestState>>) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.profile_tar.clone()))
             .unwrap()
     }
 

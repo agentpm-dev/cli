@@ -12,8 +12,8 @@ use crate::keys::signing::{
     StoredKeyV1, decrypt_private, keystore_dir, prompt_passphrase_with_fallback,
 };
 use crate::manifest::{
-    AgentManifest, Entrypoint, KnowledgeManifest, MemoryManifest, PublishManifest, SkillManifest,
-    TemplateManifest, ToolManifest, load_manifest_value, parse_publish_manifest,
+    AgentManifest, Entrypoint, KnowledgeManifest, MemoryManifest, ProfileManifest, PublishManifest,
+    SkillManifest, TemplateManifest, ToolManifest, load_manifest_value, parse_publish_manifest,
     resolve_schema_source, validate_manifest_value,
 };
 use crate::prelude::*;
@@ -165,6 +165,8 @@ impl PublishArgs {
             }
             PublishManifest::Memory(mf) => package_memory(mf, &manifest_path, &manifest_value)
                 .context("packaging memory into tar.gz")?,
+            PublishManifest::Profile(mf) => package_profile(mf, &manifest_path, &manifest_value)
+                .context("packaging profile into tar.gz")?,
         };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
         if size_bytes > MAX_ARTIFACT_BYTES {
@@ -237,24 +239,21 @@ impl PublishArgs {
         let license_payload = {
             // Prefer file content if provided; spdx is added if present
             let mut file_block: Option<serde_json::Value> = None;
-            if let Some(rel) = license_file_opt {
-                let p = manifest_dir.join(rel);
-                if p.exists() {
-                    match read_utf8_with_cap(&p, MAX_LICENSE_BYTES) {
-                        Ok(text) => {
-                            let sha = hex_sha256(text.as_bytes());
-                            file_block = Some(serde_json::json!({
-                                "path": rel,
-                                "sha256": sha,
-                                "content": text
-                            }));
-                        }
-                        Err(e) => {
-                            eprintln!("Warning: skipping license.file ({}).", e);
-                        }
+            if let Some(rel) = license_file_opt
+                && let Ok((p, tar_name)) = validate_declared_manifest_file_path(manifest_dir, rel)
+            {
+                match read_utf8_with_cap(&p, MAX_LICENSE_BYTES) {
+                    Ok(text) => {
+                        let sha = hex_sha256(text.as_bytes());
+                        file_block = Some(serde_json::json!({
+                            "path": tar_name,
+                            "sha256": sha,
+                            "content": text
+                        }));
                     }
-                } else {
-                    eprintln!("Warning: license.file '{}' not found.", rel);
+                    Err(e) => {
+                        eprintln!("Warning: skipping license.file ({}).", e);
+                    }
                 }
             }
 
@@ -342,6 +341,7 @@ impl PublishArgs {
             PublishManifest::Skill(mf) => artifact_filename(&mf.name, &mf.version, None),
             PublishManifest::Knowledge(mf) => artifact_filename(&mf.name, &mf.version, None),
             PublishManifest::Memory(mf) => artifact_filename(&mf.name, &mf.version, None),
+            PublishManifest::Profile(mf) => artifact_filename(&mf.name, &mf.version, None),
         };
 
         // Build optional finalize_extra
@@ -647,7 +647,7 @@ fn package_skill(
         }
 
         if let Some(readme_path) = manifest_value.get("readme").and_then(|v| v.as_str()) {
-            append_optional_skill_file(
+            append_optional_declared_file(
                 tar,
                 root,
                 "readme",
@@ -658,7 +658,7 @@ fn package_skill(
         }
 
         if let Some(license_file) = pick_license_paths(manifest_value).1 {
-            append_optional_skill_file(
+            append_optional_declared_file(
                 tar,
                 root,
                 "license.file",
@@ -867,6 +867,57 @@ fn package_memory(
 
         if let Some(license_file) = pick_license_paths(manifest_value).1 {
             append_optional_memory_file(
+                tar,
+                root,
+                "license.file",
+                license_file,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        Ok(())
+    })?;
+    Ok(out_path)
+}
+
+fn package_profile(
+    manifest: &ProfileManifest,
+    manifest_path: &Path,
+    manifest_value: &serde_json::Value,
+) -> Result<PathBuf> {
+    let root = manifest_path.parent().unwrap_or(Path::new("."));
+    let out_dir = root.join("target").join("agentpm");
+    fs::create_dir_all(&out_dir).ok();
+
+    let out_path = out_dir.join(artifact_filename(&manifest.name, &manifest.version, None));
+    write_artifact_atomically(&out_path, |tar| {
+        let mut member_count: usize = 0;
+
+        let manifest_bytes = fs::read(manifest_path)?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        ensure_safe_tar_name("agent.json")?;
+        member_count += 1;
+        tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+
+        if let Some(readme_path) = manifest_value.get("readme").and_then(|v| v.as_str()) {
+            append_optional_declared_file(
+                tar,
+                root,
+                "readme",
+                readme_path,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        if let Some(license_file) = pick_license_paths(manifest_value).1 {
+            append_optional_declared_file(
                 tar,
                 root,
                 "license.file",
@@ -1521,14 +1572,14 @@ fn append_declared_skill_file<W: Write>(
     member_count: &mut usize,
     seen: &mut HashSet<String>,
 ) -> Result<()> {
-    let (abs, tar_name) = validate_declared_skill_path(root, rel)?;
+    let (abs, tar_name) = validate_declared_manifest_file_path(root, rel)?;
     if seen.insert(tar_name.clone()) {
         append_checked(tar, &abs, &tar_name, member_count)?;
     }
     Ok(())
 }
 
-fn append_optional_skill_file<W: Write>(
+fn append_optional_declared_file<W: Write>(
     tar: &mut TarBuilder<W>,
     root: &Path,
     field_label: &str,
@@ -1536,7 +1587,7 @@ fn append_optional_skill_file<W: Write>(
     member_count: &mut usize,
     seen: &mut HashSet<String>,
 ) -> Result<()> {
-    let (abs, tar_name) = match validate_declared_skill_path(root, rel) {
+    let (abs, tar_name) = match validate_declared_manifest_file_path(root, rel) {
         Ok(ok) => ok,
         Err(err) => {
             eprintln!("Warning: skipping {} '{}' ({}).", field_label, rel, err);
@@ -1549,27 +1600,33 @@ fn append_optional_skill_file<W: Write>(
     Ok(())
 }
 
-fn validate_declared_skill_path(root: &Path, rel: &str) -> Result<(PathBuf, String)> {
+fn validate_declared_manifest_file_path(root: &Path, rel: &str) -> Result<(PathBuf, String)> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute() {
-        bail!("skill file path must be relative: {}", rel_path.display());
+        bail!(
+            "declared file path must be relative: {}",
+            rel_path.display()
+        );
     }
     for component in rel_path.components() {
         if matches!(
             component,
             Component::ParentDir | Component::RootDir | Component::Prefix(_)
         ) {
-            bail!("skill file path must stay within the package root: {}", rel);
+            bail!(
+                "declared file path must stay within the package root: {}",
+                rel
+            );
         }
     }
 
     let abs = root.join(rel_path);
     if !abs.exists() {
-        bail!("declared skill file not found: {}", abs.display());
+        bail!("declared file not found: {}", abs.display());
     }
     let md = fs::metadata(&abs).with_context(|| format!("stat {}", abs.display()))?;
     if !md.is_file() {
-        bail!("declared skill path is not a file: {}", abs.display());
+        bail!("declared file path is not a file: {}", abs.display());
     }
 
     let tar_name = rel_to_tar_name(rel_path);
@@ -1868,6 +1925,7 @@ fn manifest_kind(manifest: &PublishManifest) -> &str {
         PublishManifest::Skill(mf) => &mf.kind,
         PublishManifest::Knowledge(mf) => &mf.kind,
         PublishManifest::Memory(mf) => &mf.kind,
+        PublishManifest::Profile(mf) => &mf.kind,
     }
 }
 
@@ -1879,6 +1937,7 @@ fn manifest_name(manifest: &PublishManifest) -> &str {
         PublishManifest::Skill(mf) => &mf.name,
         PublishManifest::Knowledge(mf) => &mf.name,
         PublishManifest::Memory(mf) => &mf.name,
+        PublishManifest::Profile(mf) => &mf.name,
     }
 }
 
@@ -1890,6 +1949,7 @@ fn manifest_version(manifest: &PublishManifest) -> &str {
         PublishManifest::Skill(mf) => &mf.version,
         PublishManifest::Knowledge(mf) => &mf.version,
         PublishManifest::Memory(mf) => &mf.version,
+        PublishManifest::Profile(mf) => &mf.version,
     }
 }
 
@@ -1970,9 +2030,8 @@ fn read_utf8_with_cap(path: &Path, max_bytes: usize) -> Result<String> {
 
 fn discover_readme(base: &Path, from_manifest: Option<&str>) -> Option<(PathBuf, String)> {
     if let Some(p) = from_manifest {
-        let abs = base.join(p);
-        if abs.exists() {
-            return Some((abs, p.to_string()));
+        if let Ok((abs, tar_name)) = validate_declared_manifest_file_path(base, p) {
+            return Some((abs, tar_name));
         }
         return None;
     }
@@ -2220,24 +2279,37 @@ mod tests {
     }
 
     #[test]
-    fn validate_declared_skill_path_rejects_parent_dir_component() {
+    fn validate_declared_manifest_file_path_rejects_parent_dir_component() {
         let dir = temp_dir("skill-path-parent");
-        let err = validate_declared_skill_path(&dir, "../secret.md").unwrap_err();
-        assert!(format!("{err:#}").contains("skill file path must stay within the package root"));
+        let err = validate_declared_manifest_file_path(&dir, "../secret.md").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("declared file path must stay within the package root")
+        );
     }
 
     #[test]
-    fn validate_declared_skill_path_rejects_parent_dir_only_path() {
+    fn validate_declared_manifest_file_path_rejects_parent_dir_only_path() {
         let dir = temp_dir("skill-path-dotdot");
-        let err = validate_declared_skill_path(&dir, "..").unwrap_err();
-        assert!(format!("{err:#}").contains("skill file path must stay within the package root"));
+        let err = validate_declared_manifest_file_path(&dir, "..").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("declared file path must stay within the package root")
+        );
     }
 
     #[test]
-    fn validate_declared_skill_path_rejects_absolute_path() {
+    fn validate_declared_manifest_file_path_rejects_absolute_path() {
         let dir = temp_dir("skill-path-absolute");
-        let err = validate_declared_skill_path(&dir, "/etc/passwd").unwrap_err();
-        assert!(format!("{err:#}").contains("skill file path must be relative"));
+        let err = validate_declared_manifest_file_path(&dir, "/etc/passwd").unwrap_err();
+        assert!(format!("{err:#}").contains("declared file path must be relative"));
+    }
+
+    #[test]
+    fn discover_readme_rejects_unsafe_manifest_path() {
+        let dir = temp_dir("discover-readme-unsafe");
+        fs::write(dir.join("README.md"), "# Safe\n").unwrap();
+        assert!(discover_readme(&dir, Some("../README.md")).is_none());
+        let discovered = discover_readme(&dir, None).unwrap();
+        assert_eq!(discovered.1, "README.md");
     }
 
     #[test]
@@ -2435,6 +2507,176 @@ mod tests {
             .run("https://example.com".into())
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_profile_manifest() {
+        let dir = temp_dir("publish-profile");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "profile",
+                "name": "customer-success-advocate",
+                "version": "1.0.0",
+                "description": "Support behavior profile.",
+                "profile": {
+                    "identity": {
+                        "role": "Senior Customer Success Advocate"
+                    },
+                    "objectives": ["Help the customer reach a clear next step."],
+                    "communication": {
+                        "tone": ["warm", "professional"],
+                        "verbosity": "concise"
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let tar_path = dir.join("target/agentpm/customer-success-advocate-1.0.0.tar.gz");
+        assert!(tar_path.exists(), "expected {}", tar_path.display());
+        let entries = tar_entries(&tar_path);
+        assert_eq!(entries, vec!["agent.json".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_includes_profile_readme_and_license_file() {
+        let dir = temp_dir("publish-profile-readme-license");
+        let manifest_path = dir.join("agent.json");
+        fs::write(dir.join("README.md"), "# Profile\n").unwrap();
+        fs::write(dir.join("LICENSE"), "MIT License\n").unwrap();
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "profile",
+                "name": "customer-success-advocate",
+                "version": "1.0.0",
+                "description": "Support behavior profile.",
+                "readme": "README.md",
+                "license": {
+                    "spdx": "MIT",
+                    "file": "LICENSE"
+                },
+                "profile": {
+                    "identity": {
+                        "role": "Senior Customer Success Advocate"
+                    },
+                    "objectives": ["Help the customer reach a clear next step."],
+                    "communication": {
+                        "tone": ["warm", "professional"],
+                        "verbosity": "concise"
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let tar_path = dir.join("target/agentpm/customer-success-advocate-1.0.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"README.md".to_string()));
+        assert!(entries.contains(&"LICENSE".to_string()));
+        assert_eq!(entries.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_skips_unsafe_profile_declared_files() {
+        let dir = temp_dir("publish-profile-unsafe-declared-files");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "profile",
+                "name": "customer-success-advocate",
+                "version": "1.0.0",
+                "description": "Support behavior profile.",
+                "readme": "../README.md",
+                "license": {
+                    "spdx": "MIT",
+                    "file": "../LICENSE"
+                },
+                "profile": {
+                    "identity": {
+                        "role": "Senior Customer Success Advocate"
+                    },
+                    "objectives": ["Help the customer reach a clear next step."],
+                    "communication": {
+                        "tone": ["warm", "professional"],
+                        "verbosity": "concise"
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let tar_path = dir.join("target/agentpm/customer-success-advocate-1.0.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert_eq!(entries, vec!["agent.json".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_profile_manifest_with_dependencies() {
+        let dir = temp_dir("publish-profile-dependencies");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "profile",
+                "name": "customer-success-advocate",
+                "version": "1.0.0",
+                "description": "Invalid profile package.",
+                "tools": ["@zack/some-tool@0.1.0"],
+                "profile": {
+                    "identity": {
+                        "role": "Senior Customer Success Advocate"
+                    },
+                    "objectives": ["Help the customer reach a clear next step."],
+                    "communication": {
+                        "tone": ["warm", "professional"],
+                        "verbosity": "concise"
+                    }
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Manifest validation failed"),
+            "{err_text}"
+        );
     }
 
     #[tokio::test]
@@ -3558,7 +3800,7 @@ mod tests {
         };
 
         let err = args.run("https://example.com".into()).await.unwrap_err();
-        assert!(format!("{err:#}").contains("declared skill file not found"));
+        assert!(format!("{err:#}").contains("declared file not found"));
         assert!(
             !dir.join("target/agentpm/missing-file-skill-0.1.0.tar.gz")
                 .exists(),

@@ -17,6 +17,7 @@ pub struct InstallRoots<'a> {
     pub skills_dir: &'a Path,
     pub knowledge_dir: &'a Path,
     pub memory_dir: &'a Path,
+    pub profiles_dir: &'a Path,
 }
 
 /// Return canonical + alias command names for a runtime type.
@@ -45,6 +46,7 @@ pub async fn download_and_extract_all(
     fs::create_dir_all(install_roots.skills_dir).await?;
     fs::create_dir_all(install_roots.knowledge_dir).await?;
     fs::create_dir_all(install_roots.memory_dir).await?;
+    fs::create_dir_all(install_roots.profiles_dir).await?;
 
     let client = Client::new();
     let mut futs = FuturesUnordered::new();
@@ -78,6 +80,7 @@ pub async fn download_and_extract_all(
             install_roots.skills_dir,
             install_roots.knowledge_dir,
             install_roots.memory_dir,
+            install_roots.profiles_dir,
             &pkg,
             &ver,
         )?;
@@ -464,6 +467,7 @@ fn resolved_package_dir(
     skills_base: &Path,
     knowledge_base: &Path,
     memory_base: &Path,
+    profiles_base: &Path,
     package: &str,
     version: &str,
 ) -> Result<PathBuf> {
@@ -473,6 +477,7 @@ fn resolved_package_dir(
         sdkm::PackageKind::Skill => resolved_agent_dir(skills_base, package, version),
         sdkm::PackageKind::Knowledge => resolved_agent_dir(knowledge_base, package, version),
         sdkm::PackageKind::Memory => resolved_agent_dir(memory_base, package, version),
+        sdkm::PackageKind::Profile => resolved_agent_dir(profiles_base, package, version),
         sdkm::PackageKind::Template => {
             bail!("template packages are not installable with `agentpm install`; use `agentpm new`")
         }
@@ -504,6 +509,7 @@ mod tests {
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
             Path::new(".agentpm/memory"),
+            Path::new(".agentpm/profiles"),
             "@zack/capitalize",
             "0.1.0",
         )
@@ -521,6 +527,7 @@ mod tests {
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
             Path::new(".agentpm/memory"),
+            Path::new(".agentpm/profiles"),
             "@zack/support-agent",
             "0.1.0",
         )
@@ -541,6 +548,7 @@ mod tests {
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
             Path::new(".agentpm/memory"),
+            Path::new(".agentpm/profiles"),
             "@zack/triage-skill",
             "0.1.0",
         )
@@ -561,6 +569,7 @@ mod tests {
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
             Path::new(".agentpm/memory"),
+            Path::new(".agentpm/profiles"),
             "@zack/research-template",
             "0.1.0",
         )
@@ -582,6 +591,7 @@ mod tests {
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
             Path::new(".agentpm/memory"),
+            Path::new(".agentpm/profiles"),
             "@zack/python-docs",
             "0.1.0",
         )
@@ -602,6 +612,7 @@ mod tests {
             Path::new(".agentpm/skills"),
             Path::new(".agentpm/knowledge"),
             Path::new(".agentpm/memory"),
+            Path::new(".agentpm/profiles"),
             "@zack/support-memory",
             "0.1.0",
         )
@@ -610,6 +621,27 @@ mod tests {
         assert_eq!(
             path,
             PathBuf::from(".agentpm/memory/zack/support-memory/0.1.0")
+        );
+    }
+
+    #[test]
+    fn resolves_profile_install_dir_under_profiles_layout() {
+        let path = resolved_package_dir(
+            PackageKind::Profile,
+            Path::new(".agentpm/tools"),
+            Path::new(".agentpm/agents"),
+            Path::new(".agentpm/skills"),
+            Path::new(".agentpm/knowledge"),
+            Path::new(".agentpm/memory"),
+            Path::new(".agentpm/profiles"),
+            "@zack/support-persona",
+            "0.1.0",
+        )
+        .unwrap();
+
+        assert_eq!(
+            path,
+            PathBuf::from(".agentpm/profiles/zack/support-persona/0.1.0")
         );
     }
 

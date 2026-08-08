@@ -26,6 +26,10 @@ pub struct WorkspacePackageRoots {
     pub skills: Vec<WorkspacePackageRoot>,
     #[serde(default)]
     pub knowledge: Vec<WorkspacePackageRoot>,
+    #[serde(default)]
+    pub memory: Vec<WorkspacePackageRoot>,
+    #[serde(default)]
+    pub profiles: Vec<WorkspacePackageRoot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,6 +171,20 @@ pub fn desired_from_workspace(
             knowledge.version.clone(),
         ));
     }
+    for memory in &package_roots.memory {
+        items.push(PackageRequirement::new(
+            PackageKind::Memory,
+            memory.name.clone(),
+            memory.version.clone(),
+        ));
+    }
+    for profile in &package_roots.profiles {
+        items.push(PackageRequirement::new(
+            PackageKind::Profile,
+            profile.name.clone(),
+            profile.version.clone(),
+        ));
+    }
 
     Ok(DesiredSet { items })
 }
@@ -218,7 +236,13 @@ pub fn build_workspace_lock(
                 &format!("workspace manifest {}", manifest.rel_path),
                 &packages,
             )?,
-            reserved: reserved_refs_from_manifest(&manifest.manifest_value),
+            profiles: resolve_packages_for_manifest(
+                &manifest.manifest_value,
+                PackageKind::Profile,
+                &format!("workspace manifest {}", manifest.rel_path),
+                &packages,
+            )?,
+            reserved: reserved_refs_from_manifest(),
         });
     }
 
@@ -267,6 +291,8 @@ pub fn validate_workspace_metadata(root: &Path, metadata: &WorkspaceMetadata) ->
     validate_package_roots("agent", &metadata.package_roots.agents)?;
     validate_package_roots("skill", &metadata.package_roots.skills)?;
     validate_package_roots("knowledge", &metadata.package_roots.knowledge)?;
+    validate_package_roots("memory", &metadata.package_roots.memory)?;
+    validate_package_roots("profile", &metadata.package_roots.profiles)?;
 
     Ok(())
 }
@@ -407,7 +433,13 @@ fn build_registry_agent_root(
             &format!("registry agent {}@{}", package, version),
             packages,
         )?,
-        reserved: reserved_refs_from_manifest(&manifest_value),
+        profiles: resolve_packages_for_manifest(
+            &manifest_value,
+            PackageKind::Profile,
+            &format!("registry agent {}@{}", package, version),
+            packages,
+        )?,
+        reserved: reserved_refs_from_manifest(),
     })
 }
 
@@ -482,21 +514,8 @@ fn resolve_packages_for_manifest(
     Ok(resolved)
 }
 
-fn reserved_refs_from_manifest(manifest_value: &Value) -> ReservedReferences {
-    ReservedReferences {
-        skills: Vec::new(),
-        knowledge: Vec::new(),
-        memory: Vec::new(),
-        profiles: manifest_array_or_empty(manifest_value, "profiles"),
-    }
-}
-
-fn manifest_array_or_empty(manifest_value: &Value, field: &str) -> Vec<Value> {
-    manifest_value
-        .get(field)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
+fn reserved_refs_from_manifest() -> ReservedReferences {
+    ReservedReferences::default()
 }
 
 #[cfg(test)]
@@ -671,14 +690,24 @@ mod tests {
                     name: "@zack/python-docs".to_string(),
                     version: "0.1.0".to_string(),
                 }],
+                memory: vec![WorkspacePackageRoot {
+                    name: "@zack/session-memory".to_string(),
+                    version: "0.1.0".to_string(),
+                }],
+                profiles: vec![WorkspacePackageRoot {
+                    name: "@zack/support-style".to_string(),
+                    version: "0.1.0".to_string(),
+                }],
             },
         )
         .unwrap();
 
-        assert_eq!(desired.items.len(), 5);
+        assert_eq!(desired.items.len(), 7);
         assert_eq!(desired.items[2].kind, PackageKind::Agent);
         assert_eq!(desired.items[3].kind, PackageKind::Skill);
         assert_eq!(desired.items[4].kind, PackageKind::Knowledge);
+        assert_eq!(desired.items[5].kind, PackageKind::Memory);
+        assert_eq!(desired.items[6].kind, PackageKind::Profile);
     }
 
     #[test]
@@ -723,6 +752,8 @@ mod tests {
                     version: "0.2.0".to_string(),
                 }],
                 knowledge: Vec::new(),
+                memory: Vec::new(),
+                profiles: Vec::new(),
             },
             &ResolvePlan {
                 items: vec![
@@ -774,6 +805,8 @@ mod tests {
                     name: "@zack/python-docs".to_string(),
                     version: "0.1.0".to_string(),
                 }],
+                memory: Vec::new(),
+                profiles: Vec::new(),
             },
             &ResolvePlan {
                 items: vec![

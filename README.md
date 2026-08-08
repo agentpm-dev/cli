@@ -2,16 +2,17 @@
 
 Command-line tool for building, publishing, installing, and validating AgentPM packages.
 
-AgentPM currently supports six package kinds:
+AgentPM currently supports seven package kinds:
 
 - **tools**: executable capabilities with entrypoints, runtime requirements, inputs, and outputs
 - **skills**: procedural packages that capture playbooks, checklists, and reasoning guides around tools
 - **knowledge**: prepared context packages for direct context injection or local vector retrieval
 - **memory**: declarative Memory Blueprints that define durable record shapes, retrieval semantics, and lifecycle policy
-- **agents**: composition artifacts that declare tool, skill, knowledge, and memory dependencies plus examples and reserved references
+- **profiles**: authored Instruction Profiles that define portable role, objective, communication, and constraint metadata
+- **agents**: composition artifacts that declare tool, skill, knowledge, memory, and profile dependencies plus examples
 - **templates**: workflow scaffolds that generate editable AgentPM workspaces
 
-Agent packages are not runnable app bundles. They install as portable composition metadata plus resolved tool, skill, knowledge, and memory dependencies.
+Agent packages are not runnable app bundles. They install as portable composition metadata plus resolved tool, skill, knowledge, memory, and profile dependencies.
 
 [![CI](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml)
 [![Homebrew tap](https://img.shields.io/badge/homebrew-agentpm--dev%2Ftap-blue)](https://github.com/agentpm-dev/homebrew-tap)
@@ -148,6 +149,7 @@ agentpm init --kind tool --name demo --description "My first tool"
 agentpm init --kind skill --name triage-playbook --description "My first skill"
 agentpm init --kind knowledge --name docs-corpus --description "My first knowledge package"
 agentpm init --kind memory --name conversation-continuity --description "My first memory blueprint"
+agentpm init --kind profile --name support-style --description "My first instruction profile"
 agentpm init --kind agent --name support-agent --description "My first agent"
 agentpm init --kind template --name research-template --description "My workflow template"
 ```
@@ -167,7 +169,7 @@ cd my-project
 `agentpm new`:
 
 - copies and renders scaffold files from the template
-- installs declared tool, skill, agent, knowledge, and memory dependencies into the generated workspace
+- installs declared tool, skill, agent, knowledge, memory, and profile dependencies into the generated workspace
 - writes `agent.json`, `agentpm.workspace.json`, `agent.lock`, and `.agentpm/template.json`
 - does not execute template-provided scripts or generated app code during scaffolding
 
@@ -211,11 +213,12 @@ agentpm install
 
 That:
 
-- resolves the tools, skills, knowledge, and memory packages declared in the local manifest
+- resolves the tools, skills, knowledge, memory, and profile packages declared in the local manifest
 - installs tools under `.agentpm/tools/<namespace>/<name>/<version>/`
 - installs skills under `.agentpm/skills/<namespace>/<name>/<version>/`
 - installs knowledge under `.agentpm/knowledge/<namespace>/<name>/<version>/`
 - installs memory under `.agentpm/memory/<namespace>/<name>/<version>/`
+- installs profiles under `.agentpm/profiles/<namespace>/<name>/<version>/`
 - writes `agent.lock` (Skill-containing graphs use `lockfile_version: 3`)
 - keeps the local `agent.json` as the source of truth
 
@@ -239,6 +242,12 @@ Install a memory package directly:
 agentpm install @zack/profile-memory@0.1.0
 ```
 
+Install a profile package directly:
+
+```bash
+agentpm install @zack/support-style@0.1.0
+```
+
 Direct agent install writes:
 
 - the installed agent under `.agentpm/agents/<namespace>/<name>/<version>/`
@@ -246,6 +255,7 @@ Direct agent install writes:
 - the agent’s resolved knowledge dependencies under `.agentpm/knowledge/<namespace>/<name>/<version>/`
 - the agent’s resolved tools under `.agentpm/tools/<namespace>/<name>/<version>/`
 - the agent’s resolved memory dependencies under `.agentpm/memory/<namespace>/<name>/<version>/`
+- the agent’s resolved profile dependencies under `.agentpm/profiles/<namespace>/<name>/<version>/`
 - an `agent:@namespace/name@version` root in `agent.lock`
 
 Once a tool is installed, AgentPM can expose the same packaged artifact through the shell, MCP, and Skill scaffolds:
