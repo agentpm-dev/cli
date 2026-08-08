@@ -235,21 +235,29 @@
 - [ ] Add tests for direct loading, directory overrides, minimal and full Profiles, missing or malformed manifests, wrong kinds, Tool-loader guidance, Agent Profile relationships, missing installed dependencies, multiple Profiles, and shared Profiles.
 - [ ] Confirm Python and Node behavior align on field names, return metadata, nullability, error behavior where practical, and all non-enforcement boundaries.
 
-## Milestone 11: Documentation, Examples, Compatibility Audit, and Final Verification
-> Scope note: finish the phase by documenting the final contracts and boundaries, adding representative Profile examples, auditing every existing package-kind surface for omissions, and running the required cross-repository verification. This milestone should close gaps and regressions against `spec.md`; it must not introduce new schema concepts, Profile parameters, build/runtime behavior, binding or layering rules, enforcement claims, provider-specific prompt formats, or other feature expansion that was not implemented and tested in earlier milestones.
+## Milestone 11: Documentation, Compatibility Audit, and Final Verification
+> Scope note: finish the implemented product surface by documenting the final contracts and boundaries, auditing every existing package-kind surface for omissions, and running the required cross-repository verification before seeding real published examples. This milestone should close gaps and regressions against `spec.md`; it must not introduce new schema concepts, Profile parameters, build/runtime behavior, binding or layering rules, enforcement claims, provider-specific prompt formats, or other feature expansion that was not implemented and tested in earlier milestones.
 - [ ] Update manifest reference documentation with the complete Profile schema, required/optional fields, enums, examples, and common README/license behavior.
 - [ ] Document `kind: "profile"`, Agent top-level `profiles`, and `template.dependencies.profiles`.
 - [ ] Document the Profile-versus-Skill boundary with concrete examples.
 - [ ] Document that required constraints are author intent and not enforcement.
 - [ ] Document that Profiles have no build command, generated output, runtime execution, parameters, variables, or install-time prompts.
 - [ ] Document direct install, Agent dependency install, Template `new`, registry discovery, `loadProfile`, and `load_profile` flows.
-- [ ] Add at least two complete example Profile packages using different optional fields and communication patterns.
 - [ ] Audit the full codebase for hardcoded `tool|agent|template|skill|knowledge|memory` strings and add `profile` where package kinds are intended.
 - [ ] Audit Rust and API client enums, CLI help text, error messages, OpenAPI/schema definitions, tests, fixtures, and sample data.
 - [ ] Audit database SQL, materialized views, triggers, statistics, search, trending, namespace access, signing, malware/tar validation, and canonical URL helpers.
 - [ ] Audit frontend route maps, type unions, cards, filters, badges, stats, global search, metadata, landing content, and dependency rendering.
 - [ ] Audit Node and Python public exports and package documentation.
+- [ ] Bump the released version numbers for the CLI, the Node SDK, and the Python SDK as part of the final pre-example release pass.
+- [ ] Update the web status page version and date values so they reflect the released Instruction Profile-capable CLI and SDK builds.
 - [ ] Confirm Profile README and license files are packaged and displayed through common behavior.
 - [ ] Confirm Profiles cannot declare dependencies in schema, CLI publish, or backend publish paths.
 - [ ] Confirm old v3 locks with `reserved.profiles` remain readable and regenerate safely.
 - [ ] Run all verification in `test-plan.md` and report evidence, failures, skipped checks, and migration verification.
+
+## Milestone 12: Examples
+> Scope note: seed real published Instruction Profile examples only after Milestone 11 documentation, compatibility audit, and verification are complete. These examples should reinforce the established product story, exercise different optional Profile fields, and be suitable to publish to AgentPM production without expanding the phase beyond the implemented Profile contract.
+- [ ] Add at least two complete example Profile packages using different optional fields and communication patterns.
+- [ ] Ensure the example set reflects the established AgentPM package story and fits cleanly with existing agents, templates, or example apps where appropriate.
+- [ ] Use only implemented Profile contract fields and current product behavior; do not introduce speculative binding, layering, enforcement, or prompt-compilation concepts through the examples.
+- [ ] Validate each example with the normal lint, publish, install, registry-display, and SDK loading flows before treating the phase as complete.
