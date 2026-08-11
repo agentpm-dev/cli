@@ -3,7 +3,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::{
     fs,
     io::Write,
@@ -945,6 +945,18 @@ pub fn validate_manifest_value(
         issues.extend(validate_profile_manifest_semantics(file_label, &manifest));
     }
 
+    if value.get("kind").and_then(Value::as_str) == Some("loop")
+        && let Ok(manifest) = parse_loop_manifest(value)
+    {
+        issues.extend(validate_loop_manifest_semantics(file_label, &manifest));
+    }
+
+    if value.get("kind").and_then(Value::as_str) == Some("agent")
+        && let Ok(manifest) = serde_json::from_value::<AgentManifest>(value.clone())
+    {
+        issues.extend(validate_agent_bindings_semantics(file_label, &manifest));
+    }
+
     let has_error = issues.iter().any(|i| i.level == "error");
     Ok((!has_error, issues))
 }
@@ -1371,6 +1383,401 @@ fn validate_profile_manifest_semantics(
     issues
 }
 
+fn validate_loop_manifest_semantics(file_label: &str, manifest: &LoopManifest) -> Vec<LintIssue> {
+    let mut issues = Vec::new();
+    let loop_metadata = &manifest.r#loop;
+
+    validate_optional_trimmed_string(
+        file_label,
+        "/loop/archetype",
+        "loop.archetype",
+        loop_metadata.archetype.as_deref(),
+        &mut issues,
+    );
+
+    let mut phase_index_by_id: HashMap<String, usize> = HashMap::new();
+    let mut phase_outcomes: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for (phase_idx, phase) in loop_metadata.phases.iter().enumerate() {
+        validate_non_empty_trimmed_string(
+            file_label,
+            &format!("/loop/phases/{phase_idx}/objective"),
+            "loop.phases[].objective",
+            &phase.objective,
+            &mut issues,
+        );
+
+        if let Some(previous_idx) = phase_index_by_id.insert(phase.id.clone(), phase_idx) {
+            push_manifest_error(
+                file_label,
+                &format!("/loop/phases/{phase_idx}/id"),
+                format!(
+                    "duplicate loop phase id `{}` is not allowed (already declared at index {previous_idx})",
+                    phase.id
+                ),
+                &mut issues,
+            );
+        }
+
+        let mut outcomes = HashSet::new();
+        if phase.outcomes.is_empty() {
+            outcomes.insert("complete".to_string());
+        } else {
+            for (outcome_idx, outcome) in phase.outcomes.iter().enumerate() {
+                validate_non_empty_trimmed_string(
+                    file_label,
+                    &format!("/loop/phases/{phase_idx}/outcomes/{outcome_idx}/description"),
+                    "loop.phases[].outcomes[].description",
+                    &outcome.description,
+                    &mut issues,
+                );
+                if !outcomes.insert(outcome.id.clone()) {
+                    push_manifest_error(
+                        file_label,
+                        &format!("/loop/phases/{phase_idx}/outcomes/{outcome_idx}/id"),
+                        format!(
+                            "duplicate loop outcome id `{}` is not allowed within phase `{}`",
+                            outcome.id, phase.id
+                        ),
+                        &mut issues,
+                    );
+                }
+            }
+        }
+        phase_outcomes.insert(phase.id.clone(), outcomes);
+    }
+
+    if !phase_index_by_id.contains_key(&loop_metadata.entry_phase) {
+        push_manifest_error(
+            file_label,
+            "/loop/entry_phase",
+            format!(
+                "loop entry_phase `{}` must match a declared phase id",
+                loop_metadata.entry_phase
+            ),
+            &mut issues,
+        );
+    }
+
+    let mut transition_counts: HashMap<(String, String), usize> = HashMap::new();
+    let mut phase_edges: HashMap<String, Vec<String>> = HashMap::new();
+    let mut terminal_targets = HashSet::new();
+
+    for (transition_idx, transition) in loop_metadata.transitions.iter().enumerate() {
+        let pointer = format!("/loop/transitions/{transition_idx}");
+        if !phase_index_by_id.contains_key(&transition.from) {
+            push_manifest_error(
+                file_label,
+                &format!("{pointer}/from"),
+                format!(
+                    "transition source phase `{}` is not declared",
+                    transition.from
+                ),
+                &mut issues,
+            );
+            continue;
+        }
+
+        if !phase_outcomes
+            .get(&transition.from)
+            .is_some_and(|outcomes| outcomes.contains(&transition.on))
+        {
+            push_manifest_error(
+                file_label,
+                &format!("{pointer}/on"),
+                format!(
+                    "transition outcome `{}` is not valid for phase `{}`",
+                    transition.on, transition.from
+                ),
+                &mut issues,
+            );
+        }
+
+        if phase_index_by_id.contains_key(&transition.to) {
+            phase_edges
+                .entry(transition.from.clone())
+                .or_default()
+                .push(transition.to.clone());
+        } else if is_loop_terminal(&transition.to) {
+            terminal_targets.insert(transition.to.clone());
+        } else {
+            push_manifest_error(
+                file_label,
+                &format!("{pointer}/to"),
+                format!(
+                    "transition destination `{}` must be a declared phase or supported terminal",
+                    transition.to
+                ),
+                &mut issues,
+            );
+        }
+
+        *transition_counts
+            .entry((transition.from.clone(), transition.on.clone()))
+            .or_insert(0) += 1;
+    }
+
+    for phase in &loop_metadata.phases {
+        if let Some(outcomes) = phase_outcomes.get(&phase.id) {
+            for outcome in outcomes {
+                match transition_counts
+                    .get(&(phase.id.clone(), outcome.clone()))
+                    .copied()
+                {
+                    Some(1) => {}
+                    Some(count) => push_manifest_error(
+                        file_label,
+                        "/loop/transitions",
+                        format!(
+                            "phase `{}` outcome `{}` must have exactly one transition (found {count})",
+                            phase.id, outcome
+                        ),
+                        &mut issues,
+                    ),
+                    None => push_manifest_error(
+                        file_label,
+                        "/loop/transitions",
+                        format!(
+                            "phase `{}` outcome `{}` must declare exactly one transition",
+                            phase.id, outcome
+                        ),
+                        &mut issues,
+                    ),
+                }
+            }
+        }
+    }
+
+    let mut reachable_terminals = HashSet::new();
+    if phase_index_by_id.contains_key(&loop_metadata.entry_phase) {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::from([loop_metadata.entry_phase.clone()]);
+
+        while let Some(current) = queue.pop_front() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            for transition in loop_metadata
+                .transitions
+                .iter()
+                .filter(|transition| transition.from == current)
+            {
+                if phase_index_by_id.contains_key(&transition.to) {
+                    queue.push_back(transition.to.clone());
+                } else if is_loop_terminal(&transition.to) {
+                    reachable_terminals.insert(transition.to.clone());
+                }
+            }
+        }
+
+        for (phase_id, phase_idx) in &phase_index_by_id {
+            if !visited.contains(phase_id) {
+                push_manifest_error(
+                    file_label,
+                    &format!("/loop/phases/{phase_idx}/id"),
+                    format!("phase `{phase_id}` is unreachable from entry_phase"),
+                    &mut issues,
+                );
+            }
+        }
+    }
+
+    if terminal_targets.is_empty() || reachable_terminals.is_empty() {
+        push_manifest_error(
+            file_label,
+            "/loop/transitions",
+            "loop must be able to reach at least one terminal outcome".to_string(),
+            &mut issues,
+        );
+    }
+
+    let mut checkpoint_ids = HashSet::new();
+    let mut approval_targets = HashSet::new();
+    for (checkpoint_idx, checkpoint) in loop_metadata.checkpoints.iter().enumerate() {
+        if !checkpoint_ids.insert(checkpoint.id.clone()) {
+            push_manifest_error(
+                file_label,
+                &format!("/loop/checkpoints/{checkpoint_idx}/id"),
+                format!("duplicate checkpoint id `{}` is not allowed", checkpoint.id),
+                &mut issues,
+            );
+        }
+
+        if !phase_index_by_id.contains_key(&checkpoint.before_phase) {
+            push_manifest_error(
+                file_label,
+                &format!("/loop/checkpoints/{checkpoint_idx}/before_phase"),
+                format!(
+                    "checkpoint target phase `{}` must match a declared phase id",
+                    checkpoint.before_phase
+                ),
+                &mut issues,
+            );
+        }
+
+        if !(phase_index_by_id.contains_key(&checkpoint.on_reject)
+            || is_loop_terminal(&checkpoint.on_reject))
+        {
+            push_manifest_error(
+                file_label,
+                &format!("/loop/checkpoints/{checkpoint_idx}/on_reject"),
+                format!(
+                    "checkpoint on_reject target `{}` must be a declared phase or supported terminal",
+                    checkpoint.on_reject
+                ),
+                &mut issues,
+            );
+        }
+
+        if checkpoint.r#type == "approval"
+            && !approval_targets.insert(checkpoint.before_phase.clone())
+        {
+            push_manifest_error(
+                file_label,
+                &format!("/loop/checkpoints/{checkpoint_idx}/before_phase"),
+                format!(
+                    "multiple approval checkpoints cannot target phase `{}`",
+                    checkpoint.before_phase
+                ),
+                &mut issues,
+            );
+        }
+    }
+
+    if let Some(error_policy) = &loop_metadata.error_policy
+        && let Some(tool_failure) = &error_policy.tool_failure
+    {
+        match tool_failure.action {
+            LoopToolFailureAction::Retry => {
+                if tool_failure.max_retries.is_none() {
+                    push_manifest_error(
+                        file_label,
+                        "/loop/error_policy/tool_failure/max_retries",
+                        "tool_failure.max_retries is required when action is `retry`".to_string(),
+                        &mut issues,
+                    );
+                }
+                if tool_failure.on_exhausted.is_none() {
+                    push_manifest_error(
+                        file_label,
+                        "/loop/error_policy/tool_failure/on_exhausted",
+                        "tool_failure.on_exhausted is required when action is `retry`".to_string(),
+                        &mut issues,
+                    );
+                }
+            }
+            _ => {
+                if tool_failure.max_retries.is_some() {
+                    push_manifest_error(
+                        file_label,
+                        "/loop/error_policy/tool_failure/max_retries",
+                        "tool_failure.max_retries is allowed only when action is `retry`"
+                            .to_string(),
+                        &mut issues,
+                    );
+                }
+                if tool_failure.on_exhausted.is_some() {
+                    push_manifest_error(
+                        file_label,
+                        "/loop/error_policy/tool_failure/on_exhausted",
+                        "tool_failure.on_exhausted is allowed only when action is `retry`"
+                            .to_string(),
+                        &mut issues,
+                    );
+                }
+            }
+        }
+
+        let can_fail_phase = matches!(tool_failure.action, LoopToolFailureAction::FailPhase)
+            || matches!(
+                tool_failure.on_exhausted,
+                Some(LoopToolFailureExhaustedAction::FailPhase)
+            );
+        if can_fail_phase && error_policy.phase_failure.is_none() {
+            push_manifest_error(
+                file_label,
+                "/loop/error_policy/phase_failure",
+                "phase_failure is required when tool_failure can fail the current phase"
+                    .to_string(),
+                &mut issues,
+            );
+        }
+    }
+
+    issues
+}
+
+fn validate_agent_bindings_semantics(file_label: &str, manifest: &AgentManifest) -> Vec<LintIssue> {
+    let mut issues = Vec::new();
+    let Some(bindings) = &manifest.bindings else {
+        return issues;
+    };
+
+    if manifest.loop_ref.is_none() && !bindings.phases.is_empty() {
+        push_manifest_error(
+            file_label,
+            "/bindings/phases",
+            "bindings.phases requires the agent to declare a top-level `loop` dependency"
+                .to_string(),
+            &mut issues,
+        );
+    }
+
+    let allowed = AgentBindingAllowedSets {
+        tools: canonical_package_reference_set(&manifest.tools),
+        skills: canonical_package_reference_set(&manifest.skills),
+        knowledge: canonical_package_reference_set(&manifest.knowledge),
+        memory: canonical_package_reference_set(&manifest.memory),
+        profiles: canonical_package_reference_set(&manifest.profiles),
+    };
+
+    if let Some(global) = &bindings.global {
+        validate_agent_binding_scope(
+            file_label,
+            "/bindings/global",
+            global,
+            &allowed,
+            &mut issues,
+        );
+    }
+
+    for (phase_name, scope) in &bindings.phases {
+        validate_agent_binding_scope(
+            file_label,
+            &format!("/bindings/phases/{phase_name}"),
+            scope,
+            &allowed,
+            &mut issues,
+        );
+    }
+
+    let mut seen_mcp_ids = HashSet::new();
+    for (binding_idx, binding) in bindings.mcp.iter().enumerate() {
+        if !seen_mcp_ids.insert(binding.id.clone()) {
+            push_manifest_error(
+                file_label,
+                &format!("/bindings/mcp/{binding_idx}/id"),
+                format!("duplicate MCP binding id `{}` is not allowed", binding.id),
+                &mut issues,
+            );
+        }
+        for (tool_idx, tool) in binding.tools.iter().enumerate() {
+            if !allowed.tools.contains(tool) {
+                push_manifest_error(
+                    file_label,
+                    &format!("/bindings/mcp/{binding_idx}/tools/{tool_idx}"),
+                    format!(
+                        "tool binding `{tool}` must match a top-level agent tool dependency by package identity"
+                    ),
+                    &mut issues,
+                );
+            }
+        }
+    }
+
+    issues
+}
+
 fn validate_non_empty_trimmed_string(
     file_label: &str,
     pointer: &str,
@@ -1518,6 +1925,131 @@ fn validate_profile_constraints(
             );
         }
     }
+}
+
+struct AgentBindingAllowedSets {
+    tools: HashSet<String>,
+    skills: HashSet<String>,
+    knowledge: HashSet<String>,
+    memory: HashSet<String>,
+    profiles: HashSet<String>,
+}
+
+fn validate_agent_binding_scope(
+    file_label: &str,
+    pointer: &str,
+    scope: &AgentBindingScope,
+    allowed: &AgentBindingAllowedSets,
+    issues: &mut Vec<LintIssue>,
+) {
+    validate_bound_package_strings(
+        file_label,
+        &json_pointer_child(pointer, "tools"),
+        "tool",
+        &scope.tools,
+        &allowed.tools,
+        issues,
+    );
+    validate_bound_package_strings(
+        file_label,
+        &json_pointer_child(pointer, "skills"),
+        "skill",
+        &scope.skills,
+        &allowed.skills,
+        issues,
+    );
+    validate_bound_package_strings(
+        file_label,
+        &json_pointer_child(pointer, "knowledge"),
+        "knowledge package",
+        &scope.knowledge,
+        &allowed.knowledge,
+        issues,
+    );
+    validate_bound_package_strings(
+        file_label,
+        &json_pointer_child(pointer, "profiles"),
+        "profile package",
+        &scope.profiles,
+        &allowed.profiles,
+        issues,
+    );
+
+    let mut seen_memory_packages = HashSet::new();
+    for (memory_idx, binding) in scope.memory.iter().enumerate() {
+        if !allowed.memory.contains(&binding.package) {
+            push_manifest_error(
+                file_label,
+                &format!("{pointer}/memory/{memory_idx}/package"),
+                format!(
+                    "memory binding `{}` must match a top-level agent memory dependency by package identity",
+                    binding.package
+                ),
+                issues,
+            );
+        }
+        if !seen_memory_packages.insert(binding.package.clone()) {
+            push_manifest_error(
+                file_label,
+                &format!("{pointer}/memory/{memory_idx}/package"),
+                format!(
+                    "duplicate memory binding package `{}` is not allowed within one binding scope",
+                    binding.package
+                ),
+                issues,
+            );
+        }
+    }
+}
+
+fn validate_bound_package_strings(
+    file_label: &str,
+    pointer: &str,
+    label: &str,
+    values: &[String],
+    allowed: &HashSet<String>,
+    issues: &mut Vec<LintIssue>,
+) {
+    for (idx, value) in values.iter().enumerate() {
+        if !allowed.contains(value) {
+            push_manifest_error(
+                file_label,
+                &json_pointer_child(pointer, &idx.to_string()),
+                format!(
+                    "{label} binding `{value}` must match a top-level dependency by package identity"
+                ),
+                issues,
+            );
+        }
+    }
+}
+
+fn canonical_package_reference_set(values: &[PackageReference]) -> HashSet<String> {
+    values
+        .iter()
+        .map(package_reference_identity)
+        .collect::<HashSet<_>>()
+}
+
+fn package_reference_identity(reference: &PackageReference) -> String {
+    match reference {
+        PackageReference::String(value) => package_identity(value),
+        PackageReference::Object { name, .. } => package_identity(name),
+    }
+}
+
+fn package_identity(value: &str) -> String {
+    let slash_idx = value.rfind('/').unwrap_or(0);
+    match value[slash_idx..].rfind('@') {
+        Some(relative_idx) if slash_idx + relative_idx > 0 => {
+            value[..slash_idx + relative_idx].to_string()
+        }
+        _ => value.to_string(),
+    }
+}
+
+fn is_loop_terminal(value: &str) -> bool {
+    matches!(value, "$end" | "$abort" | "$handoff")
 }
 
 fn validate_memory_keys<'a>(
@@ -4041,6 +4573,326 @@ mod tests {
         assert!(
             issues.iter().any(|issue| issue.instance_path == "/kind"),
             "expected dependency rejection for kind=loop, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn loop_semantics_reject_whitespace_only_text_fields() {
+        let mut manifest = base_loop_manifest();
+        manifest["loop"]["archetype"] = json!("   ");
+        manifest["loop"]["phases"][0]["objective"] = json!("   ");
+        manifest["loop"]["phases"][0]["outcomes"] = json!([
+            {
+                "id": "complete-review",
+                "description": "   "
+            }
+        ]);
+        manifest["loop"]["transitions"][0]["on"] = json!("complete-review");
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/archetype")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/phases/0/objective")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/phases/0/outcomes/0/description")
+        );
+    }
+
+    #[test]
+    fn loop_semantics_reject_invalid_entry_phase_and_transitions() {
+        let mut manifest = base_loop_manifest();
+        manifest["loop"]["entry_phase"] = json!("review");
+        manifest["loop"]["transitions"] = json!([
+            { "from": "triage", "on": "wrong", "to": "$end" },
+            { "from": "missing", "on": "complete", "to": "$end" },
+            { "from": "triage", "on": "complete", "to": "$pause" }
+        ]);
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/entry_phase")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions/0/on")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions/1/from")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions/2/to")
+        );
+    }
+
+    #[test]
+    fn loop_semantics_require_exactly_one_transition_and_reachable_terminal() {
+        let manifest = json!({
+            "kind": "loop",
+            "name": "bad-loop",
+            "version": "1.0.0",
+            "description": "Loop with missing and duplicate transitions.",
+            "loop": {
+                "entry_phase": "triage",
+                "phases": [
+                    {
+                        "id": "triage",
+                        "objective": "Assess work.",
+                        "outcomes": [
+                            { "id": "proceed", "description": "Proceed." },
+                            { "id": "stop", "description": "Stop." }
+                        ]
+                    },
+                    {
+                        "id": "review",
+                        "objective": "Review work."
+                    },
+                    {
+                        "id": "orphan",
+                        "objective": "Never reached."
+                    }
+                ],
+                "transitions": [
+                    { "from": "triage", "on": "proceed", "to": "review" },
+                    { "from": "triage", "on": "proceed", "to": "review" },
+                    { "from": "review", "on": "complete", "to": "triage" }
+                ]
+            }
+        });
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions"
+                    && issue.message.contains("triage")
+                    && issue.message.contains("proceed"))
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions"
+                    && issue.message.contains("stop"))
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/phases/2/id")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions"
+                    && issue.message.contains("terminal"))
+        );
+    }
+
+    #[test]
+    fn loop_semantics_reject_invalid_checkpoints() {
+        let mut manifest = base_loop_manifest();
+        manifest["loop"]["phases"] = json!([
+            { "id": "triage", "objective": "Assess." },
+            { "id": "respond", "objective": "Respond." }
+        ]);
+        manifest["loop"]["transitions"] = json!([
+            { "from": "triage", "on": "complete", "to": "respond" },
+            { "from": "respond", "on": "complete", "to": "$end" }
+        ]);
+        manifest["loop"]["checkpoints"] = json!([
+            {
+                "id": "approve-response",
+                "type": "approval",
+                "before_phase": "respond",
+                "on_reject": "triage"
+            },
+            {
+                "id": "approve-response",
+                "type": "approval",
+                "before_phase": "respond",
+                "on_reject": "$resume"
+            }
+        ]);
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/checkpoints/1/id")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/checkpoints/1/before_phase")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/checkpoints/1/on_reject")
+        );
+    }
+
+    #[test]
+    fn loop_semantics_reject_invalid_tool_failure_policy_shapes() {
+        let mut missing_retry_fields = base_loop_manifest();
+        missing_retry_fields["loop"]["error_policy"] = json!({
+            "tool_failure": {
+                "action": "retry"
+            }
+        });
+        let issues = assert_manifest_invalid(missing_retry_fields);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/error_policy/tool_failure/max_retries")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/error_policy/tool_failure/on_exhausted")
+        );
+
+        let mut invalid_non_retry = base_loop_manifest();
+        invalid_non_retry["loop"]["error_policy"] = json!({
+            "tool_failure": {
+                "action": "abort",
+                "max_retries": 2,
+                "on_exhausted": "handoff"
+            }
+        });
+        let issues = assert_manifest_invalid(invalid_non_retry);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/error_policy/tool_failure/max_retries")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/error_policy/tool_failure/on_exhausted")
+        );
+
+        let mut missing_phase_failure = base_loop_manifest();
+        missing_phase_failure["loop"]["error_policy"] = json!({
+            "tool_failure": {
+                "action": "retry",
+                "max_retries": 1,
+                "on_exhausted": "fail_phase"
+            }
+        });
+        let issues = assert_manifest_invalid(missing_phase_failure);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/error_policy/phase_failure")
+        );
+    }
+
+    #[test]
+    fn agent_binding_semantics_reject_missing_top_level_bindings_and_duplicates() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "agent",
+            "name": "bad-bindings-agent",
+            "version": "1.0.0",
+            "description": "Agent with bad bindings.",
+            "tools": ["@acme/get-incident-context@1.0.0"],
+            "skills": ["@acme/incident-investigation@1.0.0"],
+            "knowledge": ["@acme/incident-runbooks@1.0.0"],
+            "memory": ["@acme/incident-memory@1.0.0"],
+            "profiles": ["@acme/incident-responder@1.0.0"],
+            "bindings": {
+                "global": {
+                    "tools": ["@acme/missing-tool"],
+                    "skills": ["@acme/missing-skill"],
+                    "knowledge": ["@acme/missing-knowledge"],
+                    "memory": [
+                        {
+                            "package": "@acme/missing-memory",
+                            "spaces": ["incident_state"]
+                        },
+                        {
+                            "package": "@acme/missing-memory",
+                            "spaces": ["evidence"]
+                        }
+                    ],
+                    "profiles": ["@acme/missing-profile"]
+                },
+                "phases": {
+                    "review": {
+                        "tools": ["@acme/get-incident-context"]
+                    }
+                },
+                "mcp": [
+                    {
+                        "id": "ops-tools",
+                        "tools": ["@acme/missing-tool"]
+                    },
+                    {
+                        "id": "ops-tools",
+                        "tools": ["@acme/get-incident-context"]
+                    }
+                ]
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/tools/0")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/skills/0")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/knowledge/0")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/memory/0/package")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/memory/1/package")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/profiles/0")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/phases")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/mcp/0/tools/0")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/mcp/1/id")
         );
     }
 

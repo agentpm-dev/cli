@@ -302,4 +302,69 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(out);
     }
+
+    #[tokio::test]
+    async fn lint_loop_formats_work_across_pretty_json_and_ndjson() {
+        let out = temp_dir("loop-formats");
+        let manifest_path = out.join("agent.json");
+        std::fs::write(
+            &manifest_path,
+            r#"{
+  "kind": "loop",
+  "name": "incident-response-loop",
+  "version": "1.0.0",
+  "description": "Support loop.",
+  "loop": {
+    "entry_phase": "triage",
+    "phases": [
+      {
+        "id": "triage",
+        "objective": "Assess the incident."
+      }
+    ],
+    "transitions": [
+      {
+        "from": "triage",
+        "on": "complete",
+        "to": "$end"
+      }
+    ]
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        for format in ["pretty", "json", "ndjson"] {
+            let non_strict = LintArgs {
+                paths: vec![manifest_path.to_string_lossy().to_string()],
+                schema: None,
+                strict: false,
+                format: format.into(),
+                fix: false,
+            }
+            .run()
+            .await;
+            assert!(
+                non_strict.is_ok(),
+                "expected non-strict lint to allow warning in format {format}, got: {non_strict:?}"
+            );
+
+            let strict = LintArgs {
+                paths: vec![manifest_path.to_string_lossy().to_string()],
+                schema: None,
+                strict: true,
+                format: format.into(),
+                fix: false,
+            }
+            .run()
+            .await;
+            assert!(
+                strict.is_err(),
+                "expected strict lint to fail on warning in format {format}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(out);
+    }
 }
