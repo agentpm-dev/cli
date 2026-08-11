@@ -74,12 +74,26 @@ pub struct ToolManifest {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct AgentManifest {
     pub kind: String,
     pub name: String,
     pub version: String,
     #[allow(dead_code)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub tools: Vec<PackageReference>,
+    #[serde(default)]
+    pub skills: Vec<PackageReference>,
+    #[serde(default)]
+    pub knowledge: Vec<PackageReference>,
+    #[serde(default)]
+    pub memory: Vec<PackageReference>,
+    #[serde(default)]
+    pub profiles: Vec<PackageReference>,
+    #[serde(rename = "loop")]
+    pub loop_ref: Option<PackageReference>,
+    pub bindings: Option<AgentBindings>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +151,7 @@ pub struct TemplateDependencies {
     pub knowledge: Vec<PackageReference>,
     pub memory: Vec<PackageReference>,
     pub profiles: Vec<PackageReference>,
+    pub r#loop: Option<PackageReference>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -582,6 +597,182 @@ pub struct ProfileManifest {
     #[serde(default)]
     pub license: Option<Value>,
     pub profile: ProfileMetadata,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopAccessMemory {
+    pub read: Option<bool>,
+    pub write: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopPhaseAccess {
+    pub tools: Option<bool>,
+    pub knowledge: Option<bool>,
+    pub memory: Option<LoopAccessMemory>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopOutcome {
+    pub id: String,
+    pub description: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopPhase {
+    pub id: String,
+    pub objective: String,
+    pub access: Option<LoopPhaseAccess>,
+    #[serde(default)]
+    pub outcomes: Vec<LoopOutcome>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopTransition {
+    pub from: String,
+    pub on: String,
+    pub to: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct LoopLimits {
+    pub max_steps: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopCheckpoint {
+    pub id: String,
+    pub r#type: String,
+    pub before_phase: String,
+    pub on_reject: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum LoopToolFailureAction {
+    Retry,
+    FailPhase,
+    Abort,
+    Handoff,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum LoopToolFailureExhaustedAction {
+    FailPhase,
+    Abort,
+    Handoff,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopToolFailurePolicy {
+    pub action: LoopToolFailureAction,
+    pub max_retries: Option<u64>,
+    pub on_exhausted: Option<LoopToolFailureExhaustedAction>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum LoopPhaseFailureAction {
+    Abort,
+    Handoff,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopPhaseFailurePolicy {
+    pub action: LoopPhaseFailureAction,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct LoopErrorPolicy {
+    pub tool_failure: Option<LoopToolFailurePolicy>,
+    pub phase_failure: Option<LoopPhaseFailurePolicy>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopMetadata {
+    pub archetype: Option<String>,
+    pub entry_phase: String,
+    pub limits: Option<LoopLimits>,
+    pub phases: Vec<LoopPhase>,
+    pub transitions: Vec<LoopTransition>,
+    #[serde(default)]
+    pub checkpoints: Vec<LoopCheckpoint>,
+    pub error_policy: Option<LoopErrorPolicy>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopManifest {
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+    pub readme: Option<String>,
+    #[serde(default)]
+    pub license: Option<Value>,
+    pub r#loop: LoopMetadata,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct AgentMemoryBinding {
+    pub package: String,
+    #[serde(default)]
+    pub spaces: Vec<String>,
+    #[serde(default)]
+    pub operations: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct AgentBindingScope {
+    pub tools: Vec<String>,
+    pub skills: Vec<String>,
+    pub knowledge: Vec<String>,
+    pub memory: Vec<AgentMemoryBinding>,
+    pub profiles: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct AgentMcpBinding {
+    pub id: String,
+    pub tools: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct AgentConsumerContext {
+    pub file: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct AgentBindings {
+    pub global: Option<AgentBindingScope>,
+    pub phases: HashMap<String, AgentBindingScope>,
+    pub mcp: Vec<AgentMcpBinding>,
+    pub consumer_context: Option<AgentConsumerContext>,
 }
 
 #[derive(Debug)]
@@ -2207,6 +2398,19 @@ pub fn parse_memory_manifest(value: &Value) -> Result<MemoryManifest> {
 }
 
 #[allow(dead_code)]
+pub fn parse_loop_manifest(value: &Value) -> Result<LoopManifest> {
+    let mf: LoopManifest =
+        serde_json::from_value(value.clone()).context("parsing manifest into LoopManifest")?;
+    if mf.kind != "loop" {
+        return Err(anyhow!(format!(
+            "expected kind=\"loop\" manifest (got kind=\"{}\")",
+            mf.kind
+        )));
+    }
+    Ok(mf)
+}
+
+#[allow(dead_code)]
 pub fn parse_profile_manifest(value: &Value) -> Result<ProfileManifest> {
     let mf: ProfileManifest =
         serde_json::from_value(value.clone()).context("parsing manifest into ProfileManifest")?;
@@ -2273,6 +2477,7 @@ mod tests {
                 "knowledge",
                 "memory",
                 "profile",
+                "loop",
             ]
         );
     }
@@ -2385,6 +2590,31 @@ mod tests {
                         }
                     }
                 }
+            }
+        })
+    }
+
+    fn base_loop_manifest() -> Value {
+        json!({
+            "kind": "loop",
+            "name": "incident-response-loop",
+            "version": "1.0.0",
+            "description": "A bounded triage, investigation, review, and response loop.",
+            "loop": {
+                "entry_phase": "triage",
+                "phases": [
+                    {
+                        "id": "triage",
+                        "objective": "Assess the incident."
+                    }
+                ],
+                "transitions": [
+                    {
+                        "from": "triage",
+                        "on": "complete",
+                        "to": "$end"
+                    }
+                ]
             }
         })
     }
@@ -3470,6 +3700,421 @@ mod tests {
                 ]
             }
         }));
+    }
+
+    #[test]
+    fn valid_minimal_loop_manifest_validates() {
+        assert_manifest_ok(base_loop_manifest());
+    }
+
+    #[test]
+    fn valid_full_loop_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "loop",
+            "name": "incident-response-loop",
+            "version": "1.0.0",
+            "description": "A bounded triage, investigation, review, and response loop with approval and escalation paths.",
+            "loop": {
+                "archetype": "investigate_review_respond",
+                "entry_phase": "triage",
+                "limits": {
+                    "max_steps": 16
+                },
+                "phases": [
+                    {
+                        "id": "triage",
+                        "objective": "Assess the incident and determine whether investigation should proceed.",
+                        "access": {
+                            "tools": false,
+                            "knowledge": true,
+                            "memory": {
+                                "read": true,
+                                "write": false
+                            }
+                        },
+                        "outcomes": [
+                            {
+                                "id": "proceed",
+                                "description": "The incident has enough information to begin investigation."
+                            },
+                            {
+                                "id": "cannot-proceed",
+                                "description": "The incident cannot be investigated safely or meaningfully."
+                            }
+                        ]
+                    },
+                    {
+                        "id": "investigate",
+                        "objective": "Gather evidence, test hypotheses, and update the working understanding of the incident.",
+                        "access": {
+                            "tools": true,
+                            "knowledge": true,
+                            "memory": {
+                                "read": true,
+                                "write": true
+                            }
+                        }
+                    },
+                    {
+                        "id": "review",
+                        "objective": "Evaluate the evidence and decide whether more investigation, escalation, or response is appropriate.",
+                        "access": {
+                            "tools": false,
+                            "knowledge": true,
+                            "memory": {
+                                "read": true,
+                                "write": false
+                            }
+                        },
+                        "outcomes": [
+                            {
+                                "id": "needs-more-evidence",
+                                "description": "Important questions remain and another investigation cycle is required."
+                            },
+                            {
+                                "id": "ready",
+                                "description": "The evidence is sufficient to prepare the incident response."
+                            },
+                            {
+                                "id": "escalate",
+                                "description": "The incident requires an external actor or system to take over."
+                            }
+                        ]
+                    },
+                    {
+                        "id": "respond",
+                        "objective": "Produce and deliver the final incident response using the reviewed evidence.",
+                        "access": {
+                            "tools": true,
+                            "knowledge": false,
+                            "memory": {
+                                "read": true,
+                                "write": true
+                            }
+                        }
+                    }
+                ],
+                "transitions": [
+                    { "from": "triage", "on": "proceed", "to": "investigate" },
+                    { "from": "triage", "on": "cannot-proceed", "to": "$abort" },
+                    { "from": "investigate", "on": "complete", "to": "review" },
+                    { "from": "review", "on": "needs-more-evidence", "to": "investigate" },
+                    { "from": "review", "on": "ready", "to": "respond" },
+                    { "from": "review", "on": "escalate", "to": "$handoff" },
+                    { "from": "respond", "on": "complete", "to": "$end" }
+                ],
+                "checkpoints": [
+                    {
+                        "id": "approve-response",
+                        "type": "approval",
+                        "before_phase": "respond",
+                        "on_reject": "review"
+                    }
+                ],
+                "error_policy": {
+                    "tool_failure": {
+                        "action": "retry",
+                        "max_retries": 2,
+                        "on_exhausted": "fail_phase"
+                    },
+                    "phase_failure": {
+                        "action": "abort"
+                    }
+                }
+            },
+            "readme": "README.md",
+            "license": {
+                "spdx": "Apache-2.0"
+            }
+        }));
+    }
+
+    #[test]
+    fn agent_manifest_with_full_bindings_validates() {
+        assert_manifest_ok(json!({
+            "kind": "agent",
+            "name": "incident-response-agent",
+            "version": "1.0.0",
+            "description": "Incident response agent.",
+            "tools": ["@acme/get-incident-context@1.0.0", "@acme/search-logs@1.0.0"],
+            "skills": ["@acme/incident-investigation@1.0.0"],
+            "knowledge": ["@acme/incident-runbooks@1.0.0"],
+            "memory": ["@acme/incident-memory@1.0.0"],
+            "profiles": ["@acme/incident-responder@1.0.0"],
+            "loop": "@acme/incident-response-loop@1.0.0",
+            "bindings": {
+                "global": {
+                    "tools": ["@acme/get-incident-context"],
+                    "skills": ["@acme/incident-investigation"],
+                    "knowledge": ["@acme/incident-runbooks"],
+                    "memory": [
+                        {
+                            "package": "@acme/incident-memory",
+                            "spaces": ["incident_state"]
+                        }
+                    ],
+                    "profiles": ["@acme/incident-responder"]
+                },
+                "phases": {
+                    "review": {
+                        "tools": ["@acme/search-logs"],
+                        "memory": [
+                            {
+                                "package": "@acme/incident-memory",
+                                "spaces": ["incident_state", "evidence"],
+                                "operations": ["compact_evidence"]
+                            }
+                        ]
+                    }
+                },
+                "mcp": [
+                    {
+                        "id": "investigation-tools",
+                        "tools": ["@acme/get-incident-context", "@acme/search-logs"]
+                    }
+                ],
+                "consumer_context": {
+                    "file": "INCIDENT_AGENT.md"
+                }
+            },
+            "examples": [
+                {
+                    "title": "Example prompt",
+                    "prompt": "Investigate the incident."
+                }
+            ]
+        }));
+    }
+
+    #[test]
+    fn agent_bindings_reject_invalid_binding_shapes() {
+        let cases = vec![
+            (
+                "versioned-tool-binding",
+                json!({
+                    "global": { "tools": ["@acme/get-incident-context@1.0.0"] }
+                }),
+                "/bindings/global/tools/0",
+            ),
+            (
+                "object-skill-binding",
+                json!({
+                    "global": { "skills": [{ "name": "@acme/incident-investigation" }] }
+                }),
+                "/bindings/global/skills/0",
+            ),
+            (
+                "unsafe-consumer-context",
+                json!({
+                    "consumer_context": { "file": "../INCIDENT_AGENT.md" }
+                }),
+                "/bindings/consumer_context/file",
+            ),
+            (
+                "empty-memory-selectors",
+                json!({
+                    "global": {
+                        "memory": [{ "package": "@acme/incident-memory" }]
+                    }
+                }),
+                "/bindings/global/memory/0",
+            ),
+            (
+                "invalid-memory-key",
+                json!({
+                    "global": {
+                        "memory": [{
+                            "package": "@acme/incident-memory",
+                            "spaces": ["incident-state"]
+                        }]
+                    }
+                }),
+                "/bindings/global/memory/0/spaces/0",
+            ),
+            (
+                "empty-mcp-tools",
+                json!({
+                    "mcp": [{ "id": "investigation-tools", "tools": [] }]
+                }),
+                "/bindings/mcp/0/tools",
+            ),
+            (
+                "invalid-mcp-id",
+                json!({
+                    "mcp": [{ "id": "investigation_tools", "tools": ["@acme/get-incident-context"] }]
+                }),
+                "/bindings/mcp/0/id",
+            ),
+        ];
+
+        for (label, bindings, expected_path) in cases {
+            let manifest = json!({
+                "kind": "agent",
+                "name": format!("invalid-{label}"),
+                "version": "1.0.0",
+                "description": "Invalid agent bindings should fail.",
+                "tools": ["@acme/get-incident-context@1.0.0"],
+                "skills": ["@acme/incident-investigation@1.0.0"],
+                "knowledge": ["@acme/incident-runbooks@1.0.0"],
+                "memory": ["@acme/incident-memory@1.0.0"],
+                "profiles": ["@acme/incident-responder@1.0.0"],
+                "loop": "@acme/incident-response-loop@1.0.0",
+                "bindings": bindings
+            });
+
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.instance_path == expected_path),
+                "expected invalid binding path {expected_path} for {label}, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn loop_manifest_rejects_invalid_loop_shapes() {
+        let mut invalid_id = base_loop_manifest();
+        invalid_id["loop"]["phases"][0]["id"] = json!("triage_phase");
+        let issues = assert_manifest_invalid(invalid_id);
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/loop"),
+            "expected invalid phase id failure, got: {issues:#?}"
+        );
+
+        let mut empty_outcomes = base_loop_manifest();
+        empty_outcomes["loop"]["phases"][0]["outcomes"] = json!([]);
+        let issues = assert_manifest_invalid(empty_outcomes);
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/loop"),
+            "expected empty outcomes failure, got: {issues:#?}"
+        );
+
+        let mut bad_terminal = base_loop_manifest();
+        bad_terminal["loop"]["transitions"][0]["to"] = json!("$pause");
+        let issues = assert_manifest_invalid(bad_terminal);
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/loop"),
+            "expected invalid terminal target failure, got: {issues:#?}"
+        );
+
+        let mut bad_access = base_loop_manifest();
+        bad_access["loop"]["phases"][0]["access"] = json!({ "skills": true });
+        let issues = assert_manifest_invalid(bad_access);
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/loop"),
+            "expected unsupported access field failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn bindings_are_rejected_on_non_agent_manifests() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "loop",
+            "name": "bad-loop",
+            "version": "1.0.0",
+            "description": "Loop packages must not declare Agent bindings.",
+            "loop": {
+                "entry_phase": "triage",
+                "phases": [{ "id": "triage", "objective": "Assess." }],
+                "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+            },
+            "bindings": {
+                "global": {
+                    "tools": ["@acme/get-incident-context"]
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/kind"),
+            "expected bindings rejection on non-agent manifest, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn loop_manifest_rejects_package_dependencies() {
+        let mut manifest = base_loop_manifest();
+        manifest["tools"] = json!(["@acme/get-incident-context@1.0.0"]);
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/kind"),
+            "expected dependency rejection for kind=loop, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn template_manifest_accepts_zero_or_one_loop_and_rejects_plural_loop_shapes() {
+        let no_loop = json!({
+            "kind": "template",
+            "name": "incident-template",
+            "version": "0.1.0",
+            "description": "Incident template.",
+            "template": {
+                "display_name": "Incident Template",
+                "use_case": "incident-response",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+            }
+        });
+        assert_manifest_ok(no_loop);
+
+        let one_loop = json!({
+            "kind": "template",
+            "name": "incident-template",
+            "version": "0.1.0",
+            "description": "Incident template.",
+            "template": {
+                "display_name": "Incident Template",
+                "use_case": "incident-response",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "loop": "@acme/incident-response-loop@1.0.0"
+                },
+                "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+            }
+        });
+        assert_manifest_ok(one_loop);
+
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "incident-template",
+            "version": "0.1.0",
+            "description": "Incident template.",
+            "template": {
+                "display_name": "Incident Template",
+                "use_case": "incident-response",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "loop": [
+                        "@acme/incident-response-loop@1.0.0",
+                        "@acme/fallback-loop@1.0.0"
+                    ]
+                },
+                "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+            }
+        }));
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/template/dependencies/loop"),
+            "expected singular template loop shape failure, got: {issues:#?}"
+        );
     }
 
     #[test]
@@ -5372,6 +6017,127 @@ mod tests {
     }
 
     #[test]
+    fn top_level_loop_is_rejected_for_every_non_agent_non_loop_kind() {
+        let cases = vec![
+            json!({
+                "kind": "tool",
+                "name": "bad-tool-loop",
+                "version": "0.1.0",
+                "description": "Tools must not declare top-level loop.",
+                "entrypoint": { "command": "python", "args": ["main.py"] },
+                "inputs": { "type": "object" },
+                "outputs": { "type": "object" },
+                "files": ["main.py"],
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+            json!({
+                "kind": "template",
+                "name": "bad-template-loop",
+                "version": "0.1.0",
+                "description": "Templates must not declare top-level loop.",
+                "template": {
+                    "display_name": "Bad Template",
+                    "use_case": "support",
+                    "execution_surfaces": ["python-sdk"],
+                    "files_root": "template",
+                    "variables": [],
+                    "dependencies": { "tools": [], "agents": [] },
+                    "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+                },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+            json!({
+                "kind": "skill",
+                "name": "bad-skill-loop",
+                "version": "0.1.0",
+                "description": "Skills must not declare top-level loop.",
+                "skill": { "entrypoint": "SKILL.md" },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+            json!({
+                "kind": "knowledge",
+                "name": "bad-knowledge-loop",
+                "version": "0.1.0",
+                "description": "Knowledge must not declare top-level loop.",
+                "knowledge": { "mode": "context" },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+            json!({
+                "kind": "memory",
+                "name": "bad-memory-loop",
+                "version": "0.1.0",
+                "description": "Memory must not declare top-level loop.",
+                "memory": {
+                    "scopes": { "user": { "description": "User scope." } },
+                    "record_types": {
+                        "preference": {
+                            "version": "1.0.0",
+                            "description": "Preference record.",
+                            "schema": "schemas/preference.schema.json"
+                        }
+                    },
+                    "spaces": {
+                        "profile": {
+                            "description": "Profile document.",
+                            "model": "document",
+                            "record_types": ["preference"],
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["key"] }
+                        }
+                    }
+                },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+            json!({
+                "kind": "profile",
+                "name": "bad-profile-loop",
+                "version": "1.0.0",
+                "description": "Profiles must not declare top-level loop.",
+                "profile": {
+                    "identity": { "role": "Support agent" },
+                    "objectives": ["Help."],
+                    "communication": { "tone": ["warm"], "verbosity": "concise" }
+                },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+        ];
+
+        for manifest in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.schema_path == "/dependentSchemas/loop/oneOf"),
+                "expected top-level loop rejection outside kind=agent/kind=loop, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
     fn non_agent_non_memory_top_level_memory_fails() {
         let issues = assert_manifest_invalid(json!({
             "kind": "skill",
@@ -6734,6 +7500,177 @@ mod tests {
             }
             PackageReference::String(_) => panic!("expected object dependency reference"),
         }
+    }
+
+    #[test]
+    fn parse_template_manifest_preserves_loop_dependencies() {
+        let manifest = json!({
+            "kind": "template",
+            "name": "incident-template",
+            "version": "0.1.0",
+            "description": "Incident template.",
+            "template": {
+                "display_name": "Incident Template",
+                "use_case": "incident-response",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "loop": "@zack/incident-response-loop@1.0.0"
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        });
+
+        let parsed = parse_template_manifest(&manifest).unwrap();
+        match parsed.template.dependencies.r#loop.as_ref() {
+            Some(PackageReference::String(value)) => {
+                assert_eq!(value, "@zack/incident-response-loop@1.0.0");
+            }
+            Some(PackageReference::Object { .. }) => panic!("expected string dependency reference"),
+            None => panic!("expected loop dependency"),
+        }
+    }
+
+    #[test]
+    fn parse_loop_manifest_accepts_loop_kind() {
+        let manifest = json!({
+            "kind": "loop",
+            "name": "incident-response-loop",
+            "version": "1.0.0",
+            "description": "Incident loop.",
+            "loop": {
+                "entry_phase": "triage",
+                "phases": [
+                    {
+                        "id": "triage",
+                        "objective": "Assess the incident."
+                    }
+                ],
+                "transitions": [
+                    {
+                        "from": "triage",
+                        "on": "complete",
+                        "to": "$end"
+                    }
+                ]
+            }
+        });
+
+        let parsed = parse_loop_manifest(&manifest).unwrap();
+        assert_eq!(parsed.kind, "loop");
+        assert_eq!(parsed.name, "incident-response-loop");
+        assert_eq!(parsed.r#loop.entry_phase, "triage");
+        assert_eq!(parsed.r#loop.phases.len(), 1);
+        assert_eq!(parsed.r#loop.transitions.len(), 1);
+    }
+
+    #[test]
+    fn parse_loop_manifest_rejects_wrong_kind() {
+        let manifest = json!({
+            "kind": "profile",
+            "name": "incident-response-loop",
+            "version": "1.0.0",
+            "description": "Incident loop with the wrong kind.",
+            "loop": {
+                "entry_phase": "triage",
+                "phases": [
+                    {
+                        "id": "triage",
+                        "objective": "Assess the incident."
+                    }
+                ],
+                "transitions": [
+                    {
+                        "from": "triage",
+                        "on": "complete",
+                        "to": "$end"
+                    }
+                ]
+            }
+        });
+
+        let err = parse_loop_manifest(&manifest).unwrap_err().to_string();
+        assert!(
+            err.contains("expected kind=\"loop\" manifest"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn agent_manifest_typed_parsing_preserves_loop_and_bindings() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "incident-response-agent",
+            "version": "1.0.0",
+            "description": "Incident response agent.",
+            "tools": ["@acme/get-incident-context@1.0.0"],
+            "skills": ["@acme/incident-investigation@1.0.0"],
+            "knowledge": ["@acme/incident-runbooks@1.0.0"],
+            "memory": ["@acme/incident-memory@1.0.0"],
+            "profiles": ["@acme/incident-responder@1.0.0"],
+            "loop": "@acme/incident-response-loop@1.0.0",
+            "bindings": {
+                "global": {
+                    "tools": ["@acme/get-incident-context"],
+                    "memory": [
+                        {
+                            "package": "@acme/incident-memory",
+                            "operations": ["compact_evidence"]
+                        }
+                    ]
+                },
+                "phases": {
+                    "review": {
+                        "profiles": ["@acme/incident-responder"]
+                    }
+                },
+                "mcp": [
+                    {
+                        "id": "investigation-tools",
+                        "tools": ["@acme/get-incident-context"]
+                    }
+                ],
+                "consumer_context": {
+                    "file": "INCIDENT_AGENT.md"
+                }
+            }
+        });
+
+        let parsed: AgentManifest = serde_json::from_value(manifest).unwrap();
+        match parsed.loop_ref {
+            Some(PackageReference::String(value)) => {
+                assert_eq!(value, "@acme/incident-response-loop@1.0.0");
+            }
+            Some(PackageReference::Object { .. }) => panic!("expected string loop reference"),
+            None => panic!("expected loop reference"),
+        }
+        let bindings = parsed.bindings.expect("expected bindings");
+        assert_eq!(
+            bindings
+                .global
+                .as_ref()
+                .expect("expected global bindings")
+                .tools,
+            vec!["@acme/get-incident-context".to_string()]
+        );
+        assert_eq!(bindings.phases.len(), 1);
+        assert_eq!(bindings.mcp.len(), 1);
+        assert_eq!(
+            bindings
+                .consumer_context
+                .as_ref()
+                .expect("expected consumer context")
+                .file,
+            "INCIDENT_AGENT.md"
+        );
     }
 
     #[test]

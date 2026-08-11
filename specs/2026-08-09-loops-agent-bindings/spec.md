@@ -812,7 +812,7 @@ Agent semantic lint must not:
 
 ## Template dependency model
 
-Template dependency metadata adds optional `loops`:
+Template dependency metadata adds optional singular `loop`:
 
 ```json
 {
@@ -824,9 +824,7 @@ Template dependency metadata adds optional `loops`:
       "knowledge": [],
       "memory": [],
       "profiles": [],
-      "loops": [
-        "@acme/incident-response-loop@1.0.0"
-      ]
+      "loop": "@acme/incident-response-loop@1.0.0"
     }
   }
 }
@@ -834,13 +832,12 @@ Template dependency metadata adds optional `loops`:
 
 Rules:
 
-- `template.dependencies.loops` is optional.
-- It uses existing package-reference shapes.
-- Direct Template Loop dependencies are limited to at most one item because the synthesized root Agent has singular top-level `loop`.
+- `template.dependencies.loop` is optional.
+- It uses the existing package-reference shape.
 - A direct Template Loop is resolved during `agentpm new`, installed, and written as an exact-version reference into the synthesized root Agent's top-level `loop`.
 - Generated local Agent manifests may independently declare their own Loop dependencies.
 - The direct Template Loop must not be copied into every generated local Agent.
-- Template `loops` are dependencies only; Templates do not define Agent bindings themselves.
+- Template `loop` is dependency metadata only; Templates do not define Agent bindings themselves.
 
 ## CLI behavior
 
@@ -976,7 +973,7 @@ Backend behavior:
 - recognize Agent top-level `loop` as a singular package dependency;
 - require an Agent Loop dependency to resolve to stored kind `loop`;
 - treat Loop packages as leaves;
-- recognize Template `dependencies.loops` with at most one direct Loop dependency;
+- recognize Template `dependencies.loop` as an optional direct Loop dependency;
 - require Template Loop references to resolve to stored kind `loop`;
 - include Agent Loop dependencies in normal Agent install-graph expansion;
 - do not expand Template Loop dependencies during generic Template install; they are processed by `agentpm new` according to existing Template semantics;
@@ -1174,7 +1171,7 @@ Phase 7A does not:
 - An Agent may declare zero or one top-level `loop` package reference.
 - Existing Agents without Loops remain valid.
 - Loop packages are immutable dependency leaves.
-- Templates may declare at most one direct `template.dependencies.loops` entry for the synthesized root Agent.
+- Templates may declare an optional direct `template.dependencies.loop` entry for the synthesized root Agent.
 - The graph, not `archetype`, defines Loop control flow.
 - Phase arrays are not implicitly execution-ordered.
 - Omitted phase outcomes mean exactly one implicit outcome: `complete`.
@@ -1224,7 +1221,7 @@ Phase 7A does not:
 - Consumer context accepts safe relative paths, rejects unsafe paths, is optional at runtime, and is not packaged as an Agent file.
 - Agent Loop dependencies resolve and record singular first-class Loop relationships in lockfile v3.
 - Loop relationships participate in frozen mode, reachability, pruning, deduplication, replacement, refresh, and installed Agent traversal.
-- Template manifests accept at most one direct `template.dependencies.loops` entry.
+- Template manifests accept an optional singular `template.dependencies.loop` entry.
 - `agentpm new` resolves/installs the direct Template Loop and writes its exact reference to the synthesized root Agent while preserving generated local Agent Loop declarations.
 - Backend publish/install/resolve/search/trending/statistics/private authorization support `loop`.
 - Database constraints and materialized views accept the eighth package kind without regressing existing kinds.

@@ -1,7 +1,7 @@
 # Tasks
 
 ## Milestone 1: Loop Manifest Contract
-> Scope note: establish `kind: "loop"` as the final first-class package contract and define the complete authored Loop vocabulary in JSON Schema and Rust typed-manifest layers. Overload top-level `loop` so Loop packages use structured metadata while Agents use a singular package reference. Add Agent `bindings` shape and Template `loops` dependency shape at the schema/type level. This milestone validates manifest shape and typed parsing only; it does not perform graph semantic linting, scaffold files, resolve dependencies, write lockfiles, publish/install packages, render registry UI, load Loops through SDKs, or execute orchestration.
+> Scope note: establish `kind: "loop"` as the final first-class package contract and define the complete authored Loop vocabulary in JSON Schema and Rust typed-manifest layers. Overload top-level `loop` so Loop packages use structured metadata while Agents use a singular package reference. Add Agent `bindings` shape and singular Template `loop` dependency shape at the schema/type level. This milestone validates manifest shape and typed parsing only; it does not perform graph semantic linting, scaffold files, resolve dependencies, write lockfiles, publish/install packages, render registry UI, load Loops through SDKs, or execute orchestration.
 - [ ] Add `loop` to the shared manifest package-kind enum and add a `kind: "loop"` branch to the top-level `oneOf` requiring structured top-level `loop` metadata.
 - [ ] Add or extract a reusable stable lowercase kebab-case identifier definition matching `^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){0,63}$` for Loop phase IDs, outcome IDs, checkpoint IDs, and MCP binding IDs.
 - [ ] Add a versionless `packageIdentity` schema definition accepting only `@namespace/package` and rejecting versions, ranges, and object-form package references.
@@ -29,8 +29,8 @@
 - [ ] Define MCP bindings as a non-empty array of objects requiring stable `id` and non-empty unique versionless Tool identities.
 - [ ] Define `consumer_context.file` using the existing `safeRelativePath` schema and no other v1 fields.
 - [ ] Restrict `bindings` to `kind: "agent"`; reject bindings on all other package kinds.
-- [ ] Add optional `loops` to `templateDependencyGroup`, use existing package-reference shapes, and cap direct Template Loop dependencies at one item.
-- [ ] Add defaulted `loops: Vec<PackageReference>` to Rust `TemplateDependencies` or the repository-equivalent type.
+- [ ] Add optional singular `loop` to `templateDependencyGroup` using the existing package-reference shape.
+- [ ] Add defaulted `loop: Option<PackageReference>` to Rust `TemplateDependencies` or the repository-equivalent type.
 - [ ] Add Rust typed Loop structs/enums and Agent binding structs matching the schema.
 - [ ] Add `LoopManifest` and `parse_loop_manifest`, including clear wrong-kind errors.
 - [ ] Extend Agent typed-manifest parsing with optional singular Loop dependency and optional typed bindings.
@@ -39,7 +39,7 @@
 - [ ] Add schema tests for Agents using every binding surface and every bindable package kind.
 - [ ] Add schema tests proving binding identities reject versions/ranges/object-form package refs while top-level dependencies continue to accept normal package refs.
 - [ ] Add schema failure tests for invalid stable IDs, empty outcomes, unsafe consumer-context paths, empty Memory selectors, malformed MCP bindings, unsupported terminal names, unsupported access fields, and extra properties.
-- [ ] Add schema tests proving Templates accept zero/one direct Loop and reject more than one.
+- [ ] Add schema tests proving Templates accept zero or one direct Loop and reject plural/array-shaped Template Loop declarations.
 - [ ] Add tests proving Loop packages cannot declare package dependencies or Agent bindings.
 - [ ] Update embedded-schema tests and hardcoded seven-kind schema assertions for the new eighth package kind.
 
@@ -155,7 +155,7 @@
 - [ ] Add Agent singular top-level `loop` to backend dependency extraction, relationship persistence, and normal Agent install-graph expansion.
 - [ ] Require Agent Loop dependencies to resolve to stored package kind `loop`.
 - [ ] Keep Loop packages as dependency leaves.
-- [ ] Add Template `dependencies.loops` to publish-time dependency extraction/validation/relationship persistence and enforce at most one direct Loop.
+- [ ] Add Template `dependencies.loop` to publish-time dependency extraction/validation/relationship persistence.
 - [ ] Require Template Loop references to resolve to stored package kind `loop`.
 - [ ] Keep Template direct Loop installation deferred to `agentpm new`; generic Template install behavior remains unchanged.
 - [ ] Do not parse/evaluate Agent `bindings` for runtime policy or cross-package content validation on the backend.
@@ -186,8 +186,8 @@
 
 ## Milestone 7: Template `new` and Workspace Integration
 > Scope note: add direct Template Loop support to `agentpm new`. Resolve/install at most one direct Template Loop, write the exact resolved reference into the synthesized root Agent, and preserve Loop dependencies/bindings authored by generated local Agents. Do not create workspace-level Loop roots, generate bindings, execute orchestration, or reinterpret Template variables as runtime configuration.
-- [ ] Include `template.dependencies.loops` in `agentpm new` resolver requests using `PackageKind::Loop`.
-- [ ] Enforce at most one direct Template Loop in schema and runtime defensive validation.
+- [ ] Include `template.dependencies.loop` in `agentpm new` resolver requests using `PackageKind::Loop`.
+- [ ] Enforce singular direct Template Loop handling in schema and runtime defensive validation.
 - [ ] Include Loop requirements declared by rendered local Agent manifests through the normal Agent dependency parser.
 - [ ] Apply existing version resolution, wrong-kind validation, private access, deduplication, and conflict behavior.
 - [ ] Install resolved Loops under `.agentpm/loops/<namespace>/<name>/<version>`.
@@ -271,7 +271,7 @@
 - [ ] Document consumer-context ownership, safe workspace-relative paths, optional file presence, and author-chosen filename.
 - [ ] Document the Loop-access-versus-Agent-binding boundary and that lint/publish/install do not reject conflicts.
 - [ ] Document that Agent lint validates package membership but does not resolve Loop phases or Memory contents.
-- [ ] Document Template `dependencies.loops` max-one direct dependency and synthesized-root-Agent behavior.
+- [ ] Document Template `dependencies.loop` and synthesized-root-Agent behavior.
 - [ ] Document `loadLoop` / `load_loop` and Agent binding exposure as metadata-only SDK behavior.
 - [ ] Document Phase 7B as the separate canonical AgentPM harness implementation and list runtime concerns deliberately absent from 7A.
 - [ ] Audit the full codebase for hardcoded `tool|agent|template|skill|knowledge|memory|profile` lists and add `loop` where package kinds are intended.
@@ -283,7 +283,7 @@
 - [ ] Confirm Loop README/license packaging uses common behavior and README is not interpreted as orchestration guidance.
 - [ ] Confirm Loop packages cannot declare dependencies in schema, CLI publish, or backend publish paths.
 - [ ] Confirm Agent manifests without Loop/bindings remain compatible and existing required `tools` behavior remains unchanged.
-- [ ] Confirm Templates without `loops` remain valid.
+- [ ] Confirm Templates without `loop` remain valid.
 - [ ] Confirm lockfile v3 remains compatible unless a reviewed implementation finding justified a change.
 - [ ] Bump CLI, Node SDK, and Python SDK release versions in the normal final-release pass.
 - [ ] Update web status/version/date surfaces if that remains part of current release practice.
@@ -304,7 +304,7 @@
 - [ ] Use real Memory Blueprint space/operation identifiers in Agent examples and preserve snake_case Memory keys.
 - [ ] Ensure the MCP example uses at least two named surfaces if the existing Agent story naturally supports them, demonstrating that IDs improve inspectability without adding network configuration.
 - [ ] Include a consumer-context filename that is intentionally not `AGENTPM.md` to reinforce author-defined conventions.
-- [ ] Wire at least one Loop through a Template `dependencies.loops` flow and verify the synthesized root Agent receives the exact resolved Loop reference.
+- [ ] Wire at least one Loop through a Template `dependencies.loop` flow and verify the synthesized root Agent receives the exact resolved Loop reference.
 - [ ] Keep generated local Agents' independently authored Loop dependencies/bindings intact in Template examples.
 - [ ] Ensure READMEs explain that Loops/bindings are portable contracts and that actual execution belongs to the consuming runtime / future AgentPM harness.
 - [ ] Validate examples through lint, publish dry-run, publish/install where production seeding is intended, registry display, Template `new`, and Node/Python metadata loading.

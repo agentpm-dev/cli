@@ -21,7 +21,7 @@
 - Confirm Tool/phase error policy actions match the closed v1 vocabulary and cross-field rules.
 - Confirm Agent `bindings` is Agent-only and contains only the intended `global`, `phases`, `mcp`, and `consumer_context` surfaces.
 - Confirm binding package identities are versionless and cannot carry ranges or object-form versions.
-- Confirm Template `dependencies.loops` is optional and limited to at most one direct Loop.
+- Confirm Template `dependencies.loop` is optional and singular.
 - Confirm existing Agent top-level `tools` requirement was not changed by this phase.
 
 ## Loop artifact boundary
@@ -125,7 +125,7 @@
 
 ## Template/new
 
-- Confirm Template `dependencies.loops` accepts at most one direct Loop.
+- Confirm Template `dependencies.loop` accepts exactly one normal package reference when present.
 - Confirm `agentpm new` resolves and installs the direct Template Loop.
 - Confirm synthesized root Agent receives the exact resolved Loop reference.
 - Confirm generated local Agent manifests retain their own independently authored Loop dependencies and bindings.
@@ -194,7 +194,7 @@
 - Confirm existing Tool, Agent, Template, Skill, Knowledge, Memory, and Profile flows remain unchanged.
 - Confirm Knowledge/Memory build/publish requirements are not affected.
 - Confirm Agents without Loop/bindings remain compatible.
-- Confirm Templates without direct Loops remain compatible.
+- Confirm Templates without a direct Template `loop` remain compatible.
 - Confirm existing required Agent `tools` behavior remains intact.
 - Confirm older lockfiles remain readable.
 
