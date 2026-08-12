@@ -214,6 +214,7 @@ impl InstallArgs {
         let knowledge_dir = project_root.join(".agentpm/knowledge");
         let memory_dir = project_root.join(".agentpm/memory");
         let profiles_dir = project_root.join(".agentpm/profiles");
+        let loops_dir = project_root.join(".agentpm/loops");
         fs::ensure_dirs(&[
             &dl_dir,
             &tools_dir,
@@ -222,6 +223,7 @@ impl InstallArgs {
             &knowledge_dir,
             &memory_dir,
             &profiles_dir,
+            &loops_dir,
         ])?;
         download_and_extract_all(
             &init,
@@ -233,6 +235,7 @@ impl InstallArgs {
                 knowledge_dir: &knowledge_dir,
                 memory_dir: &memory_dir,
                 profiles_dir: &profiles_dir,
+                loops_dir: &loops_dir,
             },
             self.refresh,
             quiet,
@@ -288,6 +291,7 @@ impl InstallArgs {
                     spec,
                     self.update_range,
                 )?,
+                PackageKind::Loop => false,
                 PackageKind::Agent => false,
             }
         {
@@ -517,6 +521,7 @@ fn remove_superseded_direct_registry_roots(
             PackageKind::Knowledge
             | PackageKind::Memory
             | PackageKind::Profile
+            | PackageKind::Loop
             | PackageKind::Tool => return true,
         };
         if !key.starts_with(expected_prefix) {
@@ -631,8 +636,11 @@ fn enqueue_manifest_dependencies(
                 )?);
             }
         }
-        PackageKind::Knowledge | PackageKind::Memory | PackageKind::Profile | PackageKind::Tool => {
-        }
+        PackageKind::Knowledge
+        | PackageKind::Memory
+        | PackageKind::Profile
+        | PackageKind::Loop
+        | PackageKind::Tool => {}
     }
     Ok(())
 }
@@ -646,9 +654,11 @@ fn load_installed_manifest_value(
     let manifest_path = match kind {
         PackageKind::Agent => installed_agent_manifest_path(install_root, name, version)?,
         PackageKind::Skill => installed_skill_manifest_path(install_root, name, version)?,
-        PackageKind::Knowledge | PackageKind::Memory | PackageKind::Profile | PackageKind::Tool => {
-            return Ok(None);
-        }
+        PackageKind::Knowledge
+        | PackageKind::Memory
+        | PackageKind::Profile
+        | PackageKind::Loop
+        | PackageKind::Tool => return Ok(None),
     };
     if !manifest_path.exists() {
         return Err(anyhow!(
@@ -777,6 +787,21 @@ fn installed_profile_manifest_path(
         .join("agent.json"))
 }
 
+#[cfg(test)]
+fn installed_loop_manifest_path(
+    install_root: &std::path::Path,
+    package: &str,
+    version: &str,
+) -> Result<PathBuf> {
+    let (owner, name) = split_package_ref(package)?;
+    Ok(install_root
+        .join("loops")
+        .join(owner)
+        .join(name)
+        .join(version)
+        .join("agent.json"))
+}
+
 fn build_registry_package_roots(
     spec: Option<&str>,
     plan: &ResolvePlan,
@@ -869,6 +894,7 @@ fn build_registry_package_roots(
             PackageKind::Knowledge => unreachable!(),
             PackageKind::Memory => unreachable!(),
             PackageKind::Profile => unreachable!(),
+            PackageKind::Loop => unreachable!(),
             PackageKind::Tool => unreachable!(),
         };
 
@@ -1112,9 +1138,9 @@ mod tests {
     use super::{
         InstallArgs, build_lock_roots, build_updated_lock, ensure_supported_install_kinds,
         installed_agent_manifest_path, installed_knowledge_manifest_path,
-        installed_memory_manifest_path, installed_profile_manifest_path,
-        installed_skill_manifest_path, should_load_manifest_for_install,
-        validate_frozen_lock_compatibility,
+        installed_loop_manifest_path, installed_memory_manifest_path,
+        installed_profile_manifest_path, installed_skill_manifest_path,
+        should_load_manifest_for_install, validate_frozen_lock_compatibility,
     };
     use crate::semver::types::{
         DesiredSet, Lock, LockRoot, LockV1, LockV2, LockedDependency, LockedPackage, LockedRoot,
@@ -1205,6 +1231,19 @@ mod tests {
                 name: "@zack/support-persona".to_string(),
                 version: "0.1.0".to_string(),
                 integrity: "sha256-profile".to_string(),
+            }],
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn direct_install_allows_loop_packages() {
+        ensure_supported_install_kinds(&sdkm::ResolveResponse {
+            items: vec![sdkm::ResolvedPackage {
+                kind: sdkm::PackageKind::Loop,
+                name: "@zack/incident-response-loop".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-loop".to_string(),
             }],
         })
         .unwrap();
@@ -3232,6 +3271,102 @@ mod tests {
     }
 
     #[test]
+    fn direct_loop_install_without_local_manifest_keeps_package_only_v2_lock() {
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::new(),
+            roots: BTreeMap::new(),
+        });
+        let root = temp_root("direct-loop-package-only");
+        let manifest_path =
+            installed_loop_manifest_path(&root, "@zack/incident-response-loop", "0.1.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "loop",
+                "name": "incident-response-loop",
+                "version": "0.1.0",
+                "description": "Loop",
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [
+                        {
+                            "id": "triage",
+                            "objective": "Review the incoming incident context and choose the next action.",
+                            "outcomes": [
+                                {
+                                    "id": "needs-investigation",
+                                    "description": "More evidence is required before the loop can finish."
+                                },
+                                {
+                                    "id": "complete",
+                                    "description": "The loop gathered enough context to end successfully."
+                                },
+                                {
+                                    "id": "handoff",
+                                    "description": "The loop should transfer control to a human or another system."
+                                }
+                            ]
+                        },
+                        {
+                            "id": "investigate",
+                            "objective": "Gather missing evidence before finalizing the response.",
+                            "outcomes": [
+                                {
+                                    "id": "complete",
+                                    "description": "The missing evidence has been collected."
+                                },
+                                {
+                                    "id": "handoff",
+                                    "description": "Investigation cannot continue without external intervention."
+                                }
+                            ]
+                        }
+                    ],
+                    "transitions": [
+                        { "from": "triage", "on": "needs-investigation", "to": "investigate" },
+                        { "from": "triage", "on": "complete", "to": "$end" },
+                        { "from": "triage", "on": "handoff", "to": "$handoff" },
+                        { "from": "investigate", "on": "complete", "to": "$end" },
+                        { "from": "investigate", "on": "handoff", "to": "$handoff" }
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Loop,
+                name: "@zack/incident-response-loop".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-loop".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            None,
+            Some("@zack/incident-response-loop@0.1.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(lock.lockfile_version, 2);
+        assert!(lock.roots.is_empty());
+        assert!(
+            lock.packages
+                .contains_key("loop:@zack/incident-response-loop@0.1.0")
+        );
+    }
+
+    #[test]
     fn direct_profile_install_with_local_agent_manifest_updates_local_root_profiles() {
         let root = temp_root("direct-profile-local-agent");
         let existing = Lock::V2(LockV2 {
@@ -4303,6 +4438,177 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[tokio::test]
+    async fn direct_loop_install_extracts_under_loops_without_mutating_local_agent_manifest() {
+        let root = temp_root("install-local-agent-loop");
+        fs::create_dir_all(&root).unwrap();
+        crate::manifest::write_manifest_pretty_atomic(
+            &root.join("agent.json"),
+            &json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0",
+                "tools": [{"name":"@zack/echo","version":"0.1.0"}],
+                "profiles": []
+            }),
+        )
+        .unwrap();
+        crate::manifest::write_lock(
+            &root,
+            &Lock::V2(LockV2 {
+                lockfile_version: 2,
+                generated: Utc::now(),
+                packages: BTreeMap::from([(
+                    "tool:@zack/echo@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/echo".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-echo".to_string(),
+                    },
+                )]),
+                roots: BTreeMap::new(),
+            }),
+        )
+        .unwrap();
+
+        let loop_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"loop",
+                "name":"incident-response-loop",
+                "version":"0.1.0",
+                "description":"Loop",
+                "loop":{
+                    "entry_phase":"triage",
+                    "phases":[
+                        {
+                            "id":"triage",
+                            "objective":"Review the incoming incident context and choose the next action.",
+                            "outcomes":[
+                                {
+                                    "id":"needs-investigation",
+                                    "description":"More evidence is required before the loop can finish."
+                                },
+                                {
+                                    "id":"complete",
+                                    "description":"The loop gathered enough context to end successfully."
+                                },
+                                {
+                                    "id":"handoff",
+                                    "description":"The loop should transfer control to a human or another system."
+                                }
+                            ]
+                        },
+                        {
+                            "id":"investigate",
+                            "objective":"Gather missing evidence before finalizing the response.",
+                            "outcomes":[
+                                {
+                                    "id":"complete",
+                                    "description":"The missing evidence has been collected."
+                                },
+                                {
+                                    "id":"handoff",
+                                    "description":"Investigation cannot continue without external intervention."
+                                }
+                            ]
+                        }
+                    ],
+                    "transitions":[
+                        {"from":"triage","on":"needs-investigation","to":"investigate"},
+                        {"from":"triage","on":"complete","to":"$end"},
+                        {"from":"triage","on":"handoff","to":"$handoff"},
+                        {"from":"investigate","on":"complete","to":"$end"},
+                        {"from":"investigate","on":"handoff","to":"$handoff"}
+                    ]
+                }
+            }))
+            .unwrap(),
+        )]);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(DirectLoopInstallTestState {
+            base_url: base_url.clone(),
+            loop_tar: loop_tar.clone(),
+            loop_sha: sha_hex(&loop_tar),
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(direct_loop_resolve))
+            .route("/v1/tools/install/init", post(direct_loop_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/direct-loop", get(get_direct_loop))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let args = InstallArgs {
+            manifest: root.join("agent.json").to_string_lossy().into_owned(),
+            spec: Some("@zack/incident-response-loop@0.1.0".to_string()),
+            frozen: false,
+            refresh: false,
+            update_range: false,
+            quiet: true,
+            require_attestation: false,
+            token: None,
+        };
+
+        args.run(base_url).await.unwrap();
+
+        let manifest_after: Value =
+            serde_json::from_str(&fs::read_to_string(root.join("agent.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest_after,
+            json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.1.0",
+                "tools": [{"name":"@zack/echo","version":"0.1.0"}],
+                "profiles": []
+            })
+        );
+
+        let lock_after = crate::manifest::read_lock_or_default(&root).unwrap();
+        let Lock::V2(lock_after) = lock_after else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(lock_after.lockfile_version, 2);
+        assert!(
+            lock_after
+                .packages
+                .contains_key("loop:@zack/incident-response-loop@0.1.0")
+        );
+        assert!(
+            !lock_after
+                .roots
+                .contains_key("loop:@zack/incident-response-loop@0.1.0")
+        );
+        let local_root = lock_after
+            .roots
+            .get("local:agent")
+            .expect("local agent root missing");
+        assert_eq!(local_root.tools, vec!["tool:@zack/echo@0.1.0".to_string()]);
+        assert!(local_root.skills.is_empty());
+        assert!(local_root.knowledge.is_empty());
+        assert!(local_root.memory.is_empty());
+        assert!(local_root.profiles.is_empty());
+        assert!(
+            installed_loop_manifest_path(
+                &root.join(".agentpm"),
+                "@zack/incident-response-loop",
+                "0.1.0",
+            )
+            .unwrap()
+            .exists()
+        );
+
+        server.abort();
+        let _ = fs::remove_dir_all(root);
+    }
+
     async fn assert_manifest_dependency_failure_happens_before_init_and_download(
         label: &str,
         manifest: Value,
@@ -4474,6 +4780,13 @@ mod tests {
         base_url: String,
         profile_tar: Vec<u8>,
         profile_sha: String,
+    }
+
+    #[derive(Clone)]
+    struct DirectLoopInstallTestState {
+        base_url: String,
+        loop_tar: Vec<u8>,
+        loop_sha: String,
     }
 
     #[derive(Clone)]
@@ -4766,6 +5079,27 @@ mod tests {
             .unwrap())
     }
 
+    async fn direct_loop_resolve(
+        State(state): State<Arc<DirectLoopInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "items": [{
+                "kind": "loop",
+                "name": item["name"],
+                "version": "0.1.0",
+                "integrity": state.loop_sha,
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
     async fn manifest_dependency_failure_resolve(
         State(state): State<Arc<ManifestDependencyFailureState>>,
         body: String,
@@ -4829,6 +5163,32 @@ mod tests {
                 "version": item["version"],
                 "integrity": state.profile_sha,
                 "presigned_url": format!("{}/artifact/direct-profile", state.base_url),
+                "size": 12,
+                "content_type":"application/gzip"
+            }]
+        });
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(response.to_string()))
+            .unwrap())
+    }
+
+    async fn direct_loop_init(
+        State(state): State<Arc<DirectLoopInstallTestState>>,
+        body: String,
+    ) -> Result<Response<Body>, StatusCode> {
+        let req: Value = serde_json::from_str(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let item = &req["items"][0];
+        let response = json!({
+            "session_id":"session-1",
+            "expires_at":"2026-06-01T00:00:00Z",
+            "artifacts": [{
+                "kind": "loop",
+                "name": item["name"],
+                "version": item["version"],
+                "integrity": state.loop_sha,
+                "presigned_url": format!("{}/artifact/direct-loop", state.base_url),
                 "size": 12,
                 "content_type":"application/gzip"
             }]
@@ -4908,6 +5268,16 @@ mod tests {
         Response::builder()
             .status(StatusCode::OK)
             .body(Body::from(state.profile_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_direct_loop(
+        State(state): State<Arc<DirectLoopInstallTestState>>,
+    ) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/gzip")
+            .body(Body::from(state.loop_tar.clone()))
             .unwrap()
     }
 

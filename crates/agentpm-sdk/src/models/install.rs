@@ -10,6 +10,7 @@ pub enum PackageKind {
     Knowledge,
     Memory,
     Profile,
+    Loop,
     Template,
 }
 
@@ -144,6 +145,17 @@ mod tests {
 
         assert_eq!(parsed.kind, PackageKind::Profile);
         assert_eq!(parsed.name, "@zack/support-persona");
+    }
+
+    #[test]
+    fn install_dto_supports_explicit_loop_kind() {
+        let parsed: ResolvedPackage = serde_json::from_str(
+            r#"{"kind":"loop","name":"@zack/incident-response-loop","version":"0.1.0","integrity":"abc"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.kind, PackageKind::Loop);
+        assert_eq!(parsed.name, "@zack/incident-response-loop");
     }
 }
 

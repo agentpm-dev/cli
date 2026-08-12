@@ -14,6 +14,7 @@ pub enum PackageKind {
     Knowledge,
     Memory,
     Profile,
+    Loop,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -706,6 +707,7 @@ impl PackageKind {
             PackageKind::Knowledge => "knowledge",
             PackageKind::Memory => "memory",
             PackageKind::Profile => "profile",
+            PackageKind::Loop => "loop",
         }
     }
 }
@@ -885,6 +887,20 @@ mod tests {
         assert_eq!(
             package_key(parsed.kind, &parsed.name, "0.1.0"),
             "profile:@zack/support-persona@0.1.0"
+        );
+    }
+
+    #[test]
+    fn package_requirement_supports_loop_kind() {
+        let parsed =
+            PackageRequirement::new(PackageKind::Loop, "@zack/incident-response-loop", "^0.1");
+
+        assert_eq!(parsed.kind, PackageKind::Loop);
+        assert_eq!(parsed.name, "@zack/incident-response-loop");
+        assert_eq!(parsed.range, "^0.1");
+        assert_eq!(
+            package_key(parsed.kind, &parsed.name, "0.1.0"),
+            "loop:@zack/incident-response-loop@0.1.0"
         );
     }
 
