@@ -17,8 +17,7 @@ pub fn maybe_update_manifest_dependency(
     spec: &str,
     update_range: bool,
 ) -> Result<bool> {
-    let (spec_pkg, spec_range) = parse_cli_spec(spec)?;
-    let desired_range = normalize_range(&spec_range); // None means "no version field" (equiv to "*")
+    let desired = desired_dependency_slot(spec)?;
 
     if !meta.get(field).map(|v| v.is_array()).unwrap_or(false) {
         meta.as_object_mut()
@@ -36,10 +35,10 @@ pub fn maybe_update_manifest_dependency(
     let mut existing_range: Option<String> = None;
 
     for (i, item) in dependencies.iter().enumerate() {
-        match parse_tools_item(item) {
-            Some((name, rng)) if name == spec_pkg => {
+        match parse_dependency_item(item) {
+            Some(existing) if existing.package == desired.package => {
                 found_idx = Some(i);
-                existing_range = rng;
+                existing_range = existing.range;
                 break;
             }
             _ => {}
@@ -49,39 +48,89 @@ pub fn maybe_update_manifest_dependency(
     match (found_idx, existing_range) {
         // Not found → append a new entry
         (None, _) => {
-            let new_item = build_tools_item(&spec_pkg, desired_range.as_deref());
-            dependencies.push(new_item);
+            dependencies.push(build_dependency_item(&desired));
             Ok(true)
         }
 
         // Found, same effective range → nothing to do
-        (Some(_idx), ref rng) if normalize_range_opt(rng.as_deref()) == desired_range => Ok(false),
+        (Some(_idx), ref rng) if normalize_range_opt(rng.as_deref()) == desired.range => Ok(false),
 
         // Found, different range → require --update-range
         (Some(idx), _) => {
             if !update_range {
-                return Err(anyhow!(
-                    "{} {} already exists in agent.json with a different version range. Pass --update-range to update it.",
-                    label,
-                    spec_pkg
-                ));
+                return Err(dependency_range_change_error(label, &desired.package));
             }
-            // Replace with object form { name, version? }
-            let new_item = build_tools_item(&spec_pkg, desired_range.as_deref());
             if let Some(slot) = dependencies.get_mut(idx) {
-                *slot = new_item;
+                *slot = build_dependency_item(&desired);
             }
             Ok(true)
         }
     }
 }
 
-/// Build a canonical tools item (object form).
+pub fn maybe_update_manifest_singular_dependency(
+    meta: &mut Value,
+    field: &str,
+    label: &str,
+    spec: &str,
+    update_range: bool,
+) -> Result<bool> {
+    let desired = desired_dependency_slot(spec)?;
+
+    let root = meta
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("agent.json root must be a JSON object"))?;
+
+    let existing = root.get(field).cloned().unwrap_or(Value::Null);
+    let Some(existing_slot) = parse_dependency_item(&existing) else {
+        root.insert(field.to_string(), build_dependency_item(&desired));
+        return Ok(true);
+    };
+
+    if existing_slot.package != desired.package {
+        root.insert(field.to_string(), build_dependency_item(&desired));
+        return Ok(true);
+    }
+
+    if normalize_range_opt(existing_slot.range.as_deref()) == desired.range {
+        return Ok(false);
+    }
+
+    if !update_range {
+        return Err(dependency_range_change_error(label, &desired.package));
+    }
+
+    root.insert(field.to_string(), build_dependency_item(&desired));
+    Ok(true)
+}
+
+struct DependencySlot {
+    package: String,
+    range: Option<String>,
+}
+
+fn desired_dependency_slot(spec: &str) -> Result<DependencySlot> {
+    let (package, range) = parse_cli_spec(spec)?;
+    Ok(DependencySlot {
+        package,
+        range: normalize_range(&range),
+    })
+}
+
+fn dependency_range_change_error(label: &str, package: &str) -> anyhow::Error {
+    anyhow!(
+        "{} {} already exists in agent.json with a different version range. Pass --update-range to update it.",
+        label,
+        package
+    )
+}
+
+/// Build a canonical dependency item (object form).
 /// If `range` is None or "*", omit the "version" field.
-fn build_tools_item(package: &str, range: Option<&str>) -> Value {
+fn build_dependency_item(slot: &DependencySlot) -> Value {
     let mut m = Map::new();
-    m.insert("name".to_string(), Value::String(package.to_string()));
-    if let Some(r) = range
+    m.insert("name".to_string(), Value::String(slot.package.clone()));
+    if let Some(r) = slot.range.as_deref()
         && r != "*"
     {
         m.insert("version".to_string(), Value::String(r.to_string()));
@@ -89,22 +138,25 @@ fn build_tools_item(package: &str, range: Option<&str>) -> Value {
     Value::Object(m)
 }
 
-/// Parse a tools array item from agent.json into (name, range?)
+/// Parse a dependency item from agent.json into (name, range?)
 /// Supports:
 /// - "summarize"
 /// - "@zack/summarize"
 /// - "@zack/summarize@^1.2"  (string shorthand if you allow it)
 /// - { "name": "@zack/summarize", "version": "^1.2" }
-fn parse_tools_item(v: &Value) -> Option<(String, Option<String>)> {
+fn parse_dependency_item(v: &Value) -> Option<DependencySlot> {
     match v {
-        Value::String(s) => parse_string_name_and_range(s),
+        Value::String(s) => {
+            let (package, range) = parse_string_name_and_range(s)?;
+            Some(DependencySlot { package, range })
+        }
         Value::Object(m) => {
-            let name = m.get("name")?.as_str()?.to_string();
+            let package = m.get("name")?.as_str()?.to_string();
             let range = m
                 .get("version")
                 .and_then(|x| x.as_str())
                 .map(|s| s.to_string());
-            Some((name, range))
+            Some(DependencySlot { package, range })
         }
         _ => None,
     }
@@ -178,7 +230,10 @@ fn normalize_range_opt(r: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{maybe_update_agent_json, maybe_update_manifest_dependency};
+    use super::{
+        maybe_update_agent_json, maybe_update_manifest_dependency,
+        maybe_update_manifest_singular_dependency,
+    };
     use serde_json::json;
 
     #[test]
@@ -291,6 +346,55 @@ mod tests {
         assert_eq!(
             manifest["skills"],
             json!([{"name":"@zack/triage-skill","version":"^0.2"}])
+        );
+    }
+
+    #[test]
+    fn maybe_update_manifest_singular_dependency_appends_loop_dependency() {
+        let mut manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0"
+        });
+
+        let changed = maybe_update_manifest_singular_dependency(
+            &mut manifest,
+            "loop",
+            "Loop",
+            "@zack/incident-response-loop@^0.2",
+            false,
+        )
+        .unwrap();
+
+        assert!(changed);
+        assert_eq!(
+            manifest["loop"],
+            json!({"name":"@zack/incident-response-loop","version":"^0.2"})
+        );
+    }
+
+    #[test]
+    fn maybe_update_manifest_singular_dependency_replaces_different_package() {
+        let mut manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "loop": {"name":"@zack/old-loop","version":"^0.1"}
+        });
+
+        let changed = maybe_update_manifest_singular_dependency(
+            &mut manifest,
+            "loop",
+            "Loop",
+            "@zack/new-loop@^0.2",
+            false,
+        )
+        .unwrap();
+
+        assert!(changed);
+        assert_eq!(
+            manifest["loop"],
+            json!({"name":"@zack/new-loop","version":"^0.2"})
         );
     }
 }

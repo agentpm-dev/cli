@@ -109,6 +109,8 @@ pub struct LockedRoot {
     pub memory: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#loop: Option<String>,
     #[serde(default, skip_serializing_if = "ReservedReferences::is_empty")]
     pub reserved: ReservedReferences,
 }
@@ -146,6 +148,7 @@ pub enum LockRoot {
         knowledge: Vec<String>,
         memory: Vec<String>,
         profiles: Vec<String>,
+        r#loop: Option<String>,
         reserved: ReservedReferences,
     },
     RegistryAgent {
@@ -155,6 +158,7 @@ pub enum LockRoot {
         knowledge: Vec<String>,
         memory: Vec<String>,
         profiles: Vec<String>,
+        r#loop: Option<String>,
         reserved: ReservedReferences,
     },
     LocalSkill {
@@ -208,6 +212,11 @@ impl DesiredSet {
                         "profiles",
                         PackageKind::Profile,
                     )?);
+                    if let Some(loop_requirement) =
+                        parse_manifest_requirement(meta, "loop", PackageKind::Loop)?
+                    {
+                        items.push(loop_requirement);
+                    }
                     Ok(DesiredSet { items })
                 }
                 "skill" => Ok(DesiredSet {
@@ -235,27 +244,51 @@ fn parse_manifest_requirements(
 
     let mut out = Vec::new();
     for item in items {
-        let (pkg, rng) = match item {
-            Value::String(s) => parse_tool_str(&s)?,
-            Value::Object(map) => {
-                let name = map
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("{field} entry missing name"))?
-                    .to_string();
-                let rng = map
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("*")
-                    .to_string();
-                (name, rng)
-            }
-            _ => return Err(anyhow!("{field} entry must be a string or an object")),
-        };
-
-        out.push(PackageRequirement::new(kind, pkg, rng));
+        out.push(parse_manifest_dependency_value(&item, field, kind)?);
     }
     Ok(out)
+}
+
+fn parse_manifest_requirement(
+    meta: &serde_json::Value,
+    field: &str,
+    kind: PackageKind,
+) -> Result<Option<PackageRequirement>> {
+    let Some(item) = meta.get(field) else {
+        return Ok(None);
+    };
+
+    if item.is_null() {
+        return Ok(None);
+    }
+
+    Ok(Some(parse_manifest_dependency_value(item, field, kind)?))
+}
+
+fn parse_manifest_dependency_value(
+    item: &Value,
+    field: &str,
+    kind: PackageKind,
+) -> Result<PackageRequirement> {
+    let (pkg, rng) = match item {
+        Value::String(s) => parse_tool_str(s)?,
+        Value::Object(map) => {
+            let name = map
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("{field} entry missing name"))?
+                .to_string();
+            let rng = map
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*")
+                .to_string();
+            (name, rng)
+        }
+        _ => return Err(anyhow!("{field} entry must be a string or an object")),
+    };
+
+    Ok(PackageRequirement::new(kind, pkg, rng))
 }
 
 fn parse_tool_str(s: &str) -> Result<(String, String)> {
@@ -370,6 +403,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                 knowledge,
                 memory,
                 profiles,
+                r#loop,
                 reserved,
             } => {
                 root_map.insert(
@@ -382,6 +416,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         knowledge: knowledge.clone(),
                         memory: memory.clone(),
                         profiles: profiles.clone(),
+                        r#loop: r#loop.clone(),
                         reserved: reserved.clone(),
                     },
                 );
@@ -393,6 +428,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                 knowledge,
                 memory,
                 profiles,
+                r#loop,
                 reserved,
             } => {
                 root_map.insert(
@@ -405,6 +441,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         knowledge: knowledge.clone(),
                         memory: memory.clone(),
                         profiles: profiles.clone(),
+                        r#loop: r#loop.clone(),
                         reserved: reserved.clone(),
                     },
                 );
@@ -425,6 +462,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         knowledge: Vec::new(),
                         memory: Vec::new(),
                         profiles: Vec::new(),
+                        r#loop: None,
                         reserved: ReservedReferences::default(),
                     },
                 );
@@ -440,6 +478,7 @@ pub fn lock_from_plan(plan: &ResolvePlan, roots: &[LockRoot]) -> Lock {
                         knowledge: Vec::new(),
                         memory: Vec::new(),
                         profiles: Vec::new(),
+                        r#loop: None,
                         reserved: ReservedReferences::default(),
                     },
                 );
@@ -473,7 +512,9 @@ pub fn lock_from_packages_and_roots(
 }
 
 fn prune_standalone_leaf_roots(roots: &mut BTreeMap<String, LockedRoot>) {
-    roots.retain(|key, _| !key.starts_with("knowledge:") && !key.starts_with("memory:"));
+    roots.retain(|key, _| {
+        !key.starts_with("knowledge:") && !key.starts_with("memory:") && !key.starts_with("loop:")
+    });
 }
 
 fn requires_v3_lock(
@@ -492,6 +533,8 @@ fn requires_v3_lock(
                 || !root.memory.is_empty()
                 || key.starts_with("profile:")
                 || !root.profiles.is_empty()
+                || key.starts_with("loop:")
+                || root.r#loop.is_some()
         })
 }
 
@@ -997,6 +1040,7 @@ mod tests {
                 skills: Vec::new(),
                 knowledge: Vec::new(),
                 memory: Vec::new(),
+                r#loop: None,
                 profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
                 reserved: ReservedReferences {
                     skills: vec![json!("@zack/triage-skill@0.1.0")],
@@ -1053,6 +1097,7 @@ mod tests {
                 skills: Vec::new(),
                 knowledge: Vec::new(),
                 memory: Vec::new(),
+                r#loop: None,
                 profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
                 reserved: ReservedReferences::default(),
             }],
@@ -1093,6 +1138,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: vec![json!("@zack/triage-skill@0.1.0")],
@@ -1129,6 +1175,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: vec![json!("@zack/missing-skill@0.1.0")],
@@ -1172,6 +1219,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
@@ -1208,6 +1256,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
@@ -1251,6 +1300,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
@@ -1287,6 +1337,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
@@ -1329,6 +1380,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: vec!["memory:@zack/session-memory@0.1.0".to_string()],
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
@@ -1340,6 +1392,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: vec!["memory:@zack/session-memory@0.1.0".to_string()],
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
@@ -1387,6 +1440,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
                     reserved: ReservedReferences::default(),
                 },
@@ -1398,6 +1452,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
                     reserved: ReservedReferences::default(),
                 },
@@ -1426,6 +1481,68 @@ mod tests {
     }
 
     #[test]
+    fn lock_from_plan_deduplicates_shared_loop_package_across_multiple_agent_roots() {
+        let lock = lock_from_plan(
+            &ResolvePlan {
+                items: vec![ResolvedPackage {
+                    kind: PackageKind::Loop,
+                    name: "@zack/incident-response-loop".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-loop".to_string(),
+                }],
+            },
+            &[
+                LockRoot::LocalAgent {
+                    key: "local:agent".to_string(),
+                    name: "support-agent".to_string(),
+                    version: "0.1.0".to_string(),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    r#loop: Some("loop:@zack/incident-response-loop@0.1.0".to_string()),
+                    profiles: Vec::new(),
+                    reserved: ReservedReferences::default(),
+                },
+                LockRoot::LocalAgent {
+                    key: "local:agent:agents/reviewer.agent.json".to_string(),
+                    name: "reviewer".to_string(),
+                    version: "0.1.0".to_string(),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    r#loop: Some("loop:@zack/incident-response-loop@0.1.0".to_string()),
+                    profiles: Vec::new(),
+                    reserved: ReservedReferences::default(),
+                },
+            ],
+        );
+
+        let Lock::V2(lock) = lock else {
+            panic!("expected v2 lockfile");
+        };
+        assert_eq!(lock.lockfile_version, 3);
+        assert_eq!(
+            lock.packages
+                .keys()
+                .filter(|key| key.as_str() == "loop:@zack/incident-response-loop@0.1.0")
+                .count(),
+            1
+        );
+        assert_eq!(
+            lock.roots["local:agent"].r#loop.as_deref(),
+            Some("loop:@zack/incident-response-loop@0.1.0")
+        );
+        assert_eq!(
+            lock.roots["local:agent:agents/reviewer.agent.json"]
+                .r#loop
+                .as_deref(),
+            Some("loop:@zack/incident-response-loop@0.1.0")
+        );
+    }
+
+    #[test]
     fn lock_from_packages_and_roots_migrates_reserved_profiles_to_first_class_root_field() {
         let lock = lock_from_packages_and_roots(
             BTreeMap::from([(
@@ -1446,6 +1563,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
@@ -1482,6 +1600,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences {
                         skills: Vec::new(),
@@ -1577,6 +1696,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },
@@ -1586,6 +1706,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: ReservedReferences::default(),
                 },

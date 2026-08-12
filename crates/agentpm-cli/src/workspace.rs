@@ -242,6 +242,11 @@ pub fn build_workspace_lock(
                 &format!("workspace manifest {}", manifest.rel_path),
                 &packages,
             )?,
+            r#loop: resolve_loop_for_manifest(
+                &manifest.manifest_value,
+                &format!("workspace manifest {}", manifest.rel_path),
+                &packages,
+            )?,
             reserved: reserved_refs_from_manifest(),
         });
     }
@@ -439,6 +444,11 @@ fn build_registry_agent_root(
             &format!("registry agent {}@{}", package, version),
             packages,
         )?,
+        r#loop: resolve_loop_for_manifest(
+            &manifest_value,
+            &format!("registry agent {}@{}", package, version),
+            packages,
+        )?,
         reserved: reserved_refs_from_manifest(),
     })
 }
@@ -512,6 +522,38 @@ fn resolve_packages_for_manifest(
     }
 
     Ok(resolved)
+}
+
+fn resolve_loop_for_manifest(
+    manifest_value: &Value,
+    manifest_label: &str,
+    packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
+) -> Result<Option<String>> {
+    let desired = DesiredSet::from_cli_or_agent_json(manifest_value, None, false)
+        .with_context(|| format!("reading kind for {}", manifest_label))?;
+    let Some(item) = desired
+        .items
+        .into_iter()
+        .find(|item| item.kind == PackageKind::Loop)
+    else {
+        return Ok(None);
+    };
+
+    let Some(pkg) = resolve_declared_package_from_packages(
+        packages,
+        &item.name,
+        &item.range,
+        PackageKind::Loop,
+    )?
+    else {
+        return Err(anyhow!(
+            "declared loop dependency {}@{} is missing from the resolved package set",
+            item.name,
+            item.range
+        ));
+    };
+
+    Ok(Some(package_key(pkg.kind, &pkg.name, &pkg.version)))
 }
 
 fn reserved_refs_from_manifest() -> ReservedReferences {

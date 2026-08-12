@@ -8,7 +8,10 @@ use crate::semver::types::{
     lock_from_packages_and_roots, lock_from_plan, package_key, parse_package_spec,
     resolve_declared_package_from_packages, split_package_ref,
 };
-use crate::semver::update::{maybe_update_agent_json, maybe_update_manifest_dependency};
+use crate::semver::update::{
+    maybe_update_agent_json, maybe_update_manifest_dependency,
+    maybe_update_manifest_singular_dependency,
+};
 use crate::workspace::{
     build_workspace_lock, desired_from_workspace, load_workspace_local_manifests,
     read_workspace_metadata,
@@ -291,7 +294,13 @@ impl InstallArgs {
                     spec,
                     self.update_range,
                 )?,
-                PackageKind::Loop => false,
+                PackageKind::Loop => maybe_update_manifest_singular_dependency(
+                    manifest_value,
+                    "loop",
+                    "Loop",
+                    spec,
+                    self.update_range,
+                )?,
                 PackageKind::Agent => false,
             }
         {
@@ -392,6 +401,10 @@ fn validate_frozen_lock_compatibility(
         .items
         .iter()
         .any(|item| item.kind == PackageKind::Profile);
+    let desired_has_loop = desired
+        .items
+        .iter()
+        .any(|item| item.kind == PackageKind::Loop);
     let manifest_has_knowledge = manifest_value
         .and_then(|value| value.get("knowledge"))
         .and_then(Value::as_array)
@@ -404,6 +417,9 @@ fn validate_frozen_lock_compatibility(
         .and_then(|value| value.get("profiles"))
         .and_then(Value::as_array)
         .is_some_and(|items| !items.is_empty());
+    let manifest_has_loop = manifest_value
+        .and_then(|value| value.get("loop"))
+        .is_some_and(|value| !value.is_null());
 
     let requires_v3 = manifest_is_skill
         || desired_has_skill
@@ -413,7 +429,9 @@ fn validate_frozen_lock_compatibility(
                 || manifest_has_memory
                 || desired_has_memory
                 || manifest_has_profile
-                || desired_has_profile));
+                || desired_has_profile
+                || manifest_has_loop
+                || desired_has_loop));
     if (manifest_is_agent || desired_has_agent) && lock.is_v1() {
         return Err(anyhow!(
             "--frozen cannot use lockfile v1 for agent dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v2"
@@ -421,7 +439,7 @@ fn validate_frozen_lock_compatibility(
     }
     if requires_v3 && lock.lockfile_version() < 3 {
         return Err(anyhow!(
-            "--frozen cannot use lockfile v{} for Skill, Knowledge, Memory, or Profile dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v3",
+            "--frozen cannot use lockfile v{} for Skill, Knowledge, Memory, Profile, or Loop dependency graphs; run `agentpm install` without --frozen to regenerate agent.lock v3",
             lock.lockfile_version()
         ));
     }
@@ -579,6 +597,9 @@ fn enqueue_root_dependencies(root: &LockedRoot, queue: &mut VecDeque<String>) {
     queue.extend(root.knowledge.iter().cloned());
     queue.extend(root.memory.iter().cloned());
     queue.extend(root.profiles.iter().cloned());
+    if let Some(loop_key) = &root.r#loop {
+        queue.push_back(loop_key.clone());
+    }
 }
 
 fn enqueue_manifest_dependencies(
@@ -622,6 +643,13 @@ fn enqueue_manifest_dependencies(
                     &format!("registry agent {}@{}", pkg.name, pkg.version),
                     PackageKind::Profile,
                 )?);
+                if let Some(loop_key) = resolve_declared_loop_from_manifest(
+                    &manifest_value,
+                    packages,
+                    &format!("registry agent {}@{}", pkg.name, pkg.version),
+                )? {
+                    queue.push_back(loop_key);
+                }
             }
         }
         PackageKind::Skill => {
@@ -705,6 +733,7 @@ fn build_lock_roots(
                     knowledge: root.knowledge,
                     memory: root.memory,
                     profiles: root.profiles,
+                    r#loop: root.r#loop,
                     reserved: root.reserved,
                 },
             },
@@ -856,6 +885,11 @@ fn build_registry_package_roots(
                             &format!("registry agent {}@{}", item.name, item.version),
                             PackageKind::Profile,
                         )?,
+                        r#loop: resolve_declared_loop_from_manifest(
+                            &manifest_value,
+                            &packages,
+                            &format!("registry agent {}@{}", item.name, item.version),
+                        )?,
                         reserved: reserved_refs_from_manifest(),
                     }
                 } else {
@@ -866,6 +900,7 @@ fn build_registry_package_roots(
                         knowledge: Vec::new(),
                         memory: Vec::new(),
                         profiles: Vec::new(),
+                        r#loop: None,
                         reserved: ReservedReferences::default(),
                     }
                 }
@@ -999,8 +1034,45 @@ fn build_local_lock_root(manifest_value: &Value, plan: &ResolvePlan) -> Result<L
         } else {
             Vec::new()
         },
+        r#loop: if manifest_value.get("kind").and_then(Value::as_str) == Some("agent") {
+            resolve_declared_loop_from_manifest(manifest_value, &packages, "local manifest")?
+        } else {
+            None
+        },
         reserved: reserved_refs_from_manifest(),
     })
+}
+
+fn resolve_declared_loop_from_manifest(
+    manifest_value: &Value,
+    packages: &BTreeMap<String, crate::semver::types::LockedPackage>,
+    manifest_label: &str,
+) -> Result<Option<String>> {
+    let desired = DesiredSet::from_cli_or_agent_json(manifest_value, None, false)
+        .with_context(|| format!("reading kind for {}", manifest_label))?;
+    let Some(item) = desired
+        .items
+        .into_iter()
+        .find(|item| item.kind == PackageKind::Loop)
+    else {
+        return Ok(None);
+    };
+
+    let Some(pkg) = resolve_declared_package_from_packages(
+        packages,
+        &item.name,
+        &item.range,
+        PackageKind::Loop,
+    )?
+    else {
+        return Err(anyhow!(
+            "declared loop dependency {}@{} is missing from the resolved package set",
+            item.name,
+            item.range
+        ));
+    };
+
+    Ok(Some(package_key(pkg.kind, &pkg.name, &pkg.version)))
 }
 
 fn resolve_declared_packages_from_manifest(
@@ -1064,6 +1136,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
             knowledge,
             memory,
             profiles,
+            r#loop,
             reserved,
         } => (
             key,
@@ -1075,6 +1148,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 knowledge,
                 memory,
                 profiles,
+                r#loop,
                 reserved,
             },
         ),
@@ -1085,6 +1159,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
             knowledge,
             memory,
             profiles,
+            r#loop,
             reserved,
         } => (
             package_key,
@@ -1096,6 +1171,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 knowledge,
                 memory,
                 profiles,
+                r#loop,
                 reserved,
             },
         ),
@@ -1114,6 +1190,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 knowledge: Vec::new(),
                 memory: Vec::new(),
                 profiles: Vec::new(),
+                r#loop: None,
                 reserved: ReservedReferences::default(),
             },
         ),
@@ -1127,6 +1204,7 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
                 knowledge: Vec::new(),
                 memory: Vec::new(),
                 profiles: Vec::new(),
+                r#loop: None,
                 reserved: ReservedReferences::default(),
             },
         ),
@@ -1349,7 +1427,39 @@ mod tests {
         let err = validate_frozen_lock_compatibility(&lock, Some(&manifest), &desired).unwrap_err();
 
         let err_text = format!("{err:#}");
-        assert!(err_text.contains("Profile dependency graphs"), "{err_text}");
+        assert!(
+            err_text.contains("Skill, Knowledge, Memory, Profile, or Loop dependency graphs"),
+            "{err_text}"
+        );
+        assert!(err_text.contains("regenerate agent.lock v3"), "{err_text}");
+    }
+
+    #[test]
+    fn frozen_v2_lockfile_rejects_loop_graphs_that_require_v3() {
+        let lock = Lock::V2(LockV2 {
+            lockfile_version: 2,
+            generated: Utc::now(),
+            packages: BTreeMap::new(),
+            roots: BTreeMap::new(),
+        });
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "loop": "@zack/incident-response-loop@^0.1"
+        });
+        let desired = DesiredSet {
+            items: vec![crate::semver::types::PackageRequirement::new(
+                PackageKind::Loop,
+                "@zack/incident-response-loop",
+                "^0.1",
+            )],
+        };
+
+        let err = validate_frozen_lock_compatibility(&lock, Some(&manifest), &desired).unwrap_err();
+
+        let err_text = format!("{err:#}");
+        assert!(err_text.contains("Loop dependency graphs"), "{err_text}");
         assert!(err_text.contains("regenerate agent.lock v3"), "{err_text}");
     }
 
@@ -1362,6 +1472,7 @@ mod tests {
             "skills": ["@zack/triage-skill@0.1.0"],
             "knowledge": ["@zack/python-docs@0.1.0"],
             "memory": ["@zack/session-memory@0.1.0"],
+            "loop": "@zack/incident-response-loop@0.1.0",
             "profiles": ["@zack/support-persona@0.1.0"],
             "tools": ["@zack/slack-post-message@0.1.0"]
         });
@@ -1397,6 +1508,12 @@ mod tests {
                     version: "0.1.0".to_string(),
                     integrity: "sha256-profile".to_string(),
                 },
+                ResolvedPackage {
+                    kind: PackageKind::Loop,
+                    name: "@zack/incident-response-loop".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-loop".to_string(),
+                },
             ],
         };
 
@@ -1412,8 +1529,10 @@ mod tests {
             skills,
             knowledge,
             memory,
+            r#loop,
             profiles,
             reserved,
+            ..
         } = &roots[0]
         else {
             panic!("expected local agent root");
@@ -1433,6 +1552,10 @@ mod tests {
         assert_eq!(
             memory,
             &vec!["memory:@zack/session-memory@0.1.0".to_string()]
+        );
+        assert_eq!(
+            r#loop.as_deref(),
+            Some("loop:@zack/incident-response-loop@0.1.0")
         );
         assert_eq!(
             profiles,
@@ -1605,6 +1728,92 @@ mod tests {
     }
 
     #[test]
+    fn manifest_driven_agent_install_resolves_loop_version_ranges_to_pinned_version() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "loop": "@zack/incident-response-loop@^0.1"
+        });
+        let plan = ResolvePlan {
+            items: vec![
+                ResolvedPackage {
+                    kind: PackageKind::Loop,
+                    name: "@zack/incident-response-loop".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-loop-1".to_string(),
+                },
+                ResolvedPackage {
+                    kind: PackageKind::Loop,
+                    name: "@zack/incident-response-loop".to_string(),
+                    version: "0.1.7".to_string(),
+                    integrity: "sha256-loop-2".to_string(),
+                },
+            ],
+        };
+
+        let root = temp_root("local-loop-range");
+        let roots = build_lock_roots(Some(&manifest), None, &plan, &root).unwrap();
+
+        let LockRoot::LocalAgent { r#loop, .. } = &roots[0] else {
+            panic!("expected local agent root");
+        };
+        assert_eq!(
+            r#loop.as_deref(),
+            Some("loop:@zack/incident-response-loop@0.1.7")
+        );
+    }
+
+    #[test]
+    fn manifest_driven_agent_install_rejects_wrong_kind_for_loop_dependency() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "loop": "@zack/incident-response-loop@0.1.0"
+        });
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Profile,
+                name: "@zack/incident-response-loop".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-profile".to_string(),
+            }],
+        };
+
+        let root = temp_root("local-loop-wrong-kind");
+        let err = build_lock_roots(Some(&manifest), None, &plan, &root).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains(
+                "declared loop dependency @zack/incident-response-loop@0.1.0 is missing from the resolved package set"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn manifest_driven_agent_install_rejects_missing_loop_dependency() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "loop": "@zack/incident-response-loop@0.1.0"
+        });
+        let plan = ResolvePlan { items: Vec::new() };
+
+        let root = temp_root("local-loop-missing");
+        let err = build_lock_roots(Some(&manifest), None, &plan, &root).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains(
+                "declared loop dependency @zack/incident-response-loop@0.1.0 is missing from the resolved package set"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn manifest_driven_agent_install_rejects_wrong_kind_for_profile_dependency() {
         let manifest = json!({
             "kind": "agent",
@@ -1669,6 +1878,7 @@ mod tests {
                 "skills": ["@zack/triage-skill@0.1.0"],
                 "knowledge": ["@zack/python-docs@0.1.0"],
                 "memory": ["@zack/session-memory@0.1.0"],
+                "loop": "@zack/incident-response-loop@0.1.0",
                 "profiles": ["@zack/support-persona@0.1.0"]
             }))
             .unwrap(),
@@ -1713,6 +1923,12 @@ mod tests {
                     version: "0.1.0".to_string(),
                     integrity: "sha256-profile".to_string(),
                 },
+                ResolvedPackage {
+                    kind: PackageKind::Loop,
+                    name: "@zack/incident-response-loop".to_string(),
+                    version: "0.1.0".to_string(),
+                    integrity: "sha256-loop".to_string(),
+                },
             ],
         };
 
@@ -1726,8 +1942,10 @@ mod tests {
             skills,
             knowledge,
             memory,
+            r#loop,
             profiles,
             reserved,
+            ..
         } = &roots[0]
         else {
             panic!("expected registry agent root");
@@ -1745,6 +1963,10 @@ mod tests {
         assert_eq!(
             memory,
             &vec!["memory:@zack/session-memory@0.1.0".to_string()]
+        );
+        assert_eq!(
+            r#loop.as_deref(),
+            Some("loop:@zack/incident-response-loop@0.1.0")
         );
         assert_eq!(
             profiles,
@@ -1968,6 +2190,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: Vec::new(),
                         reserved: Default::default(),
                     },
@@ -1981,6 +2204,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: Vec::new(),
                         reserved: Default::default(),
                     },
@@ -2163,6 +2387,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: Vec::new(),
                         reserved: Default::default(),
                     },
@@ -2176,6 +2401,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: Vec::new(),
                         reserved: Default::default(),
                     },
@@ -2281,6 +2507,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
                         reserved: Default::default(),
                     },
@@ -2294,6 +2521,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
                         reserved: Default::default(),
                     },
@@ -2404,6 +2632,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: vec!["profile:@zack/support-persona@0.1.0".to_string()],
                     reserved: Default::default(),
                 },
@@ -2474,6 +2703,237 @@ mod tests {
     }
 
     #[test]
+    fn direct_agent_upgrade_preserves_older_loop_required_by_local_root() {
+        let root = temp_root("preserve-local-root-loop");
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 3,
+            generated: Utc::now(),
+            packages: BTreeMap::from([
+                (
+                    "loop:@zack/incident-response-loop@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Loop,
+                        name: "@zack/incident-response-loop".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-loop-old".to_string(),
+                    },
+                ),
+                (
+                    "agent:@zack/support-agent@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Agent,
+                        name: "@zack/support-agent".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-support-old".to_string(),
+                    },
+                ),
+            ]),
+            roots: BTreeMap::from([
+                (
+                    "local:agent".to_string(),
+                    LockedRoot {
+                        name: Some("local-support-agent".to_string()),
+                        version: Some("0.1.0".to_string()),
+                        tools: Vec::new(),
+                        skills: Vec::new(),
+                        knowledge: Vec::new(),
+                        memory: Vec::new(),
+                        r#loop: Some("loop:@zack/incident-response-loop@0.1.0".to_string()),
+                        profiles: Vec::new(),
+                        reserved: Default::default(),
+                    },
+                ),
+                (
+                    "agent:@zack/support-agent@0.1.0".to_string(),
+                    LockedRoot {
+                        name: None,
+                        version: None,
+                        tools: Vec::new(),
+                        skills: Vec::new(),
+                        knowledge: Vec::new(),
+                        memory: Vec::new(),
+                        r#loop: Some("loop:@zack/incident-response-loop@0.1.0".to_string()),
+                        profiles: Vec::new(),
+                        reserved: Default::default(),
+                    },
+                ),
+            ]),
+        });
+
+        let manifest_path =
+            installed_agent_manifest_path(&root, "@zack/support-agent", "0.2.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.2.0",
+                "loop": "@zack/incident-response-loop@0.2.0"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let plan = ResolvePlan {
+            items: vec![
+                ResolvedPackage {
+                    kind: PackageKind::Agent,
+                    name: "@zack/support-agent".to_string(),
+                    version: "0.2.0".to_string(),
+                    integrity: "sha256-support-new".to_string(),
+                },
+                ResolvedPackage {
+                    kind: PackageKind::Loop,
+                    name: "@zack/incident-response-loop".to_string(),
+                    version: "0.2.0".to_string(),
+                    integrity: "sha256-loop-new".to_string(),
+                },
+            ],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            None,
+            Some("@zack/support-agent@0.2.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert!(lock.roots.contains_key("local:agent"));
+        assert!(!lock.roots.contains_key("agent:@zack/support-agent@0.1.0"));
+        assert!(lock.roots.contains_key("agent:@zack/support-agent@0.2.0"));
+        assert!(
+            lock.packages
+                .contains_key("loop:@zack/incident-response-loop@0.1.0")
+        );
+        assert!(
+            lock.packages
+                .contains_key("loop:@zack/incident-response-loop@0.2.0")
+        );
+
+        let local_root = lock.roots.get("local:agent").unwrap();
+        assert_eq!(
+            local_root.r#loop.as_deref(),
+            Some("loop:@zack/incident-response-loop@0.1.0")
+        );
+        let registry_root = lock.roots.get("agent:@zack/support-agent@0.2.0").unwrap();
+        assert_eq!(
+            registry_root.r#loop.as_deref(),
+            Some("loop:@zack/incident-response-loop@0.2.0")
+        );
+    }
+
+    #[test]
+    fn direct_agent_upgrade_prunes_old_loop_when_unreachable() {
+        let root = temp_root("prune-unreachable-loop");
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 3,
+            generated: Utc::now(),
+            packages: BTreeMap::from([
+                (
+                    "loop:@zack/incident-response-loop@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Loop,
+                        name: "@zack/incident-response-loop".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-loop-old".to_string(),
+                    },
+                ),
+                (
+                    "agent:@zack/support-agent@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Agent,
+                        name: "@zack/support-agent".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-support-old".to_string(),
+                    },
+                ),
+            ]),
+            roots: BTreeMap::from([(
+                "agent:@zack/support-agent@0.1.0".to_string(),
+                LockedRoot {
+                    name: None,
+                    version: None,
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    r#loop: Some("loop:@zack/incident-response-loop@0.1.0".to_string()),
+                    profiles: Vec::new(),
+                    reserved: Default::default(),
+                },
+            )]),
+        });
+
+        let manifest_path =
+            installed_agent_manifest_path(&root, "@zack/support-agent", "0.2.0").unwrap();
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "kind": "agent",
+                "name": "support-agent",
+                "version": "0.2.0",
+                "loop": "@zack/incident-response-loop@0.2.0"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let plan = ResolvePlan {
+            items: vec![
+                ResolvedPackage {
+                    kind: PackageKind::Agent,
+                    name: "@zack/support-agent".to_string(),
+                    version: "0.2.0".to_string(),
+                    integrity: "sha256-support-new".to_string(),
+                },
+                ResolvedPackage {
+                    kind: PackageKind::Loop,
+                    name: "@zack/incident-response-loop".to_string(),
+                    version: "0.2.0".to_string(),
+                    integrity: "sha256-loop-new".to_string(),
+                },
+            ],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            None,
+            Some("@zack/support-agent@0.2.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert!(!lock.roots.contains_key("agent:@zack/support-agent@0.1.0"));
+        assert!(lock.roots.contains_key("agent:@zack/support-agent@0.2.0"));
+        assert!(
+            !lock
+                .packages
+                .contains_key("loop:@zack/incident-response-loop@0.1.0")
+        );
+        assert!(
+            lock.packages
+                .contains_key("loop:@zack/incident-response-loop@0.2.0")
+        );
+
+        let registry_root = lock.roots.get("agent:@zack/support-agent@0.2.0").unwrap();
+        assert_eq!(
+            registry_root.r#loop.as_deref(),
+            Some("loop:@zack/incident-response-loop@0.2.0")
+        );
+    }
+
+    #[test]
     fn direct_skill_install_replaces_existing_registry_root_for_same_package() {
         let root = temp_root("replace-skill-registry-root");
         let existing = Lock::V2(LockV2 {
@@ -2527,6 +2987,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: Vec::new(),
                         reserved: Default::default(),
                     },
@@ -2540,6 +3001,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: Vec::new(),
                         reserved: Default::default(),
                     },
@@ -2683,6 +3145,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: Vec::new(),
                         reserved: Default::default(),
                     },
@@ -2696,6 +3159,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: Vec::new(),
                         reserved: Default::default(),
                     },
@@ -2762,6 +3226,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: Default::default(),
                 },
@@ -2840,6 +3305,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: Default::default(),
                 },
@@ -2924,6 +3390,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: Vec::new(),
                         reserved: Default::default(),
                     },
@@ -2937,6 +3404,7 @@ mod tests {
                         skills: Vec::new(),
                         knowledge: Vec::new(),
                         memory: Vec::new(),
+                        r#loop: None,
                         profiles: Vec::new(),
                         reserved: Default::default(),
                     },
@@ -3008,6 +3476,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: Default::default(),
                 },
@@ -3390,6 +3859,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: Default::default(),
                 },
@@ -3455,6 +3925,7 @@ mod tests {
                     skills: Vec::new(),
                     knowledge: Vec::new(),
                     memory: Vec::new(),
+                    r#loop: None,
                     profiles: Vec::new(),
                     reserved: Default::default(),
                 },
@@ -4439,7 +4910,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_loop_install_extracts_under_loops_without_mutating_local_agent_manifest() {
+    async fn direct_loop_install_updates_local_agent_manifest_without_standalone_root() {
         let root = temp_root("install-local-agent-loop");
         fs::create_dir_all(&root).unwrap();
         crate::manifest::write_manifest_pretty_atomic(
@@ -4449,7 +4920,7 @@ mod tests {
                 "name": "support-agent",
                 "version": "0.1.0",
                 "tools": [{"name":"@zack/echo","version":"0.1.0"}],
-                "profiles": []
+                "loop": null
             }),
         )
         .unwrap();
@@ -4561,21 +5032,15 @@ mod tests {
         let manifest_after: Value =
             serde_json::from_str(&fs::read_to_string(root.join("agent.json")).unwrap()).unwrap();
         assert_eq!(
-            manifest_after,
-            json!({
-                "kind": "agent",
-                "name": "support-agent",
-                "version": "0.1.0",
-                "tools": [{"name":"@zack/echo","version":"0.1.0"}],
-                "profiles": []
-            })
+            manifest_after["loop"],
+            json!({"name":"@zack/incident-response-loop","version":"0.1.0"})
         );
 
         let lock_after = crate::manifest::read_lock_or_default(&root).unwrap();
         let Lock::V2(lock_after) = lock_after else {
             panic!("expected v2 lock");
         };
-        assert_eq!(lock_after.lockfile_version, 2);
+        assert_eq!(lock_after.lockfile_version, 3);
         assert!(
             lock_after
                 .packages
@@ -4594,6 +5059,10 @@ mod tests {
         assert!(local_root.skills.is_empty());
         assert!(local_root.knowledge.is_empty());
         assert!(local_root.memory.is_empty());
+        assert_eq!(
+            local_root.r#loop.as_deref(),
+            Some("loop:@zack/incident-response-loop@0.1.0")
+        );
         assert!(local_root.profiles.is_empty());
         assert!(
             installed_loop_manifest_path(
