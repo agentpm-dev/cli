@@ -793,6 +793,14 @@ fn build_dependency_request(
             range,
         });
     }
+    if let Some(loop_ref) = &manifest.template.dependencies.r#loop {
+        let (name, range) = package_ref_parts(loop_ref)?;
+        items.push(agentpm_sdk::models::install::PackageRequirement {
+            kind: agentpm_sdk::models::install::PackageKind::Loop,
+            name,
+            range,
+        });
+    }
 
     for item in local_manifest_dependency_items(target_dir, extra_local_manifests)? {
         items.push(item);
@@ -864,7 +872,8 @@ fn synthesize_root_manifest(
     let knowledge_refs = resolved_knowledge_manifest_refs(template_manifest, plan)?;
     let memory_refs = resolved_memory_manifest_refs(template_manifest, plan)?;
     let profile_refs = resolved_profile_manifest_refs(template_manifest, plan)?;
-    Ok(json!({
+    let loop_ref = resolved_loop_manifest_ref(template_manifest, plan)?;
+    let mut manifest = json!({
         "kind": "agent",
         "name": resolved_vars
             .get("project_name")
@@ -880,7 +889,11 @@ fn synthesize_root_manifest(
         "knowledge": knowledge_refs,
         "memory": memory_refs,
         "profiles": profile_refs
-    }))
+    });
+    if !loop_ref.is_null() {
+        manifest["loop"] = loop_ref;
+    }
+    Ok(manifest)
 }
 
 fn resolved_tool_manifest_refs(
@@ -1056,6 +1069,28 @@ fn resolved_profile_manifest_refs(
         }));
     }
     Ok(refs)
+}
+
+fn resolved_loop_manifest_ref(
+    template_manifest: &TemplateManifest,
+    plan: &ResolvePlan,
+) -> Result<Value> {
+    let Some(loop_ref) = &template_manifest.template.dependencies.r#loop else {
+        return Ok(Value::Null);
+    };
+    let (name, range) = package_ref_parts(loop_ref)?;
+    let packages = plan_packages_by_name(plan, PackageKind::Loop);
+    let resolved = resolve_matching_plan_item(&packages, &name, &range)?.ok_or_else(|| {
+        anyhow!(
+            "resolved loop dependency {}@{} missing from plan",
+            name,
+            range
+        )
+    })?;
+    Ok(json!({
+        "name": resolved.name,
+        "version": resolved.version,
+    }))
 }
 
 fn plan_packages_by_name(
@@ -1447,6 +1482,41 @@ mod tests {
     }
 
     #[test]
+    fn build_dependency_request_includes_template_loop_dependency() {
+        let manifest = parse_template_manifest(&json!({
+            "kind": "template",
+            "name": "incident-workspace",
+            "version": "0.1.0",
+            "description": "Template",
+            "template": {
+                "display_name": "Incident Workspace",
+                "use_case": "operations",
+                "execution_surfaces": ["multi-agent-workspace"],
+                "stack": ["python"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "loop": {"name":"@zack/incident-response-loop","version":"^1.2"}
+                },
+                "entrypoints": []
+            }
+        }))
+        .unwrap();
+
+        let request = build_dependency_request(&manifest, Path::new("."), &[]).unwrap();
+
+        assert_eq!(request.items.len(), 1);
+        assert_eq!(
+            request.items[0].kind,
+            agentpm_sdk::models::install::PackageKind::Loop
+        );
+        assert_eq!(request.items[0].name, "@zack/incident-response-loop");
+        assert_eq!(request.items[0].range, "^1.2");
+    }
+
+    #[test]
     fn prompts_interactively_for_required_variable_without_default() {
         let manifest = parse_template_manifest(&json!({
             "kind": "template",
@@ -1753,6 +1823,10 @@ mod tests {
             memory_sha: "4".repeat(64),
             profile_tar: Vec::new(),
             profile_sha: "5".repeat(64),
+            loop_tar: Vec::new(),
+            loop_sha: "6".repeat(64),
+            reviewer_loop_tar: Vec::new(),
+            reviewer_loop_sha: "7".repeat(64),
         });
         let app = Router::new()
             .route("/v1/tools/install/resolve", post(test_resolve))
@@ -1764,6 +1838,8 @@ mod tests {
             .route("/artifact/knowledge", get(get_knowledge))
             .route("/artifact/memory", get(get_memory))
             .route("/artifact/profile", get(get_profile))
+            .route("/artifact/loop", get(get_loop))
+            .route("/artifact/reviewer-loop", get(get_reviewer_loop))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -1812,7 +1888,8 @@ mod tests {
                                 "agents":[{"name":"@zack/support-agent","version":"0.1.0"}],
                                 "knowledge":[{"name":"@zack/python-docs","version":"0.1.0"}],
                                 "memory":[{"name":"@zack/session-memory","version":"0.1.0"}],
-                                "profiles":[{"name":"@zack/support-style","version":"0.1.0"}]
+                                "profiles":[{"name":"@zack/support-style","version":"0.1.0"}],
+                                "loop":{"name":"@zack/incident-response-loop","version":"^1.0"}
                             },
                             "entrypoints":[{"label":"Run","command":"python main.py"}]
                         }
@@ -1838,7 +1915,19 @@ mod tests {
                         "skills":[],
                         "knowledge":[],
                         "memory":[],
-                        "profiles":[{"name":"@zack/escalation-style","version":"0.1.0"}]
+                        "profiles":[{"name":"@zack/escalation-style","version":"0.1.0"}],
+                        "loop":{"name":"@zack/reviewer-loop","version":"0.1.0"},
+                        "bindings":{
+                            "global":{
+                                "tools":["@zack/echo"],
+                                "profiles":["@zack/escalation-style"]
+                            },
+                            "phases":{
+                                "review":{
+                                    "profiles":["@zack/escalation-style"]
+                                }
+                            }
+                        }
                     }))
                     .unwrap(),
                 ),
@@ -2004,6 +2093,53 @@ mod tests {
                 "Keep installed placeholders literal: {{ project_name }}\n".to_string(),
             ),
         ]);
+        let loop_tar = build_tarball(&[
+            (
+                "agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"loop",
+                    "name":"incident-response-loop",
+                    "version":"1.0.0",
+                    "description":"Incident response loop.",
+                    "loop":{
+                        "entry_phase":"triage",
+                        "phases":[
+                            {
+                                "id":"triage",
+                                "objective":"Assess the incident."
+                            }
+                        ],
+                        "transitions":[
+                            {"from":"triage","on":"complete","to":"$end"}
+                        ]
+                    }
+                }))
+                .unwrap(),
+            ),
+            ("README.md", "# Incident Loop\n".to_string()),
+        ]);
+        let reviewer_loop_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"loop",
+                "name":"reviewer-loop",
+                "version":"0.1.0",
+                "description":"Reviewer loop.",
+                "loop":{
+                    "entry_phase":"review",
+                    "phases":[
+                        {
+                            "id":"review",
+                            "objective":"Review the draft."
+                        }
+                    ],
+                    "transitions":[
+                        {"from":"review","on":"complete","to":"$end"}
+                    ]
+                }
+            }))
+            .unwrap(),
+        )]);
         let initial_state = TestState {
             base_url: String::new(),
             template_sha: template_sha.clone(),
@@ -2018,6 +2154,10 @@ mod tests {
             memory_tar,
             profile_sha: sha_hex(&profile_tar),
             profile_tar,
+            loop_sha: sha_hex(&loop_tar),
+            loop_tar,
+            reviewer_loop_sha: sha_hex(&reviewer_loop_tar),
+            reviewer_loop_tar,
         };
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2037,6 +2177,8 @@ mod tests {
             .route("/artifact/knowledge", get(get_knowledge))
             .route("/artifact/memory", get(get_memory))
             .route("/artifact/profile", get(get_profile))
+            .route("/artifact/loop", get(get_loop))
+            .route("/artifact/reviewer-loop", get(get_reviewer_loop))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -2076,6 +2218,10 @@ mod tests {
             json!([]),
             "template package roots should not gain standalone profile roots: {workspace:#}"
         );
+        assert!(
+            workspace["package_roots"].get("loops").is_none(),
+            "template workspace metadata should not add standalone loop roots: {workspace:#}"
+        );
 
         let lock: Value =
             serde_json::from_str(&std::fs::read_to_string(target.join("agent.lock")).unwrap())
@@ -2100,6 +2246,16 @@ mod tests {
         assert!(
             lock["packages"]
                 .get("profile:@zack/escalation-style@0.1.0")
+                .is_some()
+        );
+        assert!(
+            lock["packages"]
+                .get("loop:@zack/incident-response-loop@1.0.0")
+                .is_some()
+        );
+        assert!(
+            lock["packages"]
+                .get("loop:@zack/reviewer-loop@0.1.0")
                 .is_some()
         );
         assert!(
@@ -2138,8 +2294,16 @@ mod tests {
             json!(["profile:@zack/support-style@0.1.0"])
         );
         assert_eq!(
+            lock["roots"]["local:agent"]["loop"],
+            json!("loop:@zack/incident-response-loop@1.0.0")
+        );
+        assert_eq!(
             lock["roots"]["local:agent:agents/reviewer.agent.json"]["profiles"],
             json!(["profile:@zack/escalation-style@0.1.0"])
+        );
+        assert_eq!(
+            lock["roots"]["local:agent:agents/reviewer.agent.json"]["loop"],
+            json!("loop:@zack/reviewer-loop@0.1.0")
         );
         assert!(
             target
@@ -2159,6 +2323,16 @@ mod tests {
         assert!(
             target
                 .join(".agentpm/profiles/zack/escalation-style/0.1.0/agent.json")
+                .exists()
+        );
+        assert!(
+            target
+                .join(".agentpm/loops/zack/incident-response-loop/1.0.0/agent.json")
+                .exists()
+        );
+        assert!(
+            target
+                .join(".agentpm/loops/zack/reviewer-loop/0.1.0/agent.json")
                 .exists()
         );
         assert_eq!(
@@ -2183,6 +2357,10 @@ mod tests {
             root_manifest["profiles"],
             json!([{"name":"@zack/support-style","version":"0.1.0"}])
         );
+        assert_eq!(
+            root_manifest["loop"],
+            json!({"name":"@zack/incident-response-loop","version":"1.0.0"})
+        );
         let reviewer_manifest: Value = serde_json::from_str(
             &std::fs::read_to_string(target.join("agents/reviewer.agent.json")).unwrap(),
         )
@@ -2190,6 +2368,18 @@ mod tests {
         assert_eq!(
             reviewer_manifest["profiles"],
             json!([{"name":"@zack/escalation-style","version":"0.1.0"}])
+        );
+        assert_eq!(
+            reviewer_manifest["loop"],
+            json!({"name":"@zack/reviewer-loop","version":"0.1.0"})
+        );
+        assert_eq!(
+            reviewer_manifest["bindings"]["global"]["profiles"],
+            json!(["@zack/escalation-style"])
+        );
+        assert_eq!(
+            reviewer_manifest["bindings"]["phases"]["review"]["profiles"],
+            json!(["@zack/escalation-style"])
         );
         assert!(
             lock["packages"]
@@ -2213,6 +2403,158 @@ mod tests {
         assert_eq!(template_meta["integrity"], Value::String(template_sha));
         assert!(template_meta.get("path").is_none());
         assert_eq!(template_meta["variables"]["project_name"], "generated");
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn generates_workspace_from_template_deduplicates_shared_loop_across_local_agents() {
+        let root = temp_dir("shared-loop-workspace");
+        let template_tar = build_tarball(&[
+            (
+                "agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"template",
+                    "name":"shared-loop-template",
+                    "version":"0.1.0",
+                    "description":"A template.",
+                    "template":{
+                        "display_name":"Shared Loop Template",
+                        "use_case":"operations",
+                        "execution_surfaces":["multi-agent-workspace"],
+                        "stack":["python"],
+                        "files_root":"template",
+                        "variables":[{"name":"project_name","required":true,"default":"my-workspace"}],
+                        "dependencies":{
+                            "tools":[],
+                            "agents":[],
+                            "loop":{"name":"@zack/incident-response-loop","version":"^1.0"}
+                        },
+                        "entrypoints":[{"label":"Run","command":"python main.py"}]
+                    }
+                }))
+                .unwrap(),
+            ),
+            ("template/README.md", "# {{ project_name }}\n".to_string()),
+            (
+                "template/agents/reviewer.agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"agent",
+                    "name":"reviewer",
+                    "version":"0.1.0",
+                    "description":"Reviewer",
+                    "tools":[],
+                    "skills":[],
+                    "knowledge":[],
+                    "memory":[],
+                    "profiles":[],
+                    "loop":{"name":"@zack/incident-response-loop","version":"1.0.0"}
+                }))
+                .unwrap(),
+            ),
+        ]);
+        let loop_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"loop",
+                "name":"incident-response-loop",
+                "version":"1.0.0",
+                "description":"Incident response loop.",
+                "loop":{
+                    "entry_phase":"triage",
+                    "phases":[
+                        {
+                            "id":"triage",
+                            "objective":"Assess the incident."
+                        }
+                    ],
+                    "transitions":[
+                        {"from":"triage","on":"complete","to":"$end"}
+                    ]
+                }
+            }))
+            .unwrap(),
+        )]);
+        let loop_sha = sha_hex(&loop_tar);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(TestState {
+            base_url: base_url.clone(),
+            template_sha: sha_hex(&template_tar),
+            template_tar,
+            tool_tar: Vec::new(),
+            tool_sha: "1".repeat(64),
+            agent_tar: Vec::new(),
+            agent_sha: "2".repeat(64),
+            knowledge_tar: Vec::new(),
+            knowledge_sha: "3".repeat(64),
+            memory_tar: Vec::new(),
+            memory_sha: "4".repeat(64),
+            profile_tar: Vec::new(),
+            profile_sha: "5".repeat(64),
+            loop_tar,
+            loop_sha,
+            reviewer_loop_tar: Vec::new(),
+            reviewer_loop_sha: "7".repeat(64),
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(test_resolve))
+            .route("/v1/tools/install/init", post(test_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/template", get(get_template))
+            .route("/artifact/tool", get(get_tool))
+            .route("/artifact/agent", get(get_agent))
+            .route("/artifact/knowledge", get(get_knowledge))
+            .route("/artifact/memory", get(get_memory))
+            .route("/artifact/profile", get(get_profile))
+            .route("/artifact/loop", get(get_loop))
+            .route("/artifact/reviewer-loop", get(get_reviewer_loop))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let target = root.join("generated");
+        let args = NewArgs {
+            template_ref: "@zack/shared-loop-template@0.1.0".to_string(),
+            target_dir: Some(target.clone()),
+            vars: Vec::new(),
+            quiet: true,
+            token: None,
+        };
+
+        args.run(base_url).await.unwrap();
+
+        let lock: Value =
+            serde_json::from_str(&std::fs::read_to_string(target.join("agent.lock")).unwrap())
+                .unwrap();
+        let loop_packages = lock["packages"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|key| key.starts_with("loop:@zack/incident-response-loop@"))
+            .count();
+        assert_eq!(loop_packages, 1, "{lock:#}");
+        assert_eq!(
+            lock["roots"]["local:agent"]["loop"],
+            json!("loop:@zack/incident-response-loop@1.0.0")
+        );
+        assert_eq!(
+            lock["roots"]["local:agent:agents/reviewer.agent.json"]["loop"],
+            json!("loop:@zack/incident-response-loop@1.0.0")
+        );
+        assert!(
+            target
+                .join(".agentpm/loops/zack/incident-response-loop/1.0.0/agent.json")
+                .exists()
+        );
+        assert!(
+            !target.join(".agentpm/loops/zack/reviewer-loop").exists(),
+            "unexpected second loop install layout present"
+        );
 
         server.abort();
         let _ = std::fs::remove_dir_all(root);
@@ -2294,6 +2636,10 @@ mod tests {
             memory_tar,
             profile_tar: Vec::new(),
             profile_sha: "5".repeat(64),
+            loop_sha: "6".repeat(64),
+            loop_tar: Vec::new(),
+            reviewer_loop_sha: "7".repeat(64),
+            reviewer_loop_tar: Vec::new(),
         });
         let app = Router::new()
             .route("/v1/tools/install/resolve", post(test_resolve))
@@ -2305,6 +2651,8 @@ mod tests {
             .route("/artifact/knowledge", get(get_knowledge))
             .route("/artifact/memory", get(get_memory))
             .route("/artifact/profile", get(get_profile))
+            .route("/artifact/loop", get(get_loop))
+            .route("/artifact/reviewer-loop", get(get_reviewer_loop))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -2324,6 +2672,109 @@ mod tests {
             format!("{err:#}").contains(
                 "resolved profile dependency @zack/not-a-profile@0.1.0 missing from plan"
             ),
+            "{err:#}"
+        );
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn rejects_wrong_kind_template_loop_dependency() {
+        let root = temp_dir("wrong-kind-loop-dep");
+        let template_tar = build_tarball(&[
+            (
+                "agent.json",
+                serde_json::to_string_pretty(&json!({
+                    "kind":"template",
+                    "name":"ops-template",
+                    "version":"0.1.0",
+                    "description":"A template.",
+                    "template":{
+                        "display_name":"Ops Template",
+                        "use_case":"operations",
+                        "execution_surfaces":["multi-agent-workspace"],
+                        "stack":["python"],
+                        "files_root":"template",
+                        "variables":[{"name":"project_name","required":true,"default":"generated"}],
+                        "dependencies":{
+                            "tools":[],
+                            "agents":[],
+                            "loop":{"name":"@zack/not-a-loop","version":"0.1.0"}
+                        },
+                        "entrypoints":[]
+                    }
+                }))
+                .unwrap(),
+            ),
+            ("template/README.md", "# generated\n".to_string()),
+        ]);
+        let profile_tar = build_tarball(&[(
+            "agent.json",
+            serde_json::to_string_pretty(&json!({
+                "kind":"profile",
+                "name":"not-a-loop",
+                "version":"0.1.0",
+                "description":"Actually a profile.",
+                "profile":{
+                    "identity":{"role":"Not a loop"}
+                }
+            }))
+            .unwrap(),
+        )]);
+        let profile_sha = sha_hex(&profile_tar);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let state = Arc::new(TestState {
+            base_url: base_url.clone(),
+            template_sha: sha_hex(&template_tar),
+            template_tar,
+            tool_tar: Vec::new(),
+            tool_sha: "1".repeat(64),
+            agent_tar: Vec::new(),
+            agent_sha: "2".repeat(64),
+            knowledge_tar: Vec::new(),
+            knowledge_sha: "3".repeat(64),
+            memory_tar: Vec::new(),
+            memory_sha: "4".repeat(64),
+            profile_tar,
+            profile_sha,
+            loop_tar: Vec::new(),
+            loop_sha: "6".repeat(64),
+            reviewer_loop_tar: Vec::new(),
+            reviewer_loop_sha: "7".repeat(64),
+        });
+        let app = Router::new()
+            .route("/v1/tools/install/resolve", post(test_resolve))
+            .route("/v1/tools/install/init", post(test_init))
+            .route("/v1/tools/install/finalize", post(test_finalize))
+            .route("/artifact/template", get(get_template))
+            .route("/artifact/tool", get(get_tool))
+            .route("/artifact/agent", get(get_agent))
+            .route("/artifact/knowledge", get(get_knowledge))
+            .route("/artifact/memory", get(get_memory))
+            .route("/artifact/profile", get(get_profile))
+            .route("/artifact/loop", get(get_loop))
+            .route("/artifact/reviewer-loop", get(get_reviewer_loop))
+            .with_state(state);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let target = root.join("generated");
+        let args = NewArgs {
+            template_ref: "@zack/ops-template@0.1.0".to_string(),
+            target_dir: Some(target),
+            vars: Vec::new(),
+            quiet: true,
+            token: None,
+        };
+
+        let err = args.run(base_url).await.unwrap_err();
+        assert!(
+            format!("{err:#}")
+                .contains("resolved loop dependency @zack/not-a-loop@0.1.0 missing from plan"),
             "{err:#}"
         );
 
@@ -2395,6 +2846,10 @@ mod tests {
             memory_tar: Vec::new(),
             profile_sha: "5".repeat(64),
             profile_tar: Vec::new(),
+            loop_sha: "6".repeat(64),
+            loop_tar: Vec::new(),
+            reviewer_loop_sha: "7".repeat(64),
+            reviewer_loop_tar: Vec::new(),
         });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2413,6 +2868,8 @@ mod tests {
             .route("/artifact/knowledge", get(get_knowledge))
             .route("/artifact/memory", get(get_memory))
             .route("/artifact/profile", get(get_profile))
+            .route("/artifact/loop", get(get_loop))
+            .route("/artifact/reviewer-loop", get(get_reviewer_loop))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -2519,6 +2976,10 @@ mod tests {
             memory_tar: Vec::new(),
             profile_sha: "5".repeat(64),
             profile_tar: Vec::new(),
+            loop_sha: "6".repeat(64),
+            loop_tar: Vec::new(),
+            reviewer_loop_sha: "7".repeat(64),
+            reviewer_loop_tar: Vec::new(),
         });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2537,6 +2998,8 @@ mod tests {
             .route("/artifact/knowledge", get(get_knowledge))
             .route("/artifact/memory", get(get_memory))
             .route("/artifact/profile", get(get_profile))
+            .route("/artifact/loop", get(get_loop))
+            .route("/artifact/reviewer-loop", get(get_reviewer_loop))
             .with_state(state);
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -2820,6 +3283,10 @@ mod tests {
         memory_sha: String,
         profile_tar: Vec<u8>,
         profile_sha: String,
+        loop_tar: Vec<u8>,
+        loop_sha: String,
+        reviewer_loop_tar: Vec<u8>,
+        reviewer_loop_sha: String,
     }
 
     async fn test_resolve(
@@ -2869,11 +3336,29 @@ mod tests {
                     "version":"0.1.0",
                     "integrity":state.memory_sha
                 })),
+                "loop" if name == "@zack/not-a-loop" => items.push(json!({
+                    "kind":"profile",
+                    "name":name,
+                    "version":"0.1.0",
+                    "integrity":state.profile_sha
+                })),
                 "profile" => items.push(json!({
                     "kind":"profile",
                     "name":name,
                     "version":"0.1.0",
                     "integrity":state.profile_sha
+                })),
+                "loop" if name == "@zack/reviewer-loop" => items.push(json!({
+                    "kind":"loop",
+                    "name":name,
+                    "version":"0.1.0",
+                    "integrity":state.reviewer_loop_sha
+                })),
+                "loop" => items.push(json!({
+                    "kind":"loop",
+                    "name":name,
+                    "version":"1.0.0",
+                    "integrity":state.loop_sha
                 })),
                 "agent" => {
                     items.push(json!({
@@ -2916,6 +3401,10 @@ mod tests {
                 "knowledge" => format!("{}/artifact/knowledge", state.base_url),
                 "memory" => format!("{}/artifact/memory", state.base_url),
                 "profile" => format!("{}/artifact/profile", state.base_url),
+                "loop" if item["name"].as_str() == Some("@zack/reviewer-loop") => {
+                    format!("{}/artifact/reviewer-loop", state.base_url)
+                }
+                "loop" => format!("{}/artifact/loop", state.base_url),
                 _ => return Err(StatusCode::BAD_REQUEST),
             };
             let integrity = match kind {
@@ -2925,12 +3414,16 @@ mod tests {
                 "knowledge" => state.knowledge_sha.as_str(),
                 "memory" => state.memory_sha.as_str(),
                 "profile" => state.profile_sha.as_str(),
+                "loop" if item["name"].as_str() == Some("@zack/reviewer-loop") => {
+                    state.reviewer_loop_sha.as_str()
+                }
+                "loop" => state.loop_sha.as_str(),
                 _ => return Err(StatusCode::BAD_REQUEST),
             };
             artifacts.push(json!({
                 "kind":kind,
                 "name":item["name"],
-                "version":"0.1.0",
+                "version":item["version"],
                 "integrity":integrity,
                 "presigned_url":url,
                 "size":12,
@@ -2989,6 +3482,20 @@ mod tests {
         Response::builder()
             .status(StatusCode::OK)
             .body(Body::from(state.profile_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_loop(State(state): State<Arc<TestState>>) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.loop_tar.clone()))
+            .unwrap()
+    }
+
+    async fn get_reviewer_loop(State(state): State<Arc<TestState>>) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(state.reviewer_loop_tar.clone()))
             .unwrap()
     }
 
