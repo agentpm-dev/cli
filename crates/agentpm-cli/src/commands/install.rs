@@ -467,6 +467,7 @@ fn build_updated_lock(
         Lock::V2(lock) => lock.roots.clone(),
         Lock::V1(_) => BTreeMap::new(),
     };
+    let mut removed_local_dependency_keys = Vec::new();
 
     let new_registry_roots = build_registry_package_roots(spec, plan, install_root)?;
     let replacing_direct_registry_root = direct_registry_root_identity(&new_registry_roots);
@@ -492,6 +493,12 @@ fn build_updated_lock(
         })
     {
         let (root_key, local_root) = build_local_root_from_manifest(manifest_value, &packages)?;
+        if let Some(previous_root) = roots.get(&root_key) {
+            removed_local_dependency_keys =
+                removed_root_dependency_keys(previous_root, &local_root)
+                    .into_iter()
+                    .collect();
+        }
         roots.insert(root_key, local_root);
     }
 
@@ -502,9 +509,36 @@ fn build_updated_lock(
 
     if replacing_direct_registry_root.is_some() {
         packages = prune_unreachable_packages(packages, &roots, install_root)?;
+    } else if !removed_local_dependency_keys.is_empty() {
+        prune_removed_unreachable_packages(
+            &mut packages,
+            &roots,
+            install_root,
+            &removed_local_dependency_keys,
+        )?;
     }
 
     Ok(lock_from_packages_and_roots(packages, roots))
+}
+
+fn removed_root_dependency_keys(previous: &LockedRoot, next: &LockedRoot) -> BTreeSet<String> {
+    root_dependency_keys(previous)
+        .difference(&root_dependency_keys(next))
+        .cloned()
+        .collect()
+}
+
+fn root_dependency_keys(root: &LockedRoot) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    keys.extend(root.tools.iter().cloned());
+    keys.extend(root.skills.iter().cloned());
+    keys.extend(root.knowledge.iter().cloned());
+    keys.extend(root.memory.iter().cloned());
+    keys.extend(root.profiles.iter().cloned());
+    if let Some(loop_key) = &root.r#loop {
+        keys.insert(loop_key.clone());
+    }
+    keys
 }
 
 fn direct_registry_root_identity(new_registry_roots: &[LockRoot]) -> Option<(PackageKind, String)> {
@@ -561,6 +595,21 @@ fn prune_unreachable_packages(
         .into_iter()
         .filter(|(key, _)| reachable.contains(key))
         .collect())
+}
+
+fn prune_removed_unreachable_packages(
+    packages: &mut BTreeMap<String, crate::semver::types::LockedPackage>,
+    roots: &BTreeMap<String, LockedRoot>,
+    install_root: &Path,
+    candidate_keys: &[String],
+) -> Result<()> {
+    let reachable = collect_reachable_packages(packages, roots, install_root)?;
+    for key in candidate_keys {
+        if !reachable.contains(key) {
+            packages.remove(key);
+        }
+    }
+    Ok(())
 }
 
 fn collect_reachable_packages(
@@ -5076,6 +5125,169 @@ mod tests {
 
         server.abort();
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn direct_local_agent_loop_replacement_prunes_old_loop_when_unreachable() {
+        let root = temp_root("replace-local-agent-loop");
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 3,
+            generated: Utc::now(),
+            packages: BTreeMap::from([
+                (
+                    "loop:@zack/incident-response-loop@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Loop,
+                        name: "@zack/incident-response-loop".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-loop-old".to_string(),
+                    },
+                ),
+                (
+                    "loop:@zack/escalation-loop@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Loop,
+                        name: "@zack/escalation-loop".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-loop-new".to_string(),
+                    },
+                ),
+            ]),
+            roots: BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: Vec::new(),
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    profiles: Vec::new(),
+                    r#loop: Some("loop:@zack/incident-response-loop@0.1.0".to_string()),
+                    reserved: Default::default(),
+                },
+            )]),
+        });
+
+        let manifest_value = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "loop": "@zack/escalation-loop@0.1.0"
+        });
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Loop,
+                name: "@zack/escalation-loop".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-loop-new".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            Some(&manifest_value),
+            Some("@zack/escalation-loop@0.1.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(
+            lock.roots
+                .get("local:agent")
+                .and_then(|root| root.r#loop.as_deref()),
+            Some("loop:@zack/escalation-loop@0.1.0")
+        );
+        assert!(
+            !lock
+                .packages
+                .contains_key("loop:@zack/incident-response-loop@0.1.0")
+        );
+        assert!(
+            lock.packages
+                .contains_key("loop:@zack/escalation-loop@0.1.0")
+        );
+    }
+
+    #[test]
+    fn direct_local_agent_tool_replacement_prunes_old_tool_when_unreachable() {
+        let root = temp_root("replace-local-agent-tool");
+        let existing = Lock::V2(LockV2 {
+            lockfile_version: 3,
+            generated: Utc::now(),
+            packages: BTreeMap::from([
+                (
+                    "tool:@zack/echo@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/echo".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-tool-old".to_string(),
+                    },
+                ),
+                (
+                    "tool:@zack/summarize@0.1.0".to_string(),
+                    LockedPackage {
+                        kind: PackageKind::Tool,
+                        name: "@zack/summarize".to_string(),
+                        version: "0.1.0".to_string(),
+                        integrity: "sha256-tool-new".to_string(),
+                    },
+                ),
+            ]),
+            roots: BTreeMap::from([(
+                "local:agent".to_string(),
+                LockedRoot {
+                    name: Some("support-agent".to_string()),
+                    version: Some("0.1.0".to_string()),
+                    tools: vec!["tool:@zack/echo@0.1.0".to_string()],
+                    skills: Vec::new(),
+                    knowledge: Vec::new(),
+                    memory: Vec::new(),
+                    profiles: Vec::new(),
+                    r#loop: None,
+                    reserved: Default::default(),
+                },
+            )]),
+        });
+
+        let manifest_value = json!({
+            "kind": "agent",
+            "name": "support-agent",
+            "version": "0.1.0",
+            "tools": ["@zack/summarize@0.1.0"]
+        });
+        let plan = ResolvePlan {
+            items: vec![ResolvedPackage {
+                kind: PackageKind::Tool,
+                name: "@zack/summarize".to_string(),
+                version: "0.1.0".to_string(),
+                integrity: "sha256-tool-new".to_string(),
+            }],
+        };
+
+        let next = build_updated_lock(
+            &existing,
+            Some(&manifest_value),
+            Some("@zack/summarize@0.1.0"),
+            &plan,
+            &root,
+        )
+        .unwrap();
+
+        let Lock::V2(lock) = next else {
+            panic!("expected v2 lock");
+        };
+        assert_eq!(
+            lock.roots.get("local:agent").map(|root| root.tools.clone()),
+            Some(vec!["tool:@zack/summarize@0.1.0".to_string()])
+        );
+        assert!(!lock.packages.contains_key("tool:@zack/echo@0.1.0"));
+        assert!(lock.packages.contains_key("tool:@zack/summarize@0.1.0"));
     }
 
     async fn assert_manifest_dependency_failure_happens_before_init_and_download(
