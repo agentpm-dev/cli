@@ -784,6 +784,7 @@ pub enum PublishManifest {
     Knowledge(Box<KnowledgeManifest>),
     Memory(Box<MemoryManifest>),
     Profile(Box<ProfileManifest>),
+    Loop(Box<LoopManifest>),
 }
 
 /// Resolve the schema source (local file if present; else hosted URL)
@@ -2873,8 +2874,9 @@ pub fn parse_publish_manifest(value: &Value) -> Result<PublishManifest> {
         "profile" => Ok(PublishManifest::Profile(Box::new(parse_profile_manifest(
             value,
         )?))),
+        "loop" => Ok(PublishManifest::Loop(Box::new(parse_loop_manifest(value)?))),
         other => Err(anyhow!(format!(
-            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", kind=\"memory\", and kind=\"profile\" manifests (got kind=\"{}\")",
+            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", kind=\"memory\", kind=\"profile\", and kind=\"loop\" manifests (got kind=\"{}\")",
             other
         ))),
     }
@@ -7878,7 +7880,8 @@ mod tests {
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
             | PublishManifest::Memory(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected tool publish manifest")
             }
         }
@@ -7909,7 +7912,8 @@ mod tests {
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
             | PublishManifest::Memory(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected agent publish manifest")
             }
         }
@@ -7947,7 +7951,8 @@ mod tests {
             | PublishManifest::Template(_)
             | PublishManifest::Knowledge(_)
             | PublishManifest::Memory(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected skill publish manifest")
             }
         }
@@ -7993,7 +7998,8 @@ mod tests {
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
             | PublishManifest::Memory(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected template publish manifest")
             }
         }
@@ -8028,7 +8034,8 @@ mod tests {
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
             | PublishManifest::Memory(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected knowledge publish manifest")
             }
         }
@@ -8081,7 +8088,8 @@ mod tests {
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected memory publish manifest")
             }
         }
@@ -8117,8 +8125,31 @@ mod tests {
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
-            | PublishManifest::Memory(_) => {
+            | PublishManifest::Memory(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected profile publish manifest")
+            }
+        }
+    }
+
+    #[test]
+    fn parse_publish_manifest_dispatches_loop_kind() {
+        let manifest = base_loop_manifest();
+
+        match parse_publish_manifest(&manifest).unwrap() {
+            PublishManifest::Loop(mf) => {
+                assert_eq!(mf.kind, "loop");
+                assert_eq!(mf.name, "incident-response-loop");
+                assert_eq!(mf.r#loop.entry_phase, "triage");
+            }
+            PublishManifest::Tool(_)
+            | PublishManifest::Agent(_)
+            | PublishManifest::Template(_)
+            | PublishManifest::Skill(_)
+            | PublishManifest::Knowledge(_)
+            | PublishManifest::Memory(_)
+            | PublishManifest::Profile(_) => {
+                panic!("expected loop publish manifest")
             }
         }
     }
@@ -8134,7 +8165,7 @@ mod tests {
         let err = parse_publish_manifest(&manifest).unwrap_err().to_string();
         assert!(
             err.contains(
-                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", kind=\"memory\", and kind=\"profile\""
+                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", kind=\"memory\", kind=\"profile\", and kind=\"loop\""
             ),
             "unexpected error: {err}"
         );

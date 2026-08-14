@@ -85,6 +85,8 @@ This repo contains the Rust CLI, schema, and packaging/install/publish flows.
 ## Verification
 - Consult `.pre-commit-config.yaml` for the expected formatting/lint checks.
 - Run the narrowest relevant test first, then broader checks when practical.
+- `cargo fmt --all` is a required final step for Rust changes before handoff.
+- If Rust files were edited, do not report completion until formatting has been run.
 - Favor repo-native commands such as:
   - `cargo fmt --all --check`
   - `cargo clippy --workspace --all-targets -- -D warnings`
