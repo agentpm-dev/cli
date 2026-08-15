@@ -12,9 +12,9 @@ use crate::keys::signing::{
     StoredKeyV1, decrypt_private, keystore_dir, prompt_passphrase_with_fallback,
 };
 use crate::manifest::{
-    AgentManifest, Entrypoint, KnowledgeManifest, MemoryManifest, ProfileManifest, PublishManifest,
-    SkillManifest, TemplateManifest, ToolManifest, load_manifest_value, parse_publish_manifest,
-    resolve_schema_source, validate_manifest_value,
+    AgentManifest, Entrypoint, KnowledgeManifest, LoopManifest, MemoryManifest, ProfileManifest,
+    PublishManifest, SkillManifest, TemplateManifest, ToolManifest, load_manifest_value,
+    parse_publish_manifest, resolve_schema_source, validate_manifest_value,
 };
 use crate::prelude::*;
 use crate::ui::Step;
@@ -167,6 +167,8 @@ impl PublishArgs {
                 .context("packaging memory into tar.gz")?,
             PublishManifest::Profile(mf) => package_profile(mf, &manifest_path, &manifest_value)
                 .context("packaging profile into tar.gz")?,
+            PublishManifest::Loop(mf) => package_loop(mf, &manifest_path, &manifest_value)
+                .context("packaging loop into tar.gz")?,
         };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
         if size_bytes > MAX_ARTIFACT_BYTES {
@@ -342,6 +344,7 @@ impl PublishArgs {
             PublishManifest::Knowledge(mf) => artifact_filename(&mf.name, &mf.version, None),
             PublishManifest::Memory(mf) => artifact_filename(&mf.name, &mf.version, None),
             PublishManifest::Profile(mf) => artifact_filename(&mf.name, &mf.version, None),
+            PublishManifest::Loop(mf) => artifact_filename(&mf.name, &mf.version, None),
         };
 
         // Build optional finalize_extra
@@ -883,6 +886,57 @@ fn package_memory(
 
 fn package_profile(
     manifest: &ProfileManifest,
+    manifest_path: &Path,
+    manifest_value: &serde_json::Value,
+) -> Result<PathBuf> {
+    let root = manifest_path.parent().unwrap_or(Path::new("."));
+    let out_dir = root.join("target").join("agentpm");
+    fs::create_dir_all(&out_dir).ok();
+
+    let out_path = out_dir.join(artifact_filename(&manifest.name, &manifest.version, None));
+    write_artifact_atomically(&out_path, |tar| {
+        let mut member_count: usize = 0;
+
+        let manifest_bytes = fs::read(manifest_path)?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest_bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        ensure_safe_tar_name("agent.json")?;
+        member_count += 1;
+        tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+
+        if let Some(readme_path) = manifest_value.get("readme").and_then(|v| v.as_str()) {
+            append_optional_declared_file(
+                tar,
+                root,
+                "readme",
+                readme_path,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        if let Some(license_file) = pick_license_paths(manifest_value).1 {
+            append_optional_declared_file(
+                tar,
+                root,
+                "license.file",
+                license_file,
+                &mut member_count,
+                &mut seen,
+            )?;
+        }
+
+        Ok(())
+    })?;
+    Ok(out_path)
+}
+
+fn package_loop(
+    manifest: &LoopManifest,
     manifest_path: &Path,
     manifest_value: &serde_json::Value,
 ) -> Result<PathBuf> {
@@ -1926,6 +1980,7 @@ fn manifest_kind(manifest: &PublishManifest) -> &str {
         PublishManifest::Knowledge(mf) => &mf.kind,
         PublishManifest::Memory(mf) => &mf.kind,
         PublishManifest::Profile(mf) => &mf.kind,
+        PublishManifest::Loop(mf) => &mf.kind,
     }
 }
 
@@ -1938,6 +1993,7 @@ fn manifest_name(manifest: &PublishManifest) -> &str {
         PublishManifest::Knowledge(mf) => &mf.name,
         PublishManifest::Memory(mf) => &mf.name,
         PublishManifest::Profile(mf) => &mf.name,
+        PublishManifest::Loop(mf) => &mf.name,
     }
 }
 
@@ -1950,6 +2006,7 @@ fn manifest_version(manifest: &PublishManifest) -> &str {
         PublishManifest::Knowledge(mf) => &mf.version,
         PublishManifest::Memory(mf) => &mf.version,
         PublishManifest::Profile(mf) => &mf.version,
+        PublishManifest::Loop(mf) => &mf.version,
     }
 }
 
@@ -2546,6 +2603,191 @@ mod tests {
         assert!(tar_path.exists(), "expected {}", tar_path.display());
         let entries = tar_entries(&tar_path);
         assert_eq!(entries, vec!["agent.json".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_succeeds_for_loop_manifest_without_build_step() {
+        let dir = temp_dir("publish-loop");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "loop",
+                "name": "incident-response-loop",
+                "version": "0.1.0",
+                "description": "A bounded incident response loop.",
+                "loop": {
+                    "archetype": "investigate-review-decide",
+                    "entry_phase": "triage",
+                    "phases": [
+                        {
+                            "id": "triage",
+                            "objective": "Assess the report and decide what happens next.",
+                            "outcomes": [
+                                { "id": "needs-investigation", "description": "Collect more evidence." },
+                                { "id": "handoff", "description": "Escalate to a human operator." }
+                            ]
+                        },
+                        {
+                            "id": "investigate",
+                            "objective": "Gather the missing evidence needed to resolve the case."
+                        }
+                    ],
+                    "transitions": [
+                        { "from": "triage", "on": "needs-investigation", "to": "investigate" },
+                        { "from": "triage", "on": "handoff", "to": "$handoff" },
+                        { "from": "investigate", "on": "complete", "to": "$end" }
+                    ]
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let tar_path = dir.join("target/agentpm/incident-response-loop-0.1.0.tar.gz");
+        assert!(tar_path.exists(), "expected {}", tar_path.display());
+        let entries = tar_entries(&tar_path);
+        assert_eq!(entries, vec!["agent.json".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_includes_loop_readme_and_license_file() {
+        let dir = temp_dir("publish-loop-readme-license");
+        let manifest_path = dir.join("agent.json");
+        fs::write(dir.join("README.md"), "# Loop\n").unwrap();
+        fs::write(dir.join("LICENSE"), "MIT License\n").unwrap();
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "loop",
+                "name": "incident-response-loop",
+                "version": "0.1.0",
+                "description": "A bounded incident response loop.",
+                "readme": "README.md",
+                "license": {
+                    "spdx": "MIT",
+                    "file": "LICENSE"
+                },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [
+                        {
+                            "id": "triage",
+                            "objective": "Assess the report and decide what happens next."
+                        }
+                    ],
+                    "transitions": [
+                        { "from": "triage", "on": "complete", "to": "$end" }
+                    ]
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap();
+
+        let tar_path = dir.join("target/agentpm/incident-response-loop-0.1.0.tar.gz");
+        let entries = tar_entries(&tar_path);
+        assert!(entries.contains(&"agent.json".to_string()));
+        assert!(entries.contains(&"README.md".to_string()));
+        assert!(entries.contains(&"LICENSE".to_string()));
+        assert_eq!(entries.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_invalid_loop_graph() {
+        let dir = temp_dir("publish-loop-invalid");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "loop",
+                "name": "incident-response-loop",
+                "version": "0.1.0",
+                "description": "Invalid loop.",
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [
+                        {
+                            "id": "triage",
+                            "objective": "Assess the report and decide what happens next."
+                        }
+                    ],
+                    "transitions": [
+                        { "from": "triage", "on": "complete", "to": "missing-phase" }
+                    ]
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Manifest validation failed"),
+            "{err_text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_dry_run_fails_for_loop_manifest_with_dependencies() {
+        let dir = temp_dir("publish-loop-dependencies");
+        let manifest_path = dir.join("agent.json");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "loop",
+                "name": "incident-response-loop",
+                "version": "0.1.0",
+                "description": "Invalid loop package.",
+                "tools": ["@zack/some-tool@0.1.0"],
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [
+                        {
+                            "id": "triage",
+                            "objective": "Assess the report and decide what happens next."
+                        }
+                    ],
+                    "transitions": [
+                        { "from": "triage", "on": "complete", "to": "$end" }
+                    ]
+                }
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
+
+        let err = dry_run_args(&manifest_path)
+            .run("https://example.com".into())
+            .await
+            .unwrap_err();
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("Manifest validation failed"),
+            "{err_text}"
+        );
     }
 
     #[tokio::test]

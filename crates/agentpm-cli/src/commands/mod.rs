@@ -22,10 +22,10 @@ pub enum Commands {
     /// Log in and cache credentials
     Login(login::LoginArgs),
 
-    /// Scaffold agent.json (tool, agent, template, skill, knowledge, memory, or profile)
+    /// Scaffold agent.json (tool, agent, template, skill, knowledge, memory, profile, or loop)
     Init(init::InitArgs),
 
-    /// Lint agent.json (tool, agent, template, skill, knowledge, memory, or profile)
+    /// Lint agent.json (tool, agent, template, skill, knowledge, memory, profile, or loop)
     Lint(lint::LintArgs),
 
     /// Build or inspect a Knowledge package

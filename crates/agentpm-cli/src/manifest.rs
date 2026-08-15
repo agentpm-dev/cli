@@ -3,7 +3,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::{
     fs,
     io::Write,
@@ -74,12 +74,26 @@ pub struct ToolManifest {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct AgentManifest {
     pub kind: String,
     pub name: String,
     pub version: String,
     #[allow(dead_code)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub tools: Vec<PackageReference>,
+    #[serde(default)]
+    pub skills: Vec<PackageReference>,
+    #[serde(default)]
+    pub knowledge: Vec<PackageReference>,
+    #[serde(default)]
+    pub memory: Vec<PackageReference>,
+    #[serde(default)]
+    pub profiles: Vec<PackageReference>,
+    #[serde(rename = "loop")]
+    pub loop_ref: Option<PackageReference>,
+    pub bindings: Option<AgentBindings>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +151,7 @@ pub struct TemplateDependencies {
     pub knowledge: Vec<PackageReference>,
     pub memory: Vec<PackageReference>,
     pub profiles: Vec<PackageReference>,
+    pub r#loop: Option<PackageReference>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -584,6 +599,182 @@ pub struct ProfileManifest {
     pub profile: ProfileMetadata,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopAccessMemory {
+    pub read: Option<bool>,
+    pub write: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopPhaseAccess {
+    pub tools: Option<bool>,
+    pub knowledge: Option<bool>,
+    pub memory: Option<LoopAccessMemory>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopOutcome {
+    pub id: String,
+    pub description: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopPhase {
+    pub id: String,
+    pub objective: String,
+    pub access: Option<LoopPhaseAccess>,
+    #[serde(default)]
+    pub outcomes: Vec<LoopOutcome>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopTransition {
+    pub from: String,
+    pub on: String,
+    pub to: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct LoopLimits {
+    pub max_steps: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopCheckpoint {
+    pub id: String,
+    pub r#type: String,
+    pub before_phase: String,
+    pub on_reject: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum LoopToolFailureAction {
+    Retry,
+    FailPhase,
+    Abort,
+    Handoff,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum LoopToolFailureExhaustedAction {
+    FailPhase,
+    Abort,
+    Handoff,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopToolFailurePolicy {
+    pub action: LoopToolFailureAction,
+    pub max_retries: Option<u64>,
+    pub on_exhausted: Option<LoopToolFailureExhaustedAction>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum LoopPhaseFailureAction {
+    Abort,
+    Handoff,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopPhaseFailurePolicy {
+    pub action: LoopPhaseFailureAction,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct LoopErrorPolicy {
+    pub tool_failure: Option<LoopToolFailurePolicy>,
+    pub phase_failure: Option<LoopPhaseFailurePolicy>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopMetadata {
+    pub archetype: Option<String>,
+    pub entry_phase: String,
+    pub limits: Option<LoopLimits>,
+    pub phases: Vec<LoopPhase>,
+    pub transitions: Vec<LoopTransition>,
+    #[serde(default)]
+    pub checkpoints: Vec<LoopCheckpoint>,
+    pub error_policy: Option<LoopErrorPolicy>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LoopManifest {
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    #[allow(dead_code)]
+    pub description: Option<String>,
+    pub readme: Option<String>,
+    #[serde(default)]
+    pub license: Option<Value>,
+    pub r#loop: LoopMetadata,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct AgentMemoryBinding {
+    pub package: String,
+    #[serde(default)]
+    pub spaces: Vec<String>,
+    #[serde(default)]
+    pub operations: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct AgentBindingScope {
+    pub tools: Vec<String>,
+    pub skills: Vec<String>,
+    pub knowledge: Vec<String>,
+    pub memory: Vec<AgentMemoryBinding>,
+    pub profiles: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct AgentMcpBinding {
+    pub id: String,
+    pub tools: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct AgentConsumerContext {
+    pub file: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+#[allow(dead_code)]
+pub struct AgentBindings {
+    pub global: Option<AgentBindingScope>,
+    pub phases: HashMap<String, AgentBindingScope>,
+    pub mcp: Vec<AgentMcpBinding>,
+    pub consumer_context: Option<AgentConsumerContext>,
+}
+
 #[derive(Debug)]
 pub enum PublishManifest {
     Tool(Box<ToolManifest>),
@@ -593,6 +784,7 @@ pub enum PublishManifest {
     Knowledge(Box<KnowledgeManifest>),
     Memory(Box<MemoryManifest>),
     Profile(Box<ProfileManifest>),
+    Loop(Box<LoopManifest>),
 }
 
 /// Resolve the schema source (local file if present; else hosted URL)
@@ -752,6 +944,18 @@ pub fn validate_manifest_value(
         && let Ok(manifest) = parse_profile_manifest(value)
     {
         issues.extend(validate_profile_manifest_semantics(file_label, &manifest));
+    }
+
+    if value.get("kind").and_then(Value::as_str) == Some("loop")
+        && let Ok(manifest) = parse_loop_manifest(value)
+    {
+        issues.extend(validate_loop_manifest_semantics(file_label, &manifest));
+    }
+
+    if value.get("kind").and_then(Value::as_str) == Some("agent")
+        && let Ok(manifest) = serde_json::from_value::<AgentManifest>(value.clone())
+    {
+        issues.extend(validate_agent_bindings_semantics(file_label, &manifest));
     }
 
     let has_error = issues.iter().any(|i| i.level == "error");
@@ -1180,6 +1384,401 @@ fn validate_profile_manifest_semantics(
     issues
 }
 
+fn validate_loop_manifest_semantics(file_label: &str, manifest: &LoopManifest) -> Vec<LintIssue> {
+    let mut issues = Vec::new();
+    let loop_metadata = &manifest.r#loop;
+
+    validate_optional_trimmed_string(
+        file_label,
+        "/loop/archetype",
+        "loop.archetype",
+        loop_metadata.archetype.as_deref(),
+        &mut issues,
+    );
+
+    let mut phase_index_by_id: HashMap<String, usize> = HashMap::new();
+    let mut phase_outcomes: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for (phase_idx, phase) in loop_metadata.phases.iter().enumerate() {
+        validate_non_empty_trimmed_string(
+            file_label,
+            &format!("/loop/phases/{phase_idx}/objective"),
+            "loop.phases[].objective",
+            &phase.objective,
+            &mut issues,
+        );
+
+        if let Some(previous_idx) = phase_index_by_id.insert(phase.id.clone(), phase_idx) {
+            push_manifest_error(
+                file_label,
+                &format!("/loop/phases/{phase_idx}/id"),
+                format!(
+                    "duplicate loop phase id `{}` is not allowed (already declared at index {previous_idx})",
+                    phase.id
+                ),
+                &mut issues,
+            );
+        }
+
+        let mut outcomes = HashSet::new();
+        if phase.outcomes.is_empty() {
+            outcomes.insert("complete".to_string());
+        } else {
+            for (outcome_idx, outcome) in phase.outcomes.iter().enumerate() {
+                validate_non_empty_trimmed_string(
+                    file_label,
+                    &format!("/loop/phases/{phase_idx}/outcomes/{outcome_idx}/description"),
+                    "loop.phases[].outcomes[].description",
+                    &outcome.description,
+                    &mut issues,
+                );
+                if !outcomes.insert(outcome.id.clone()) {
+                    push_manifest_error(
+                        file_label,
+                        &format!("/loop/phases/{phase_idx}/outcomes/{outcome_idx}/id"),
+                        format!(
+                            "duplicate loop outcome id `{}` is not allowed within phase `{}`",
+                            outcome.id, phase.id
+                        ),
+                        &mut issues,
+                    );
+                }
+            }
+        }
+        phase_outcomes.insert(phase.id.clone(), outcomes);
+    }
+
+    if !phase_index_by_id.contains_key(&loop_metadata.entry_phase) {
+        push_manifest_error(
+            file_label,
+            "/loop/entry_phase",
+            format!(
+                "loop entry_phase `{}` must match a declared phase id",
+                loop_metadata.entry_phase
+            ),
+            &mut issues,
+        );
+    }
+
+    let mut transition_counts: HashMap<(String, String), usize> = HashMap::new();
+    let mut phase_edges: HashMap<String, Vec<String>> = HashMap::new();
+    let mut terminal_targets = HashSet::new();
+
+    for (transition_idx, transition) in loop_metadata.transitions.iter().enumerate() {
+        let pointer = format!("/loop/transitions/{transition_idx}");
+        if !phase_index_by_id.contains_key(&transition.from) {
+            push_manifest_error(
+                file_label,
+                &format!("{pointer}/from"),
+                format!(
+                    "transition source phase `{}` is not declared",
+                    transition.from
+                ),
+                &mut issues,
+            );
+            continue;
+        }
+
+        if !phase_outcomes
+            .get(&transition.from)
+            .is_some_and(|outcomes| outcomes.contains(&transition.on))
+        {
+            push_manifest_error(
+                file_label,
+                &format!("{pointer}/on"),
+                format!(
+                    "transition outcome `{}` is not valid for phase `{}`",
+                    transition.on, transition.from
+                ),
+                &mut issues,
+            );
+        }
+
+        if phase_index_by_id.contains_key(&transition.to) {
+            phase_edges
+                .entry(transition.from.clone())
+                .or_default()
+                .push(transition.to.clone());
+        } else if is_loop_terminal(&transition.to) {
+            terminal_targets.insert(transition.to.clone());
+        } else {
+            push_manifest_error(
+                file_label,
+                &format!("{pointer}/to"),
+                format!(
+                    "transition destination `{}` must be a declared phase or supported terminal",
+                    transition.to
+                ),
+                &mut issues,
+            );
+        }
+
+        *transition_counts
+            .entry((transition.from.clone(), transition.on.clone()))
+            .or_insert(0) += 1;
+    }
+
+    for phase in &loop_metadata.phases {
+        if let Some(outcomes) = phase_outcomes.get(&phase.id) {
+            for outcome in outcomes {
+                match transition_counts
+                    .get(&(phase.id.clone(), outcome.clone()))
+                    .copied()
+                {
+                    Some(1) => {}
+                    Some(count) => push_manifest_error(
+                        file_label,
+                        "/loop/transitions",
+                        format!(
+                            "phase `{}` outcome `{}` must have exactly one transition (found {count})",
+                            phase.id, outcome
+                        ),
+                        &mut issues,
+                    ),
+                    None => push_manifest_error(
+                        file_label,
+                        "/loop/transitions",
+                        format!(
+                            "phase `{}` outcome `{}` must declare exactly one transition",
+                            phase.id, outcome
+                        ),
+                        &mut issues,
+                    ),
+                }
+            }
+        }
+    }
+
+    let mut reachable_terminals = HashSet::new();
+    if phase_index_by_id.contains_key(&loop_metadata.entry_phase) {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::from([loop_metadata.entry_phase.clone()]);
+
+        while let Some(current) = queue.pop_front() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            for transition in loop_metadata
+                .transitions
+                .iter()
+                .filter(|transition| transition.from == current)
+            {
+                if phase_index_by_id.contains_key(&transition.to) {
+                    queue.push_back(transition.to.clone());
+                } else if is_loop_terminal(&transition.to) {
+                    reachable_terminals.insert(transition.to.clone());
+                }
+            }
+        }
+
+        for (phase_id, phase_idx) in &phase_index_by_id {
+            if !visited.contains(phase_id) {
+                push_manifest_error(
+                    file_label,
+                    &format!("/loop/phases/{phase_idx}/id"),
+                    format!("phase `{phase_id}` is unreachable from entry_phase"),
+                    &mut issues,
+                );
+            }
+        }
+    }
+
+    if terminal_targets.is_empty() || reachable_terminals.is_empty() {
+        push_manifest_error(
+            file_label,
+            "/loop/transitions",
+            "loop must be able to reach at least one terminal outcome".to_string(),
+            &mut issues,
+        );
+    }
+
+    let mut checkpoint_ids = HashSet::new();
+    let mut approval_targets = HashSet::new();
+    for (checkpoint_idx, checkpoint) in loop_metadata.checkpoints.iter().enumerate() {
+        if !checkpoint_ids.insert(checkpoint.id.clone()) {
+            push_manifest_error(
+                file_label,
+                &format!("/loop/checkpoints/{checkpoint_idx}/id"),
+                format!("duplicate checkpoint id `{}` is not allowed", checkpoint.id),
+                &mut issues,
+            );
+        }
+
+        if !phase_index_by_id.contains_key(&checkpoint.before_phase) {
+            push_manifest_error(
+                file_label,
+                &format!("/loop/checkpoints/{checkpoint_idx}/before_phase"),
+                format!(
+                    "checkpoint target phase `{}` must match a declared phase id",
+                    checkpoint.before_phase
+                ),
+                &mut issues,
+            );
+        }
+
+        if !(phase_index_by_id.contains_key(&checkpoint.on_reject)
+            || is_loop_terminal(&checkpoint.on_reject))
+        {
+            push_manifest_error(
+                file_label,
+                &format!("/loop/checkpoints/{checkpoint_idx}/on_reject"),
+                format!(
+                    "checkpoint on_reject target `{}` must be a declared phase or supported terminal",
+                    checkpoint.on_reject
+                ),
+                &mut issues,
+            );
+        }
+
+        if checkpoint.r#type == "approval"
+            && !approval_targets.insert(checkpoint.before_phase.clone())
+        {
+            push_manifest_error(
+                file_label,
+                &format!("/loop/checkpoints/{checkpoint_idx}/before_phase"),
+                format!(
+                    "multiple approval checkpoints cannot target phase `{}`",
+                    checkpoint.before_phase
+                ),
+                &mut issues,
+            );
+        }
+    }
+
+    if let Some(error_policy) = &loop_metadata.error_policy
+        && let Some(tool_failure) = &error_policy.tool_failure
+    {
+        match tool_failure.action {
+            LoopToolFailureAction::Retry => {
+                if tool_failure.max_retries.is_none() {
+                    push_manifest_error(
+                        file_label,
+                        "/loop/error_policy/tool_failure/max_retries",
+                        "tool_failure.max_retries is required when action is `retry`".to_string(),
+                        &mut issues,
+                    );
+                }
+                if tool_failure.on_exhausted.is_none() {
+                    push_manifest_error(
+                        file_label,
+                        "/loop/error_policy/tool_failure/on_exhausted",
+                        "tool_failure.on_exhausted is required when action is `retry`".to_string(),
+                        &mut issues,
+                    );
+                }
+            }
+            _ => {
+                if tool_failure.max_retries.is_some() {
+                    push_manifest_error(
+                        file_label,
+                        "/loop/error_policy/tool_failure/max_retries",
+                        "tool_failure.max_retries is allowed only when action is `retry`"
+                            .to_string(),
+                        &mut issues,
+                    );
+                }
+                if tool_failure.on_exhausted.is_some() {
+                    push_manifest_error(
+                        file_label,
+                        "/loop/error_policy/tool_failure/on_exhausted",
+                        "tool_failure.on_exhausted is allowed only when action is `retry`"
+                            .to_string(),
+                        &mut issues,
+                    );
+                }
+            }
+        }
+
+        let can_fail_phase = matches!(tool_failure.action, LoopToolFailureAction::FailPhase)
+            || matches!(
+                tool_failure.on_exhausted,
+                Some(LoopToolFailureExhaustedAction::FailPhase)
+            );
+        if can_fail_phase && error_policy.phase_failure.is_none() {
+            push_manifest_error(
+                file_label,
+                "/loop/error_policy/phase_failure",
+                "phase_failure is required when tool_failure can fail the current phase"
+                    .to_string(),
+                &mut issues,
+            );
+        }
+    }
+
+    issues
+}
+
+fn validate_agent_bindings_semantics(file_label: &str, manifest: &AgentManifest) -> Vec<LintIssue> {
+    let mut issues = Vec::new();
+    let Some(bindings) = &manifest.bindings else {
+        return issues;
+    };
+
+    if manifest.loop_ref.is_none() && !bindings.phases.is_empty() {
+        push_manifest_error(
+            file_label,
+            "/bindings/phases",
+            "bindings.phases requires the agent to declare a top-level `loop` dependency"
+                .to_string(),
+            &mut issues,
+        );
+    }
+
+    let allowed = AgentBindingAllowedSets {
+        tools: canonical_package_reference_set(&manifest.tools),
+        skills: canonical_package_reference_set(&manifest.skills),
+        knowledge: canonical_package_reference_set(&manifest.knowledge),
+        memory: canonical_package_reference_set(&manifest.memory),
+        profiles: canonical_package_reference_set(&manifest.profiles),
+    };
+
+    if let Some(global) = &bindings.global {
+        validate_agent_binding_scope(
+            file_label,
+            "/bindings/global",
+            global,
+            &allowed,
+            &mut issues,
+        );
+    }
+
+    for (phase_name, scope) in &bindings.phases {
+        validate_agent_binding_scope(
+            file_label,
+            &format!("/bindings/phases/{phase_name}"),
+            scope,
+            &allowed,
+            &mut issues,
+        );
+    }
+
+    let mut seen_mcp_ids = HashSet::new();
+    for (binding_idx, binding) in bindings.mcp.iter().enumerate() {
+        if !seen_mcp_ids.insert(binding.id.clone()) {
+            push_manifest_error(
+                file_label,
+                &format!("/bindings/mcp/{binding_idx}/id"),
+                format!("duplicate MCP binding id `{}` is not allowed", binding.id),
+                &mut issues,
+            );
+        }
+        for (tool_idx, tool) in binding.tools.iter().enumerate() {
+            if !allowed.tools.contains(tool) {
+                push_manifest_error(
+                    file_label,
+                    &format!("/bindings/mcp/{binding_idx}/tools/{tool_idx}"),
+                    format!(
+                        "tool binding `{tool}` must match a top-level agent tool dependency by package identity"
+                    ),
+                    &mut issues,
+                );
+            }
+        }
+    }
+
+    issues
+}
+
 fn validate_non_empty_trimmed_string(
     file_label: &str,
     pointer: &str,
@@ -1327,6 +1926,131 @@ fn validate_profile_constraints(
             );
         }
     }
+}
+
+struct AgentBindingAllowedSets {
+    tools: HashSet<String>,
+    skills: HashSet<String>,
+    knowledge: HashSet<String>,
+    memory: HashSet<String>,
+    profiles: HashSet<String>,
+}
+
+fn validate_agent_binding_scope(
+    file_label: &str,
+    pointer: &str,
+    scope: &AgentBindingScope,
+    allowed: &AgentBindingAllowedSets,
+    issues: &mut Vec<LintIssue>,
+) {
+    validate_bound_package_strings(
+        file_label,
+        &json_pointer_child(pointer, "tools"),
+        "tool",
+        &scope.tools,
+        &allowed.tools,
+        issues,
+    );
+    validate_bound_package_strings(
+        file_label,
+        &json_pointer_child(pointer, "skills"),
+        "skill",
+        &scope.skills,
+        &allowed.skills,
+        issues,
+    );
+    validate_bound_package_strings(
+        file_label,
+        &json_pointer_child(pointer, "knowledge"),
+        "knowledge package",
+        &scope.knowledge,
+        &allowed.knowledge,
+        issues,
+    );
+    validate_bound_package_strings(
+        file_label,
+        &json_pointer_child(pointer, "profiles"),
+        "profile package",
+        &scope.profiles,
+        &allowed.profiles,
+        issues,
+    );
+
+    let mut seen_memory_packages = HashSet::new();
+    for (memory_idx, binding) in scope.memory.iter().enumerate() {
+        if !allowed.memory.contains(&binding.package) {
+            push_manifest_error(
+                file_label,
+                &format!("{pointer}/memory/{memory_idx}/package"),
+                format!(
+                    "memory binding `{}` must match a top-level agent memory dependency by package identity",
+                    binding.package
+                ),
+                issues,
+            );
+        }
+        if !seen_memory_packages.insert(binding.package.clone()) {
+            push_manifest_error(
+                file_label,
+                &format!("{pointer}/memory/{memory_idx}/package"),
+                format!(
+                    "duplicate memory binding package `{}` is not allowed within one binding scope",
+                    binding.package
+                ),
+                issues,
+            );
+        }
+    }
+}
+
+fn validate_bound_package_strings(
+    file_label: &str,
+    pointer: &str,
+    label: &str,
+    values: &[String],
+    allowed: &HashSet<String>,
+    issues: &mut Vec<LintIssue>,
+) {
+    for (idx, value) in values.iter().enumerate() {
+        if !allowed.contains(value) {
+            push_manifest_error(
+                file_label,
+                &json_pointer_child(pointer, &idx.to_string()),
+                format!(
+                    "{label} binding `{value}` must match a top-level dependency by package identity"
+                ),
+                issues,
+            );
+        }
+    }
+}
+
+fn canonical_package_reference_set(values: &[PackageReference]) -> HashSet<String> {
+    values
+        .iter()
+        .map(package_reference_identity)
+        .collect::<HashSet<_>>()
+}
+
+fn package_reference_identity(reference: &PackageReference) -> String {
+    match reference {
+        PackageReference::String(value) => package_identity(value),
+        PackageReference::Object { name, .. } => package_identity(name),
+    }
+}
+
+fn package_identity(value: &str) -> String {
+    let slash_idx = value.rfind('/').unwrap_or(0);
+    match value[slash_idx..].rfind('@') {
+        Some(relative_idx) if slash_idx + relative_idx > 0 => {
+            value[..slash_idx + relative_idx].to_string()
+        }
+        _ => value.to_string(),
+    }
+}
+
+fn is_loop_terminal(value: &str) -> bool {
+    matches!(value, "$end" | "$abort" | "$handoff")
 }
 
 fn validate_memory_keys<'a>(
@@ -2150,8 +2874,9 @@ pub fn parse_publish_manifest(value: &Value) -> Result<PublishManifest> {
         "profile" => Ok(PublishManifest::Profile(Box::new(parse_profile_manifest(
             value,
         )?))),
+        "loop" => Ok(PublishManifest::Loop(Box::new(parse_loop_manifest(value)?))),
         other => Err(anyhow!(format!(
-            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", kind=\"memory\", and kind=\"profile\" manifests (got kind=\"{}\")",
+            "`agentpm publish` supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", kind=\"memory\", kind=\"profile\", and kind=\"loop\" manifests (got kind=\"{}\")",
             other
         ))),
     }
@@ -2200,6 +2925,19 @@ pub fn parse_memory_manifest(value: &Value) -> Result<MemoryManifest> {
     if mf.kind != "memory" {
         return Err(anyhow!(format!(
             "expected kind=\"memory\" manifest (got kind=\"{}\")",
+            mf.kind
+        )));
+    }
+    Ok(mf)
+}
+
+#[allow(dead_code)]
+pub fn parse_loop_manifest(value: &Value) -> Result<LoopManifest> {
+    let mf: LoopManifest =
+        serde_json::from_value(value.clone()).context("parsing manifest into LoopManifest")?;
+    if mf.kind != "loop" {
+        return Err(anyhow!(format!(
+            "expected kind=\"loop\" manifest (got kind=\"{}\")",
             mf.kind
         )));
     }
@@ -2273,6 +3011,7 @@ mod tests {
                 "knowledge",
                 "memory",
                 "profile",
+                "loop",
             ]
         );
     }
@@ -2385,6 +3124,31 @@ mod tests {
                         }
                     }
                 }
+            }
+        })
+    }
+
+    fn base_loop_manifest() -> Value {
+        json!({
+            "kind": "loop",
+            "name": "incident-response-loop",
+            "version": "1.0.0",
+            "description": "A bounded triage, investigation, review, and response loop.",
+            "loop": {
+                "entry_phase": "triage",
+                "phases": [
+                    {
+                        "id": "triage",
+                        "objective": "Assess the incident."
+                    }
+                ],
+                "transitions": [
+                    {
+                        "from": "triage",
+                        "on": "complete",
+                        "to": "$end"
+                    }
+                ]
             }
         })
     }
@@ -3470,6 +4234,741 @@ mod tests {
                 ]
             }
         }));
+    }
+
+    #[test]
+    fn valid_minimal_loop_manifest_validates() {
+        assert_manifest_ok(base_loop_manifest());
+    }
+
+    #[test]
+    fn valid_full_loop_manifest_validates() {
+        assert_manifest_ok(json!({
+            "kind": "loop",
+            "name": "incident-response-loop",
+            "version": "1.0.0",
+            "description": "A bounded triage, investigation, review, and response loop with approval and escalation paths.",
+            "loop": {
+                "archetype": "investigate_review_respond",
+                "entry_phase": "triage",
+                "limits": {
+                    "max_steps": 16
+                },
+                "phases": [
+                    {
+                        "id": "triage",
+                        "objective": "Assess the incident and determine whether investigation should proceed.",
+                        "access": {
+                            "tools": false,
+                            "knowledge": true,
+                            "memory": {
+                                "read": true,
+                                "write": false
+                            }
+                        },
+                        "outcomes": [
+                            {
+                                "id": "proceed",
+                                "description": "The incident has enough information to begin investigation."
+                            },
+                            {
+                                "id": "cannot-proceed",
+                                "description": "The incident cannot be investigated safely or meaningfully."
+                            }
+                        ]
+                    },
+                    {
+                        "id": "investigate",
+                        "objective": "Gather evidence, test hypotheses, and update the working understanding of the incident.",
+                        "access": {
+                            "tools": true,
+                            "knowledge": true,
+                            "memory": {
+                                "read": true,
+                                "write": true
+                            }
+                        }
+                    },
+                    {
+                        "id": "review",
+                        "objective": "Evaluate the evidence and decide whether more investigation, escalation, or response is appropriate.",
+                        "access": {
+                            "tools": false,
+                            "knowledge": true,
+                            "memory": {
+                                "read": true,
+                                "write": false
+                            }
+                        },
+                        "outcomes": [
+                            {
+                                "id": "needs-more-evidence",
+                                "description": "Important questions remain and another investigation cycle is required."
+                            },
+                            {
+                                "id": "ready",
+                                "description": "The evidence is sufficient to prepare the incident response."
+                            },
+                            {
+                                "id": "escalate",
+                                "description": "The incident requires an external actor or system to take over."
+                            }
+                        ]
+                    },
+                    {
+                        "id": "respond",
+                        "objective": "Produce and deliver the final incident response using the reviewed evidence.",
+                        "access": {
+                            "tools": true,
+                            "knowledge": false,
+                            "memory": {
+                                "read": true,
+                                "write": true
+                            }
+                        }
+                    }
+                ],
+                "transitions": [
+                    { "from": "triage", "on": "proceed", "to": "investigate" },
+                    { "from": "triage", "on": "cannot-proceed", "to": "$abort" },
+                    { "from": "investigate", "on": "complete", "to": "review" },
+                    { "from": "review", "on": "needs-more-evidence", "to": "investigate" },
+                    { "from": "review", "on": "ready", "to": "respond" },
+                    { "from": "review", "on": "escalate", "to": "$handoff" },
+                    { "from": "respond", "on": "complete", "to": "$end" }
+                ],
+                "checkpoints": [
+                    {
+                        "id": "approve-response",
+                        "type": "approval",
+                        "before_phase": "respond",
+                        "on_reject": "review"
+                    }
+                ],
+                "error_policy": {
+                    "tool_failure": {
+                        "action": "retry",
+                        "max_retries": 2,
+                        "on_exhausted": "fail_phase"
+                    },
+                    "phase_failure": {
+                        "action": "abort"
+                    }
+                }
+            },
+            "readme": "README.md",
+            "license": {
+                "spdx": "Apache-2.0"
+            }
+        }));
+    }
+
+    #[test]
+    fn agent_manifest_with_full_bindings_validates() {
+        assert_manifest_ok(json!({
+            "kind": "agent",
+            "name": "incident-response-agent",
+            "version": "1.0.0",
+            "description": "Incident response agent.",
+            "tools": ["@acme/get-incident-context@1.0.0", "@acme/search-logs@1.0.0"],
+            "skills": ["@acme/incident-investigation@1.0.0"],
+            "knowledge": ["@acme/incident-runbooks@1.0.0"],
+            "memory": ["@acme/incident-memory@1.0.0"],
+            "profiles": ["@acme/incident-responder@1.0.0"],
+            "loop": "@acme/incident-response-loop@1.0.0",
+            "bindings": {
+                "global": {
+                    "tools": ["@acme/get-incident-context"],
+                    "skills": ["@acme/incident-investigation"],
+                    "knowledge": ["@acme/incident-runbooks"],
+                    "memory": [
+                        {
+                            "package": "@acme/incident-memory",
+                            "spaces": ["incident_state"]
+                        }
+                    ],
+                    "profiles": ["@acme/incident-responder"]
+                },
+                "phases": {
+                    "review": {
+                        "tools": ["@acme/search-logs"],
+                        "memory": [
+                            {
+                                "package": "@acme/incident-memory",
+                                "spaces": ["incident_state", "evidence"],
+                                "operations": ["compact_evidence"]
+                            }
+                        ]
+                    }
+                },
+                "mcp": [
+                    {
+                        "id": "investigation-tools",
+                        "tools": ["@acme/get-incident-context", "@acme/search-logs"]
+                    }
+                ],
+                "consumer_context": {
+                    "file": "INCIDENT_AGENT.md"
+                }
+            },
+            "examples": [
+                {
+                    "title": "Example prompt",
+                    "prompt": "Investigate the incident."
+                }
+            ]
+        }));
+    }
+
+    #[test]
+    fn agent_bindings_reject_invalid_binding_shapes() {
+        let cases = vec![
+            (
+                "versioned-tool-binding",
+                json!({
+                    "global": { "tools": ["@acme/get-incident-context@1.0.0"] }
+                }),
+                "/bindings/global/tools/0",
+            ),
+            (
+                "object-skill-binding",
+                json!({
+                    "global": { "skills": [{ "name": "@acme/incident-investigation" }] }
+                }),
+                "/bindings/global/skills/0",
+            ),
+            (
+                "unsafe-consumer-context",
+                json!({
+                    "consumer_context": { "file": "../INCIDENT_AGENT.md" }
+                }),
+                "/bindings/consumer_context/file",
+            ),
+            (
+                "empty-memory-selectors",
+                json!({
+                    "global": {
+                        "memory": [{ "package": "@acme/incident-memory" }]
+                    }
+                }),
+                "/bindings/global/memory/0",
+            ),
+            (
+                "invalid-memory-key",
+                json!({
+                    "global": {
+                        "memory": [{
+                            "package": "@acme/incident-memory",
+                            "spaces": ["incident-state"]
+                        }]
+                    }
+                }),
+                "/bindings/global/memory/0/spaces/0",
+            ),
+            (
+                "empty-mcp-tools",
+                json!({
+                    "mcp": [{ "id": "investigation-tools", "tools": [] }]
+                }),
+                "/bindings/mcp/0/tools",
+            ),
+            (
+                "invalid-mcp-id",
+                json!({
+                    "mcp": [{ "id": "investigation_tools", "tools": ["@acme/get-incident-context"] }]
+                }),
+                "/bindings/mcp/0/id",
+            ),
+        ];
+
+        for (label, bindings, expected_path) in cases {
+            let manifest = json!({
+                "kind": "agent",
+                "name": format!("invalid-{label}"),
+                "version": "1.0.0",
+                "description": "Invalid agent bindings should fail.",
+                "tools": ["@acme/get-incident-context@1.0.0"],
+                "skills": ["@acme/incident-investigation@1.0.0"],
+                "knowledge": ["@acme/incident-runbooks@1.0.0"],
+                "memory": ["@acme/incident-memory@1.0.0"],
+                "profiles": ["@acme/incident-responder@1.0.0"],
+                "loop": "@acme/incident-response-loop@1.0.0",
+                "bindings": bindings
+            });
+
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.instance_path == expected_path),
+                "expected invalid binding path {expected_path} for {label}, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn loop_manifest_rejects_invalid_loop_shapes() {
+        let mut invalid_id = base_loop_manifest();
+        invalid_id["loop"]["phases"][0]["id"] = json!("triage_phase");
+        let issues = assert_manifest_invalid(invalid_id);
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/loop"),
+            "expected invalid phase id failure, got: {issues:#?}"
+        );
+
+        let mut empty_outcomes = base_loop_manifest();
+        empty_outcomes["loop"]["phases"][0]["outcomes"] = json!([]);
+        let issues = assert_manifest_invalid(empty_outcomes);
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/loop"),
+            "expected empty outcomes failure, got: {issues:#?}"
+        );
+
+        let mut bad_terminal = base_loop_manifest();
+        bad_terminal["loop"]["transitions"][0]["to"] = json!("$pause");
+        let issues = assert_manifest_invalid(bad_terminal);
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/loop"),
+            "expected invalid terminal target failure, got: {issues:#?}"
+        );
+
+        let mut bad_access = base_loop_manifest();
+        bad_access["loop"]["phases"][0]["access"] = json!({ "skills": true });
+        let issues = assert_manifest_invalid(bad_access);
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/loop"),
+            "expected unsupported access field failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn bindings_are_rejected_on_non_agent_manifests() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "loop",
+            "name": "bad-loop",
+            "version": "1.0.0",
+            "description": "Loop packages must not declare Agent bindings.",
+            "loop": {
+                "entry_phase": "triage",
+                "phases": [{ "id": "triage", "objective": "Assess." }],
+                "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+            },
+            "bindings": {
+                "global": {
+                    "tools": ["@acme/get-incident-context"]
+                }
+            }
+        }));
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/kind"),
+            "expected bindings rejection on non-agent manifest, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn loop_manifest_rejects_package_dependencies() {
+        let mut manifest = base_loop_manifest();
+        manifest["tools"] = json!(["@acme/get-incident-context@1.0.0"]);
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues.iter().any(|issue| issue.instance_path == "/kind"),
+            "expected dependency rejection for kind=loop, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn loop_semantics_reject_whitespace_only_text_fields() {
+        let mut manifest = base_loop_manifest();
+        manifest["loop"]["archetype"] = json!("   ");
+        manifest["loop"]["phases"][0]["objective"] = json!("   ");
+        manifest["loop"]["phases"][0]["outcomes"] = json!([
+            {
+                "id": "complete-review",
+                "description": "   "
+            }
+        ]);
+        manifest["loop"]["transitions"][0]["on"] = json!("complete-review");
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/archetype")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/phases/0/objective")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/phases/0/outcomes/0/description")
+        );
+    }
+
+    #[test]
+    fn loop_semantics_reject_invalid_entry_phase_and_transitions() {
+        let mut manifest = base_loop_manifest();
+        manifest["loop"]["entry_phase"] = json!("review");
+        manifest["loop"]["transitions"] = json!([
+            { "from": "triage", "on": "wrong", "to": "$end" },
+            { "from": "missing", "on": "complete", "to": "$end" },
+            { "from": "triage", "on": "complete", "to": "$pause" }
+        ]);
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/entry_phase")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions/0/on")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions/1/from")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions/2/to")
+        );
+    }
+
+    #[test]
+    fn loop_semantics_require_exactly_one_transition_and_reachable_terminal() {
+        let manifest = json!({
+            "kind": "loop",
+            "name": "bad-loop",
+            "version": "1.0.0",
+            "description": "Loop with missing and duplicate transitions.",
+            "loop": {
+                "entry_phase": "triage",
+                "phases": [
+                    {
+                        "id": "triage",
+                        "objective": "Assess work.",
+                        "outcomes": [
+                            { "id": "proceed", "description": "Proceed." },
+                            { "id": "stop", "description": "Stop." }
+                        ]
+                    },
+                    {
+                        "id": "review",
+                        "objective": "Review work."
+                    },
+                    {
+                        "id": "orphan",
+                        "objective": "Never reached."
+                    }
+                ],
+                "transitions": [
+                    { "from": "triage", "on": "proceed", "to": "review" },
+                    { "from": "triage", "on": "proceed", "to": "review" },
+                    { "from": "review", "on": "complete", "to": "triage" }
+                ]
+            }
+        });
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions"
+                    && issue.message.contains("triage")
+                    && issue.message.contains("proceed"))
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions"
+                    && issue.message.contains("stop"))
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/phases/2/id")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/transitions"
+                    && issue.message.contains("terminal"))
+        );
+    }
+
+    #[test]
+    fn loop_semantics_reject_invalid_checkpoints() {
+        let mut manifest = base_loop_manifest();
+        manifest["loop"]["phases"] = json!([
+            { "id": "triage", "objective": "Assess." },
+            { "id": "respond", "objective": "Respond." }
+        ]);
+        manifest["loop"]["transitions"] = json!([
+            { "from": "triage", "on": "complete", "to": "respond" },
+            { "from": "respond", "on": "complete", "to": "$end" }
+        ]);
+        manifest["loop"]["checkpoints"] = json!([
+            {
+                "id": "approve-response",
+                "type": "approval",
+                "before_phase": "respond",
+                "on_reject": "triage"
+            },
+            {
+                "id": "approve-response",
+                "type": "approval",
+                "before_phase": "respond",
+                "on_reject": "$resume"
+            }
+        ]);
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/checkpoints/1/id")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/checkpoints/1/before_phase")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/checkpoints/1/on_reject")
+        );
+    }
+
+    #[test]
+    fn loop_semantics_reject_invalid_tool_failure_policy_shapes() {
+        let mut missing_retry_fields = base_loop_manifest();
+        missing_retry_fields["loop"]["error_policy"] = json!({
+            "tool_failure": {
+                "action": "retry"
+            }
+        });
+        let issues = assert_manifest_invalid(missing_retry_fields);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/error_policy/tool_failure/max_retries")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/error_policy/tool_failure/on_exhausted")
+        );
+
+        let mut invalid_non_retry = base_loop_manifest();
+        invalid_non_retry["loop"]["error_policy"] = json!({
+            "tool_failure": {
+                "action": "abort",
+                "max_retries": 2,
+                "on_exhausted": "handoff"
+            }
+        });
+        let issues = assert_manifest_invalid(invalid_non_retry);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/error_policy/tool_failure/max_retries")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/error_policy/tool_failure/on_exhausted")
+        );
+
+        let mut missing_phase_failure = base_loop_manifest();
+        missing_phase_failure["loop"]["error_policy"] = json!({
+            "tool_failure": {
+                "action": "retry",
+                "max_retries": 1,
+                "on_exhausted": "fail_phase"
+            }
+        });
+        let issues = assert_manifest_invalid(missing_phase_failure);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/loop/error_policy/phase_failure")
+        );
+    }
+
+    #[test]
+    fn agent_binding_semantics_reject_missing_top_level_bindings_and_duplicates() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "agent",
+            "name": "bad-bindings-agent",
+            "version": "1.0.0",
+            "description": "Agent with bad bindings.",
+            "tools": ["@acme/get-incident-context@1.0.0"],
+            "skills": ["@acme/incident-investigation@1.0.0"],
+            "knowledge": ["@acme/incident-runbooks@1.0.0"],
+            "memory": ["@acme/incident-memory@1.0.0"],
+            "profiles": ["@acme/incident-responder@1.0.0"],
+            "bindings": {
+                "global": {
+                    "tools": ["@acme/missing-tool"],
+                    "skills": ["@acme/missing-skill"],
+                    "knowledge": ["@acme/missing-knowledge"],
+                    "memory": [
+                        {
+                            "package": "@acme/missing-memory",
+                            "spaces": ["incident_state"]
+                        },
+                        {
+                            "package": "@acme/missing-memory",
+                            "spaces": ["evidence"]
+                        }
+                    ],
+                    "profiles": ["@acme/missing-profile"]
+                },
+                "phases": {
+                    "review": {
+                        "tools": ["@acme/get-incident-context"]
+                    }
+                },
+                "mcp": [
+                    {
+                        "id": "ops-tools",
+                        "tools": ["@acme/missing-tool"]
+                    },
+                    {
+                        "id": "ops-tools",
+                        "tools": ["@acme/get-incident-context"]
+                    }
+                ]
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/tools/0")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/skills/0")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/knowledge/0")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/memory/0/package")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/memory/1/package")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/global/profiles/0")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/phases")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/mcp/0/tools/0")
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/bindings/mcp/1/id")
+        );
+    }
+
+    #[test]
+    fn template_manifest_accepts_zero_or_one_loop_and_rejects_plural_loop_shapes() {
+        let no_loop = json!({
+            "kind": "template",
+            "name": "incident-template",
+            "version": "0.1.0",
+            "description": "Incident template.",
+            "template": {
+                "display_name": "Incident Template",
+                "use_case": "incident-response",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+            }
+        });
+        assert_manifest_ok(no_loop);
+
+        let one_loop = json!({
+            "kind": "template",
+            "name": "incident-template",
+            "version": "0.1.0",
+            "description": "Incident template.",
+            "template": {
+                "display_name": "Incident Template",
+                "use_case": "incident-response",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "loop": "@acme/incident-response-loop@1.0.0"
+                },
+                "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+            }
+        });
+        assert_manifest_ok(one_loop);
+
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "incident-template",
+            "version": "0.1.0",
+            "description": "Incident template.",
+            "template": {
+                "display_name": "Incident Template",
+                "use_case": "incident-response",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "loop": [
+                        "@acme/incident-response-loop@1.0.0",
+                        "@acme/fallback-loop@1.0.0"
+                    ]
+                },
+                "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+            }
+        }));
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/template/dependencies/loop"),
+            "expected singular template loop shape failure, got: {issues:#?}"
+        );
     }
 
     #[test]
@@ -5372,6 +6871,127 @@ mod tests {
     }
 
     #[test]
+    fn top_level_loop_is_rejected_for_every_non_agent_non_loop_kind() {
+        let cases = vec![
+            json!({
+                "kind": "tool",
+                "name": "bad-tool-loop",
+                "version": "0.1.0",
+                "description": "Tools must not declare top-level loop.",
+                "entrypoint": { "command": "python", "args": ["main.py"] },
+                "inputs": { "type": "object" },
+                "outputs": { "type": "object" },
+                "files": ["main.py"],
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+            json!({
+                "kind": "template",
+                "name": "bad-template-loop",
+                "version": "0.1.0",
+                "description": "Templates must not declare top-level loop.",
+                "template": {
+                    "display_name": "Bad Template",
+                    "use_case": "support",
+                    "execution_surfaces": ["python-sdk"],
+                    "files_root": "template",
+                    "variables": [],
+                    "dependencies": { "tools": [], "agents": [] },
+                    "entrypoints": [{ "label": "Run", "command": "python main.py" }]
+                },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+            json!({
+                "kind": "skill",
+                "name": "bad-skill-loop",
+                "version": "0.1.0",
+                "description": "Skills must not declare top-level loop.",
+                "skill": { "entrypoint": "SKILL.md" },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+            json!({
+                "kind": "knowledge",
+                "name": "bad-knowledge-loop",
+                "version": "0.1.0",
+                "description": "Knowledge must not declare top-level loop.",
+                "knowledge": { "mode": "context" },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+            json!({
+                "kind": "memory",
+                "name": "bad-memory-loop",
+                "version": "0.1.0",
+                "description": "Memory must not declare top-level loop.",
+                "memory": {
+                    "scopes": { "user": { "description": "User scope." } },
+                    "record_types": {
+                        "preference": {
+                            "version": "1.0.0",
+                            "description": "Preference record.",
+                            "schema": "schemas/preference.schema.json"
+                        }
+                    },
+                    "spaces": {
+                        "profile": {
+                            "description": "Profile document.",
+                            "model": "document",
+                            "record_types": ["preference"],
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["key"] }
+                        }
+                    }
+                },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+            json!({
+                "kind": "profile",
+                "name": "bad-profile-loop",
+                "version": "1.0.0",
+                "description": "Profiles must not declare top-level loop.",
+                "profile": {
+                    "identity": { "role": "Support agent" },
+                    "objectives": ["Help."],
+                    "communication": { "tone": ["warm"], "verbosity": "concise" }
+                },
+                "loop": {
+                    "entry_phase": "triage",
+                    "phases": [{ "id": "triage", "objective": "Assess." }],
+                    "transitions": [{ "from": "triage", "on": "complete", "to": "$end" }]
+                }
+            }),
+        ];
+
+        for manifest in cases {
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.schema_path == "/dependentSchemas/loop/oneOf"),
+                "expected top-level loop rejection outside kind=agent/kind=loop, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
     fn non_agent_non_memory_top_level_memory_fails() {
         let issues = assert_manifest_invalid(json!({
             "kind": "skill",
@@ -6260,7 +7880,8 @@ mod tests {
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
             | PublishManifest::Memory(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected tool publish manifest")
             }
         }
@@ -6291,7 +7912,8 @@ mod tests {
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
             | PublishManifest::Memory(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected agent publish manifest")
             }
         }
@@ -6329,7 +7951,8 @@ mod tests {
             | PublishManifest::Template(_)
             | PublishManifest::Knowledge(_)
             | PublishManifest::Memory(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected skill publish manifest")
             }
         }
@@ -6375,7 +7998,8 @@ mod tests {
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
             | PublishManifest::Memory(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected template publish manifest")
             }
         }
@@ -6410,7 +8034,8 @@ mod tests {
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
             | PublishManifest::Memory(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected knowledge publish manifest")
             }
         }
@@ -6463,7 +8088,8 @@ mod tests {
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
-            | PublishManifest::Profile(_) => {
+            | PublishManifest::Profile(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected memory publish manifest")
             }
         }
@@ -6499,8 +8125,31 @@ mod tests {
             | PublishManifest::Template(_)
             | PublishManifest::Skill(_)
             | PublishManifest::Knowledge(_)
-            | PublishManifest::Memory(_) => {
+            | PublishManifest::Memory(_)
+            | PublishManifest::Loop(_) => {
                 panic!("expected profile publish manifest")
+            }
+        }
+    }
+
+    #[test]
+    fn parse_publish_manifest_dispatches_loop_kind() {
+        let manifest = base_loop_manifest();
+
+        match parse_publish_manifest(&manifest).unwrap() {
+            PublishManifest::Loop(mf) => {
+                assert_eq!(mf.kind, "loop");
+                assert_eq!(mf.name, "incident-response-loop");
+                assert_eq!(mf.r#loop.entry_phase, "triage");
+            }
+            PublishManifest::Tool(_)
+            | PublishManifest::Agent(_)
+            | PublishManifest::Template(_)
+            | PublishManifest::Skill(_)
+            | PublishManifest::Knowledge(_)
+            | PublishManifest::Memory(_)
+            | PublishManifest::Profile(_) => {
+                panic!("expected loop publish manifest")
             }
         }
     }
@@ -6516,7 +8165,7 @@ mod tests {
         let err = parse_publish_manifest(&manifest).unwrap_err().to_string();
         assert!(
             err.contains(
-                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", kind=\"memory\", and kind=\"profile\""
+                "supports kind=\"tool\", kind=\"agent\", kind=\"template\", kind=\"skill\", kind=\"knowledge\", kind=\"memory\", kind=\"profile\", and kind=\"loop\""
             ),
             "unexpected error: {err}"
         );
@@ -6734,6 +8383,177 @@ mod tests {
             }
             PackageReference::String(_) => panic!("expected object dependency reference"),
         }
+    }
+
+    #[test]
+    fn parse_template_manifest_preserves_loop_dependencies() {
+        let manifest = json!({
+            "kind": "template",
+            "name": "incident-template",
+            "version": "0.1.0",
+            "description": "Incident template.",
+            "template": {
+                "display_name": "Incident Template",
+                "use_case": "incident-response",
+                "execution_surfaces": ["python-sdk"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": [],
+                    "loop": "@zack/incident-response-loop@1.0.0"
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "python main.py"
+                    }
+                ]
+            }
+        });
+
+        let parsed = parse_template_manifest(&manifest).unwrap();
+        match parsed.template.dependencies.r#loop.as_ref() {
+            Some(PackageReference::String(value)) => {
+                assert_eq!(value, "@zack/incident-response-loop@1.0.0");
+            }
+            Some(PackageReference::Object { .. }) => panic!("expected string dependency reference"),
+            None => panic!("expected loop dependency"),
+        }
+    }
+
+    #[test]
+    fn parse_loop_manifest_accepts_loop_kind() {
+        let manifest = json!({
+            "kind": "loop",
+            "name": "incident-response-loop",
+            "version": "1.0.0",
+            "description": "Incident loop.",
+            "loop": {
+                "entry_phase": "triage",
+                "phases": [
+                    {
+                        "id": "triage",
+                        "objective": "Assess the incident."
+                    }
+                ],
+                "transitions": [
+                    {
+                        "from": "triage",
+                        "on": "complete",
+                        "to": "$end"
+                    }
+                ]
+            }
+        });
+
+        let parsed = parse_loop_manifest(&manifest).unwrap();
+        assert_eq!(parsed.kind, "loop");
+        assert_eq!(parsed.name, "incident-response-loop");
+        assert_eq!(parsed.r#loop.entry_phase, "triage");
+        assert_eq!(parsed.r#loop.phases.len(), 1);
+        assert_eq!(parsed.r#loop.transitions.len(), 1);
+    }
+
+    #[test]
+    fn parse_loop_manifest_rejects_wrong_kind() {
+        let manifest = json!({
+            "kind": "profile",
+            "name": "incident-response-loop",
+            "version": "1.0.0",
+            "description": "Incident loop with the wrong kind.",
+            "loop": {
+                "entry_phase": "triage",
+                "phases": [
+                    {
+                        "id": "triage",
+                        "objective": "Assess the incident."
+                    }
+                ],
+                "transitions": [
+                    {
+                        "from": "triage",
+                        "on": "complete",
+                        "to": "$end"
+                    }
+                ]
+            }
+        });
+
+        let err = parse_loop_manifest(&manifest).unwrap_err().to_string();
+        assert!(
+            err.contains("expected kind=\"loop\" manifest"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn agent_manifest_typed_parsing_preserves_loop_and_bindings() {
+        let manifest = json!({
+            "kind": "agent",
+            "name": "incident-response-agent",
+            "version": "1.0.0",
+            "description": "Incident response agent.",
+            "tools": ["@acme/get-incident-context@1.0.0"],
+            "skills": ["@acme/incident-investigation@1.0.0"],
+            "knowledge": ["@acme/incident-runbooks@1.0.0"],
+            "memory": ["@acme/incident-memory@1.0.0"],
+            "profiles": ["@acme/incident-responder@1.0.0"],
+            "loop": "@acme/incident-response-loop@1.0.0",
+            "bindings": {
+                "global": {
+                    "tools": ["@acme/get-incident-context"],
+                    "memory": [
+                        {
+                            "package": "@acme/incident-memory",
+                            "operations": ["compact_evidence"]
+                        }
+                    ]
+                },
+                "phases": {
+                    "review": {
+                        "profiles": ["@acme/incident-responder"]
+                    }
+                },
+                "mcp": [
+                    {
+                        "id": "investigation-tools",
+                        "tools": ["@acme/get-incident-context"]
+                    }
+                ],
+                "consumer_context": {
+                    "file": "INCIDENT_AGENT.md"
+                }
+            }
+        });
+
+        let parsed: AgentManifest = serde_json::from_value(manifest).unwrap();
+        match parsed.loop_ref {
+            Some(PackageReference::String(value)) => {
+                assert_eq!(value, "@acme/incident-response-loop@1.0.0");
+            }
+            Some(PackageReference::Object { .. }) => panic!("expected string loop reference"),
+            None => panic!("expected loop reference"),
+        }
+        let bindings = parsed.bindings.expect("expected bindings");
+        assert_eq!(
+            bindings
+                .global
+                .as_ref()
+                .expect("expected global bindings")
+                .tools,
+            vec!["@acme/get-incident-context".to_string()]
+        );
+        assert_eq!(bindings.phases.len(), 1);
+        assert_eq!(bindings.mcp.len(), 1);
+        assert_eq!(
+            bindings
+                .consumer_context
+                .as_ref()
+                .expect("expected consumer context")
+                .file,
+            "INCIDENT_AGENT.md"
+        );
     }
 
     #[test]

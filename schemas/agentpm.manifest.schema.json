@@ -30,6 +30,12 @@
         }
       ]
     },
+    "packageIdentity": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^@[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}$",
+      "description": "Versionless package identity used by Agent bindings to reference already-declared dependencies."
+    },
     "promptExample": {
       "type": "object",
       "additionalProperties": false,
@@ -952,6 +958,368 @@
         "profiles": {
           "type": "array",
           "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "loop": {
+          "$ref": "#/$defs/packageRef"
+        }
+      }
+    },
+    "loopAccessMemory": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "read": {
+          "type": "boolean",
+          "description": "Optional Loop-authored intent for whether Memory reads are permitted in this phase."
+        },
+        "write": {
+          "type": "boolean",
+          "description": "Optional Loop-authored intent for whether Memory writes are permitted in this phase."
+        }
+      }
+    },
+    "loopPhaseAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "type": "boolean",
+          "description": "Optional Loop-authored intent for whether Tool use is permitted in this phase."
+        },
+        "knowledge": {
+          "type": "boolean",
+          "description": "Optional Loop-authored intent for whether Knowledge use is permitted in this phase."
+        },
+        "memory": {
+          "$ref": "#/$defs/loopAccessMemory",
+          "description": "Optional Loop-authored intent for whether Memory reads and writes are permitted in this phase."
+        }
+      }
+    },
+    "loopOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required stable identifier for the authored phase outcome."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of what the outcome means."
+        }
+      }
+    },
+    "loopPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "objective"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required stable phase identifier."
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable objective describing what this phase is intended to accomplish."
+        },
+        "access": {
+          "$ref": "#/$defs/loopPhaseAccess",
+          "description": "Optional declarative access-intent metadata for this phase."
+        },
+        "outcomes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/loopOutcome" },
+          "description": "Optional explicit authored outcomes for this phase. When omitted, the phase uses an implicit `complete` outcome."
+        }
+      }
+    },
+    "loopTerminalTarget": {
+      "type": "string",
+      "enum": ["$end", "$abort", "$handoff"],
+      "description": "Standardized Loop terminal target."
+    },
+    "loopTransitionTarget": {
+      "oneOf": [
+        { "$ref": "#/$defs/stableKebabId" },
+        { "$ref": "#/$defs/loopTerminalTarget" }
+      ]
+    },
+    "loopTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "on", "to"],
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required source phase identifier."
+        },
+        "on": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required outcome identifier for the source phase."
+        },
+        "to": {
+          "$ref": "#/$defs/loopTransitionTarget",
+          "description": "Required target phase identifier or standardized terminal target."
+        }
+      }
+    },
+    "loopLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional maximum number of Loop phase executions a compatible runtime may allow."
+        }
+      }
+    },
+    "loopCheckpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "before_phase", "on_reject"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required stable identifier for the declared checkpoint."
+        },
+        "type": {
+          "type": "string",
+          "const": "approval",
+          "description": "Required checkpoint type. approval is the only supported checkpoint type in this contract."
+        },
+        "before_phase": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required phase identifier before which approval should be requested."
+        },
+        "on_reject": {
+          "$ref": "#/$defs/loopTransitionTarget",
+          "description": "Required phase identifier or terminal target to transfer control to when approval is rejected."
+        }
+      }
+    },
+    "loopToolFailureRetryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "max_retries", "on_exhausted"],
+      "properties": {
+        "action": { "type": "string", "const": "retry" },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required positive retry count when tool failure handling uses retry."
+        },
+        "on_exhausted": {
+          "type": "string",
+          "enum": ["fail_phase", "abort", "handoff"],
+          "description": "Required resolution path when retries are exhausted."
+        }
+      }
+    },
+    "loopToolFailureDirectPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["fail_phase", "abort", "handoff"],
+          "description": "Required direct tool failure policy action when retries are not used."
+        }
+      }
+    },
+    "loopToolFailurePolicy": {
+      "oneOf": [
+        { "$ref": "#/$defs/loopToolFailureRetryPolicy" },
+        { "$ref": "#/$defs/loopToolFailureDirectPolicy" }
+      ]
+    },
+    "loopPhaseFailurePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["abort", "handoff"],
+          "description": "Required phase failure policy action."
+        }
+      }
+    },
+    "loopErrorPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool_failure": {
+          "$ref": "#/$defs/loopToolFailurePolicy",
+          "description": "Optional Tool failure handling metadata."
+        },
+        "phase_failure": {
+          "$ref": "#/$defs/loopPhaseFailurePolicy",
+          "description": "Optional phase failure handling metadata."
+        }
+      }
+    },
+    "loopMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_phase", "phases", "transitions"],
+      "properties": {
+        "archetype": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional open-ended descriptive label for the authored orchestration style."
+        },
+        "entry_phase": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required phase identifier that names the graph entry point."
+        },
+        "limits": {
+          "$ref": "#/$defs/loopLimits",
+          "description": "Optional Loop limits metadata."
+        },
+        "phases": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/loopPhase" },
+          "description": "Required authored Loop phases."
+        },
+        "transitions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/loopTransition" },
+          "description": "Required deterministic phase transitions."
+        },
+        "checkpoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/loopCheckpoint" },
+          "description": "Optional approval checkpoint declarations."
+        },
+        "error_policy": {
+          "$ref": "#/$defs/loopErrorPolicy",
+          "description": "Optional Tool and phase failure handling metadata."
+        }
+      }
+    },
+    "agentMemoryBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package"],
+      "properties": {
+        "package": {
+          "$ref": "#/$defs/packageIdentity",
+          "description": "Required versionless Memory Blueprint package identity."
+        },
+        "spaces": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryKey" },
+          "description": "Optional unique Memory space identifiers associated with this binding."
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryKey" },
+          "description": "Optional unique Memory operation identifiers associated with this binding."
+        }
+      },
+      "anyOf": [
+        { "required": ["spaces"] },
+        { "required": ["operations"] }
+      ]
+    },
+    "agentBindingPackageIdentities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/packageIdentity" }
+    },
+    "agentBindingScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "$ref": "#/$defs/agentBindingPackageIdentities",
+          "description": "Optional versionless Tool package identities associated with this binding scope."
+        },
+        "skills": {
+          "$ref": "#/$defs/agentBindingPackageIdentities",
+          "description": "Optional versionless Skill package identities associated with this binding scope."
+        },
+        "knowledge": {
+          "$ref": "#/$defs/agentBindingPackageIdentities",
+          "description": "Optional versionless Knowledge package identities associated with this binding scope."
+        },
+        "memory": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/agentMemoryBinding" },
+          "description": "Optional Memory binding metadata associated with this binding scope."
+        },
+        "profiles": {
+          "$ref": "#/$defs/agentBindingPackageIdentities",
+          "description": "Optional versionless Instruction Profile package identities associated with this binding scope."
+        }
+      }
+    },
+    "agentMcpBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "tools"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required stable identifier for the named MCP surface."
+        },
+        "tools": {
+          "$ref": "#/$defs/agentBindingPackageIdentities",
+          "description": "Required non-empty unique versionless Tool package identities exposed through this MCP surface."
+        }
+      }
+    },
+    "agentConsumerContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file"],
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required safe relative path to the consumer-owned context file."
+        }
+      }
+    },
+    "agentBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "global": {
+          "$ref": "#/$defs/agentBindingScope",
+          "description": "Optional Agent-global authored package bindings."
+        },
+        "phases": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/stableKebabId" },
+          "additionalProperties": { "$ref": "#/$defs/agentBindingScope" },
+          "description": "Optional phase-scoped authored package bindings keyed by authored Loop phase identifier."
+        },
+        "mcp": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/agentMcpBinding" },
+          "description": "Optional named MCP surfaces for bound Tool packages."
+        },
+        "consumer_context": {
+          "$ref": "#/$defs/agentConsumerContext",
+          "description": "Optional consumer-owned context metadata."
         }
       }
     },
@@ -1016,9 +1384,15 @@
         }
       }
     },
-    "profileConstraintId": {
+    "stableKebabId": {
       "type": "string",
       "pattern": "^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){0,63}$",
+      "description": "Stable lowercase kebab-case identifier used by Loop phases, outcomes, checkpoints, MCP surfaces, and Profile constraints."
+    },
+    "profileConstraintId": {
+      "allOf": [
+        { "$ref": "#/$defs/stableKebabId" }
+      ],
       "description": "Stable lowercase kebab-case identifier for a declared Instruction Profile constraint."
     },
     "profileIdentity": {
@@ -1289,8 +1663,25 @@
         }
       ]
     },
+    "loop":  {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": { "const": "agent" },
+            "loop": { "$ref": "#/$defs/packageRef" }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "loop" },
+            "loop": { "$ref": "#/$defs/loopMetadata" }
+          }
+        }
+      ]
+    },
     "profile":    { "properties": { "kind": { "const": "profile" } } },
     "profiles":   { "properties": { "kind": { "const": "agent" } } },
+    "bindings":   { "properties": { "kind": { "const": "agent" } } },
     "entrypoint": {
       "properties": { "kind": { "const": "tool" } }
     },
@@ -1304,7 +1695,7 @@
 
   "properties": {
     "$schema": { "type": "string", "format": "uri" },
-    "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill", "knowledge", "memory", "profile"] },
+    "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill", "knowledge", "memory", "profile", "loop"] },
     "name": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,63}$" },
     "version": {
       "type": "string",
@@ -1341,11 +1732,18 @@
         }
       ]
     },
+    "loop": {
+      "oneOf": [
+        { "$ref": "#/$defs/packageRef" },
+        { "$ref": "#/$defs/loopMetadata" }
+      ]
+    },
     "profile": { "$ref": "#/$defs/profileMetadata" },
     "profiles": {
       "type": "array",
       "items": { "$ref": "#/$defs/packageRef" }
     },
+    "bindings": { "$ref": "#/$defs/agentBindings" },
     "examples": {
       "type": "array",
       "items": { "$ref": "#/$defs/promptExample" }
@@ -1438,6 +1836,10 @@
     {
       "properties": { "kind": { "const": "profile" } },
       "required": ["profile"]
+    },
+    {
+      "properties": { "kind": { "const": "loop" } },
+      "required": ["loop"]
     }
   ]
 }

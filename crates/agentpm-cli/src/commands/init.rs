@@ -1,9 +1,9 @@
 use crate::assets::{
     AGENT_JSON_TPL, KNOWLEDGE_CONTEXT_AGENT_JSON_TPL, KNOWLEDGE_CONTEXT_README_MD_TPL,
-    KNOWLEDGE_VECTOR_AGENT_JSON_TPL, KNOWLEDGE_VECTOR_README_MD_TPL, MEMORY_AGENT_JSON_TPL,
-    MEMORY_README_MD_TPL, MEMORY_SCHEMA_JSON_TPL, PROFILE_AGENT_JSON_TPL, PROFILE_README_MD_TPL,
-    SKILL_AGENT_JSON_TPL, SKILL_INIT_MD_TPL, TEMPLATE_GENERATED_README_MD_TPL,
-    TEMPLATE_PACKAGE_AGENT_JSON_TPL, TOOL_AGENT_JSON_TPL,
+    KNOWLEDGE_VECTOR_AGENT_JSON_TPL, KNOWLEDGE_VECTOR_README_MD_TPL, LOOP_AGENT_JSON_TPL,
+    LOOP_README_MD_TPL, MEMORY_AGENT_JSON_TPL, MEMORY_README_MD_TPL, MEMORY_SCHEMA_JSON_TPL,
+    PROFILE_AGENT_JSON_TPL, PROFILE_README_MD_TPL, SKILL_AGENT_JSON_TPL, SKILL_INIT_MD_TPL,
+    TEMPLATE_GENERATED_README_MD_TPL, TEMPLATE_PACKAGE_AGENT_JSON_TPL, TOOL_AGENT_JSON_TPL,
 };
 use crate::io::fs::{ensure_dirs, write_atomic};
 use crate::prelude::*;
@@ -19,6 +19,7 @@ pub enum InitKind {
     Knowledge,
     Memory,
     Profile,
+    Loop,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -29,7 +30,7 @@ pub enum KnowledgeInitMode {
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// What to scaffold: a single-tool package, a composed agent, a workflow template, a skill, a knowledge package, a memory blueprint, or an instruction profile
+    /// What to scaffold: a single-tool package, a composed agent, a workflow template, a skill, a knowledge package, a memory blueprint, an instruction profile, or a loop package
     #[arg(long, value_enum, default_value = "tool")]
     kind: InitKind,
 
@@ -235,6 +236,24 @@ impl InitArgs {
 
                 let title = humanize_name(&self.name);
                 let readme = render(PROFILE_README_MD_TPL, &[("PROFILE_TITLE", &title)]);
+                let readme_path = out.join("README.md");
+                write_atomic(&readme_path, &readme)?;
+                println!("Created {}", readme_path.display());
+            }
+            InitKind::Loop => {
+                let rendered = render(
+                    LOOP_AGENT_JSON_TPL,
+                    &[
+                        ("LOOP_NAME", &self.name),
+                        ("LOOP_DESCRIPTION", &self.description),
+                    ],
+                );
+                let path = out.join("agent.json");
+                write_atomic(&path, &rendered)?;
+                println!("Created {}", path.display());
+
+                let title = humanize_name(&self.name);
+                let readme = render(LOOP_README_MD_TPL, &[("LOOP_TITLE", &title)]);
                 let readme_path = out.join("README.md");
                 write_atomic(&readme_path, &readme)?;
                 println!("Created {}", readme_path.display());
@@ -658,6 +677,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn init_loop_creates_valid_manifest_and_readme_only() {
+        let out = temp_dir("loop");
+        let args = InitArgs {
+            kind: InitKind::Loop,
+            mode: KnowledgeInitMode::Context,
+            name: "incident-response-loop".into(),
+            description: "Bounded review and execution loop.".into(),
+            out_dir: Some(out.clone()),
+        };
+
+        args.run("http://example.invalid".into()).await.unwrap();
+
+        let manifest_path = out.join("agent.json");
+        let readme_path = out.join("README.md");
+
+        assert!(manifest_path.exists());
+        assert!(readme_path.exists());
+        assert!(!out.join("loop").exists());
+        assert!(!out.join("loops").exists());
+        assert!(!out.join("schemas").exists());
+        assert!(!out.join("scripts").exists());
+        assert!(!out.join("references").exists());
+
+        validate(&manifest_path);
+
+        let manifest_json: Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        assert_eq!(
+            manifest_json["$schema"],
+            "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json"
+        );
+        assert_eq!(manifest_json["kind"], "loop");
+        assert_eq!(manifest_json["name"], "incident-response-loop");
+        assert_eq!(manifest_json["readme"], "README.md");
+        assert_eq!(manifest_json["loop"]["entry_phase"], "assess");
+        assert_eq!(manifest_json["loop"]["phases"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            manifest_json["loop"]["transitions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            5
+        );
+        assert_eq!(manifest_json["loop"]["checkpoints"][0]["type"], "approval");
+        assert_eq!(
+            manifest_json["loop"]["checkpoints"][0]["before_phase"],
+            "review"
+        );
+        assert_eq!(manifest_json["loop"]["transitions"][2]["to"], "review");
+        assert_eq!(manifest_json["loop"]["transitions"][3]["from"], "review");
+        assert_eq!(manifest_json["loop"]["transitions"][3]["to"], "execute");
+        assert_eq!(manifest_json["loop"]["transitions"][4]["to"], "$end");
+
+        let readme_text = std::fs::read_to_string(&readme_path).unwrap();
+        assert!(readme_text.contains("# Incident Response Loop"));
+        assert!(readme_text.contains("generated by `agentpm init --kind loop`"));
+        assert!(readme_text.contains("portable control-flow contract"));
+        assert!(readme_text.contains("starter review loop"));
+        assert!(readme_text.contains("does not execute a runtime loop by itself"));
+        assert!(!readme_text.contains("{{LOOP_"));
+
+        let _ = std::fs::remove_dir_all(out);
+    }
+
+    #[tokio::test]
     async fn init_tool_agent_template_and_skill_behavior_still_work() {
         for (kind, label, expected_kind) in [
             (InitKind::Tool, "tool", "tool"),
@@ -666,6 +750,7 @@ mod tests {
             (InitKind::Skill, "skill", "skill"),
             (InitKind::Memory, "memory", "memory"),
             (InitKind::Profile, "profile", "profile"),
+            (InitKind::Loop, "loop", "loop"),
         ] {
             let out = temp_dir(label);
             let args = InitArgs {
@@ -716,6 +801,13 @@ mod tests {
                 assert!(!out.join("instructions").exists());
                 assert!(!out.join("schemas").exists());
             }
+            if expected_kind == "loop" {
+                validate(&manifest_path);
+                assert!(out.join("README.md").exists());
+                assert!(!out.join("loop").exists());
+                assert!(!out.join("loops").exists());
+                assert!(!out.join("schemas").exists());
+            }
 
             let _ = std::fs::remove_dir_all(out);
         }
@@ -750,6 +842,27 @@ mod tests {
             mode: KnowledgeInitMode::Vector,
             name: "support-profile".into(),
             description: "Starter profile.".into(),
+            out_dir: Some(out.clone()),
+        };
+
+        let err = args.run("http://example.invalid".into()).await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "`--mode` is only applicable when `--kind knowledge` is used"
+        );
+        assert!(!out.join("agent.json").exists());
+
+        let _ = std::fs::remove_dir_all(out);
+    }
+
+    #[tokio::test]
+    async fn init_loop_rejects_mode_for_non_knowledge_kind() {
+        let out = temp_dir("loop-mode-invalid");
+        let args = InitArgs {
+            kind: InitKind::Loop,
+            mode: KnowledgeInitMode::Vector,
+            name: "incident-loop".into(),
+            description: "Starter loop.".into(),
             out_dir: Some(out.clone()),
         };
 
