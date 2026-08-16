@@ -292,13 +292,26 @@
 ## Milestone 12: Examples
 > Scope note: seed realistic public Loop and Agent composition examples only after Milestone 11 verification. Examples should demonstrate the portability of graph-defined orchestration and the complete binding model without implying that Phase 7A executes anything. Use existing AgentPM example stories where possible so Loops compose with real Tool, Skill, Knowledge, Memory, and Profile artifacts.
 - [ ] Add a `loop-packages/` directory to `agentpm-examples` following existing package-kind organization.
-- [ ] Create 3 production-worthy Loop examples with materially different orchestration structures.
-- [ ] Add a planner/executor/reviewer Loop with iterative review outcomes and bounded steps.
-- [ ] Add an incident/operations Loop with approval, abort, handoff, Tool/Knowledge/Memory access declarations, and retry/failure policy.
-- [ ] Add a third custom-archetype Loop that demonstrates an orchestration pattern not represented by a predefined AgentPM enum and still works entirely through generic phases/outcomes/transitions.
+- [ ] Create 4 production-worthy Loop examples with materially different orchestration structures.
+- [ ] Add `@zack/support-escalation-loop` under `loop-packages/` as the support-story Loop example.
+- [ ] Model `@zack/support-escalation-loop` around triage, draft-response, and review/escalate control flow.
+- [ ] Ensure `@zack/support-escalation-loop` demonstrates explicit outcomes, `$handoff`, an approval checkpoint, and lightweight Memory access intent.
+- [ ] Publish `@zack/support-escalation-loop` and wire it into the support template / support app story where the existing package narrative fits cleanly.
+- [ ] Add `@zack/incident-response-loop` under `loop-packages/` as the flagship iterative incident/operations Loop example.
+- [ ] Model `@zack/incident-response-loop` around assess, execute, and review phases with a reachable cycle back into execution.
+- [ ] Ensure `@zack/incident-response-loop` demonstrates explicit outcomes, bounded steps, Tool/Knowledge/Memory access declarations, and retry / fail-phase behavior.
+- [ ] Publish `@zack/incident-response-loop` and wire it into the ops agent / app story.
+- [ ] Add `@zack/devwork-triage-loop` under `loop-packages/` as the devwork maintainer workflow Loop example.
+- [ ] Model `@zack/devwork-triage-loop` around inspect-issue, draft-comment, and resolve-or-handoff control flow.
+- [ ] Ensure `@zack/devwork-triage-loop` demonstrates a slower review-oriented orchestration shape distinct from support and incident examples.
+- [ ] Publish `@zack/devwork-triage-loop` and wire it into the devwork agent / app story.
+- [ ] Add one standalone Loop package not required by an app, such as `@zack/research-review-loop` or `@zack/content-review-loop`, to seed an additional public orchestration pattern.
+- [ ] Use the standalone Loop to demonstrate a review/revise pattern with approval semantics without forcing another app integration.
 - [ ] Use both implicit `complete` outcomes and explicit outcome objects across the examples.
 - [ ] Exercise all three terminal targets across the example set.
+- [ ] Use as much of the supported Loop and Agent binding surface as realistically fits the examples, so the public seed set demonstrates the contract broadly rather than only the minimal happy path.
 - [ ] Exercise optional archetype, limits, access, checkpoints, and error policy across the example set without forcing every field into every Loop.
+- [ ] Ensure optional fields such as `access`, `limits`, checkpoints, error policy, Memory selectors, MCP surfaces, and consumer context appear across the example set wherever they fit naturally.
 - [ ] Update at least one existing published Agent example to depend on a Loop and use all major `bindings` surfaces: global, phases, Memory spaces/operations, named MCP surfaces, and consumer context.
 - [ ] Ensure bound package identities are versionless and every bound package is declared in the corresponding top-level versioned dependency list.
 - [ ] Use real Memory Blueprint space/operation identifiers in Agent examples and preserve snake_case Memory keys.
