@@ -39,7 +39,9 @@
 - [ ] Resolve an explicit Agent selector against lockfile/install state.
 - [ ] If `AGENT` is omitted and exactly one runnable Agent root exists, select it deterministically.
 - [ ] If multiple runnable Agent roots exist, return a structured selection requirement for headless/machine modes and leave interactive selection to the later TUI milestone.
-- [ ] Reject Agents without a resolved Loop as non-runnable; do not invent a default Loop.
+- [ ] Reject Agents without a resolved Loop as non-runnable by Harness while preserving that such an Agent remains a valid package artifact; do not invent a default Loop.
+- [ ] Keep top-level Agent dependency arrays as dependency/install graph only; require an applicable binding for authored runtime availability and ensure an installed-but-unbound artifact is not surfaced automatically.
+- [ ] Treat Agent `examples`, README, and license metadata as non-behavioral discovery/documentation data only.
 - [ ] Resolve exact installed Agent, Loop, Tool, Skill, Knowledge, Memory, and Profile package versions from lockfile relationships.
 - [ ] Add Harness-only cross-package validation for binding phase names, bound package existence, Memory spaces/operations, Skill Tool inheritance, MCP Tool membership, and generated Knowledge/Memory metadata needed for runtime use.
 - [ ] Classify diagnostics as fatal, warning, suppressed/unavailable capability, or informational according to `spec.md`.
@@ -72,6 +74,8 @@
 - [ ] Add `HarnessSession`, `RunContext`, `RunState`, `PhaseResult`, runtime terminal status, and phase execution ID models.
 - [ ] Enforce the single-writer invariant: only HarnessEngine mutates RunState.
 - [ ] Execute `entry_phase`, phase completion, transition lookup, re-entry, and terminal targets from the Loop graph.
+- [ ] Treat phase IDs as graph/runtime identity only, `phase.objective` as model-facing guidance, and `archetype` as descriptive metadata with no engine branch.
+- [ ] Enforce Loop access tri-state semantics (`false` prohibits, `true` permits without creating capability, omitted means no Loop opinion) in the generic engine model used by later capabilities.
 - [ ] Treat one phase execution as one Loop step; model/action work inside the phase does not increment Loop steps.
 - [ ] Enforce effective max steps as the stricter of authored Loop max and Harness safety ceiling.
 - [ ] Return `limit_reached` rather than authored `$abort` when limits are exhausted.
@@ -79,7 +83,7 @@
 - [ ] Validate explicit model/host outcome IDs exactly and add bounded structured repair plumbing.
 - [ ] Implement `$end`, `$abort`, and `$handoff` terminal result semantics, with `$handoff` returning control/context rather than invoking another Agent.
 - [ ] Implement default Tool-failure -> phase failure and phase-failure -> runtime failed behavior for cases where Loop policy is absent; actual Tool invocation comes later.
-- [ ] Implement Loop Tool retry policy counters/actions in an executor-neutral form for later Tool/MCP use.
+- [ ] Implement Loop Tool retry policy counters/actions in an executor-neutral form for later Tool/MCP use; define `max_retries` as additional attempts after the initial failure (`2` => at most `3` total attempts).
 - [ ] Add internal action-count/model-call/tool-call counters and safety-limit enforcement models.
 - [ ] Add fake ModelRuntime/test harness capable of returning content, explicit outcomes, malformed outcomes, and failures.
 - [ ] Emit lifecycle/phase/outcome/transition/terminal events and write populated reports.
@@ -109,9 +113,10 @@
 - [ ] Add `EffectivePhase` model including authored candidates, runtime augmentation placeholders, Loop access decisions, runtime readiness, suppression reasons, and deterministic ordering.
 - [ ] Compute global + phase Profile bindings additively and de-dupe by package identity.
 - [ ] Load Profile structured metadata once during bootstrap and reuse immutable resolved data.
-- [ ] Serialize multiple Profiles as distinct model-facing inputs in deterministic global-then-phase authored order; do not merge/override into a synthetic Profile.
-- [ ] Treat required/preferred Profile constraints as different prompt-strength guidance only.
-- [ ] Evaluate Profile compatibility as advisory readiness diagnostics/warnings, never as hard behavioral enforcement.
+- [ ] Serialize every authored behavioral Profile section present (identity, objectives/principles, audience, communication/formatting/vocabulary, boundaries, constraints) as model-facing input, and serialize multiple Profiles as distinct inputs in deterministic global-then-phase authored order; do not merge/override into a synthetic Profile.
+- [ ] Treat required/preferred Profile constraints as different prompt-strength guidance only and preserve stable constraint IDs in prompt/trace metadata where practical.
+- [ ] Evaluate Profile compatibility as advisory readiness diagnostics/warnings, never as hard behavioral enforcement; distinguish stronger `requires` mismatch warnings from softer `recommends` hints where the schema provides them.
+- [ ] Warn on obvious mechanical Profile conflicts where practical but never invent identity/persona/semantic precedence to resolve them.
 - [ ] Snapshot `bindings.consumer_context.file` once at Run start and reuse that exact snapshot across all phase executions in the Run.
 - [ ] Reload consumer context on the next Run within the same Session.
 - [ ] Make missing/unreadable consumer context non-fatal and evented.
@@ -139,6 +144,8 @@
 > Scope note: add the first real model-executable capabilities. Direct AgentPM Tools execute only through public `agentpm run --machine`; bound Skills contribute progressive resources and inherited Tools. Loop Tool access, repair, retry/error policy, and Tool events become live.
 - [ ] Add Harness `ToolRuntime` implementation that spawns public `agentpm run --machine` using JSON stdin.
 - [ ] Build model-facing AgentPM Tool descriptors from canonical identity, description, and input schema; do not expose secrets/execution internals.
+- [ ] Do not infer destructive/read/write safety policy from arbitrary Tool action names or schema fields; use authored Loop/binding/checkpoint policy and Hooks instead.
+- [ ] Keep Tool entrypoint/files/cwd/timeout/environment/interpreter execution semantics owned by public `agentpm run`; Harness may inspect readiness but must not implement a second private runner.
 - [ ] Perform early Harness Tool-argument schema validation before invoking ToolRuntime.
 - [ ] Add bounded model argument repair using `max_tool_call_repairs`.
 - [ ] Revalidate arguments after any later Hook modifications.
@@ -146,12 +153,13 @@
 - [ ] Retry as fresh `agentpm run` invocations with the same finalized arguments.
 - [ ] Suppress known runtime-incompatible Tools during EffectivePhase computation with reasons.
 - [ ] Warn but do not necessarily suppress solely for missing required env at preflight; actual `agentpm run` invocation remains authoritative.
-- [ ] Add Skill activation descriptors/inventory without eagerly loading full `SKILL.md`/references.
-- [ ] Add model semantic action for authorized Skill entrypoint/reference read.
+- [ ] Add Skill activation descriptors/inventory without eagerly loading full `SKILL.md`/references; keep multiple active Skills distinct and ordered rather than merging them into one synthetic Skill.
+- [ ] Add model semantic action for authorized Skill entrypoint/reference read, keep loaded resources phase/Skill-scoped, and do not let previously loaded Skill content leak automatically into later phase contexts.
 - [ ] Resolve/canonicalize Skill resource paths within installed Skill root and reject escapes/symlink escapes.
-- [ ] Expand bound Skill Tool dependencies into the Skill's global/phase binding scope.
+- [ ] Expand bound Skill Tool dependencies into the Skill's global/phase binding scope without requiring duplicate direct Agent Tool bindings.
 - [ ] De-dupe same-scope direct + inherited Tool identity and emit composition warning.
-- [ ] Never auto-execute Skill scripts; script execution requires an independently authorized Tool.
+- [ ] Never auto-execute Skill scripts or infer an interpreter/executor from file extension; script execution requires an independently authorized Tool.
+- [ ] Emit Skill activation/resource events but do not add a mutable `before_skill_activation` Hook; activation remains authored composition.
 - [ ] Treat Skill compatibility metadata as advisory warnings only; never use it to grant authority or silently suppress an otherwise valid Skill.
 - [ ] Enforce Loop `access.tools` over direct and inherited Tools while Skill resource reads remain distinct from Tool calls.
 - [ ] Emit Tool candidate/selection/invocation/retry/result/failure and Skill resource events.
@@ -165,6 +173,7 @@
 - [ ] Keep event messages distinct from control requests and service/provider requests.
 - [ ] Add correlation IDs and bounded request timeouts where configured.
 - [ ] Add `HookRuntime` with the exact version-1 Hook IDs from `spec.md`, ordered config/SDK registrations, and constrained request/response patch types.
+- [ ] Invoke a Hook only when its corresponding authorized decision/action is actually eligible; candidate/suppression events may still be emitted when no actionable capability exists, but Hooks must never be called as a capability-manufacturing escape hatch.
 - [ ] Implement prompt/context-shaping Hook before model request.
 - [ ] Implement Tool candidate/selection influence hook where applicable without granting new capabilities.
 - [ ] Implement before-Tool-call argument shaping/rejection hook followed by schema revalidation.
@@ -222,9 +231,11 @@
 - [ ] Add semantic model action for Knowledge access distinct from Tool calls.
 - [ ] Enforce Loop `access.knowledge` independently from `access.tools`.
 - [ ] Keep bound Knowledge packages distinct model surfaces rather than auto-federating them.
-- [ ] For context Knowledge, expose compact package/document descriptors initially and load only the requested declared document.
+- [ ] For context Knowledge, expose compact package/document descriptors initially and load only the requested declared document; treat document `role` as a discovery/reasoning hint rather than eager-load behavior.
 - [ ] Resolve package-owned Knowledge paths relative to installed package root and reject traversal/symlink escapes.
 - [ ] For vector Knowledge, load/validate installed build/index/provenance metadata needed for compatibility/readiness.
+- [ ] Treat packaged retrieval strategy/`top_k`/score threshold/citation settings as retrieval defaults or hints rather than Loop orchestration; allow authorized request/Hook shaping within runtime constraints.
+- [ ] Keep retrieval citation/provenance output separate from final-answer formatting; `return_citations` does not force the model's final response to cite sources.
 - [ ] Reuse public `agentpm knowledge query` behavior/machinery when it can satisfy the request rather than reimplementing search privately in Harness.
 - [ ] Add a machine/query interface if existing public Knowledge query output is insufficient for Harness-safe structured consumption.
 - [ ] Add typed `EmbeddingProvider` service request/response contract with provider/model/dimensions/normalization/text and returned numeric vector.
@@ -260,7 +271,7 @@
 - [ ] Implement the version-1 SQLite schema from `spec.md`: `memory_meta`, `memory_records`, `memory_sequence_state`, `memory_operation_state`, and `memory_vectors`, including required indexes/uniqueness and schema-version migration handling.
 - [ ] Store canonical lexicographically-keyed compact `scope_json` plus `sha256:<hex>` `scope_hash` exactly as defined in `spec.md`; verify hash/content agreement and never let model-supplied content choose scope.
 - [ ] Resolve arbitrary Blueprint scope keys from trusted RunContext/config/SDK/CLI inputs.
-- [ ] Load generated contract index/contracts and validate runtime records against generated envelope contracts.
+- [ ] Load generated build/contract index/contracts from package-root-relative paths in the exact installed Memory package and validate runtime records against generated envelope contracts; never place live records/state beside those package files.
 - [ ] Accept model-proposed record `content` only and construct IDs, scope, timestamps, schema version, ordinal, expiration, and provenance in Harness/MemoryRuntime.
 - [ ] Implement document one-current-record semantics per complete scope tuple.
 - [ ] Implement collection create/read/update/delete by ID/filter according to declared constraints/retrieval modes.
@@ -293,6 +304,7 @@
 - [ ] Implement consolidate over active scoped input records with one destination output.
 - [ ] Implement delete operation mechanically without ModelRuntime generation.
 - [ ] For transform/consolidate, call ModelRuntime with operation description, authorized source content, target content schema, and lifecycle control instructions; require target content only.
+- [ ] Count lifecycle ModelRuntime calls in provider usage/token totals and Harness model-call safety accounting, emit them distinctly in trace/report, and never count them as phase turns or Loop steps.
 - [ ] Validate generated target content and perform bounded `max_memory_operation_repairs` structured repair.
 - [ ] Construct provenance from operation/source record IDs and enforce `preserve_provenance`/source-handling semantics.
 - [ ] Apply `retain`, `retain_until_expiration`, and `delete_after_success` consistently; for the built-in SQLite runtime, record/output/source/trigger-state mutations belonging to one lifecycle operation must commit or roll back together.
@@ -327,6 +339,8 @@
 - [ ] Preserve MCP protocol behavior and human serve output outside machine mode.
 - [ ] Add Harness `McpRuntime` export lifecycle that starts one `agentpm serve --mcp --machine` subprocess per authored MCP binding ID.
 - [ ] Pass exactly the bound top-level Agent Tools for that logical surface.
+- [ ] Treat phase-binding and MCP-export binding of the same Tool as valid/non-redundant because they expose different surfaces; allow MCP-only exported Tools without making them phase capabilities.
+- [ ] Keep exported MCP surfaces Session-owned and callable even when no Harness Run is currently active.
 - [ ] Validate MCP-safe normalized name collisions during preflight/startup.
 - [ ] Suppress known runtime-incompatible Tools from managed MCP exposure; realize ready subset with strong warnings when non-empty and mark empty surface unavailable.
 - [ ] Keep outward calls independent from active Run phase hooks/access/checkpoints.
@@ -376,8 +390,9 @@
 - [ ] Create/update an MCP example showing both Agent-authored outward surfaces and explicitly scoped external MCP import.
 - [ ] Create/update a full reference Harness example exercising a 3+ phase Loop, 2+ Tools, 2+ Skills, Profiles, context/vector Knowledge, Memory spaces/operations, consumer context, approvals, hooks, tracing, reports, and TUI.
 - [ ] Ensure generated Template README copy teaches `Agent artifacts = portable definition`, `agentpm.harness.json = workspace runtime realization`, and `agentpm harness = reference executor`.
+- [ ] Document/prove that Template dependencies do not become Harness bindings, Template entrypoint commands are never auto-executed by Harness, generated files become ordinary consumer-owned workspace inputs, and multi-Agent Template scaffolding still executes one selected Agent per Harness Run.
 - [ ] Gitignore `.agentpm-state/` in generated Harness workspaces while documenting how to inspect/export reports and local Memory safely.
-- [ ] Document `agentpm harness` modes/options, Agent selection, config precedence/defaults, runtime-state directory, safety limits, approvals, cancellation, and terminal statuses.
+- [ ] Document `agentpm harness` modes/options, Agent selection, config precedence/defaults, runtime-state directory, safety limits, approvals, cancellation, and terminal statuses, including that Consumer Context is snapshotted once per Run and shaped only through normal prompt Hooks rather than a dedicated context-loading Hook.
 - [ ] Publish the exact `agentpm.harness.json` version-1 reference from `spec.md`, including shared process/host descriptors, Hook implementations/bindings, Knowledge/Memory mappings, local Memory semantic config, stdio/HTTP MCP imports, approvals, lifecycle defaults, trace policy, and branding.
 - [ ] Document the public machine protocol sufficiently for third-party clients/providers without requiring Node/Python SDKs.
 - [ ] Document first-class Node/Python Harness and Hook/provider APIs with runnable examples.

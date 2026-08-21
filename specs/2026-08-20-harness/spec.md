@@ -953,6 +953,17 @@ Only HarnessEngine mutates RunState. It contains:
 
 External Memory data and persistent Memory trigger state are not RunState; MemoryRuntime is authoritative for those resources.
 
+## Agent runtime semantics
+
+The Agent is the Harness runnable composition boundary. Harness runtime interpretation must preserve these Agent-specific rules explicitly:
+
+- an Agent without `loop` remains a valid publishable/installable Agent artifact, but it is **not runnable by the built-in Harness** in Phase 7B; Harness must report that distinction rather than treating the package itself as invalid or inventing a Loop;
+- top-level `tools`, `skills`, `knowledge`, `memory`, and `profiles` declare the dependency graph only; they do not make those artifacts model-available by themselves;
+- Agent bindings establish authored runtime availability. If an artifact has no applicable global/phase binding, it is not surfaced merely because it is installed or listed as a dependency;
+- binding package references remain versionless identities while exact runtime versions come from `agent.lock`;
+- Agent `examples` and README/license metadata are discovery/documentation inputs only and never executable/model behavior; a TUI may surface examples as optional launch suggestions without injecting them into a Run;
+- consumer context, outward MCP bindings, and phase/global bindings retain the specialized semantics defined later in this spec rather than becoming generic dependency activation.
+
 ## EffectivePhase
 
 EffectivePhase is recomputed on each phase entry/re-entry.
@@ -980,6 +991,12 @@ Effective phase computation must never mutate portable metadata.
 - Memory selectors for the same Blueprint are unioned by spaces/operations while preserving global-versus-phase participation semantics.
 
 ## Loop execution model
+
+Loop phase IDs are graph/runtime identities only; Harness must not attach built-in behavior to names such as `plan`, `execute`, or `review`. `phase.objective` is model-facing orchestration guidance. `loop.archetype` remains descriptive.
+
+Loop access is tri-state: `false` prohibits the corresponding otherwise-available capability, `true` permits it without creating it, and omission expresses no Loop opinion.
+
+For Loop Tool retry policy, `max_retries` means **additional attempts after the initial failed invocation**. For example, `max_retries: 2` permits at most three total attempts for that Tool call. Retries do not permit argument mutation; a model proposal with different arguments is a new Tool call.
 
 ### Phase steps
 
@@ -1103,13 +1120,17 @@ Ollama is the required local/open path so a user can run the Harness without a p
 
 Profiles are resolved model-facing behavioral inputs; there is no ProfileRuntime.
 
+All authored behavioral sections present in the resolved Profile—including identity, objectives/principles, audience, communication/formatting/vocabulary, boundaries, and constraints—remain model-facing inputs. Harness must not silently drop a Profile section merely because it does not have a special runtime implementation.
+
 - top-level Profile dependency alone does not activate behavior;
 - global/phase bindings determine active Profiles;
 - global + phase are additive and deduplicated;
 - multiple Profiles remain distinct inputs, not merged into a synthetic Profile;
 - ordering is deterministic serialization, not precedence/override;
 - required/preferred constraints influence prompt wording only; Harness does not fake post-response enforcement;
-- compatibility is advisory and may produce strong warnings;
+- compatibility is advisory and may produce strong warnings; `requires` mismatches should be stronger than `recommends` hints, but neither grants/suppresses authority by itself;
+- stable Profile constraint IDs should be preserved in prompt assembly/events where practical so traces can identify which authored constraint influenced a request;
+- obvious mechanical conflicts between active Profiles may be warned about, but Harness must not invent precedence or semantic conflict resolution, including for competing identity/persona guidance;
 - boundaries are authored model guidance and never replace Harness authority.
 
 ## Skills
@@ -1120,13 +1141,15 @@ A bound Skill contributes:
 
 - compact manifest/description/resource inventory for initial discovery;
 - progressive access to its entrypoint/reference resources as needed;
-- inherited Tool dependencies in the Skill's binding scope.
+- inherited Tool dependencies in the Skill's binding scope; those inherited Tools do not require a duplicate direct Tool binding on the Agent.
 
-Binding a Skill does not eagerly inject all Skill files.
+Binding a Skill does not eagerly inject all Skill files. Multiple active Skills remain distinct authored procedural inputs in deterministic order; Harness does not merge them into one synthetic Skill or apply override precedence. Skill resources are scoped to the Skill/phase in which the Skill is active and do not leak into later phase contexts merely because they were loaded previously.
 
-Package-owned Skill paths resolve relative to the resolved Skill package root and must remain inside that root after canonicalization/symlink resolution.
+Package-owned Skill paths resolve relative to the resolved Skill package root and must remain inside that root after canonicalization/symlink resolution. Skill resource loading may reuse a low-level packaged-file reader also used by other artifact implementations, but a Skill reference remains a Skill semantic action rather than Knowledge retrieval.
 
-Skill scripts never auto-execute. A script can execute only through independently authorized capability such as an AgentPM shell-executor Tool.
+Skill scripts never auto-execute. Merely declaring a script grants no process-execution authority and Harness must not infer an interpreter/executor from `.sh`, `.py`, or other extensions. A script can execute only through independently authorized capability such as an AgentPM shell-executor Tool.
+
+Skill activation itself is mechanical composition and needs an event, not a mutable `before_skill_activation` Hook. Hooks may shape later prompt/action decisions but cannot rewrite which Skill binding is active.
 
 Skill `compatibility` metadata is advisory like Profile compatibility. Harness may emit readiness/quality warnings when the active runtime/model clearly does not match a declared compatibility hint, but compatibility does not grant/suppress authority or become hard execution policy by itself.
 
@@ -1151,6 +1174,10 @@ Phase 7B must strengthen `agentpm run` so the Harness and third parties can rely
 
 Harness performs early input-schema validation before ToolRuntime so malformed model arguments can be repaired without counting as a Tool failure. Hook-modified arguments are validated again.
 
+Harness must not infer read/write/destructive safety semantics from arbitrary Tool action names or schema fields. Tool availability/approval comes from Agent/Loop composition, runtime readiness, and Hooks rather than heuristics such as treating an `action: delete` field specially.
+
+Tool package entrypoint, package files, `cwd`, timeout, environment-default expansion, interpreter selection, and concrete runtime launching remain responsibilities of the public Tool runner/`agentpm run` contract. Harness may inspect them for readiness but must not implement a second private Tool executor.
+
 Failure before ToolRuntime invocation is a model/action repair concern. Failure while ToolRuntime attempts the invocation is a Loop Tool failure.
 
 A schema-valid Tool output such as `{ "ok": false }` is still a successful Tool invocation unless the generic Tool contract itself defines it as invalid; Harness must not infer domain semantics from arbitrary output fields.
@@ -1165,13 +1192,13 @@ Knowledge bindings make packages available on demand; they never imply automatic
 
 ### Context mode
 
-Expose a compact package/document inventory initially. The model requests one declared document when needed. Document bodies are not eagerly injected.
+Expose a compact package/document inventory initially. The model requests one declared document when needed. Document bodies are not eagerly injected. Declared document `role` values are discovery/reasoning hints only; they do not create hidden eager-load behavior or authority. Requests may address only documents declared by that Knowledge package.
 
 Package paths resolve from the resolved Knowledge package root and must remain inside it.
 
 ### Vector mode
 
-KnowledgeRuntime accepts a text query and returns normalized structured results with chunk/source/citation metadata.
+KnowledgeRuntime accepts a text query and returns normalized structured results with chunk/source/citation metadata. Packaged retrieval metadata such as strategy, `top_k`, score threshold, and citation preference are retrieval defaults/hints, not Loop/orchestration semantics; an authorized request/Hook may narrow or shape them within the package/runtime contract. `return_citations` controls retrieval-result provenance/citation data and does not force the final model response to contain citations.
 
 Default resolution:
 
@@ -1209,7 +1236,7 @@ Pinecone/pgvector provisioning and corpus upload are outside runtime execution.
 
 Memory packages remain **Blueprints**, not stores.
 
-Generated Memory contracts are the runtime durable record contracts. Author source schemas are build-time inputs.
+Generated Memory contracts are the runtime durable record contracts. Author source schemas are build-time inputs. Generated build/index/contract paths are package-owned paths and resolve from the exact installed Memory package root; live records/state never do.
 
 ### Runtime-owned record envelope
 
@@ -1410,7 +1437,7 @@ Operation semantics:
 - `transform`: model-assisted structured transformation of each active scoped record matching its single input pairing, producing one output per source;
 - `consolidate`: model-assisted structured synthesis over active scoped records matching its declared inputs, producing one destination record.
 
-Model-assisted operation calls receive operation description, authorized source content, target content schema, and Harness lifecycle instructions. They return target `content` only. Output is validated and repair-bounded before persistence.
+Model-assisted operation calls receive operation description, authorized source content, target content schema, and Harness lifecycle instructions. They return target `content` only. Output is validated and repair-bounded before persistence. These internal lifecycle model calls are first-class usage/trace events and count toward provider token/usage totals and Harness model-call safety accounting, but they are not phase model turns and do not consume Loop steps.
 
 ### Memory schema amendment: transform output mode
 
@@ -1474,7 +1501,7 @@ MCP has two distinct directions.
 
 Agent `bindings.mcp` means: expose selected top-level AgentPM Tools outward as named MCP server surfaces.
 
-It does not add those Tools to phase execution and does not inherit Loop phase access/checkpoints.
+It does not add those Tools to phase execution and does not inherit Loop phase access/checkpoints. A Tool may validly be both phase-bound and MCP-exported; that is not redundant composition because the two bindings grant different execution surfaces. Likewise an MCP-exported Tool need not be phase-bound at all. Outward surfaces are Session-owned and may serve external calls even when no Run is currently active.
 
 For MMP, realize each authored MCP surface as one public subprocess:
 
@@ -1541,7 +1568,7 @@ Required hook families should include at least:
 - before Memory read/write;
 - before participating Memory lifecycle operation execution;
 
-Do not add hooks for purely mechanical metadata reads with no meaningful decision point.
+Do not add hooks for purely mechanical metadata reads with no meaningful decision point. A Hook runs only when its corresponding authorized decision/action is actually eligible. For example, a phase with zero effective Tools may emit Tool-candidate/suppression events but does not invoke Tool-selection or before-Tool-call Hooks merely to give the Hook a chance to manufacture capability.
 
 Configured intercepting hooks fail closed by default. A hook may explicitly configure a continue/fail-open policy, but silent implicit fail-open is not allowed.
 
@@ -1594,7 +1621,7 @@ Persistent paused-Run resume is deferred.
 - eager model context rather than Knowledge-style retrieval;
 - model cannot change the authoritative file during a Run.
 
-TUI/preflight must visibly show loaded/unavailable status and useful size/token estimate metadata.
+TUI/preflight must visibly show loaded/unavailable status and useful size/token estimate metadata. Loading the declared file is mechanical and does not require a dedicated Consumer Context Hook; the normal prompt/context-shaping Hook may operate on the assembled model request afterward without changing which file was authoritative for the Run.
 
 ## Events, tracing, and run reports
 
@@ -1725,7 +1752,7 @@ agentpm.harness.json  = this workspace's runtime realization
 agentpm harness       = AgentPM reference execution
 ```
 
-Template variables, `stack`, `execution_surfaces`, dependencies, and entrypoints remain generation/developer-time metadata and are not interpreted by Harness.
+Template variables, `stack`, `execution_surfaces`, dependencies, and entrypoints remain generation/developer-time metadata and are not interpreted by Harness. Template dependencies never become Harness bindings or global capability merely because they were declared by the Template, and Template entrypoint commands are never auto-executed by Harness. Once Template files are generated into a workspace they are consumer-owned/runtime inputs according to their resulting role; Harness does not retain special runtime behavior based on Template provenance. A Template that scaffolds multiple Agents still does not create multi-Agent Harness execution: one resolved Agent remains the runnable unit.
 
 ## Trust and security model
 
