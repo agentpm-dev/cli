@@ -8,16 +8,26 @@
 - [ ] Retain checkpoint ID uniqueness, valid phase targets, valid `on_reject` targets, and all existing structural validation.
 - [ ] Add optional Memory transform `output_mode` with exactly `create | replace_input`.
 - [ ] Default omitted transform `output_mode` to `create` in typed/runtime interpretation for backward compatibility.
-- [ ] Add semantic validation for `replace_input`: transform-only, exactly one input, output space/record type equal to the input pairing, and source-handling compatibility.
+- [ ] Add semantic validation for `replace_input`: transform-only, exactly one input, output space/record type equal to the input pairing, and `source_handling` exactly `retain`.
 - [ ] Update the flagship `conversation-continuity` example so `refresh_saved_note` explicitly uses `output_mode: "replace_input"`.
-- [ ] Add strict JSON Schema and Rust typed models for root-level `agentpm.harness.json` version 1.
-- [ ] Implement the grouped config surfaces from `spec.md`: model, providers, scopes, runtime/state/limits, hooks, Knowledge, Memory, MCP, approvals, trace, and UI branding.
-- [ ] Keep model/provider IDs open-ended strings while documenting/typing built-in provider IDs where appropriate.
-- [ ] Add validation for workspace-relative paths, non-empty IDs, port/URL/transport shapes, phase-scope lists, hook failure policies, trace levels/content modes, and branding hex accents.
+- [ ] Add strict JSON Schema and Rust typed models for root-level `agentpm.harness.json` version 1. If the file exists, `version` is required and must equal `1`; `{ "version": 1 }` is the minimal valid file.
+- [ ] Reject unknown version-1 fields (`additionalProperties: false`) except the intentionally open ID-keyed registries/maps and provider-specific `model.options` defined in `spec.md`; unused sections are omitted rather than required as empty objects.
+- [ ] Implement the exact version-1 JSON field names/nesting from the Harness Configuration Contract in `spec.md`; do not rename/restructure them to repository preferences without a spec change.
+- [ ] Implement the shared `implementation` union exactly as `process | host`, including process `command/args/cwd/env/startup_timeout_ms/request_timeout_ms/restart` semantics/defaults and host request-timeout semantics.
+- [ ] Resolve all relative Harness-config paths from workspace root even when `--config` points elsewhere; allow an absolute path only where the spec explicitly permits it (notably `runtime.state_dir`).
+- [ ] Treat process `env` entries as names projected through the scoped environment/`.env.local` resolver; never treat them as literal secret values or inherit the entire parent environment by default.
+- [ ] Add `providers.models` and `providers.embeddings` typed registries; reserve built-in model IDs `openai`, `anthropic`, and `ollama` from custom redefinition while keeping concrete model IDs open strings.
+- [ ] Add `hooks.implementations` plus ordered `hooks.bindings` with the exact version-1 Hook IDs and `failure_policy: closed | continue`; allow repeated Hook IDs and preserve binding-array order.
+- [ ] Add `knowledge.runtimes`, versionless `knowledge.packages` mappings, and exact `knowledge.embedding_matches` tuples (`provider/model/dimensions/normalized -> embedding_provider`), rejecting unknown provider/runtime references and duplicate tuples.
+- [ ] Add `memory.runtimes`, versionless `memory.packages` mappings, and `memory.local.semantic` (`embedding_provider/model/dimensions`) for the built-in SQLite semantic-retrieval realization.
+- [ ] Add exact MCP import unions: `stdio` with process-like command/env/lifecycle fields and `http` with absolute URL plus header values expressed as `{value}` or `{env}`; require explicit `scope.mode = global | phases` and validate the structural phase/tool filters.
+- [ ] Add MCP export config `enabled` + `host` with defaults from `spec.md`; do not add static per-surface port mapping in config v1.
+- [ ] Add optional `approvals.controller.implementation` plus `approvals.timeout_ms`; keep plain-headless-without-controller behavior fixed as `approval_required`, not a configurable auto-approve/deny mode.
+- [ ] Implement exact trace enums `minimal | normal | verbose` and `none | redacted | full`, plus UI branding `name/subtitle/accent` with six-digit `#RRGGBB` validation.
 - [ ] Add a runtime-config loader using the workspace root and optional CLI-supplied config path override.
 - [ ] Add resolved-config source metadata capable of distinguishing SDK/run override, CLI override, config file, environment, and Harness default.
-- [ ] Implement default Harness safety limits from `spec.md` and ensure they are runtime defaults, not written into Loop manifests.
-- [ ] Add unit/schema tests for minimal/empty valid config, full config, unknown top-level fields, malformed provider/runtime maps, unsafe paths, invalid branding, invalid limits, malformed scopes, and invalid MCP import scope.
+- [ ] Implement default Harness safety limits and managed-process lifecycle defaults from `spec.md`; ensure they are runtime defaults, not written into portable Loop/Agent manifests.
+- [ ] Add unit/schema tests for missing config, minimal config, complete populated config, unknown fields, invalid shared implementation descriptors, duplicate Hook/embedding mappings, bad runtime references, unsafe paths, invalid branding/limits/scopes, malformed MCP stdio/HTTP/header/scope forms, and invalid approval controller config.
 - [ ] Confirm existing Agent/Loop/Memory manifests continue to validate except for the intentional semantic relaxation/addition above.
 
 ## Milestone 2: Harness Bootstrap, Workspace Discovery, and Preflight Plan
@@ -37,6 +47,7 @@
 - [ ] Detect same-scope direct Tool + Skill-inherited Tool duplication, warn, and de-dupe.
 - [ ] Resolve consumer-context path safely relative to workspace root but do not yet inject it into model prompts.
 - [ ] Resolve configured runtime scope values without giving model code authority to choose them.
+- [ ] Resolve/validate all configured registry references (custom model/embedding provider IDs, Hook implementation IDs, Knowledge/Memory package mappings, Memory local semantic provider, MCP imports, Approval controller) before execution; later milestones may defer actually starting protocols they have not implemented yet.
 - [ ] Add `.agentpm-state` path resolution with config/CLI override support and keep it physically/logically separate from `.agentpm`.
 - [ ] Add `PreflightReport`/`ResolvedHarnessPlan` Rust models usable by later TUI, headless, machine protocol, reports, and SDKs.
 - [ ] Add tests for installed-Agent-only execution roots, local Agent roots, multiple Agents, missing Loop, bad binding phase, bad Memory selector, missing generated metadata, unsafe consumer context, missing optional context, and state-dir separation.
@@ -47,7 +58,7 @@
 - [ ] Add event categories/namespaces for bootstrap, session, run, phase, model, outcome/transition, Tool, Skill/resource, Knowledge, Memory, approval/control, Hook, MCP, consumer context, cancellation, and terminal state.
 - [ ] Keep events as observability facts rather than authoritative event-sourced RunState.
 - [ ] Add central event emitter/fan-out used by CLI renderers, machine protocol, trace files, and reports.
-- [ ] Add trace configuration with `minimal | normal | verbose` and `none | redacted | full` content policies or repository-equivalent explicit enums.
+- [ ] Add trace configuration with exactly `minimal | normal | verbose` and `none | redacted | full` content-policy enums.
 - [ ] Make secret redaction unconditional regardless of trace content policy.
 - [ ] Create `.agentpm-state/runs/<run-id>/events.jsonl` by default when tracing is enabled.
 - [ ] Add versioned `RunReport` model and default `.agentpm-state/runs/<run-id>/report.json` path.
@@ -141,24 +152,27 @@
 - [ ] Expand bound Skill Tool dependencies into the Skill's global/phase binding scope.
 - [ ] De-dupe same-scope direct + inherited Tool identity and emit composition warning.
 - [ ] Never auto-execute Skill scripts; script execution requires an independently authorized Tool.
+- [ ] Treat Skill compatibility metadata as advisory warnings only; never use it to grant authority or silently suppress an otherwise valid Skill.
 - [ ] Enforce Loop `access.tools` over direct and inherited Tools while Skill resource reads remain distinct from Tool calls.
 - [ ] Emit Tool candidate/selection/invocation/retry/result/failure and Skill resource events.
 - [ ] Add end-to-end phase tests with two Tools, one Tool-backed Skill, Tool-disabled phase, invalid arguments, retry exhaustion, runtime suppression, and Skill resource access.
 
 ## Milestone 9: HookRuntime, ApprovalRuntime, Machine Control Protocol, and Cancellation
-> Scope note: establish the persistent bidirectional Harness protocol and typed interception/control contracts before language SDK wrappers are added. Implement prompt/Tool/approval hooks first, then later capability milestones add Knowledge/Memory hook points on the same contract.
-- [ ] Define a versioned Harness machine protocol over stdin/stdout or the repository's equivalent persistent subprocess transport.
-- [ ] Add handshake/version/capability negotiation for machine clients and workspace process providers/hooks.
+> Scope note: establish the persistent bidirectional Harness protocol and typed interception/control contracts before language SDK wrappers are added. Implement prompt/Tool Hooks plus the separate ApprovalRuntime first; later capability milestones add Knowledge/Memory Hook points on the same contract.
+- [ ] Define a versioned Harness machine protocol over persistent stdin/stdout JSON framing for `agentpm harness --machine`; human output must never share stdout with protocol frames.
+- [ ] Add handshake/version/capability negotiation for machine clients and every shared `process` service role (model, embedding, Hook, Knowledge, Memory, approval); the config registry determines the typed role expected from the handshake.
+- [ ] Implement common managed-process lifecycle states/events and defaults from `spec.md`: startup/handshake readiness, request timeout, one default restart for subsequent requests, no automatic replay of the failed in-flight request, exhausted-service unavailable state, and clean Session shutdown.
 - [ ] Keep event messages distinct from control requests and service/provider requests.
 - [ ] Add correlation IDs and bounded request timeouts where configured.
-- [ ] Add `HookRuntime` with typed hook registrations and constrained request/response patch types.
+- [ ] Add `HookRuntime` with the exact version-1 Hook IDs from `spec.md`, ordered config/SDK registrations, and constrained request/response patch types.
 - [ ] Implement prompt/context-shaping Hook before model request.
 - [ ] Implement Tool candidate/selection influence hook where applicable without granting new capabilities.
 - [ ] Implement before-Tool-call argument shaping/rejection hook followed by schema revalidation.
 - [ ] Make configured intercepting hook failure fail closed by default.
-- [ ] Add explicit per-hook `continue`/fail-open configuration and visible diagnostics when chosen.
+- [ ] Apply `hooks.bindings[].failure_policy` exactly as `closed | continue`, default `closed`, preserving binding-array order and validating/applying each successful patch before invoking the next binding.
 - [ ] Prevent hooks from altering graph, checkpoints, Loop access, runtime limits, arbitrary RunState, or Memory scope authority.
-- [ ] Add `ApprovalRuntime` separate from HookRuntime.
+- [ ] Add `ApprovalRuntime` separate from HookRuntime; approval callbacks must never be registered or reported as Hook IDs.
+- [ ] Support optional configured process/host Approval controller using the shared implementation descriptor and precedence rules from `spec.md`.
 - [ ] Implement machine approval request/approve/deny control messages.
 - [ ] Implement deterministic multiple-checkpoint evaluation in authored order.
 - [ ] For plain headless with no approval controller, terminate with `approval_required` rather than auto-approving/denying.
@@ -173,8 +187,8 @@
 - [ ] Add typed session/run/preflight/config override/result/report/event models matching the machine protocol.
 - [ ] Spawn and manage `agentpm harness --machine` without exposing JSON-line framing to application authors.
 - [ ] Add async event iteration/subscription APIs.
-- [ ] Add typed first-class prompt Hook registration.
-- [ ] Add typed Tool selection/before-call Hook registration.
+- [ ] Add typed first-class registration APIs for every version-1 Hook ID; users register callbacks/functions without declaring protocol frames or correlation IDs.
+- [ ] Preserve Hook registration order and automatically advertise host Hook capabilities to Harness; SDK registrations execute after workspace-configured Hook bindings as specified.
 - [ ] Add typed approval callback registration.
 - [ ] Add cancellation API.
 - [ ] Add typed external Memory-operation invocation API placeholder that becomes live with Memory runtime milestones.
@@ -190,7 +204,8 @@
 - [ ] Add public Harness client abstraction using existing Python SDK CLI subprocess/location conventions.
 - [ ] Add typed/dataclass/Pydantic-equivalent session/run/preflight/config/result/report/event models according to repository style.
 - [ ] Add async event streaming/subscription.
-- [ ] Add first-class prompt, Tool selection/before-call, and approval callbacks.
+- [ ] Add first-class registration APIs for every version-1 Hook ID plus separate approval callbacks; hide protocol/correlation plumbing and preserve registration order.
+- [ ] Automatically advertise host Hook/provider capabilities to Harness and keep SDK Hook registrations ordered after workspace-configured bindings.
 - [ ] Add cancellation API.
 - [ ] Add external Memory-operation invocation API placeholder for later Memory support.
 - [ ] Add typed custom model, embedding, Knowledge, and Memory host-provider contracts.
@@ -213,7 +228,7 @@
 - [ ] Reuse public `agentpm knowledge query` behavior/machinery when it can satisfy the request rather than reimplementing search privately in Harness.
 - [ ] Add a machine/query interface if existing public Knowledge query output is insufficient for Harness-safe structured consumption.
 - [ ] Add typed `EmbeddingProvider` service request/response contract with provider/model/dimensions/normalization/text and returned numeric vector.
-- [ ] Resolve configured embedding-provider matches against Knowledge embedding metadata when local query needs a compatible query vector.
+- [ ] Resolve `knowledge.embedding_matches` by exact provider/model/dimensions/normalized tuple when local query needs a compatible query vector; reject ambiguous/duplicate matches rather than choosing heuristically.
 - [ ] Validate returned vector dimensions/numeric finiteness/declared compatibility before local retrieval.
 - [ ] Suppress a vector Knowledge surface when neither local query nor a compatible embedding provider/custom runtime can realize it.
 - [ ] Add before-Knowledge-request and after-retrieval Hook points using the existing HookRuntime contract; revalidate package/scope/options after Hook changes.
@@ -242,18 +257,18 @@
 - [ ] Add `MemoryRuntime` interface and normalized direct Memory read/write/update/delete request/result types.
 - [ ] Implement built-in SQLite runtime at default `.agentpm-state/memory.sqlite3`.
 - [ ] Add local store schema versioning/migration mechanism.
-- [ ] Implement `memory_meta`, `memory_records`, `memory_operation_state`, and `memory_vectors` logical tables from `spec.md` with suitable indexes/constraints.
-- [ ] Store canonical `scope_json` plus stable `scope_hash`; never let model-supplied content choose scope.
+- [ ] Implement the version-1 SQLite schema from `spec.md`: `memory_meta`, `memory_records`, `memory_sequence_state`, `memory_operation_state`, and `memory_vectors`, including required indexes/uniqueness and schema-version migration handling.
+- [ ] Store canonical lexicographically-keyed compact `scope_json` plus `sha256:<hex>` `scope_hash` exactly as defined in `spec.md`; verify hash/content agreement and never let model-supplied content choose scope.
 - [ ] Resolve arbitrary Blueprint scope keys from trusted RunContext/config/SDK/CLI inputs.
 - [ ] Load generated contract index/contracts and validate runtime records against generated envelope contracts.
 - [ ] Accept model-proposed record `content` only and construct IDs, scope, timestamps, schema version, ordinal, expiration, and provenance in Harness/MemoryRuntime.
 - [ ] Implement document one-current-record semantics per complete scope tuple.
 - [ ] Implement collection create/read/update/delete by ID/filter according to declared constraints/retrieval modes.
-- [ ] Implement sequence append/chronological retrieval with runtime-assigned ordinal and deterministic ordering.
+- [ ] Implement sequence append/chronological retrieval with `memory_sequence_state`, zero-based never-reused ordinals, and ordinal reservation/insertion in one transaction.
 - [ ] Enforce `append_only` for direct model mutations.
 - [ ] Implement `key`, `filter`, `chronological`, and practical local `full_text` retrieval where declared.
-- [ ] Implement local `semantic` retrieval using configured/local embedding provider plus `memory_vectors` exact search; advertise semantic only when resolved and ready.
-- [ ] Add MemoryRuntime capability advertisement and preflight comparison to Blueprint space requirements.
+- [ ] Implement local `semantic` retrieval only when `memory.local.semantic` resolves a ready configured EmbeddingProvider/model/dimensions; store little-endian f32 vectors/content hashes and use exact cosine search; otherwise do not advertise semantic.
+- [ ] Add the normalized MemoryRuntime capability descriptor from `spec.md` (`space_models`, `retrieval_modes`, `retention_actions`, `constraints`, `capacity`, `durable_trigger_state`, `atomic_batches`) and compare live resolved capabilities to each Blueprint space/operation during preflight.
 - [ ] Suppress direct Memory spaces the selected runtime cannot faithfully realize.
 - [ ] Enforce Loop `memory.read/write` for direct model access only.
 - [ ] Implement TTL anchor `(updated_at ?? created_at) + ttl`, lazy expiration enforcement, delete/archive actions, and active-record filtering.
@@ -280,7 +295,7 @@
 - [ ] For transform/consolidate, call ModelRuntime with operation description, authorized source content, target content schema, and lifecycle control instructions; require target content only.
 - [ ] Validate generated target content and perform bounded `max_memory_operation_repairs` structured repair.
 - [ ] Construct provenance from operation/source record IDs and enforce `preserve_provenance`/source-handling semantics.
-- [ ] Apply `retain`, `retain_until_expiration`, and `delete_after_success` consistently and transactionally where practical.
+- [ ] Apply `retain`, `retain_until_expiration`, and `delete_after_success` consistently; for the built-in SQLite runtime, record/output/source/trigger-state mutations belonging to one lifecycle operation must commit or roll back together.
 - [ ] Add `memory_operation_eligible/started/completed/failed` and detailed source/output events.
 - [ ] Add before-Memory-operation Hook without allowing Hook to rewrite trigger/input/output/targets/source handling/scope authority.
 - [ ] Implement canonical Engine `invoke_memory_operation` for `trigger.type=external`.
@@ -295,7 +310,7 @@
 - [ ] Keep lifecycle operation trigger interpretation/execution in Harness; providers expose primitive persistence/retrieval/trigger-state services rather than redefining operations.
 - [ ] Add explicit `memory.packages` package-to-runtime mapping and configured runtime definitions.
 - [ ] Do not silently fall back to SQLite when an explicitly mapped external Memory runtime is unavailable.
-- [ ] Add runtime capability handshake/readiness diagnostics and suppress only unsupported spaces/operations where safe.
+- [ ] Make external providers advertise the same normalized MemoryRuntime capability descriptor; add readiness diagnostics and suppress only unsupported spaces/operations where safe instead of pretending unsupported semantics exist.
 - [ ] Add Node and Python SDK provider adapters/helpers for PostgreSQL/pgvector and Redis using optional dependencies/extras.
 - [ ] Add runnable provider bridges/examples compatible with workspace process provider configuration.
 - [ ] Keep backend credentials provider-side/scoped and out of events.
@@ -317,12 +332,13 @@
 - [ ] Keep outward calls independent from active Run phase hooks/access/checkpoints.
 - [ ] Emit Harness surface start/ready/activity/failure/stop events and include endpoint/tool mapping in TUI/report.
 - [ ] Ensure Session shutdown/cancellation terminates all owned MCP server processes cleanly.
-- [ ] Add tests for multiple surfaces, ephemeral ports, Tool filtering, collisions, partial readiness, call events, process failure/restart policy if implemented, and cleanup.
+- [ ] Apply the managed-process lifecycle policy to Harness-owned `serve --mcp` children: an in-flight call is never replayed; default one restart may restore the surface for later calls; exhausted restart marks the surface unavailable.
+- [ ] Add tests for multiple surfaces, ephemeral ports, Tool filtering, collisions, partial readiness, call events, process failure/restart-without-replay, and cleanup.
 
 ## Milestone 18: External MCP Import and Runtime Tool Augmentation
 > Scope note: let runtime config add environment-specific MCP functionality to a published Agent. Imported Tools become normal phase Tool capabilities only in explicitly configured scope and are governed by the Harness Tool pipeline.
-- [ ] Implement `mcp.imports` runtime config for at least stdio and supported HTTP MCP transport according to current MCP ecosystem/repository choices.
-- [ ] Require every import to declare explicit global or phase scope; reject omitted/empty scope.
+- [ ] Implement the exact config-v1 `mcp.imports` union from `spec.md`: `transport: stdio | http`; stdio uses direct command/args/cwd/env/timeouts/restart, HTTP uses an absolute URL and `{value}|{env}` header references.
+- [ ] Require every import to declare `scope.mode: global | phases`; `global` forbids `phases`, while `phases` requires a non-empty unique phase list and becomes unavailable if Agent-aware preflight leaves no valid phases.
 - [ ] Support optional allowed Tool-name filter; if omitted, expose all advertised Tools within the explicitly configured scope.
 - [ ] Start/connect external MCP servers at Session bootstrap, initialize protocol, discover Tool descriptors, and validate configured filters.
 - [ ] Assign canonical internal identities such as `mcp:<server-id>/<tool-name>` and provider-safe aliases separately.
@@ -362,7 +378,7 @@
 - [ ] Ensure generated Template README copy teaches `Agent artifacts = portable definition`, `agentpm.harness.json = workspace runtime realization`, and `agentpm harness = reference executor`.
 - [ ] Gitignore `.agentpm-state/` in generated Harness workspaces while documenting how to inspect/export reports and local Memory safely.
 - [ ] Document `agentpm harness` modes/options, Agent selection, config precedence/defaults, runtime-state directory, safety limits, approvals, cancellation, and terminal statuses.
-- [ ] Publish a complete `agentpm.harness.json` reference with examples for OpenAI, Anthropic, Ollama, Hooks, scopes, Knowledge providers, Memory providers, MCP imports/exports, trace policy, and branding.
+- [ ] Publish the exact `agentpm.harness.json` version-1 reference from `spec.md`, including shared process/host descriptors, Hook implementations/bindings, Knowledge/Memory mappings, local Memory semantic config, stdio/HTTP MCP imports, approvals, lifecycle defaults, trace policy, and branding.
 - [ ] Document the public machine protocol sufficiently for third-party clients/providers without requiring Node/Python SDKs.
 - [ ] Document first-class Node/Python Harness and Hook/provider APIs with runnable examples.
 - [ ] Document Pinecone/pgvector Knowledge and PostgreSQL/pgvector/Redis Memory provider setup boundaries, including that Harness does not provision/sync external indexes/stores.

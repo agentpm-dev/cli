@@ -150,11 +150,23 @@ The default workspace config file is:
 agentpm.harness.json
 ```
 
-It is consumer-owned, optional, source-control friendly, and not packaged with the Agent.
+It is consumer-owned, optional, source-control friendly, and not packaged with the Agent. If the file exists, `version` is required. Unused sections should be omitted rather than emitted as empty objects. Version 1 is strict: unknown fields are rejected except for the intentionally open ID-keyed registries/maps and provider-specific `model.options` object described below.
 
-### Versioned top-level shape
+All relative paths in Harness config resolve from the discovered workspace root, not from the config file's own directory. Moving the config file with `--config` does not change path bases.
 
-Phase 7B should implement a strict versioned contract conceptually equivalent to:
+### Minimal valid configuration
+
+```json
+{
+  "version": 1
+}
+```
+
+A missing config file is equivalent to version-1 defaults plus values supplied by CLI/SDK/environment. It is not an error.
+
+### Complete version-1 example
+
+The following example is intentionally populated so every nested registry/mapping shape is concrete. A real workspace should omit sections it does not use.
 
 ```json
 {
@@ -162,11 +174,38 @@ Phase 7B should implement a strict versioned contract conceptually equivalent to
   "model": {
     "provider": "openai",
     "model": "gpt-5",
-    "options": {}
+    "options": {
+      "temperature": 0.2
+    }
   },
   "providers": {
-    "models": {},
-    "embeddings": {}
+    "models": {
+      "company-model": {
+        "implementation": {
+          "type": "process",
+          "command": "python",
+          "args": ["runtime/company_model_provider.py"],
+          "cwd": ".",
+          "env": ["COMPANY_MODEL_API_KEY"],
+          "startup_timeout_ms": 15000,
+          "request_timeout_ms": 120000,
+          "restart": {
+            "max_attempts": 1,
+            "backoff_ms": 250
+          }
+        }
+      }
+    },
+    "embeddings": {
+      "example-4d": {
+        "implementation": {
+          "type": "process",
+          "command": "python",
+          "args": ["runtime/example_embedder.py"],
+          "env": []
+        }
+      }
+    }
   },
   "scopes": {
     "user": "user-42",
@@ -185,25 +224,136 @@ Phase 7B should implement a strict versioned contract conceptually equivalent to
     }
   },
   "hooks": {
-    "implementations": {}
+    "implementations": {
+      "workspace-policy": {
+        "implementation": {
+          "type": "process",
+          "command": "python",
+          "args": ["runtime/hooks.py"],
+          "env": ["POLICY_SERVICE_TOKEN"]
+        }
+      }
+    },
+    "bindings": [
+      {
+        "hook": "before_model_request",
+        "implementation": "workspace-policy",
+        "failure_policy": "closed"
+      },
+      {
+        "hook": "before_tool_call",
+        "implementation": "workspace-policy",
+        "failure_policy": "closed"
+      },
+      {
+        "hook": "before_memory_write",
+        "implementation": "workspace-policy",
+        "failure_policy": "continue"
+      }
+    ]
   },
   "knowledge": {
-    "runtimes": {},
-    "packages": {},
-    "embedding_matches": []
+    "runtimes": {
+      "pinecone-prod": {
+        "implementation": {
+          "type": "process",
+          "command": "python",
+          "args": ["runtime/pinecone_knowledge.py"],
+          "env": ["PINECONE_API_KEY"]
+        }
+      }
+    },
+    "packages": {
+      "@zack/agentpm-docs": {
+        "runtime": "pinecone-prod"
+      }
+    },
+    "embedding_matches": [
+      {
+        "match": {
+          "provider": "bring-your-own",
+          "model": "example-normalized-4d",
+          "dimensions": 4,
+          "normalized": true
+        },
+        "embedding_provider": "example-4d"
+      }
+    ]
   },
   "memory": {
-    "runtimes": {},
-    "packages": {}
+    "local": {
+      "semantic": {
+        "embedding_provider": "example-4d",
+        "model": "example-normalized-4d",
+        "dimensions": 4
+      }
+    },
+    "runtimes": {
+      "postgres-prod": {
+        "implementation": {
+          "type": "process",
+          "command": "python",
+          "args": ["runtime/postgres_memory.py"],
+          "env": ["DATABASE_URL"]
+        }
+      }
+    },
+    "packages": {
+      "@zack/conversation-continuity": {
+        "runtime": "postgres-prod"
+      }
+    }
   },
   "mcp": {
-    "imports": {},
+    "imports": {
+      "github": {
+        "transport": "stdio",
+        "command": "github-mcp-server",
+        "args": [],
+        "env": ["GITHUB_TOKEN"],
+        "scope": {
+          "mode": "phases",
+          "phases": ["assess", "execute"]
+        },
+        "tools": ["get_issue", "search_issues"],
+        "startup_timeout_ms": 15000,
+        "request_timeout_ms": 120000,
+        "restart": {
+          "max_attempts": 1,
+          "backoff_ms": 250
+        }
+      },
+      "company-search": {
+        "transport": "http",
+        "url": "https://mcp.example.com/mcp",
+        "headers": {
+          "Authorization": {
+            "env": "COMPANY_MCP_AUTHORIZATION"
+          },
+          "X-Workspace": {
+            "value": "support"
+          }
+        },
+        "scope": {
+          "mode": "global"
+        }
+      }
+    },
     "exports": {
+      "enabled": true,
       "host": "127.0.0.1"
     }
   },
   "approvals": {
-    "headless": "require-controller"
+    "controller": {
+      "implementation": {
+        "type": "process",
+        "command": "python",
+        "args": ["runtime/approval_controller.py"],
+        "env": []
+      }
+    },
+    "timeout_ms": 300000
   },
   "trace": {
     "enabled": true,
@@ -220,13 +370,64 @@ Phase 7B should implement a strict versioned contract conceptually equivalent to
 }
 ```
 
-This is the required semantic organization; implementation may adjust small field names to align with repository conventions, but must not collapse unrelated concepts into generic untyped maps.
+The field names and nesting in this section are the Phase 7B version-1 contract. Implementation type/function/file names may follow repository conventions, but Codex should not rename/restructure these JSON fields without an explicit spec change.
+
+### Shared service implementation descriptor
+
+Custom model providers, embedding providers, Hook implementations, Knowledge runtimes, Memory runtimes, and optional approval controllers use the same implementation descriptor. The registry in which the implementation appears determines which typed service protocol it must speak.
+
+A process-backed implementation is:
+
+```json
+{
+  "type": "process",
+  "command": "python",
+  "args": ["runtime/provider.py"],
+  "cwd": ".",
+  "env": ["PROVIDER_API_KEY"],
+  "startup_timeout_ms": 15000,
+  "request_timeout_ms": 120000,
+  "restart": {
+    "max_attempts": 1,
+    "backoff_ms": 250
+  }
+}
+```
+
+Rules:
+
+- `command` is executed directly, never through an implicit shell. It may be an absolute executable path or a name resolved by the normal process PATH.
+- `args` is an optional array of literal arguments; default `[]`. Harness does not interpolate shell variables/templates into arguments.
+- `cwd` is optional, defaults to workspace root, and when present must be a safe workspace-relative path that canonicalizes inside the workspace root; absolute `cwd` is not allowed in config v1.
+- `env` is an optional list of environment-variable names to project into that child; default `[]`. Values are resolved from the Harness secret/environment resolver (including `.env.local` when supported). Harness supplies only a minimal non-secret platform process baseline needed for normal execution (for example PATH/home/temp/system variables as appropriate) plus these declared variables; it must not inherit arbitrary parent variables. Literal secret values do not belong in this descriptor.
+- `startup_timeout_ms` defaults to `15000` and must be positive.
+- `request_timeout_ms` defaults to `120000` and must be positive. Individual semantic runtimes may apply a more specific authored/runtime timeout when their contract already provides one.
+- `restart.max_attempts` defaults to `1`; `0` disables automatic process restart. `restart.backoff_ms` defaults to `250`.
+- Automatic restart never automatically replays an in-flight request. The failed request fails visibly; a successful restart only makes the service available for subsequent requests.
+- Process services use the versioned AgentPM service protocol over persistent stdin/stdout and must complete the service-specific handshake before becoming ready.
+
+An application-hosted implementation is:
+
+```json
+{
+  "type": "host",
+  "request_timeout_ms": 120000
+}
+```
+
+Rules:
+
+- `host` means the parent machine/SDK client supplies the implementation over the Harness machine protocol under the configured registry ID.
+- A configured `host` implementation without a connected/registered host provider is unavailable during preflight; Harness never silently replaces it.
+- Host lifecycle/restart belongs to the parent application. Harness only applies request timeout/cancellation semantics.
+
+Built-in implementations do not require entries in these registries.
 
 ### Configuration precedence
 
 For runtime values that can be supplied in multiple places, use the following precedence from highest to lowest:
 
-1. explicit SDK/application control message or per-run API option;
+1. explicit SDK/application per-run option/control registration;
 2. explicit CLI option;
 3. `agentpm.harness.json`;
 4. standard environment variables / provider-specific environment conventions;
@@ -236,35 +437,428 @@ Portable Agent/Loop metadata is not part of this override chain. Runtime config 
 
 The resolved value and source must be inspectable in preflight/events/report.
 
-### Model configuration
+### Model configuration and custom model providers
 
-`model.provider` and `model.model` are open strings. Phase 7B ships built-in providers with IDs:
+`model.provider` and `model.model` are open non-empty strings. Phase 7B ships built-in model-provider IDs:
 
 - `openai`
 - `anthropic`
 - `ollama`
 
-Concrete model IDs are not enumerated by AgentPM and may change without AgentPM releases.
+Concrete model IDs are never enumerated by AgentPM.
 
-Standard provider environment variables should be used where established. Config may specify non-secret provider endpoints/options. Secrets must be resolved at runtime and never serialized into events or reports.
+`model.options` is an optional provider-specific JSON object passed only to the selected ModelRuntime. It is intentionally open-ended because providers expose different generation controls. It must not be used as a secret store; secrets come from the runtime environment/resolver.
 
-Unknown provider IDs may be satisfied by a configured custom model provider implementation.
+If `model.provider` is not a built-in ID, it must match a key in `providers.models`. Built-in IDs are reserved and cannot be redefined in `providers.models`.
 
-### Runtime limits defaults
+Example custom provider:
 
-If absent, use conservative Harness defaults:
+```json
+{
+  "providers": {
+    "models": {
+      "company-model": {
+        "implementation": {
+          "type": "host"
+        }
+      }
+    }
+  },
+  "model": {
+    "provider": "company-model",
+    "model": "support-v7"
+  }
+}
+```
 
-- `max_steps`: 100 Harness safety ceiling;
-- `max_model_calls_per_phase`: 24;
-- `max_tool_calls_per_phase`: 16;
-- `max_actions_per_phase`: 64;
-- `max_tool_call_repairs`: 2 additional repair attempts;
-- `max_structured_output_repairs`: 2 additional repair attempts;
-- `max_memory_operation_repairs`: 2 additional repair attempts.
+### Embedding providers
+
+`providers.embeddings` is an ID-keyed registry of typed EmbeddingProvider implementations:
+
+```json
+{
+  "providers": {
+    "embeddings": {
+      "corp-embedder": {
+        "implementation": {
+          "type": "process",
+          "command": "python",
+          "args": ["runtime/embedder.py"],
+          "env": ["CORP_EMBEDDING_TOKEN"]
+        }
+      }
+    }
+  }
+}
+```
+
+An EmbeddingProvider performs the typed capability `text -> compatible vector`; it does not own Knowledge retrieval unless separately configured as a KnowledgeRuntime.
+
+### Static runtime scopes
+
+`scopes` is an open map of authored scope key to non-empty runtime string value:
+
+```json
+{
+  "scopes": {
+    "tenant": "acme",
+    "repository": "agentpm-dev/agentpm"
+  }
+}
+```
+
+Keys such as `user` and `conversation` have no built-in semantics. SDK/CLI per-run scope values override config values by key. The model never supplies authoritative scope values directly.
+
+### Runtime state and limits
+
+`runtime.state_dir` defaults to `.agentpm-state`. A relative value resolves from workspace root. An absolute path is allowed for this field specifically because durable runtime state may intentionally live outside the source workspace.
+
+`runtime.limits` supports exactly:
+
+- `max_steps` positive integer;
+- `max_model_calls_per_phase` positive integer;
+- `max_tool_calls_per_phase` positive integer;
+- `max_actions_per_phase` positive integer;
+- `max_tool_call_repairs` non-negative integer;
+- `max_structured_output_repairs` non-negative integer;
+- `max_memory_operation_repairs` non-negative integer.
+
+If absent, use:
+
+- `max_steps`: `100` Harness safety ceiling;
+- `max_model_calls_per_phase`: `24`;
+- `max_tool_calls_per_phase`: `16`;
+- `max_actions_per_phase`: `64`;
+- `max_tool_call_repairs`: `2` additional repair attempts;
+- `max_structured_output_repairs`: `2` additional repair attempts;
+- `max_memory_operation_repairs`: `2` additional repair attempts.
 
 `loop.limits.max_steps`, when present, remains authoritative. Effective maximum steps is the stricter of the Loop value and runtime safety ceiling. Runtime config may tighten but never loosen the authored Loop limit.
 
-These values are defaults, not portable Loop semantics, and must be reported transparently.
+### Hook implementations and bindings
+
+`hooks.implementations` defines reusable HookRuntime process/host implementations. `hooks.bindings` binds typed hook IDs to those implementations in deterministic authored array order:
+
+```json
+{
+  "hooks": {
+    "implementations": {
+      "policy": {
+        "implementation": {
+          "type": "process",
+          "command": "python",
+          "args": ["runtime/hooks.py"]
+        }
+      }
+    },
+    "bindings": [
+      {
+        "hook": "before_model_request",
+        "implementation": "policy",
+        "failure_policy": "closed"
+      },
+      {
+        "hook": "before_tool_call",
+        "implementation": "policy",
+        "failure_policy": "continue"
+      }
+    ]
+  }
+}
+```
+
+Version-1 hook IDs are:
+
+- `before_model_request`;
+- `before_tool_selection`;
+- `before_tool_call`;
+- `before_knowledge_request`;
+- `after_knowledge_retrieval`;
+- `before_memory_read`;
+- `before_memory_write`;
+- `before_memory_operation`.
+
+`failure_policy` is exactly `closed | continue` and defaults to `closed` when omitted. Multiple bindings for the same hook ID are allowed and execute in `hooks.bindings` array order. Each successful patch/decision is validated/applied before the next Hook sees the updated safe snapshot. A `closed` failure stops the intercepted operation; `continue` records the failure and proceeds to the next binding/original operation.
+
+SDK-hosted Hook registrations may be added per Session/Run without editing config. They execute after workspace-configured Hook bindings in host registration order and remain subject to the same constrained Hook contracts.
+
+Approval callbacks are **not Hooks**. They are handled by ApprovalRuntime/control as described below.
+
+### Knowledge runtime configuration
+
+`knowledge.runtimes` is an ID-keyed registry of custom full KnowledgeRuntime implementations:
+
+```json
+{
+  "knowledge": {
+    "runtimes": {
+      "pinecone-prod": {
+        "implementation": {
+          "type": "process",
+          "command": "python",
+          "args": ["runtime/pinecone_knowledge.py"],
+          "env": ["PINECONE_API_KEY"]
+        }
+      }
+    }
+  }
+}
+```
+
+`knowledge.packages` maps a **versionless AgentPM Knowledge package identity** to one configured runtime ID:
+
+```json
+{
+  "knowledge": {
+    "packages": {
+      "@zack/agentpm-docs": {
+        "runtime": "pinecone-prod"
+      }
+    }
+  }
+}
+```
+
+Rules:
+
+- an entry must reference an ID defined in `knowledge.runtimes`;
+- the exact installed version still comes from `agent.lock` and is supplied to/validated by the runtime;
+- no package entry means the Harness attempts the AgentPM built-in/local Knowledge realization;
+- an explicit package mapping never silently falls back to local retrieval if that runtime is unavailable or mismatched.
+
+`knowledge.embedding_matches` is used only when AgentPM local vector retrieval needs an external query embedding. Each entry exactly matches one packaged embedding-space tuple and names a configured EmbeddingProvider:
+
+```json
+{
+  "knowledge": {
+    "embedding_matches": [
+      {
+        "match": {
+          "provider": "bring-your-own",
+          "model": "example-normalized-4d",
+          "dimensions": 4,
+          "normalized": true
+        },
+        "embedding_provider": "corp-embedder"
+      }
+    ]
+  }
+}
+```
+
+Every match requires `provider`, `model`, positive `dimensions`, and boolean `normalized`. Duplicate tuples are invalid. `embedding_provider` must reference `providers.embeddings`. The Harness also validates live provider capabilities and the actual installed index metadata before declaring the package ready.
+
+### Memory runtime configuration
+
+`memory.runtimes` and `memory.packages` follow the same explicit registry/mapping pattern as Knowledge:
+
+```json
+{
+  "memory": {
+    "runtimes": {
+      "postgres-prod": {
+        "implementation": {
+          "type": "process",
+          "command": "python",
+          "args": ["runtime/postgres_memory.py"],
+          "env": ["DATABASE_URL"]
+        }
+      }
+    },
+    "packages": {
+      "@zack/conversation-continuity": {
+        "runtime": "postgres-prod"
+      }
+    }
+  }
+}
+```
+
+Package keys are versionless AgentPM identities; exact versions are resolved from `agent.lock`. No mapping means built-in local MemoryRuntime. An explicit external mapping never silently falls back to SQLite.
+
+The built-in local SQLite runtime advertises `semantic` retrieval only when `memory.local.semantic` is configured and ready:
+
+```json
+{
+  "memory": {
+    "local": {
+      "semantic": {
+        "embedding_provider": "corp-embedder",
+        "model": "corp-memory-v1",
+        "dimensions": 768
+      }
+    }
+  }
+}
+```
+
+`embedding_provider` must reference `providers.embeddings`; `model` is the embedding model ID requested from that provider; `dimensions` is a positive integer and becomes part of the local vector-space identity. The built-in local runtime uses cosine similarity for Phase 7B. If this block is absent, local Memory does not advertise `semantic` even if an embedding provider exists elsewhere in config.
+
+### External MCP import configuration
+
+`mcp.imports` is an ID-keyed registry of external MCP servers that add runtime Tool capability. Every import must declare an explicit scope.
+
+Stdio form:
+
+```json
+{
+  "mcp": {
+    "imports": {
+      "github": {
+        "transport": "stdio",
+        "command": "github-mcp-server",
+        "args": [],
+        "cwd": ".",
+        "env": ["GITHUB_TOKEN"],
+        "scope": {
+          "mode": "phases",
+          "phases": ["assess", "execute"]
+        },
+        "tools": ["get_issue", "search_issues"],
+        "startup_timeout_ms": 15000,
+        "request_timeout_ms": 120000,
+        "restart": {
+          "max_attempts": 1,
+          "backoff_ms": 250
+        }
+      }
+    }
+  }
+}
+```
+
+HTTP form:
+
+```json
+{
+  "mcp": {
+    "imports": {
+      "company-search": {
+        "transport": "http",
+        "url": "https://mcp.example.com/mcp",
+        "headers": {
+          "Authorization": {
+            "env": "COMPANY_MCP_AUTHORIZATION"
+          },
+          "X-Workspace": {
+            "value": "support"
+          }
+        },
+        "scope": {
+          "mode": "global"
+        },
+        "tools": ["search"]
+      }
+    }
+  }
+}
+```
+
+Rules:
+
+- `transport` is exactly `stdio | http` in config version 1.
+- Stdio imports require `command`; `args`, `cwd`, `env`, timeouts, and restart use the same semantics/defaults as process implementations.
+- HTTP imports require an absolute `http://` or `https://` URL. `headers` is optional. Each header value is exactly one of `{ "value": "non-secret literal" }` or `{ "env": "ENV_VAR_NAME" }`; secret header values should use `env`.
+- `scope.mode` is exactly `global | phases`.
+- `global` forbids `phases`.
+- `phases` requires a non-empty unique list of authored Loop phase IDs. Unknown phase IDs are diagnosed during Agent-aware preflight; if none remain valid, the import is unavailable.
+- `tools` is an optional unique list of advertised MCP Tool names. Omission means all Tools advertised by that explicitly configured server are eligible inside its configured scope.
+- Discovery never expands scope beyond this config.
+
+### Agent-authored MCP export configuration
+
+Agent `bindings.mcp` defines the logical exported surfaces. Runtime config only controls how Harness-managed exports are hosted:
+
+```json
+{
+  "mcp": {
+    "exports": {
+      "enabled": true,
+      "host": "127.0.0.1"
+    }
+  }
+}
+```
+
+Defaults are `enabled: true` and `host: "127.0.0.1"`. Harness always requests ephemeral port `0` independently for each logical exported surface. Version 1 does not provide a static per-surface port map; users who require custom standalone MCP hosting can run `agentpm serve --mcp` directly. Configuring a non-loopback host is allowed only explicitly and must produce a prominent security warning.
+
+### Approval configuration
+
+ApprovalRuntime remains separate from HookRuntime.
+
+An optional workspace process/host controller may be configured:
+
+```json
+{
+  "approvals": {
+    "controller": {
+      "implementation": {
+        "type": "process",
+        "command": "python",
+        "args": ["runtime/approval_controller.py"]
+      }
+    },
+    "timeout_ms": 300000
+  }
+}
+```
+
+Rules:
+
+- `timeout_ms` is optional and positive; it applies when waiting on a process/host controller, not while a human is actively using the Ratatui approval screen.
+- an explicit SDK/application approval callback has highest per-run precedence;
+- otherwise an explicitly configured `approvals.controller` is used;
+- otherwise Ratatui uses its built-in interactive ApprovalRuntime;
+- otherwise machine mode may use the connected host controller if registered;
+- otherwise plain headless reaches runtime terminal status `approval_required` at the checkpoint; it never auto-approves or auto-denies.
+
+### Trace configuration
+
+```json
+{
+  "trace": {
+    "enabled": true,
+    "level": "normal",
+    "content": "redacted"
+  }
+}
+```
+
+Defaults are exactly the values above. `level` is exactly `minimal | normal | verbose`. `content` is exactly `none | redacted | full`. `full` still never serializes values classified by Harness as secrets.
+
+### UI branding configuration
+
+```json
+{
+  "ui": {
+    "branding": {
+      "name": "Acme Agent Console",
+      "subtitle": "Internal AI Platform",
+      "accent": "#2563EB"
+    }
+  }
+}
+```
+
+All branding fields are optional. Defaults are `name: "AgentPM Harness"`, `subtitle: null`, `accent: null`. `accent`, when present, is exactly a six-digit `#RRGGBB` value. Branding changes presentation only.
+
+### Managed service lifecycle
+
+Harness-owned long-lived process services (custom providers, process Hooks, process approval controller, stdio MCP imports, and managed MCP export subprocesses) use a common observable lifecycle:
+
+```text
+starting -> handshaking -> ready -> unhealthy -> restarting -> ready|failed -> stopped
+```
+
+Requirements:
+
+- a service is not ready until its protocol handshake/capabilities are validated;
+- unexpected process exit or transport failure marks it unhealthy and fails any in-flight request visibly;
+- automatic restart never replays the failed request;
+- when restart is configured/defaulted, restart is only for subsequent requests;
+- exhausted restart attempts mark the service failed/unavailable and recompute affected readiness where relevant;
+- all transitions emit service lifecycle events;
+- Session shutdown/cancellation stops owned processes cleanly.
 
 ## Bootstrap and preflight
 
@@ -281,7 +875,7 @@ It must:
 7. resolve model/provider and runtime scope values;
 8. validate cross-package binding references deliberately deferred by Phase 7A lint;
 9. validate installed Knowledge and Memory build/index metadata required for runtime use;
-10. establish Hook/Knowledge/Memory/MCP/provider service implementations;
+10. establish Model/Embedding/Hook/Knowledge/Memory/MCP/Approval service implementations;
 11. probe/handshake external services and determine capability readiness;
 12. inspect Tool runtime/environment readiness where possible;
 13. resolve Agent-authored outward MCP surfaces and runtime-configured inward MCP surfaces;
@@ -534,6 +1128,8 @@ Package-owned Skill paths resolve relative to the resolved Skill package root an
 
 Skill scripts never auto-execute. A script can execute only through independently authorized capability such as an AgentPM shell-executor Tool.
 
+Skill `compatibility` metadata is advisory like Profile compatibility. Harness may emit readiness/quality warnings when the active runtime/model clearly does not match a declared compatibility hint, but compatibility does not grant/suppress authority or become hard execution policy by itself.
+
 ## ToolRuntime and `agentpm run`
 
 Harness direct AgentPM Tool calls must execute through the public command boundary:
@@ -652,16 +1248,25 @@ Loop `memory.read/write` constrains direct model access only. It does not prohib
 
 ### Runtime capability advertisement
 
-MemoryRuntime advertises supported:
+Every MemoryRuntime exposes a normalized capability descriptor equivalent to:
 
-- space models;
-- retrieval modes;
-- retention actions;
-- constraints;
-- capacity handling;
-- other protocol capabilities.
+```json
+{
+  "space_models": ["document", "collection", "sequence"],
+  "retrieval_modes": ["key", "filter", "chronological", "full_text", "semantic"],
+  "retention_actions": ["delete", "archive"],
+  "constraints": ["append_only"],
+  "capacity": true,
+  "durable_trigger_state": true,
+  "atomic_batches": true
+}
+```
 
-Harness compares the selected runtime's live capabilities with each Blueprint space/operation during preflight. A space is exposed only when its required contract can be faithfully realized.
+The arrays contain only capabilities the runtime can actually realize in its **current resolved configuration**. For example, the built-in SQLite runtime omits `semantic` unless `memory.local.semantic` resolves a ready EmbeddingProvider.
+
+`capacity` means the runtime can atomically enforce scoped hard record limits. `durable_trigger_state` means operation scheduling state survives Harness process restarts. `atomic_batches` means the runtime can commit/rollback the related multi-record/source/trigger-state mutations required by lifecycle operations as one semantic batch.
+
+Harness compares this live descriptor with every Blueprint space and participating operation during preflight. A direct space is exposed only when all of its declared model/retrieval/retention/constraint/capacity requirements can be faithfully realized. A lifecycle operation is ready only when all referenced spaces are realizable for internal access and the backend provides durable trigger state plus atomic batches for operations that mutate multiple records/state entries.
 
 ### Local SQLite MemoryRuntime
 
@@ -671,23 +1276,36 @@ Default mutable path:
 .agentpm-state/memory.sqlite3
 ```
 
-Use a schema equivalent to the following logical tables (exact SQL types/index names may follow Rust/SQLite conventions):
+Use the following version-1 logical schema. SQL spelling/index names may follow the existing Rust migration conventions, but the columns, keys, uniqueness semantics, and state separation below are required.
 
 #### `memory_meta`
 
 - `key TEXT PRIMARY KEY`
 - `value TEXT NOT NULL`
 
-Must contain local store schema version.
+On creation/migration, store `key = 'schema_version'`, `value = '1'`. Future local-store schema changes must use explicit migrations; opening a newer unsupported schema version fails clearly rather than attempting best-effort interpretation.
+
+#### Scope identity
+
+For every persisted scoped row, `scope_json` is the complete scope tuple required by that space/operation, serialized as a JSON object with keys sorted lexicographically and no insignificant whitespace. Scope values are strings. `scope_hash` is:
+
+```text
+sha256:<lowercase-hex SHA-256 of UTF-8 scope_json>
+```
+
+The hash is an index key only; `scope_json` remains stored for diagnostics/collision verification. Harness never accepts a model-provided `scope_hash` or `scope_json` as authority.
+
+For operation state spanning multiple spaces, the operation scope tuple is the union of scope keys required by its declared inputs/output/targets, resolved from the same trusted RunContext.
 
 #### `memory_records`
 
 - `package TEXT NOT NULL`
 - `package_version TEXT NOT NULL`
 - `space TEXT NOT NULL`
+- `space_model TEXT NOT NULL` (`document | collection | sequence`)
 - `record_type TEXT NOT NULL`
 - `scope_hash TEXT NOT NULL`
-- `scope_json TEXT NOT NULL` (canonical JSON)
+- `scope_json TEXT NOT NULL`
 - `id TEXT NOT NULL`
 - `schema_version TEXT NOT NULL`
 - `ordinal INTEGER NULL`
@@ -699,14 +1317,30 @@ Must contain local store schema version.
 - `content_json TEXT NOT NULL`
 - primary key: `(package, package_version, space, scope_hash, id)`
 
-Indexes at minimum:
+Timestamps are UTC RFC 3339 strings. `content_json`, `scope_json`, and `provenance_json` use deterministic compact JSON serialization for stable hashing/debugging.
 
-- `(package, package_version, space, scope_hash, record_type)`;
-- `(package, package_version, space, scope_hash, ordinal)` for sequence reads;
-- `expires_at` for retention cleanup;
-- active/archived lookup suitable for the chosen SQLite version.
+Required indexes/constraints:
 
-Archived records remain in the table with `archived_at` set and are excluded from normal active retrieval.
+- index `(package, package_version, space, scope_hash, record_type, archived_at)` for active scoped lookup;
+- index `(package, package_version, space, scope_hash, ordinal)` for sequence reads;
+- index `expires_at` for retention cleanup;
+- partial unique index `(package, package_version, space, scope_hash, record_type)` where `space_model = 'document' AND archived_at IS NULL`, enforcing one active document per scope/record type;
+- sequence records require non-null `ordinal`; non-sequence records require null `ordinal`, enforced in runtime validation if a portable SQLite CHECK would make migrations awkward.
+
+Archived records remain in `memory_records` with `archived_at` set and are excluded from normal active reads/counts/retrieval. Delete semantics physically remove the record and any local vector row.
+
+#### `memory_sequence_state`
+
+- `package TEXT NOT NULL`
+- `package_version TEXT NOT NULL`
+- `space TEXT NOT NULL`
+- `scope_hash TEXT NOT NULL`
+- `scope_json TEXT NOT NULL`
+- `next_ordinal INTEGER NOT NULL`
+- `updated_at TEXT NOT NULL`
+- primary key: `(package, package_version, space, scope_hash)`
+
+Sequence ordinal allocation starts at `0`. Appending reserves the current `next_ordinal` and increments it in the same SQLite transaction as record insertion. Ordinals are never reused after deletion/archive.
 
 #### `memory_operation_state`
 
@@ -716,7 +1350,7 @@ Archived records remain in the table with `archived_at` set and are excluded fro
 - `scope_hash TEXT NOT NULL`
 - `scope_json TEXT NOT NULL`
 - `trigger_type TEXT NOT NULL`
-- `armed INTEGER NOT NULL`
+- `armed INTEGER NOT NULL` (`0 | 1`)
 - `baseline_at TEXT NULL`
 - `last_completed_at TEXT NULL`
 - `next_eligible_at TEXT NULL`
@@ -725,9 +1359,11 @@ Archived records remain in the table with `archived_at` set and are excluded fro
 - `updated_at TEXT NOT NULL`
 - primary key: `(package, package_version, operation, scope_hash)`
 
+`watermark_json` is reserved for trigger-specific durable state that cannot be represented by the scalar columns. Harness owns its typed contents; models/hooks never write it directly.
+
 #### `memory_vectors`
 
-Used only when the local runtime implements semantic retrieval:
+Used only when the local runtime has a ready `memory.local.semantic` configuration:
 
 - `package TEXT NOT NULL`
 - `package_version TEXT NOT NULL`
@@ -742,9 +1378,11 @@ Used only when the local runtime implements semantic retrieval:
 - `updated_at TEXT NOT NULL`
 - primary key: `(package, package_version, space, scope_hash, record_id, embedding_provider, embedding_model)`
 
-The local implementation may use exact vector search initially. It must not require a hosted vector database.
+`vector` stores contiguous little-endian IEEE-754 `f32` values, matching the established AgentPM local-vector representation. `content_hash` is SHA-256 of the exact canonical model-visible record content used to create the embedding. A mismatched hash makes the vector stale and it must be regenerated before semantic retrieval returns that record.
 
-SQLite operations that combine record mutation and lifecycle trigger state should use transactions where practical so crashes do not create obvious record/trigger divergence.
+The local implementation uses exact cosine search in Phase 7B. It must not require a hosted vector database.
+
+All SQLite writes that combine record mutation, sequence allocation, vector invalidation/update, and/or lifecycle trigger state must execute in one transaction where they are part of the same semantic operation. SQLite foreign-key/cascade usage is allowed, but transaction semantics remain authoritative.
 
 ### Retention and capacity
 
@@ -784,7 +1422,7 @@ create | replace_input
 
 Omitted value defaults to `create` for backward compatibility.
 
-`replace_input` means the transformed output updates/replaces the originating source record and is valid only when output space/record type matches the single input space/record type. It is explicit lifecycle authority even if the space is append-only for direct writes.
+`replace_input` means the transformed output updates/replaces the originating source record and is valid only when output space/record type matches the single input space/record type **and** `source_handling` is `retain`. It is explicit lifecycle authority even if the space is append-only for direct writes. `delete_after_success` or `retain_until_expiration` with `replace_input` is invalid because the transformed record is the retained source identity itself.
 
 Update the flagship `refresh_saved_note` example to declare `output_mode: "replace_input"`.
 
@@ -902,7 +1540,6 @@ Required hook families should include at least:
 - Knowledge request shaping and post-retrieval filtering/reranking;
 - before Memory read/write;
 - before participating Memory lifecycle operation execution;
-- approval decision callback in application-hosted mode.
 
 Do not add hooks for purely mechanical metadata reads with no meaningful decision point.
 
@@ -931,10 +1568,15 @@ The wire protocol remains public/documented enough that third parties can implem
 
 ApprovalRuntime is semantically separate from HookRuntime.
 
-- Ratatui mode presents interactive approval controls.
-- machine/SDK mode emits an approval request and awaits a typed approve/deny response.
-- plain headless mode with no controller does not auto-approve or auto-deny. It terminates the Run with runtime status `approval_required` and records the checkpoint in the report.
-- optional configured approval timeout is supported for controller modes; timeout is runtime/control failure, not authored rejection.
+Controller resolution follows the configuration precedence defined above:
+
+- an explicit SDK/application per-run approval callback wins;
+- otherwise a configured `approvals.controller` process/host implementation is used;
+- otherwise Ratatui mode uses the built-in interactive approval UI;
+- otherwise machine mode may use the connected host controller when one was registered;
+- otherwise plain headless does not auto-approve or auto-deny and terminates with runtime status `approval_required`, recording the pending checkpoint in the report.
+
+Configured controller timeout is runtime/control failure, not authored rejection. Multiple checkpoints targeting one phase remain distinct sequential approval requests in authored order.
 
 Cancellation is first-class. Graceful cancellation produces `cancelled`, flushes report/trace, stops owned MCP/provider processes, and terminates nested Tool process groups. Hard kill remains fallback only.
 
@@ -987,7 +1629,7 @@ Default:
 - content policy `redacted`;
 - secrets never captured.
 
-Supported levels should include `minimal | normal | verbose` and content policies should include `none | redacted | full` or equivalent explicit values.
+Supported levels are exactly `minimal | normal | verbose`; content policies are exactly `none | redacted | full`.
 
 ### Durable JSON run report
 
@@ -1174,7 +1816,7 @@ Phase 7B is complete when all of the following are true:
 - EffectivePhase composition correctly handles global/phase bindings, Skill Tool inheritance, Profiles, Knowledge, Memory, runtime MCP imports, Loop restrictions, and runtime readiness.
 - OpenAI, Anthropic, and Ollama each complete the same representative Harness scenario using open model IDs/configuration rather than model enums.
 - `agentpm run` has machine-readable output, input/output schema enforcement, runtime-version enforcement, and cancellation-safe nested process cleanup.
-- Node and Python SDKs can launch Harness, consume events, provide at least prompt/Tool/approval hooks, cancel Runs, and receive terminal/report results without implementing the protocol manually.
+- Node and Python SDKs can launch Harness, consume events, provide prompt/Tool Hooks plus separate approval callbacks, cancel Runs, and receive terminal/report results without implementing the protocol manually.
 - Hook failure behavior is explicit and fail-closed by default.
 - Context Knowledge supports on-demand document loading.
 - Vector Knowledge supports local AgentPM retrieval plus configurable EmbeddingProvider fallback.
