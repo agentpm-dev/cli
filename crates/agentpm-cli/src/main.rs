@@ -7,6 +7,7 @@ mod assets;
 mod auth;
 mod commands;
 mod config;
+mod harness_config;
 mod io;
 mod keys;
 mod manifest;

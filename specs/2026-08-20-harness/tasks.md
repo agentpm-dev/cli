@@ -116,6 +116,7 @@
 ## Release Band 1: Contract, Config, and Preflight
 Covered milestones: 1-2.
 This gives us the Harness command shell, portable contract corrections, strict `agentpm.harness.json` validation, workspace discovery, lockfile-based Agent selection, cross-artifact preflight, and a structured resolved plan. It does not execute a Loop yet, but it gives authors early validation and makes runtime-readiness problems visible.
+- [ ] After the Release Band 1 CLI/schema version is available, publish the updated `@zack/conversation-continuity` package so `refresh_saved_note` uses `output_mode: "replace_input"` in production examples.
 
 ## Milestone 3: Stable Events, Trace Sink, and JSON Run Report Foundation
 > Scope note: establish the Harness observability and accounting contracts before complex execution is added. Define canonical event envelopes/taxonomy, event fan-out, durable JSONL traces, Run reports, redaction/content policy, Session usage aggregation, and the minimal Session/Run identities needed by those contracts. This milestone does not yet traverse a Loop, call a model, execute actions, resolve approvals, or implement Tool/Knowledge/Memory/MCP behavior.

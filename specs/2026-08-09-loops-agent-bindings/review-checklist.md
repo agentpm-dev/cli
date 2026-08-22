@@ -52,7 +52,7 @@
 - Confirm every phase is reachable from the entry phase.
 - Confirm at least one terminal target is reachable.
 - Confirm cycles remain valid and do not require `max_steps`.
-- Confirm checkpoint IDs/targets are valid and only one approval checkpoint targets a given phase.
+- Confirm checkpoint IDs/targets are valid and multiple approval checkpoints targeting one phase preserve authored order.
 - Confirm error-policy retry/non-retry fields are mutually consistent.
 - Confirm no semantic validator attempts to judge whether the orchestration design is subjectively good.
 

@@ -1,10 +1,14 @@
-# AgentPM Manifest Schema
+# AgentPM Schemas
 
-This folder contains the JSON Schema that defines `agent.json` for AgentPM.
+This folder contains the JSON Schemas bundled with the AgentPM CLI.
 
-- **File:** `agentpm.manifest.schema.json`
-- **Kinds:** `tool` (single tool package), `skill` (procedural package), `agent` (composed package), and `template` (workflow starter package)
-- **Strictness:** `additionalProperties: false` (unknown fields are rejected)
+- **Manifest schema:** `agentpm.manifest.schema.json`
+  - Defines `agent.json` package manifests.
+  - Covers AgentPM package kinds such as tool, skill, agent, template, knowledge, memory, profile, and loop.
+- **Harness config schema:** `agentpm.harness.schema.json`
+  - Defines optional `agentpm.harness.json` runtime harness configuration.
+  - Lets local harness runners validate model/provider/runtime configuration without changing the package manifest contract.
+- **Strictness:** schemas reject unknown fields where those objects are intended to be closed contracts.
 
 ---
 
@@ -146,6 +150,55 @@ agentpm lint path/to/agent.json
 ```
 
 > Editor tips: most IDEs (VS Code, JetBrains) will validate automatically when `$schema` is present.
+
+---
+
+## Harness config schema
+
+`agentpm.harness.json` is an optional runtime configuration file for harness execution. It is separate from `agent.json`: the package manifest declares portable package metadata and dependencies, while the harness config declares local runtime choices such as model provider wiring, limits, approval defaults, trace settings, and UI preferences.
+
+- **File:** `agentpm.harness.schema.json`
+- **Config file:** `agentpm.harness.json`
+- **Required field:** `version`
+- **Current version:** `1`
+- **Common top-level sections:** `model`, `providers`, `scopes`, `runtime`, `hooks`, `knowledge`, `memory`, `mcp`, `approvals`, `trace`, and `ui`
+
+Minimal example:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.harness.schema.json",
+  "version": 1
+}
+```
+
+Example with local runtime defaults:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.harness.schema.json",
+  "version": 1,
+  "model": {
+    "provider": "openai",
+    "model": "gpt-4o-mini"
+  },
+  "runtime": {
+    "state_dir": ".agentpm/state",
+    "limits": {
+      "max_steps": 20,
+      "max_tool_calls_per_phase": 8
+    }
+  },
+  "approvals": {
+    "timeout_ms": 600000
+  },
+  "trace": {
+    "enabled": true
+  }
+}
+```
+
+Harness config paths are validated as safe relative paths where path fields are constrained. Environment variable names are validated separately from values, so config files can declare which environment variables a local implementation expects without storing secrets in the file.
 
 ---
 

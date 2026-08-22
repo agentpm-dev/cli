@@ -846,6 +846,7 @@ fn build_memory_inspect_text(
                     inputs,
                     output,
                     source_handling,
+                    output_mode,
                     preserve_provenance,
                 } => {
                     lines.push(format!("- {} (transform)", key));
@@ -863,6 +864,10 @@ fn build_memory_inspect_text(
                     lines.push(format!(
                         "  Source handling: {}",
                         memory_source_handling_name(source_handling)
+                    ));
+                    lines.push(format!(
+                        "  Output mode: {}",
+                        memory_transform_output_mode_name(output_mode)
                     ));
                     lines.push(format!("  Preserve provenance: {}", preserve_provenance));
                 }
@@ -1001,6 +1006,15 @@ fn memory_source_handling_name(handling: &crate::manifest::MemorySourceHandling)
         crate::manifest::MemorySourceHandling::Retain => "retain",
         crate::manifest::MemorySourceHandling::RetainUntilExpiration => "retain_until_expiration",
         crate::manifest::MemorySourceHandling::DeleteAfterSuccess => "delete_after_success",
+    }
+}
+
+fn memory_transform_output_mode_name(
+    output_mode: &crate::manifest::MemoryTransformOutputMode,
+) -> &'static str {
+    match output_mode {
+        crate::manifest::MemoryTransformOutputMode::Create => "create",
+        crate::manifest::MemoryTransformOutputMode::ReplaceInput => "replace_input",
     }
 }
 
