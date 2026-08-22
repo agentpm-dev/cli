@@ -39,7 +39,7 @@ The phase must:
 
 > The AgentPM Harness is the canonical AgentPM runtime that interprets an installed Agent, its resolved Loop and bindings, workspace runtime configuration, and live integrations. It is an opinionated reference implementation, not a new portable package kind.
 
-> A Harness Session owns long-lived runtime services and may host multiple Runs. A Run is one Loop traversal from entry phase to a terminal or runtime terminal state.
+> A Harness Session owns long-lived runtime services and may host multiple Runs sequentially, with at most one active Run per Session. A Run is one Loop traversal from entry phase to a terminal or runtime terminal state.
 
 > An Effective Phase is the runtime-computed view of one Loop phase after authored global/phase bindings, Skill inheritance, runtime augmentation, Loop restrictions, and live capability readiness are applied. It is never written back to an Agent, Loop, or lockfile.
 
@@ -83,6 +83,7 @@ The phase must:
 13. **AgentPM public execution surfaces remain public.** Harness direct Tool calls invoke public `agentpm run`; Harness MCP export starts public `agentpm serve --mcp`; local Knowledge should reuse public AgentPM query machinery where practical.
 14. **Defaults are observable.** TUI, events, reports, and machine preflight must identify whether a value came from authored metadata, runtime config, CLI/SDK override, environment, or Harness default.
 15. **Unknown/unavailable optional capabilities degrade safely.** The Harness fails the whole Run only when execution cannot be interpreted coherently or a required runtime dependency for the active operation cannot be satisfied.
+16. **A Session has at most one active Run.** A reusable Harness Session may execute multiple Runs, but they execute sequentially. Phase 7B does not queue or concurrently execute authoritative Run state machines inside one Session; callers that need concurrent Agent executions create multiple Sessions.
 
 ## Architecture overview and end-to-end flow
 
@@ -157,9 +158,9 @@ plain one-shot --headless ------+--> HarnessSession / HarnessEngine
 
 The three surfaces differ only in presentation/control transport:
 
-- **interactive TUI** keeps a Session open, accepts user messages from a visible composer, starts one Run per submitted message, renders approvals/events/output, and may execute repeated Runs;
+- **interactive TUI** keeps a Session open, accepts user messages from a visible composer, starts one Run per submitted message, renders approvals/events/output, and may execute repeated Runs sequentially; while a Run is active (including while waiting at an interactive approval checkpoint), the composer does not start another Run;
 - **plain headless** is a one-shot surface: bootstrap -> create Session -> execute exactly one Run from CLI/stdin/file input -> print the terminal user-facing result -> flush report/trace -> shut down the Session. It must not require the machine protocol and must never auto-approve;
-- **machine/SDK** keeps stdin/stdout reserved for the versioned protocol and allows the host application to start Runs, receive events, answer approvals, host Hooks/providers, cancel, and invoke supported controls.
+- **machine/SDK** keeps stdin/stdout reserved for the versioned protocol and allows the host application to start Runs, receive events, answer approvals, host Hooks/providers, cancel, and invoke supported controls. A Session accepts at most one active Run; a second `start_run` request is rejected rather than queued.
 
 For plain headless, normal final/handoff output goes to stdout while diagnostics/preflight warnings belong on stderr or the report/trace. Successful `ended`/`handed_off` results use a successful process exit; `aborted`, `failed`, `cancelled`, `limit_reached`, and `approval_required` use a non-success exit according to repository CLI conventions. Machine mode never places human prose on protocol stdout.
 
@@ -176,7 +177,7 @@ A normal invocation follows this order:
 7. enter the Loop entry phase, evaluate its EffectivePhase, and execute the phase-local agentic inner loop;
 8. produce a PhaseResult, evaluate checkpoints/transitions, and repeat until authored/runtime terminal state;
 9. produce terminal output, RunReport, events/trace, and aggregate Run usage into Session usage;
-10. either accept another Run (TUI/machine Session) or shut down owned Session services (one-shot headless).
+10. after that Run is no longer active, either accept another Run sequentially (TUI/machine Session) or shut down owned Session services (one-shot headless).
 
 ## Runtime filesystem model
 
@@ -608,6 +609,8 @@ The machine client and Harness negotiate once per Session. Required message fami
 - client -> Harness host-service responses: correlated typed success/error responses;
 - Harness -> client Run/preflight/terminal responses: structured results and report references.
 
+A machine Session permits at most one active Run. If the client sends `start_run` while another Run is active, Harness returns a stable structured session-busy/active-Run error and leaves the existing Run untouched. Phase 7B does not implicitly queue pending Run requests; a client that wants queueing owns that policy and may retry after the active Run terminates.
+
 A host provider is registered by `(service role, configured registry ID)` and advertises the same capabilities as a process provider. The Engine must not care whether a typed runtime call was satisfied locally in Rust, by a child process, or by the parent SDK host.
 
 ### Configuration precedence
@@ -981,6 +984,8 @@ Agent `bindings.mcp` defines the logical exported surfaces. Runtime config only 
 
 Defaults are `enabled: true` and `host: "127.0.0.1"`. Harness always requests ephemeral port `0` independently for each logical exported surface. Version 1 does not provide a static per-surface port map; users who require custom standalone MCP hosting can run `agentpm serve --mcp` directly. Configuring a non-loopback host is allowed only explicitly and must produce a prominent security warning.
 
+Exported MCP surfaces are Session-owned, not Run-owned. They may service external MCP calls while no Run is active and may also remain callable while the Session's single Harness Run is active. Such outward calls do not become part of that Run merely because their timing overlaps it: they do not mutate RunState, consume phase/Run action or Tool-call limits, participate in Loop access/checkpoints, or invoke phase-scoped Hooks. Their events/correlation carry Session/surface/call identity; `run_id` is absent unless a future explicit contract intentionally associates an outward call with a Run.
+
 ### Approval configuration
 
 ApprovalRuntime remains separate from HookRuntime.
@@ -1121,7 +1126,27 @@ A Harness Session owns long-lived service lifecycle:
 - ApprovalRuntime transport;
 - event/trace sinks.
 
-A TUI Session may execute multiple Runs. A one-shot headless invocation has one Session and one Run.
+A TUI or machine/SDK Session may execute multiple Runs over its lifetime. A one-shot headless invocation has one Session and one Run.
+
+#### Single-active-Run invariant
+
+Phase 7B permits **at most one active authoritative Run per Harness Session**. Reusable Sessions execute Runs sequentially:
+
+```text
+HarnessSession
+    |
+    +-- Run 1: start --------------------------> terminal
+    |
+    +-- Run 2: start --------------------------> terminal
+    |
+    +-- Run 3: start --------------------------> terminal
+```
+
+The HarnessEngine must not execute two RunState machines concurrently inside the same Session, and Harness must not implicitly queue a second Run. A machine/SDK `start_run` request received while a Run is active is rejected with a stable structured busy/active-Run error and must not mutate the active Run. The TUI likewise prevents the message composer from starting another Run until the current Run is no longer active. Consumers that require concurrent Agent executions create multiple Harness Sessions. Concurrent Runs within one Session are outside Phase 7B.
+
+This invariant is about **authoritative Harness Runs**, not about forbidding asynchronous I/O or internal concurrency inside an individual runtime implementation. A Runtime Service may use safe internal concurrency, and Session-owned outward MCP surfaces may continue serving independent external calls, without creating a second Harness RunState machine.
+
+A Run that is waiting at an approval checkpoint remains the Session's active Run when the Session has an approval/control path capable of resolving that checkpoint. The Session cannot start another Run while that approval is pending. In plain one-shot headless mode with no approval controller, the existing `approval_required` behavior is terminal for that invocation: the Run report/trace is finalized and the Session shuts down rather than remaining open waiting for approval.
 
 Session owns cumulative usage/accounting across its Runs. `SessionUsage` should aggregate, when available:
 
@@ -2056,16 +2081,19 @@ TUI/preflight must visibly show loaded/unavailable status and useful size/token 
 Every significant event uses a stable versioned envelope containing at least:
 
 - event schema version;
+- stable opaque event ID;
 - session ID;
 - run ID where applicable;
-- monotonically increasing run-local sequence;
+- monotonically increasing Session sequence for deterministic ordering across the entire Session, including bootstrap/service events before a Run exists;
+- optional monotonically increasing Run-local sequence when the event belongs to a Run, reset for each Run;
 - timestamp;
 - event type;
 - phase execution ID where applicable;
-- correlation/parent IDs where applicable;
+- correlation ID where applicable;
+- parent event ID where a direct causal parent is useful;
 - typed payload.
 
-Events are observability records, not event-sourced authoritative state.
+Correlation IDs group one logical request/operation and are not ordering authority. Session/Run sequences provide ordering; parent event IDs express direct causality where useful. Events are observability records, not event-sourced authoritative state.
 
 Required categories include bootstrap/session/run, phase, model, outcome/transition, Tool, Skill/resource, Knowledge, Memory, approval/control, Hook, MCP, consumer context, cancellation, and terminal status.
 
