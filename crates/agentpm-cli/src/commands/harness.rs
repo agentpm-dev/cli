@@ -158,6 +158,7 @@ fn print_harness_preflight(plan: &ResolvedHarnessPlan) {
 
 fn capability_counts(plan: &ResolvedHarnessPlan) -> BTreeMap<&'static str, usize> {
     let mut counts = BTreeMap::new();
+    let mut seen = std::collections::BTreeSet::new();
     for capability in &plan.capabilities {
         let key = match capability.state {
             CapabilityState::Available => "available",
@@ -166,6 +167,9 @@ fn capability_counts(plan: &ResolvedHarnessPlan) -> BTreeMap<&'static str, usize
             CapabilityState::Suppressed => "suppressed",
             CapabilityState::NotConfigured => "not_configured",
         };
+        if !seen.insert((&capability.kind, &capability.identity, key)) {
+            continue;
+        }
         *counts.entry(key).or_insert(0) += 1;
     }
     counts

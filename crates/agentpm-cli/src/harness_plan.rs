@@ -667,6 +667,7 @@ fn validate_selected_agent(
         return Ok(());
     };
 
+    let mut tool_readiness = BTreeMap::new();
     validate_consumer_context(workspace_root, bindings, consumer_context, diagnostics);
     validate_phase_bindings(bindings, &loop_phase_ids, diagnostics);
     validate_bound_scopes(
@@ -675,6 +676,7 @@ fn validate_selected_agent(
         bindings,
         &loop_phase_ids,
         package_graph,
+        &mut tool_readiness,
         capabilities,
         diagnostics,
     )?;
@@ -862,6 +864,7 @@ fn validate_bound_scopes(
     bindings: &AgentBindings,
     loop_phase_ids: &BTreeSet<String>,
     package_graph: &BTreeMap<String, ResolvedPackageInfo>,
+    tool_readiness: &mut BTreeMap<String, CapabilityState>,
     capabilities: &mut Vec<StaticCapabilityCandidate>,
     diagnostics: &mut Vec<PreflightDiagnostic>,
 ) -> Result<()> {
@@ -872,6 +875,7 @@ fn validate_bound_scopes(
             "global",
             global,
             package_graph,
+            tool_readiness,
             capabilities,
             diagnostics,
         )?;
@@ -888,6 +892,7 @@ fn validate_bound_scopes(
             &format!("phase:{phase}"),
             scope,
             package_graph,
+            tool_readiness,
             capabilities,
             diagnostics,
         )?;
@@ -895,12 +900,14 @@ fn validate_bound_scopes(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_binding_scope(
     workspace_root: &Path,
     agent: &ResolvedAgentRoot,
     scope_label: &str,
     scope: &AgentBindingScope,
     package_graph: &BTreeMap<String, ResolvedPackageInfo>,
+    tool_readiness: &mut BTreeMap<String, CapabilityState>,
     capabilities: &mut Vec<StaticCapabilityCandidate>,
     diagnostics: &mut Vec<PreflightDiagnostic>,
 ) -> Result<()> {
@@ -915,6 +922,7 @@ fn validate_binding_scope(
         &scope.tools,
         &declared_tools,
         package_graph,
+        tool_readiness,
         scope_label,
         capabilities,
         diagnostics,
@@ -963,6 +971,7 @@ fn validate_binding_scope(
         &active_skills,
         &direct_tools,
         package_graph,
+        tool_readiness,
         scope_label,
         capabilities,
         diagnostics,
@@ -1005,11 +1014,13 @@ fn validate_string_bindings(
     active
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_tool_bindings(
     workspace_root: &Path,
     bindings: &[String],
     declared_names: &BTreeSet<String>,
     package_graph: &BTreeMap<String, ResolvedPackageInfo>,
+    tool_readiness: &mut BTreeMap<String, CapabilityState>,
     scope_label: &str,
     capabilities: &mut Vec<StaticCapabilityCandidate>,
     diagnostics: &mut Vec<PreflightDiagnostic>,
@@ -1019,7 +1030,13 @@ fn validate_tool_bindings(
         let name = package_identity(binding);
         if declared_names.contains(&name) {
             active.insert(name.clone());
-            let state = tool_readiness_state(workspace_root, package_graph, &name, diagnostics);
+            let state = cached_tool_readiness_state(
+                workspace_root,
+                package_graph,
+                &name,
+                tool_readiness,
+                diagnostics,
+            );
             capabilities.push(StaticCapabilityCandidate {
                 kind: "tool".to_string(),
                 identity: name,
@@ -1135,11 +1152,13 @@ fn validate_knowledge_bindings(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_skill_inheritance(
     workspace_root: &Path,
     active_skills: &BTreeSet<String>,
     direct_tools: &BTreeSet<String>,
     package_graph: &BTreeMap<String, ResolvedPackageInfo>,
+    tool_readiness: &mut BTreeMap<String, CapabilityState>,
     scope_label: &str,
     capabilities: &mut Vec<StaticCapabilityCandidate>,
     diagnostics: &mut Vec<PreflightDiagnostic>,
@@ -1168,7 +1187,13 @@ fn validate_skill_inheritance(
                 continue;
             }
             let state = if package_by_name(package_graph, PackageKind::Tool, &tool_name).is_some() {
-                tool_readiness_state(workspace_root, package_graph, &tool_name, diagnostics)
+                cached_tool_readiness_state(
+                    workspace_root,
+                    package_graph,
+                    &tool_name,
+                    tool_readiness,
+                    diagnostics,
+                )
             } else {
                 push_diag(
                     diagnostics,
@@ -1257,6 +1282,21 @@ fn tool_readiness_state(
         state = CapabilityState::Unavailable;
     }
     validate_tool_required_env(tool_name, &manifest, diagnostics);
+    state
+}
+
+fn cached_tool_readiness_state(
+    workspace_root: &Path,
+    package_graph: &BTreeMap<String, ResolvedPackageInfo>,
+    tool_name: &str,
+    cache: &mut BTreeMap<String, CapabilityState>,
+    diagnostics: &mut Vec<PreflightDiagnostic>,
+) -> CapabilityState {
+    if let Some(state) = cache.get(tool_name) {
+        return *state;
+    }
+    let state = tool_readiness_state(workspace_root, package_graph, tool_name, diagnostics);
+    cache.insert(tool_name.to_string(), state);
     state
 }
 
@@ -2659,6 +2699,14 @@ mod tests {
         .unwrap();
 
         assert!(codes(&plan).contains("tool_runtime_mismatch"));
+        assert_eq!(
+            plan.report
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == "tool_runtime_mismatch")
+                .count(),
+            1
+        );
         assert!(
             plan.capabilities.iter().any(|capability| {
                 capability.kind == "tool"
