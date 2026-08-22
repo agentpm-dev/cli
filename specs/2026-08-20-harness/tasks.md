@@ -90,6 +90,8 @@
 - [ ] Compute which Memory spaces require which authored scope keys and report unresolved required runtime scope values as capability-readiness diagnostics rather than letting the model invent values.
 - [ ] Add `.agentpm-state` path resolution with config/CLI override support and keep it physically/logically separate from immutable `.agentpm` installed package state.
 
+- [ ] Make execution surface part of provider/runtime readiness planning. For a configured `implementation.type = "host"`, classify readiness as pending host registration in machine/SDK mode, but unavailable in standalone TUI or one-shot headless mode because those surfaces have no external host implementation.
+
 - [ ] Add a static capability-planning layer that distinguishes:
     - authored candidates from Agent bindings and Skill inheritance,
     - runtime-configured augmentation candidates such as scoped MCP imports,
@@ -362,6 +364,7 @@ This gives us the Harness command shell, portable contract corrections, strict `
 - [ ] Record provider-reported token/usage metadata when available and preserve unknown values rather than fabricating them.
 
 - [ ] Add **one-shot plain headless** execution: one Harness Session + exactly one Run from direct text, stdin, or input-file input, using the same HarnessEngine and final Run/report/event machinery as all later surfaces.
+- [ ] In one-shot plain headless mode, configured `type: host` implementations are unavailable because no machine/SDK host exists; return an actionable diagnostic rather than silently falling back.
 - [ ] In plain headless mode, write only the user-facing terminal/final/handoff output to stdout; route diagnostics/status to stderr and durable report/trace output.
 - [ ] Flush report/trace and deterministically shut down Session-owned resources before process exit.
 - [ ] Use documented terminal behavior from `spec.md`: `ended` and `handed_off` are successful CLI outcomes; `aborted`, `failed`, `cancelled`, `limit_reached`, and `approval_required` are non-success outcomes according to repository CLI conventions.
@@ -485,6 +488,8 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 - [ ] Apply ordered configured Hook bindings first, then SDK-hosted registrations in host registration order.
 - [ ] Make Hook failure `closed` by default; `continue` records the failure and proceeds without applying an invalid/failed patch. Preserve binding order and never silently fail open.
 - [ ] Prevent Hooks from altering Loop graph/transitions/access/checkpoints/limits, arbitrary RunState, capability topology, or trusted Memory scope authority.
+
+- [ ] A `host` implementation becomes ready only after the machine client registers the matching `(role, configured registry ID)` and successfully advertises/negotiates its required capabilities; never silently substitute a built-in or process implementation when that host is absent.
 
 - [ ] Add `ApprovalRuntime` as a separate semantic service; approval callbacks are not Hook IDs/events.
 - [ ] Route Engine checkpoint requests through one ApprovalRuntime resolution path and preserve Milestone 4 authored-order checkpoint semantics.
@@ -780,6 +785,8 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Ensure approval decision events (`approval_requested`/`approval_approved`/`approval_denied`) are visible in the trace/detail view whenever an approval outcome is also shown in the Run view, so the two panels can never disagree about whether or when an approval occurred.
 - [ ] Support repeated Runs in one Session; Consumer Context reloads at each Run start and Session usage accumulates.
 - [ ] Surface report/trace paths and terminal status after/between Runs.
+
+- [ ] In standalone TUI execution, treat configured `type: host` providers/runtimes/hooks/controllers as unavailable and show an actionable preflight diagnostic directing the user to configure a `process` implementation or launch the Harness through a Node/Python SDK host. Built-in implementations remain available normally.
 
 - [ ] Implement lightweight branding from config: visible name, optional subtitle, optional `#RRGGBB` accent with safe terminal fallback; branding never alters protocol/event/report/package identity.
 - [ ] Do not add arbitrary layout/theme/plugin scripting in Phase 7B.
