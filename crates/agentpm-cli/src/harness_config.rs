@@ -93,6 +93,13 @@ impl HarnessConfigSource {
             path: Some(path),
         }
     }
+
+    pub fn cli_override() -> Self {
+        Self {
+            kind: HarnessConfigSourceKind::CliOverride,
+            path: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +109,11 @@ pub struct ResolvedHarnessConfig {
     pub config: HarnessConfig,
     pub state_dir: PathBuf,
     pub state_dir_source: HarnessConfigSource,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HarnessConfigOverrides {
+    pub state_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -498,6 +510,19 @@ pub fn load_harness_config(
     })
 }
 
+pub fn load_harness_config_with_overrides(
+    workspace_root: &Path,
+    config_path_override: Option<&Path>,
+    overrides: &HarnessConfigOverrides,
+) -> Result<ResolvedHarnessConfig> {
+    let mut resolved = load_harness_config(workspace_root, config_path_override)?;
+    if let Some(state_dir) = &overrides.state_dir {
+        resolved.state_dir = resolve_state_dir(&resolved.workspace_root, state_dir)?;
+        resolved.state_dir_source = HarnessConfigSource::cli_override();
+    }
+    Ok(resolved)
+}
+
 pub fn validate_harness_config_value(value: &Value) -> Result<()> {
     let schema_value: Value =
         serde_json::from_str(EMBEDDED_HARNESS_CONFIG_SCHEMA_JSON).context("parsing schema")?;
@@ -775,21 +800,27 @@ fn validate_unique_list(import_id: &str, field: &str, values: &[String]) -> Resu
     Ok(())
 }
 
-fn validate_state_dir(state_dir: &str) -> Result<()> {
-    let path = PathBuf::from(state_dir);
+fn validate_state_dir<P: AsRef<Path>>(state_dir: P) -> Result<()> {
+    let path = state_dir.as_ref();
     if path.is_absolute() {
         return Ok(());
     }
+    let state_dir = path
+        .to_str()
+        .ok_or_else(|| anyhow!("path must be valid UTF-8"))?;
     parse_safe_workspace_relative_path(state_dir)
         .map(|_| ())
         .context("validating runtime.state_dir")
 }
 
-fn resolve_state_dir(workspace_root: &Path, state_dir: &str) -> Result<PathBuf> {
-    let path = PathBuf::from(state_dir);
+fn resolve_state_dir<P: AsRef<Path>>(workspace_root: &Path, state_dir: P) -> Result<PathBuf> {
+    let path = state_dir.as_ref();
     if path.is_absolute() {
-        Ok(path)
+        Ok(path.to_path_buf())
     } else {
+        let state_dir = path
+            .to_str()
+            .ok_or_else(|| anyhow!("path must be valid UTF-8"))?;
         Ok(workspace_root.join(parse_safe_workspace_relative_path(state_dir)?))
     }
 }

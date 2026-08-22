@@ -1,5 +1,6 @@
 use crate::prelude::*;
 pub mod export;
+pub mod harness;
 pub mod init;
 pub mod install;
 pub mod keys;
@@ -48,6 +49,9 @@ pub enum Commands {
 
     /// Expose installed tools through a local MCP server
     Serve(serve::ServeArgs),
+
+    /// Bootstrap and preflight an installed AgentPM Agent for Harness execution
+    Harness(harness::HarnessArgs),
 
     /// Generate a starter skill scaffold from an installed tool
     Export(export::ExportArgs),

@@ -278,6 +278,18 @@ agentpm export --skill @zack/capitalize
 
 That interoperability flow keeps AgentPM as the source of truth for packaging and execution while making installed tools usable from other ecosystems.
 
+### Harness preflight
+
+For an installed Agent that declares a Loop, AgentPM can bootstrap the Harness plan and report static readiness before execution support is enabled:
+
+```bash
+agentpm harness
+agentpm harness --headless @zack/support-agent --scope user=user_123
+agentpm harness @zack/support-agent --config agentpm.harness.json --state-dir .agentpm-state
+```
+
+The command requires `agent.lock`, defaults to the interactive TUI surface, selects the only runnable Agent automatically, and asks for an explicit Agent selector when multiple runnable Agents are present.
+
 ### Publishing
 
 Use:

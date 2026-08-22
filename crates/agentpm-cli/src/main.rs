@@ -8,6 +8,7 @@ mod auth;
 mod commands;
 mod config;
 mod harness_config;
+mod harness_plan;
 mod io;
 mod keys;
 mod manifest;
@@ -70,6 +71,7 @@ async fn main() -> Result<()> {
         commands::Commands::New(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Run(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Serve(arg) => arg.run(cli.base_url.clone()).await,
+        commands::Commands::Harness(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Export(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Keys(args) => args.run().await,
         commands::Commands::Namespace(args) => args.run(cli.base_url.clone()).await,
