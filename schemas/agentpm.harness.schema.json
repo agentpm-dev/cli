@@ -1,0 +1,512 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.harness.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "model": { "$ref": "#/$defs/modelConfig" },
+    "providers": { "$ref": "#/$defs/providersConfig" },
+    "scopes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "runtime": { "$ref": "#/$defs/runtimeConfig" },
+    "hooks": { "$ref": "#/$defs/hooksConfig" },
+    "knowledge": { "$ref": "#/$defs/knowledgeConfig" },
+    "memory": { "$ref": "#/$defs/memoryConfig" },
+    "mcp": { "$ref": "#/$defs/mcpConfig" },
+    "approvals": { "$ref": "#/$defs/approvalsConfig" },
+    "trace": { "$ref": "#/$defs/traceConfig" },
+    "ui": { "$ref": "#/$defs/uiConfig" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "loopPhaseId": {
+      "type": "string",
+      "pattern": "^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){0,63}$"
+    },
+    "packageIdentity": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^@[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}$"
+    },
+    "envName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!\\\\\\\\)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    },
+    "restartPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1
+        },
+        "backoff_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 250
+        }
+      }
+    },
+    "processImplementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "command"],
+      "properties": {
+        "type": { "const": "process" },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "cwd": {
+          "$ref": "#/$defs/safeRelativePath",
+          "default": "."
+        },
+        "env": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/envName" },
+          "uniqueItems": true,
+          "default": []
+        },
+        "startup_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 15000
+        },
+        "request_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 120000
+        },
+        "restart": { "$ref": "#/$defs/restartPolicy" }
+      }
+    },
+    "hostImplementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "host" },
+        "request_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 120000
+        }
+      }
+    },
+    "implementation": {
+      "oneOf": [
+        { "$ref": "#/$defs/processImplementation" },
+        { "$ref": "#/$defs/hostImplementation" }
+      ]
+    },
+    "implementationEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation"],
+      "properties": {
+        "implementation": { "$ref": "#/$defs/implementation" }
+      }
+    },
+    "modelConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "providersConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "models": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": { "$ref": "#/$defs/implementationEntry" }
+        },
+        "embeddings": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": { "$ref": "#/$defs/implementationEntry" }
+        }
+      }
+    },
+    "runtimeLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_steps": { "type": "integer", "minimum": 1, "default": 100 },
+        "max_model_calls_per_phase": { "type": "integer", "minimum": 1, "default": 24 },
+        "max_tool_calls_per_phase": { "type": "integer", "minimum": 1, "default": 16 },
+        "max_actions_per_phase": { "type": "integer", "minimum": 1, "default": 64 },
+        "max_tool_call_repairs": { "type": "integer", "minimum": 0, "default": 2 },
+        "max_structured_output_repairs": { "type": "integer", "minimum": 0, "default": 2 },
+        "max_memory_operation_repairs": { "type": "integer", "minimum": 0, "default": 2 }
+      }
+    },
+    "runtimeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "limits": { "$ref": "#/$defs/runtimeLimits" }
+      }
+    },
+    "hookBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hook", "implementation"],
+      "properties": {
+        "hook": {
+          "type": "string",
+          "enum": [
+            "before_model_request",
+            "before_tool_selection",
+            "before_tool_call",
+            "before_knowledge_request",
+            "after_knowledge_retrieval",
+            "before_memory_read",
+            "before_memory_write",
+            "before_memory_operation"
+          ]
+        },
+        "implementation": { "$ref": "#/$defs/identifier" },
+        "failure_policy": {
+          "type": "string",
+          "enum": ["closed", "continue"],
+          "default": "closed"
+        }
+      }
+    },
+    "hooksConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "implementations": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": { "$ref": "#/$defs/implementationEntry" }
+        },
+        "bindings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hookBinding" }
+        }
+      }
+    },
+    "packageRuntimeMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime"],
+      "properties": {
+        "runtime": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "embeddingMatchKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model", "dimensions", "normalized"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "dimensions": { "type": "integer", "minimum": 1 },
+        "normalized": { "type": "boolean" }
+      }
+    },
+    "embeddingMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["match", "embedding_provider"],
+      "properties": {
+        "match": { "$ref": "#/$defs/embeddingMatchKey" },
+        "embedding_provider": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "knowledgeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtimes": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": { "$ref": "#/$defs/implementationEntry" }
+        },
+        "packages": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/packageIdentity" },
+          "additionalProperties": { "$ref": "#/$defs/packageRuntimeMapping" }
+        },
+        "embedding_matches": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/embeddingMatch" }
+        }
+      }
+    },
+    "memorySemanticConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["embedding_provider", "model", "dimensions"],
+      "properties": {
+        "embedding_provider": { "$ref": "#/$defs/identifier" },
+        "model": { "type": "string", "minLength": 1 },
+        "dimensions": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "memoryLocalConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "semantic": { "$ref": "#/$defs/memorySemanticConfig" }
+      }
+    },
+    "memoryConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "local": { "$ref": "#/$defs/memoryLocalConfig" },
+        "runtimes": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": { "$ref": "#/$defs/implementationEntry" }
+        },
+        "packages": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/packageIdentity" },
+          "additionalProperties": { "$ref": "#/$defs/packageRuntimeMapping" }
+        }
+      }
+    },
+    "mcpScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": { "const": "global" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "phases"],
+          "properties": {
+            "mode": { "const": "phases" },
+            "phases": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/loopPhaseId" }
+            }
+          }
+        }
+      ]
+    },
+    "mcpHeaderValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value"],
+          "properties": {
+            "value": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["env"],
+          "properties": {
+            "env": { "$ref": "#/$defs/envName" }
+          }
+        }
+      ]
+    },
+    "mcpStdioImport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transport", "command", "scope"],
+      "properties": {
+        "transport": { "const": "stdio" },
+        "command": { "type": "string", "minLength": 1 },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "cwd": {
+          "$ref": "#/$defs/safeRelativePath",
+          "default": "."
+        },
+        "env": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/envName" },
+          "uniqueItems": true,
+          "default": []
+        },
+        "scope": { "$ref": "#/$defs/mcpScope" },
+        "tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "startup_timeout_ms": { "type": "integer", "minimum": 1, "default": 15000 },
+        "request_timeout_ms": { "type": "integer", "minimum": 1, "default": 120000 },
+        "restart": { "$ref": "#/$defs/restartPolicy" }
+      }
+    },
+    "mcpHttpImport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transport", "url", "scope"],
+      "properties": {
+        "transport": { "const": "http" },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://.+"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/mcpHeaderValue" }
+        },
+        "scope": { "$ref": "#/$defs/mcpScope" },
+        "tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    },
+    "mcpImport": {
+      "oneOf": [
+        { "$ref": "#/$defs/mcpStdioImport" },
+        { "$ref": "#/$defs/mcpHttpImport" }
+      ]
+    },
+    "mcpExports": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "default": "127.0.0.1"
+        }
+      }
+    },
+    "mcpConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "imports": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": { "$ref": "#/$defs/mcpImport" }
+        },
+        "exports": { "$ref": "#/$defs/mcpExports" }
+      }
+    },
+    "approvalsController": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation"],
+      "properties": {
+        "implementation": { "$ref": "#/$defs/implementation" }
+      }
+    },
+    "approvalsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "controller": { "$ref": "#/$defs/approvalsController" },
+        "timeout_ms": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "traceConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "level": {
+          "type": "string",
+          "enum": ["minimal", "normal", "verbose"],
+          "default": "normal"
+        },
+        "content": {
+          "type": "string",
+          "enum": ["none", "redacted", "full"],
+          "default": "redacted"
+        }
+      }
+    },
+    "brandingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "default": "AgentPM Harness"
+        },
+        "subtitle": {
+          "type": ["string", "null"]
+        },
+        "accent": {
+          "type": ["string", "null"],
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        }
+      }
+    },
+    "uiConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "branding": { "$ref": "#/$defs/brandingConfig" }
+      }
+    }
+  }
+}

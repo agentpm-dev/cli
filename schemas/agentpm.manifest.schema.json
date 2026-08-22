@@ -480,6 +480,12 @@
           "$ref": "#/$defs/memorySourceHandling",
           "description": "Required declarative policy for source records after successful completion."
         },
+        "output_mode": {
+          "type": "string",
+          "enum": ["create", "replace_input"],
+          "default": "create",
+          "description": "Optional transform output mode. create writes a new output record; replace_input updates the single input record in place."
+        },
         "preserve_provenance": {
           "type": "boolean",
           "description": "Required flag indicating whether derived records should retain source provenance."

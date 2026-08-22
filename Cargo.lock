@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "agentpm-cli"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "agentpm-sdk",
  "anyhow",
@@ -71,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "agentpm-sdk"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "anyhow",
  "reqwest 0.12.22",

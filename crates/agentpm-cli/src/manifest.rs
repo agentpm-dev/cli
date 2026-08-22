@@ -406,7 +406,7 @@ pub struct MemorySpace {
     pub constraints: Option<MemoryConstraints>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct MemoryOperationRef {
     pub space: String,
@@ -437,6 +437,14 @@ pub enum MemorySourceHandling {
     DeleteAfterSuccess,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryTransformOutputMode {
+    #[default]
+    Create,
+    ReplaceInput,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(dead_code)]
@@ -458,6 +466,8 @@ pub enum MemoryOperation {
         inputs: Vec<MemoryOperationRef>,
         output: MemoryOperationRef,
         source_handling: MemorySourceHandling,
+        #[serde(default)]
+        output_mode: MemoryTransformOutputMode,
         preserve_provenance: bool,
     },
     Delete {
@@ -1172,7 +1182,8 @@ fn validate_memory_manifest_semantics(
             MemoryOperation::Transform {
                 inputs,
                 output,
-                source_handling: _,
+                source_handling,
+                output_mode,
                 preserve_provenance: _,
                 trigger,
                 ..
@@ -1186,6 +1197,30 @@ fn validate_memory_manifest_semantics(
                         ),
                         &mut issues,
                     );
+                }
+                if output_mode == &MemoryTransformOutputMode::ReplaceInput {
+                    if let Some(input) = inputs.first()
+                        && input != output
+                    {
+                        push_manifest_error(
+                            file_label,
+                            &format!("/memory/operations/{operation_key}/output"),
+                            format!(
+                                "transform operation `{operation_key}` with output_mode `replace_input` must output to the same space and record_type as its single input"
+                            ),
+                            &mut issues,
+                        );
+                    }
+                    if source_handling != &MemorySourceHandling::Retain {
+                        push_manifest_error(
+                            file_label,
+                            &format!("/memory/operations/{operation_key}/source_handling"),
+                            format!(
+                                "transform operation `{operation_key}` with output_mode `replace_input` must use source_handling `retain`"
+                            ),
+                            &mut issues,
+                        );
+                    }
                 }
                 validate_unique_operation_refs(
                     file_label,
@@ -1593,7 +1628,6 @@ fn validate_loop_manifest_semantics(file_label: &str, manifest: &LoopManifest) -
     }
 
     let mut checkpoint_ids = HashSet::new();
-    let mut approval_targets = HashSet::new();
     for (checkpoint_idx, checkpoint) in loop_metadata.checkpoints.iter().enumerate() {
         if !checkpoint_ids.insert(checkpoint.id.clone()) {
             push_manifest_error(
@@ -1625,20 +1659,6 @@ fn validate_loop_manifest_semantics(file_label: &str, manifest: &LoopManifest) -
                 format!(
                     "checkpoint on_reject target `{}` must be a declared phase or supported terminal",
                     checkpoint.on_reject
-                ),
-                &mut issues,
-            );
-        }
-
-        if checkpoint.r#type == "approval"
-            && !approval_targets.insert(checkpoint.before_phase.clone())
-        {
-            push_manifest_error(
-                file_label,
-                &format!("/loop/checkpoints/{checkpoint_idx}/before_phase"),
-                format!(
-                    "multiple approval checkpoints cannot target phase `{}`",
-                    checkpoint.before_phase
                 ),
                 &mut issues,
             );
@@ -3126,6 +3146,28 @@ mod tests {
                 }
             }
         })
+    }
+
+    fn add_refresh_profile_operation(manifest: &mut Value) {
+        manifest["memory"]["operations"] = json!({
+            "refresh_profile": {
+                "type": "transform",
+                "description": "Refresh the current profile.",
+                "trigger": { "type": "external" },
+                "inputs": [
+                    {
+                        "space": "profile",
+                        "record_type": "user_preference"
+                    }
+                ],
+                "output": {
+                    "space": "profile",
+                    "record_type": "user_preference"
+                },
+                "source_handling": "retain",
+                "preserve_provenance": true
+            }
+        });
     }
 
     fn base_loop_manifest() -> Value {
@@ -4739,12 +4781,47 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|issue| issue.instance_path == "/loop/checkpoints/1/before_phase")
-        );
-        assert!(
-            issues
-                .iter()
                 .any(|issue| issue.instance_path == "/loop/checkpoints/1/on_reject")
+        );
+    }
+
+    #[test]
+    fn loop_semantics_allow_multiple_approval_checkpoints_for_same_phase_in_order() {
+        let mut manifest = base_loop_manifest();
+        manifest["loop"]["phases"] = json!([
+            { "id": "triage", "objective": "Assess." },
+            { "id": "respond", "objective": "Respond." }
+        ]);
+        manifest["loop"]["transitions"] = json!([
+            { "from": "triage", "on": "complete", "to": "respond" },
+            { "from": "respond", "on": "complete", "to": "$end" }
+        ]);
+        manifest["loop"]["checkpoints"] = json!([
+            {
+                "id": "approve-draft",
+                "type": "approval",
+                "before_phase": "respond",
+                "on_reject": "triage"
+            },
+            {
+                "id": "approve-compliance",
+                "type": "approval",
+                "before_phase": "respond",
+                "on_reject": "$handoff"
+            }
+        ]);
+
+        assert_manifest_ok(manifest.clone());
+
+        let parsed = parse_loop_manifest(&manifest).unwrap();
+        assert_eq!(
+            parsed
+                .r#loop
+                .checkpoints
+                .iter()
+                .map(|checkpoint| checkpoint.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["approve-draft", "approve-compliance"]
         );
     }
 
@@ -7383,6 +7460,84 @@ mod tests {
                 issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
             }),
             "expected transform input-count rejection, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_transform_output_mode_defaults_to_create() {
+        let mut manifest = base_memory_manifest();
+        add_refresh_profile_operation(&mut manifest);
+        assert_manifest_ok(manifest.clone());
+
+        let parsed = parse_memory_manifest(&manifest).unwrap();
+        let operation = parsed.memory.operations.get("refresh_profile").unwrap();
+        let MemoryOperation::Transform { output_mode, .. } = operation else {
+            panic!("expected refresh_profile to be a transform operation");
+        };
+        assert_eq!(output_mode, &MemoryTransformOutputMode::Create);
+    }
+
+    #[test]
+    fn memory_transform_output_mode_create_and_replace_input_validate() {
+        let mut create_manifest = base_memory_manifest();
+        add_refresh_profile_operation(&mut create_manifest);
+        create_manifest["memory"]["operations"]["refresh_profile"]["output_mode"] = json!("create");
+        assert_manifest_ok(create_manifest);
+
+        let mut replace_manifest = base_memory_manifest();
+        add_refresh_profile_operation(&mut replace_manifest);
+        replace_manifest["memory"]["operations"]["refresh_profile"]["output_mode"] =
+            json!("replace_input");
+        assert_manifest_ok(replace_manifest);
+    }
+
+    #[test]
+    fn memory_transform_output_mode_replace_input_rejects_different_output_pairing() {
+        let mut manifest = base_memory_manifest();
+        add_refresh_profile_operation(&mut manifest);
+        manifest["memory"]["record_types"]["summary"] = json!({
+            "version": "1.0.0",
+            "description": "Summary record.",
+            "schema": "schemas/summary.schema.json"
+        });
+        manifest["memory"]["spaces"]["summary"] = json!({
+            "description": "Summary records.",
+            "model": "document",
+            "record_types": ["summary"],
+            "scope": ["user"],
+            "retrieval": { "modes": ["key"] }
+        });
+        manifest["memory"]["operations"]["refresh_profile"]["output"] = json!({
+            "space": "summary",
+            "record_type": "summary"
+        });
+        manifest["memory"]["operations"]["refresh_profile"]["output_mode"] = json!("replace_input");
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory/operations/refresh_profile/output"
+                    && issue.message.contains("replace_input")
+            }),
+            "expected replace_input output pairing rejection, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_transform_output_mode_replace_input_requires_retain_source_handling() {
+        let mut manifest = base_memory_manifest();
+        add_refresh_profile_operation(&mut manifest);
+        manifest["memory"]["operations"]["refresh_profile"]["output_mode"] = json!("replace_input");
+        manifest["memory"]["operations"]["refresh_profile"]["source_handling"] =
+            json!("delete_after_success");
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory/operations/refresh_profile/source_handling"
+                    && issue.message.contains("replace_input")
+            }),
+            "expected replace_input source_handling rejection, got: {issues:#?}"
         );
     }
 

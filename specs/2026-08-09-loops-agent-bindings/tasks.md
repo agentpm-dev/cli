@@ -64,7 +64,7 @@
 - [ ] Validate checkpoint IDs are unique.
 - [ ] Validate every checkpoint `before_phase` exists.
 - [ ] Validate checkpoint `on_reject` is either a declared phase or one of the three terminal targets.
-- [ ] Reject multiple approval checkpoints targeting the same phase in Phase 7A.
+- [ ] Allow multiple approval checkpoints targeting the same phase; compatible runtimes evaluate them in authored array order.
 - [ ] Validate Tool error-policy cross-field requirements and forbidden fields for retry versus non-retry actions.
 - [ ] Require `phase_failure` when `tool_failure` can resolve to `fail_phase`.
 - [ ] Keep graph/semantic issues rooted under `/loop` using existing `LintIssue` conventions.

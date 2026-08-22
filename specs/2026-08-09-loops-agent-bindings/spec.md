@@ -434,7 +434,7 @@ Semantics:
 - Rejection transfers control to `on_reject`.
 - The Loop does not declare who approves, how approval is surfaced, which UI or transport is used, or how long suspension lasts.
 - Phase 7A does not execute, suspend, resume, or request approvals.
-- Only one approval checkpoint may target the same `before_phase` in Phase 7A to avoid undefined ordering among multiple approval gates.
+- Multiple approval checkpoints may target the same `before_phase`. Compatible runtimes evaluate them in authored `checkpoints` array order.
 
 ### Error policy
 
@@ -879,7 +879,7 @@ At minimum, reject:
 - graphs with no reachable terminal target;
 - duplicate checkpoint IDs;
 - unknown checkpoint phase or rejection target;
-- multiple approval checkpoints targeting the same phase;
+- duplicate checkpoint IDs and invalid checkpoint targets;
 - invalid error-policy cross-field combinations;
 - forbidden package dependencies on Loop packages.
 
