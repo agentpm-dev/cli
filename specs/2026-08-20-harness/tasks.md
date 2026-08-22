@@ -1,97 +1,337 @@
 # Tasks
 
 ## Milestone 1: Harness Contract Corrections and Runtime Configuration
-> Scope note: establish the two portable-contract corrections discovered during Harness design and add the versioned workspace runtime-configuration contract. This milestone defines configuration/schema/types and semantic validation only; it does not execute Agents, call models, persist Memory, run MCP servers, implement hooks, or render a TUI.
-- [ ] Update Loop semantic validation to allow multiple approval checkpoints with the same `before_phase`.
+> Scope note: establish the two portable-contract corrections discovered during Harness design and implement the versioned workspace runtime-configuration subsystem. This milestone includes existing-manifest semantic validation for the Loop/Memory contract changes plus config-local structural and semantic validation for `agentpm.harness.json`. It does not resolve or execute a runnable Agent, perform Agent-specific cross-package/preflight validation, start runtime services, call models, persist live Memory, run MCP servers, invoke hooks, or render a TUI.
+- [ ] Update existing Loop semantic validation to allow multiple approval checkpoints with the same `before_phase`.
 - [ ] Preserve authored `loop.checkpoints` array order and document that multiple checkpoints targeting one phase are evaluated in that order at runtime.
 - [ ] Remove/replace tests and docs that reject duplicate `before_phase` checkpoints solely because they target the same phase.
-- [ ] Retain checkpoint ID uniqueness, valid phase targets, valid `on_reject` targets, and all existing structural validation.
+- [ ] Retain checkpoint ID uniqueness, valid phase targets, valid `on_reject` targets, and all existing Loop structural/semantic validation.
 - [ ] Add optional Memory transform `output_mode` with exactly `create | replace_input`.
 - [ ] Default omitted transform `output_mode` to `create` in typed/runtime interpretation for backward compatibility.
-- [ ] Add semantic validation for `replace_input`: transform-only, exactly one input, output space/record type equal to the input pairing, and `source_handling` exactly `retain`.
+- [ ] Add existing-manifest semantic validation for `replace_input`: transform-only, exactly one input, output space/record type equal to the input pairing, and `source_handling` exactly `retain`.
 - [ ] Update the flagship `conversation-continuity` example so `refresh_saved_note` explicitly uses `output_mode: "replace_input"`.
+- [ ] Confirm the Loop and Memory changes are implemented in the existing portable-manifest schema/type/lint/semantic-validation paths rather than in Harness runtime-config validation.
+
 - [ ] Add strict JSON Schema and Rust typed models for root-level `agentpm.harness.json` version 1. If the file exists, `version` is required and must equal `1`; `{ "version": 1 }` is the minimal valid file.
 - [ ] Reject unknown version-1 fields (`additionalProperties: false`) except the intentionally open ID-keyed registries/maps and provider-specific `model.options` defined in `spec.md`; unused sections are omitted rather than required as empty objects.
 - [ ] Implement the exact version-1 JSON field names/nesting from the Harness Configuration Contract in `spec.md`; do not rename/restructure them to repository preferences without a spec change.
 - [ ] Implement the shared `implementation` union exactly as `process | host`, including process `command/args/cwd/env/startup_timeout_ms/request_timeout_ms/restart` semantics/defaults and host request-timeout semantics.
-- [ ] Resolve all relative Harness-config paths from workspace root even when `--config` points elsewhere; allow an absolute path only where the spec explicitly permits it (notably `runtime.state_dir`).
+- [ ] Resolve all relative Harness-config paths from workspace root even when `--config` points elsewhere; allow an absolute path only where the spec explicitly permits it, notably `runtime.state_dir`.
 - [ ] Treat process `env` entries as names projected through the scoped environment/`.env.local` resolver; never treat them as literal secret values or inherit the entire parent environment by default.
+
 - [ ] Add `providers.models` and `providers.embeddings` typed registries; reserve built-in model IDs `openai`, `anthropic`, and `ollama` from custom redefinition while keeping concrete model IDs open strings.
 - [ ] Add `hooks.implementations` plus ordered `hooks.bindings` with the exact version-1 Hook IDs and `failure_policy: closed | continue`; allow repeated Hook IDs and preserve binding-array order.
-- [ ] Add `knowledge.runtimes`, versionless `knowledge.packages` mappings, and exact `knowledge.embedding_matches` tuples (`provider/model/dimensions/normalized -> embedding_provider`), rejecting unknown provider/runtime references and duplicate tuples.
+- [ ] Add `knowledge.runtimes`, versionless `knowledge.packages` mappings, and exact `knowledge.embedding_matches` tuples (`provider/model/dimensions/normalized -> embedding_provider`).
 - [ ] Add `memory.runtimes`, versionless `memory.packages` mappings, and `memory.local.semantic` (`embedding_provider/model/dimensions`) for the built-in SQLite semantic-retrieval realization.
-- [ ] Add exact MCP import unions: `stdio` with process-like command/env/lifecycle fields and `http` with absolute URL plus header values expressed as `{value}` or `{env}`; require explicit `scope.mode = global | phases` and validate the structural phase/tool filters.
+- [ ] Add exact MCP import unions: `stdio` with process-like command/env/lifecycle fields and `http` with absolute URL plus header values expressed as `{value}` or `{env}`.
+- [ ] Require every MCP import to declare explicit `scope.mode = global | phases`; validate scope/filter structure in this milestone but defer checking phase names against a selected Loop and Tool names against a live MCP server.
 - [ ] Add MCP export config `enabled` + `host` with defaults from `spec.md`; do not add static per-surface port mapping in config v1.
 - [ ] Add optional `approvals.controller.implementation` plus `approvals.timeout_ms`; keep plain-headless-without-controller behavior fixed as `approval_required`, not a configurable auto-approve/deny mode.
 - [ ] Implement exact trace enums `minimal | normal | verbose` and `none | redacted | full`, plus UI branding `name/subtitle/accent` with six-digit `#RRGGBB` validation.
-- [ ] Add a runtime-config loader using the workspace root and optional CLI-supplied config path override.
+
+- [ ] Add a Harness runtime-configuration subsystem that:
+    - loads the optional default or CLI-selected config file,
+    - validates JSON structure and deserializes typed version-1 models,
+    - performs config-local semantic validation,
+    - applies Harness defaults and explicit overrides,
+    - tracks the source of resolved values,
+    - and returns a typed resolved configuration for later bootstrap/execution.
+- [ ] Keep config-local semantic validation separate conceptually from file loading/parsing even if repository organization places them in the same module.
+- [ ] In config-local semantic validation, reject references to undefined config registry IDs, including Hook implementation IDs, Knowledge runtime IDs, Memory runtime IDs, custom model/embedding provider IDs, Memory local semantic embedding-provider IDs, and Approval controller implementations.
+- [ ] Reject duplicate/ambiguous configuration-local declarations such as duplicate exact `knowledge.embedding_matches` tuples where more than one provider could satisfy the same tuple.
+- [ ] Do not attempt Agent-aware validation in this milestone: `knowledge.packages` and `memory.packages` keys do not yet need to correspond to packages in a selected Agent, and MCP phase names do not yet need to correspond to a resolved Loop.
 - [ ] Add resolved-config source metadata capable of distinguishing SDK/run override, CLI override, config file, environment, and Harness default.
 - [ ] Implement default Harness safety limits and managed-process lifecycle defaults from `spec.md`; ensure they are runtime defaults, not written into portable Loop/Agent manifests.
-- [ ] Add unit/schema tests for missing config, minimal config, complete populated config, unknown fields, invalid shared implementation descriptors, duplicate Hook/embedding mappings, bad runtime references, unsafe paths, invalid branding/limits/scopes, malformed MCP stdio/HTTP/header/scope forms, and invalid approval controller config.
+
+- [ ] Add unit/schema tests for missing config, minimal config, complete populated config, unknown fields, invalid shared implementation descriptors, undefined config registry references, duplicate Hook/embedding mappings, unsafe paths, invalid branding/limits/scopes, malformed MCP stdio/HTTP/header/scope forms, and invalid approval controller config.
+- [ ] Add portable-manifest regression tests covering the Loop checkpoint relaxation and Memory `output_mode` addition.
 - [ ] Confirm existing Agent/Loop/Memory manifests continue to validate except for the intentional semantic relaxation/addition above.
 
 ## Milestone 2: Harness Bootstrap, Workspace Discovery, and Preflight Plan
-> Scope note: add the `agentpm harness` command shell and the bootstrap/preflight pipeline that resolves one runnable Agent from `agent.lock`, installed package state, and optional runtime configuration. Produce structured readiness data but do not execute the Loop or call a model yet.
+> Scope note: add the `agentpm harness` command shell and the Agent-aware bootstrap/preflight pipeline. This milestone combines workspace/install state, `agent.lock`, an optional local Agent manifest, and the resolved Harness configuration from Milestone 1 into a structured `ResolvedHarnessPlan` and `PreflightReport`. It performs cross-artifact semantic validation and static capability-readiness planning but does not traverse the Loop, call a model, execute Tools, start external providers/hooks/MCP processes, persist live Memory, or render the full TUI.
 - [ ] Add `agentpm harness [AGENT]` to CLI command routing/help.
+- [ ] Add Harness CLI/config inputs required for bootstrap, including the optional runtime-config path override and state-directory/runtime overrides defined in `spec.md`.
 - [ ] Reuse existing workspace-root discovery conventions rather than adding Harness-only root search behavior.
+- [ ] Load the resolved Harness runtime configuration through the Milestone 1 configuration subsystem rather than duplicating configuration parsing/defaulting inside bootstrap.
+
 - [ ] Require `agent.lock` for execution and return an actionable error when missing.
 - [ ] Support local `agent.json` when present but do not require it if a runnable installed Agent root is fully represented by lock/install state.
 - [ ] Resolve an explicit Agent selector against lockfile/install state.
 - [ ] If `AGENT` is omitted and exactly one runnable Agent root exists, select it deterministically.
-- [ ] If multiple runnable Agent roots exist, return a structured selection requirement for headless/machine modes and leave interactive selection to the later TUI milestone.
+- [ ] If multiple runnable Agent roots exist, return a structured selection requirement for one-shot headless/machine modes and leave interactive selection to the later TUI milestone.
 - [ ] Reject Agents without a resolved Loop as non-runnable by Harness while preserving that such an Agent remains a valid package artifact; do not invent a default Loop.
+
+- [ ] Resolve exact installed Agent, Loop, Tool, Skill, Knowledge, Memory, and Profile package versions from lockfile relationships.
 - [ ] Keep top-level Agent dependency arrays as dependency/install graph only; require an applicable binding for authored runtime availability and ensure an installed-but-unbound artifact is not surfaced automatically.
 - [ ] Treat Agent `examples`, README, and license metadata as non-behavioral discovery/documentation data only.
-- [ ] Resolve exact installed Agent, Loop, Tool, Skill, Knowledge, Memory, and Profile package versions from lockfile relationships.
-- [ ] Add Harness-only cross-package validation for binding phase names, bound package existence, Memory spaces/operations, Skill Tool inheritance, MCP Tool membership, and generated Knowledge/Memory metadata needed for runtime use.
-- [ ] Classify diagnostics as fatal, warning, suppressed/unavailable capability, or informational according to `spec.md`.
-- [ ] Warn/ignore unknown Agent phase-binding keys rather than failing an otherwise coherent Loop.
-- [ ] Detect same-scope direct Tool + Skill-inherited Tool duplication, warn, and de-dupe.
-- [ ] Resolve consumer-context path safely relative to workspace root but do not yet inject it into model prompts.
+- [ ] Load/resolve immutable package metadata and generated build artifacts needed for later runtime use without mutating installed package state.
+
+- [ ] Add Harness-only cross-artifact semantic validation after the runnable Agent and Loop are resolved.
+- [ ] Validate Agent phase-binding keys against the resolved Loop; warn/ignore unknown phase-binding keys rather than failing an otherwise coherent Loop.
+- [ ] Validate bound Tool, Skill, Knowledge, Memory, and Profile identities against the Agent dependency graph and lock/install state.
+- [ ] Validate Memory binding `spaces` and `operations` against the resolved Memory Blueprint.
+- [ ] Validate Skill Tool dependencies and compute inherited Tool candidates according to global/phase Skill binding scope.
+- [ ] Detect same-scope direct Tool + Skill-inherited Tool duplication, warn, and de-dupe; do not treat global-direct + phase-inherited availability as inherently redundant.
+- [ ] Validate Agent MCP export Tool membership against explicitly declared top-level Agent Tool dependencies; do not allow Skill-transitive Tools to become exported solely because they are installed.
+- [ ] Validate Loop graph/checkpoint/outcome references needed for runtime interpretation, including entry phase, transition targets, duplicate/ambiguous transitions, and ordered multiple checkpoints.
+- [ ] Validate generated Knowledge and Memory build/index/contract metadata required for later runtime use and classify missing/corrupt generated metadata according to `spec.md`.
+
+- [ ] Resolve `knowledge.packages` and `memory.packages` configuration mappings against the selected Agent/lock graph; distinguish an undefined config runtime ID (Milestone 1 error) from a well-formed mapping to a package that is not relevant/resolved for the selected Agent (preflight diagnostic).
+- [ ] Resolve configured model/provider identity and custom provider references but do not start/call ModelRuntime implementations yet.
+- [ ] Resolve Hook implementation/binding references into the plan but do not start HookRuntime processes yet.
+- [ ] Resolve Memory local semantic embedding-provider references into the plan but do not start embedding providers yet.
+- [ ] Validate MCP import phase scopes against the resolved Loop.
+- [ ] Preserve configured MCP Tool filters for later live `tools/list` validation; do not claim Tool readiness before the MCP server has actually been started/discovered in the MCP milestone.
+- [ ] Resolve Approval controller configuration into the plan but do not start/invoke it yet.
+
+- [ ] Resolve consumer-context path safely relative to workspace root but do not yet inject its contents into model prompts.
+- [ ] Record consumer-context readiness as available, missing/unavailable warning, or invalid/unsafe path according to `spec.md`.
 - [ ] Resolve configured runtime scope values without giving model code authority to choose them.
-- [ ] Resolve/validate all configured registry references (custom model/embedding provider IDs, Hook implementation IDs, Knowledge/Memory package mappings, Memory local semantic provider, MCP imports, Approval controller) before execution; later milestones may defer actually starting protocols they have not implemented yet.
-- [ ] Add `.agentpm-state` path resolution with config/CLI override support and keep it physically/logically separate from `.agentpm`.
-- [ ] Add `PreflightReport`/`ResolvedHarnessPlan` Rust models usable by later TUI, headless, machine protocol, reports, and SDKs.
-- [ ] Add tests for installed-Agent-only execution roots, local Agent roots, multiple Agents, missing Loop, bad binding phase, bad Memory selector, missing generated metadata, unsafe consumer context, missing optional context, and state-dir separation.
+- [ ] Compute which Memory spaces require which authored scope keys and report unresolved required runtime scope values as capability-readiness diagnostics rather than letting the model invent values.
+- [ ] Add `.agentpm-state` path resolution with config/CLI override support and keep it physically/logically separate from immutable `.agentpm` installed package state.
+
+- [ ] Add a static capability-planning layer that distinguishes:
+    - authored candidates from Agent bindings and Skill inheritance,
+    - runtime-configured augmentation candidates such as scoped MCP imports,
+    - Loop restrictions,
+    - statically knowable runtime requirements,
+    - and capability states that require later live service handshake/readiness checks.
+- [ ] Do not mark a custom provider/runtime as fully ready merely because configuration exists; represent readiness as pending/unverified until its later runtime milestone performs the protocol handshake/capability advertisement.
+- [ ] Suppress capabilities that are already conclusively impossible from static state, such as a missing installed package or known-incompatible Tool runtime requirement, while preserving a diagnostic explaining why.
+- [ ] Do not fail the entire runnable Agent merely because an optional Tool/Knowledge/Memory/MCP capability is unavailable unless execution itself cannot be coherently interpreted.
+
+- [ ] Classify preflight diagnostics as fatal, warning, suppressed/unavailable capability, pending runtime verification, or informational according to `spec.md`.
+- [ ] Ensure fatal diagnostics are reserved for conditions that prevent coherent Harness interpretation, such as missing lock/root Agent/Loop, invalid graph references, or otherwise ambiguous authoritative runtime structure.
+- [ ] Preserve safe-degradation behavior for non-fatal mismatches and unavailable optional capabilities.
+
+- [ ] Add `PreflightReport` and `ResolvedHarnessPlan` Rust models that are UI-agnostic and reusable by later one-shot headless, machine/SDK, TUI, report, and execution milestones.
+- [ ] Ensure `ResolvedHarnessPlan` contains the resolved Agent/Loop/package graph, resolved Harness config + source metadata, workspace/state paths, runtime scope state, consumer-context readiness, service/provider definitions, static capability candidates/readiness, and diagnostics needed by later milestones.
+- [ ] Keep mutable RunState out of `ResolvedHarnessPlan`; this milestone produces immutable-ish bootstrap/session planning data only.
+
+- [ ] Add tests for installed-Agent-only execution roots, local Agent roots, explicit Agent selection, zero/one/multiple runnable Agents, missing Loop, bad binding phase, missing bound package, bad Memory selector, Skill Tool inheritance/de-duplication, invalid MCP export Tool membership, missing generated Knowledge/Memory metadata, unsafe consumer context, missing optional context, unresolved scopes, irrelevant Knowledge/Memory config package mappings, MCP import phase-scope validation, state-dir separation, and static-vs-pending capability readiness.
+- [ ] Add integration coverage proving Milestone 1 config-local validation and Milestone 2 Agent-aware validation remain separate—for example, a syntactically/semantically valid MCP phase scope passes config loading but produces a preflight diagnostic when that phase does not exist in the selected Loop.
 
 ## Milestone 3: Stable Events, Trace Sink, and JSON Run Report Foundation
-> Scope note: establish the Harness observability contract before complex execution is added. Add event envelopes, event sequencing, durable JSONL trace files, run-report models, redaction policy, and a minimal session/run lifecycle. No model/tool/Knowledge/Memory execution yet.
-- [ ] Add versioned Harness event envelope types with session ID, run ID, run-local sequence, timestamp, type, phase execution ID, correlation/parent IDs, and typed payload support.
-- [ ] Add event categories/namespaces for bootstrap, session, run, phase, model, outcome/transition, Tool, Skill/resource, Knowledge, Memory, approval/control, Hook, MCP, consumer context, cancellation, and terminal state.
-- [ ] Keep events as observability facts rather than authoritative event-sourced RunState.
-- [ ] Add central event emitter/fan-out used by CLI renderers, machine protocol, trace files, and reports.
-- [ ] Add trace configuration with exactly `minimal | normal | verbose` and `none | redacted | full` content-policy enums.
-- [ ] Make secret redaction unconditional regardless of trace content policy.
-- [ ] Create `.agentpm-state/runs/<run-id>/events.jsonl` by default when tracing is enabled.
-- [ ] Add versioned `RunReport` model and default `.agentpm-state/runs/<run-id>/report.json` path.
-- [ ] Include preflight/runtime-source metadata, Agent/Loop identities, warnings, terminal state, phase summaries, usage placeholders, action summaries, error/retry counts, and trace reference in the report schema.
-- [ ] Add explicit report-path/export override while retaining default state-directory report generation.
-- [ ] Ensure partial/failed/cancelled Runs still flush a valid report and trace as far as possible.
-- [ ] Add tests for sequence monotonicity, correlation IDs, redaction, trace-level filtering, report serialization, explicit output paths, state-dir creation, and failure-safe flush.
+> Scope note: establish the Harness observability and accounting contracts before complex execution is added. Define canonical event envelopes/taxonomy, event fan-out, durable JSONL traces, Run reports, redaction/content policy, Session usage aggregation, and the minimal Session/Run identities needed by those contracts. This milestone does not yet traverse a Loop, call a model, execute actions, resolve approvals, or implement Tool/Knowledge/Memory/MCP behavior.
+- [ ] Add versioned Harness event-envelope types with:
+    - stable event type,
+    - event ID,
+    - session ID,
+    - optional run ID,
+    - monotonically increasing session sequence,
+    - optional monotonically increasing run-local sequence,
+    - timestamp,
+    - optional phase execution ID,
+    - optional correlation ID and parent event ID,
+    - and typed payload support.
+- [ ] Use session sequence for deterministic ordering across the complete Session event stream, including bootstrap/service events that occur before a Run exists; reset only the optional run-local sequence for each Run.
+- [ ] Treat correlation IDs as operation/request grouping rather than ordering authority; use parent event IDs where a direct causal parent is useful.
+- [ ] Implement the minimum stable version-1 semantic event taxonomy from `spec.md`, covering:
+    - Session/service/preflight lifecycle,
+    - Run/phase lifecycle,
+    - model requests/turns and semantic-action proposals/results,
+    - outcome/transition selection,
+    - Tool and Skill-resource activity,
+    - Knowledge activity,
+    - Memory access/lifecycle activity,
+    - Hook and approval/control activity,
+    - MCP import/export activity,
+    - consumer-context loading,
+    - cancellation,
+    - terminal state,
+    - and usage updates.
+- [ ] Give canonical version-1 events typed payload contracts containing the stable semantic fields required by `spec.md`; allow later milestones to add more granular events without replacing or overloading the canonical event meanings.
+- [ ] Keep events as immutable observability facts, not the authoritative source of RunState and not a requirement to rebuild RunState through event replay.
 
-## Milestone 4: Core HarnessEngine and Loop Traversal with Fake ModelRuntime
-> Scope note: implement the UI-agnostic Run/phase state machine using deterministic fake/test ModelRuntime responses. Prove Loop traversal, phase steps, outcomes, limits, terminals, retries/error-policy plumbing, and single-writer RunState before real provider APIs or capabilities are introduced.
-- [ ] Add `HarnessSession`, `RunContext`, `RunState`, `PhaseResult`, runtime terminal status, and phase execution ID models.
-- [ ] Enforce the single-writer invariant: only HarnessEngine mutates RunState.
-- [ ] Execute `entry_phase`, phase completion, transition lookup, re-entry, and terminal targets from the Loop graph.
-- [ ] Treat phase IDs as graph/runtime identity only, `phase.objective` as model-facing guidance, and `archetype` as descriptive metadata with no engine branch.
-- [ ] Enforce Loop access tri-state semantics (`false` prohibits, `true` permits without creating capability, omitted means no Loop opinion) in the generic engine model used by later capabilities.
-- [ ] Treat one phase execution as one Loop step; model/action work inside the phase does not increment Loop steps.
-- [ ] Enforce effective max steps as the stricter of authored Loop max and Harness safety ceiling.
-- [ ] Return `limit_reached` rather than authored `$abort` when limits are exhausted.
-- [ ] Implement implicit `complete` for phases with omitted outcomes.
-- [ ] Validate explicit model/host outcome IDs exactly and add bounded structured repair plumbing.
-- [ ] Implement `$end`, `$abort`, and `$handoff` terminal result semantics, with `$handoff` returning control/context rather than invoking another Agent.
-- [ ] Implement default Tool-failure -> phase failure and phase-failure -> runtime failed behavior for cases where Loop policy is absent; actual Tool invocation comes later.
-- [ ] Implement Loop Tool retry policy counters/actions in an executor-neutral form for later Tool/MCP use; define `max_retries` as additional attempts after the initial failure (`2` => at most `3` total attempts).
-- [ ] Add internal action-count/model-call/tool-call counters and safety-limit enforcement models.
-- [ ] Add fake ModelRuntime/test harness capable of returning content, explicit outcomes, malformed outcomes, and failures.
-- [ ] Emit lifecycle/phase/outcome/transition/terminal events and write populated reports.
-- [ ] Add unit/integration tests for cycles, re-entered phases, implicit/explicit outcomes, invalid outcome repair/exhaustion, all terminals, max-step exhaustion, default failure behavior, and authored error policy.
+- [ ] Add one central event emitter/fan-out abstraction used by later CLI/TUI renderers, machine protocol subscribers, trace sinks, and report/accounting observers.
+- [ ] Emit a canonical internal event before sink-specific filtering; trace level determines which otherwise-valid events a sink retains/displays rather than changing Harness execution or event semantics.
+- [ ] Implement trace level exactly as `minimal | normal | verbose`.
+- [ ] Implement trace content policy exactly as `none | redacted | full`.
+- [ ] Keep event selection and content exposure separate: trace level controls event granularity while content policy controls whether eligible content-bearing fields are omitted, redacted, or retained.
+- [ ] Make secret redaction unconditional regardless of trace level or content policy; `full` must never mean raw secret emission.
+- [ ] Apply the same redaction/content rules consistently to JSONL traces, machine-protocol event delivery, TUI/event rendering data, and Run-report embedded summaries where applicable.
+
+- [ ] Create `.agentpm-state/runs/<run-id>/events.jsonl` by default when tracing is enabled.
+- [ ] Write JSONL incrementally so a crash/failure does not require the entire Run to finish before useful trace data exists.
+- [ ] Keep trace output ordered according to the canonical event sequence and ensure each JSONL record is independently parseable.
+
+- [ ] Add a versioned `RunReport` model and default `.agentpm-state/runs/<run-id>/report.json` path.
+- [ ] Include at least:
+    - Harness/report version,
+    - session/run IDs,
+    - Agent and Loop identities,
+    - relevant preflight/runtime-source metadata,
+    - start/end timestamps and duration,
+    - terminal status,
+    - warnings/diagnostics,
+    - ordered phase summaries,
+    - PhaseResult/outcome/transition summaries,
+    - usage,
+    - action summaries,
+    - retry/error counts,
+    - approval/cancellation summary where applicable,
+    - and trace-file reference.
+- [ ] Keep the Run report a compact execution summary derived from authoritative Harness state/accounting; do not require consumers to replay `events.jsonl` to understand the Run result.
+- [ ] Add explicit report-path/export override while retaining default state-directory report generation.
+- [ ] Ensure partial, failed, cancelled, `limit_reached`, and otherwise non-successful Runs can still flush a syntactically valid report and trace containing all data available up to termination.
+
+- [ ] Add `RunUsage` and in-memory `SessionUsage` accounting models.
+- [ ] Define `SessionUsage` as the aggregation of completed/current Runs within one Harness Session, including:
+    - Run count,
+    - model-call count,
+    - provider-reported input/output/total tokens,
+    - accepted semantic actions,
+    - logical Tool calls and retries,
+    - useful Knowledge/Memory/embedding request counts,
+    - duration,
+    - and provider-reported or otherwise authoritative cost when available.
+- [ ] Never fabricate token or cost values when a provider/runtime does not supply enough information; preserve unknown/unavailable values explicitly.
+- [ ] Keep per-Run usage independently available even while Session totals accumulate across repeated Runs.
+- [ ] Add `session_usage_updated` and terminal Session usage-summary exposure; do not require a separate durable Session report in Phase 7B.
+
+- [ ] Add only the minimal Session/Run lifecycle primitives required to allocate stable IDs, attach events/usage to their owning Session/Run, open/flush sinks, and finalize reports; leave operational `RunState` and Loop traversal to Milestone 4.
+- [ ] Provide synthetic/test lifecycle helpers so event, trace, report, and usage behavior can be exercised without a real ModelRuntime or HarnessEngine.
+
+- [ ] Add tests for:
+    - session and run sequence monotonicity,
+    - sequence reset/isolation between Runs,
+    - event IDs and correlation/parent relationships,
+    - canonical event serialization,
+    - trace-level filtering,
+    - content-policy behavior,
+    - unconditional secret redaction,
+    - incremental JSONL writing,
+    - RunReport serialization,
+    - SessionUsage aggregation across multiple synthetic Runs,
+    - unknown token/cost handling,
+    - explicit output paths,
+    - state-directory creation,
+    - and failure-safe trace/report flush.
+
+## Milestone 4: Core HarnessEngine, Agentic Inner Loop, and Loop Traversal with Fake Runtimes
+> Scope note: implement the UI-agnostic Harness execution state machine using deterministic fake/test runtime boundaries. Prove Run creation, phase-local agentic execution, Loop traversal, ordered checkpoints, outcomes, transitions, safety limits, retry/error-policy plumbing, terminal behavior, Session reuse, and the single-writer RunState invariant before real model providers or real Tool/Knowledge/Memory/MCP implementations are introduced. Fake runtimes return canned normalized responses/results through the same interfaces later real implementations will use.
+
+- [ ] Add operational `HarnessSession`, `RunContext`, `RunState`, `PhaseExecutionState`, `PhaseResult`, pending approval/control state, runtime terminal result/status, and phase execution ID models.
+- [ ] Reuse Milestone 3 Session/Run IDs, events, reports, and usage accounting rather than introducing parallel lifecycle/accounting paths.
+- [ ] Enforce the single-writer invariant: only `HarnessEngine` mutates authoritative `RunState`; runtimes/controllers return normalized results, proposals, or decisions for the Engine to validate and apply.
+- [ ] Support multiple sequential Runs inside one `HarnessSession`; create fresh RunState, Loop-step state, phase transcripts, PhaseResults, and per-Run usage for each Run while preserving Session-level services/identity/usage aggregation.
+
+- [ ] Add the normalized model-facing execution contracts used by both fake and later real ModelRuntime implementations:
+    - `ModelRequest`,
+    - `ModelTurn`,
+    - assistant content,
+    - ordered semantic action proposals,
+    - structured repair feedback,
+    - and provider-independent usage metadata.
+- [ ] Add the normalized semantic Harness action model required by the phase inner loop, including at least:
+    - AgentPM Tool call,
+    - external MCP Tool call,
+    - Skill resource read,
+    - Knowledge request,
+    - Memory read,
+    - Memory write,
+    - and PhaseCompletion.
+- [ ] Keep semantic action identity independent from provider-native function/tool-call syntax; provider adapters added later must translate to/from these Harness-owned contracts rather than allowing provider response shapes to drive Engine behavior.
+- [ ] Add a fake/scripted `ModelRuntime` capable of returning assistant content, one or more ordered semantic action proposals, explicit/implicit completion, malformed completion/outcome data, usage, and runtime failures.
+- [ ] Add a fake/scripted action dispatcher/runtime boundary that can return deterministic structured action success/failure results without implementing real Tool, Skill, Knowledge, Memory, or MCP behavior.
+- [ ] Keep the fake action path executor-neutral so later capability milestones replace the fake dispatcher with real routing rather than rewriting the inner-loop state machine.
+
+- [ ] Implement the canonical phase-local agentic inner loop:
+    - assemble normalized `ModelRequest`,
+    - call `ModelRuntime`,
+    - receive normalized `ModelTurn`,
+    - record assistant content,
+    - validate ordered semantic action proposals,
+    - execute accepted non-terminal actions through the action-dispatch boundary,
+    - append structured action results to the phase-local transcript,
+    - call the model again,
+    - and continue until valid PhaseCompletion, implicit completion, failure, cancellation, or safety-limit exhaustion.
+- [ ] Do not model one phase execution as one model response; allow multiple model/action cycles within a single phase execution.
+- [ ] Keep raw phase working transcripts phase-local. Cross-phase execution context flows through Run input, stable Run-level context, and `PhaseResult` rather than automatically forwarding one provider-native conversation transcript across the whole Loop.
+- [ ] Build the canonical logical `ModelRequest` structure from `spec.md` even though most capability layers are empty/fake in this milestone, so later Profiles, Skills, consumer context, Knowledge, Memory, and Tools populate existing prompt/request layers rather than changing the request architecture.
+- [ ] Process multiple non-terminal actions from one normalized `ModelTurn` deterministically in provider-preserved order.
+- [ ] Do not execute actions in parallel in Phase 7B unless a later explicit spec change adds that behavior.
+- [ ] Reject and issue structured repair feedback for ambiguous turns that combine PhaseCompletion with executable actions rather than guessing whether completion happens before or after those actions.
+- [ ] Treat malformed/rejected proposals that never become accepted semantic actions as repairable model output rather than executed action failures.
+
+- [ ] Execute `entry_phase`, phase completion, transition lookup, phase re-entry, and terminal targets strictly from the resolved Loop graph.
+- [ ] Treat phase IDs as graph/runtime identity only, `phase.objective` as model-facing guidance, and `archetype` as descriptive metadata with no Engine branch.
+- [ ] Implement generic EffectivePhase/access-policy inputs needed by later capability milestones.
+- [ ] Enforce Loop access tri-state semantics:
+    - `false` prohibits the corresponding semantic capability,
+    - `true` permits an otherwise available capability but creates none,
+    - omitted means the Loop expresses no opinion.
+- [ ] Keep semantic capability gates distinct: provider-native "tool calling" must not cause Tool access policy to gate Skill-resource, Knowledge, or Memory actions.
+
+- [ ] Treat one phase execution as one Loop step.
+- [ ] Consume the Loop step only when the phase is actually entered; model calls, accepted semantic actions, retries, repairs, and approval checkpoints do not independently increment Loop steps.
+- [ ] Enforce effective max steps as the stricter of authored Loop `limits.max_steps` and the Harness runtime safety ceiling.
+- [ ] Return runtime terminal status `limit_reached` rather than authored `$abort` when the effective step ceiling is exhausted.
+
+- [ ] Implement ordered Loop approval checkpoints before guarded phase entry using a fake/scripted approval decision boundary.
+- [ ] Evaluate all checkpoints targeting the phase in authored `loop.checkpoints` array order.
+- [ ] On approval, continue to the next checkpoint without consuming a Loop step.
+- [ ] On the first rejection, stop evaluating later checkpoints, follow that checkpoint's `on_reject` target, and do not consume the guarded phase's Loop step.
+- [ ] If an approval cannot be resolved by the current controller/test boundary, represent the Run as pending/`approval_required` according to the control contract rather than treating it as a rejection.
+- [ ] Do not implement TUI prompts, SDK approval callbacks, or external ApprovalRuntime protocols yet; later milestones connect those surfaces to this same Engine checkpoint mechanism.
+
+- [ ] Implement implicit `complete` for phases with omitted authored outcomes.
+- [ ] For phases with explicit outcomes, require the selected outcome ID to match an authored outcome exactly.
+- [ ] Add bounded structured repair when the model proposes an invalid/missing explicit outcome.
+- [ ] Treat repair requests as ModelRuntime calls and account for them against the appropriate model-call/repair safety limits.
+- [ ] Produce a first-class `PhaseResult` containing phase/execution identity, selected/implicit outcome, output content, usage contribution, and structured metadata required for later cross-phase prompt assembly.
+
+- [ ] Implement deterministic transition selection from `(phase, outcome)` and reject ambiguous/missing graph interpretation rather than inventing transitions.
+- [ ] Implement `$end`, `$abort`, and `$handoff` terminal semantics:
+    - `$end` returns a successful completed result using the final PhaseResult/output by default,
+    - `$abort` returns authored aborted state,
+    - `$handoff` returns explicit handoff/control context and does not automatically invoke another Agent.
+- [ ] Preserve runtime failures/cancellation/`limit_reached` as distinct terminal states from authored `$abort`.
+
+- [ ] Add generic action failure and retry plumbing needed by later AgentPM Tool and external MCP Tool executors.
+- [ ] Implement default Tool-failure -> phase failure and phase-failure -> runtime failed behavior when the Loop omits corresponding error policy; actual Tool execution remains fake in this milestone.
+- [ ] Implement Loop Tool retry-policy counters/actions in an executor-neutral form.
+- [ ] Define `max_retries` as additional attempts after the initial failed attempt (`2` means at most `3` total execution attempts).
+- [ ] Treat retries as repeated attempts of the same finalized logical Tool call; retry attempts do not create new semantic actions.
+- [ ] Keep a model-proposed new Tool call with changed arguments as a new logical action rather than a retry.
+
+- [ ] Implement phase safety counters and enforcement using the exact semantics from `spec.md`.
+- [ ] Define `max_actions_per_phase` as the count of accepted semantic action proposals in that phase execution: AgentPM Tool calls, external MCP Tool calls, Skill resource reads, Knowledge requests, Memory reads, Memory writes, and PhaseCompletion.
+- [ ] Do not count model calls, Hook calls, approval checks, internal Memory lifecycle operations, embedding requests, retry attempts, or malformed proposals rejected before acceptance as separate semantic actions.
+- [ ] Define `max_model_calls_per_phase` as ModelRuntime requests attributable to the phase, including structured/outcome repair requests.
+- [ ] Define `max_tool_calls_per_phase` as accepted logical AgentPM/external-MCP Tool calls; execution retries of the same logical Tool call do not increment that logical-call count.
+- [ ] Emit an explicit runtime limit/failure result and events when any phase safety limit is exceeded rather than silently truncating work.
+
+- [ ] Emit the canonical Milestone 3 lifecycle, phase, model, action, approval, outcome, transition, limit, failure, terminal, and usage events as the fake execution proceeds.
+- [ ] Populate/flush Milestone 3 Run reports from actual Engine state for completed, aborted, handed-off, failed, approval-required, cancelled/test-cancelled, and limit-reached Runs.
+- [ ] Aggregate each Run's usage into SessionUsage and verify multiple Runs in one Session accumulate Session totals while resetting per-Run counters/state.
+
+- [ ] Add unit/integration tests for:
+    - multiple Runs in one Session,
+    - cycles and phase re-entry,
+    - phase-local transcript isolation,
+    - multi-turn phases,
+    - multiple ordered actions in one model turn,
+    - ambiguous completion + action repair,
+    - accepted-action/model-call/Tool-call limit accounting,
+    - ordered multiple approval checkpoints,
+    - approval rejection and unresolved approval,
+    - implicit and explicit outcomes,
+    - invalid-outcome repair and exhaustion,
+    - all authored/runtime terminal states,
+    - max-step exhaustion,
+    - Tool retry counting (`max_retries + initial attempt`),
+    - default failure behavior,
+    - authored error policy,
+    - single-writer RunState enforcement,
+    - event/report integration,
+    - and SessionUsage aggregation.
 
 ## Milestone 5: ModelRuntime, Prompt Assembly, OpenAI, Anthropic, and Ollama
 > Scope note: add real model execution and normalized semantic turn/action plumbing, including the three required built-in providers. Complete a text-only multi-phase Harness Run in headless mode before Tool/Knowledge/Memory capabilities are added.
-- [ ] Add `ModelRuntime` trait/interface and normalized model request/response/usage/action structures.
+- [ ] Add `ModelRuntime` trait/interface and the normalized `ModelRequest`/`ModelTurn` contract from `spec.md`, including assistant content, ordered semantic action proposals, provider usage, finish metadata, canonical action identities, and provider-safe alias mapping.
+- [ ] Make the ModelRuntime boundary explicit: Engine creates ModelRequest; provider adapter translates it; provider response is normalized to ModelTurn; the model only proposes actions; Engine validates/dispatches them and appends structured results before the next model call. No Engine code should parse provider-native response shapes.
+- [ ] Add live selected-model capability advertisement (`semantic_actions`, `structured_output`, `multimodal_input`, optional `context_window_tokens`, `usage_reporting`) for built-in/custom providers and use it for readiness/compatibility diagnostics rather than a closed model catalog.
 - [ ] Keep model provider IDs and concrete model IDs runtime strings; do not add a closed model enum.
 - [ ] Implement built-in OpenAI provider using current supported API patterns in the repository/ecosystem at implementation time.
 - [ ] Implement built-in Anthropic provider with equivalent normalized behavior.
@@ -100,10 +340,15 @@
 - [ ] Support custom model provider IDs backed by configured process/SDK host provider contracts without requiring those custom implementations in this milestone.
 - [ ] Add provider capability detection/adaptation sufficient to reject unsupported required structured-action behavior clearly.
 - [ ] Add provider-safe temporary function/tool aliases while retaining canonical Harness identities internally.
-- [ ] Add phase prompt assembler with Harness control contract, phase objective/outcomes, run input, prior PhaseResults, and placeholders for later Profile/Skill/capability composition.
+- [ ] Add phase prompt assembler using the canonical logical structure from `spec.md`: immutable Harness control/outcome contract -> authored phase/Profile/Skill behavior -> Run input + Consumer Context -> prior PhaseResults -> Effective capability catalog -> current phase-local transcript. Keep provider message-role translation inside ModelRuntime.
+- [ ] Represent effective Tool/MCP/Skill-resource/Knowledge/Memory/PhaseCompletion capabilities as Harness semantic action descriptors; provider-native function/tool definitions are only transport and must map back to canonical action identities.
+- [ ] Keep Knowledge/Memory/Tool/Skill-resource contents on-demand and append their structured results to the current phase transcript rather than eager prompt injection.
+- [ ] Apply `before_model_request` only after canonical prompt assembly and before provider translation; never allow it to remove Harness control authority, alter phase/outcome IDs, add action descriptors, or mutate EffectivePhase.
 - [ ] Keep raw provider transcripts phase-local and start a fresh provider context on phase re-entry/new phases.
 - [ ] Account for provider usage/tokens when available.
-- [ ] Add headless input/output flow and actionable missing-provider/model errors.
+- [ ] Add **one-shot plain headless** input/output flow: one Session + exactly one Run from CLI text/stdin/file input, final/handoff user-facing output on stdout, diagnostics on stderr/report, report/trace flush, deterministic service shutdown, and no dependency on the machine protocol.
+- [ ] Define/test headless terminal exit behavior consistent with `spec.md`: `ended`/`handed_off` successful; `aborted`/`failed`/`cancelled`/`limit_reached`/`approval_required` non-success according to CLI conventions.
+- [ ] Return actionable missing-provider/model/scope errors in non-interactive headless mode rather than silently choosing values.
 - [ ] In interactive-capable bootstrap, represent missing model/provider as promptable requirements for the future TUI rather than choosing silently.
 - [ ] Add provider contract tests with mocked HTTP/process transports and optional real-provider smoke tests gated by environment variables.
 - [ ] Add one representative three-phase text-only end-to-end test that runs against fake provider fixtures through the real ModelRuntime interface.
@@ -116,6 +361,8 @@
 - [ ] Serialize every authored behavioral Profile section present (identity, objectives/principles, audience, communication/formatting/vocabulary, boundaries, constraints) as model-facing input, and serialize multiple Profiles as distinct inputs in deterministic global-then-phase authored order; do not merge/override into a synthetic Profile.
 - [ ] Treat required/preferred Profile constraints as different prompt-strength guidance only and preserve stable constraint IDs in prompt/trace metadata where practical.
 - [ ] Evaluate Profile compatibility as advisory readiness diagnostics/warnings, never as hard behavioral enforcement; distinguish stronger `requires` mismatch warnings from softer `recommends` hints where the schema provides them.
+- [ ] Interpret Profile capability-hint booleans correctly: `true` asserts/recommends the capability while `false` is absence of that positive requirement/recommendation, never a prohibition such as “Tool use must be disabled.”
+- [ ] Implement `compatibility.minimum_context_tokens` exactly as advisory model context-window capacity: compare to ModelRuntime `context_window_tokens` only when reliably known, warn strongly when known-insufficient, report unverified when unknown, never reserve tokens/block/suppress, and evaluate multiple Profiles independently.
 - [ ] Warn on obvious mechanical Profile conflicts where practical but never invent identity/persona/semantic precedence to resolve them.
 - [ ] Snapshot `bindings.consumer_context.file` once at Run start and reuse that exact snapshot across all phase executions in the Run.
 - [ ] Reload consumer context on the next Run within the same Session.
@@ -167,12 +414,15 @@
 
 ## Milestone 9: HookRuntime, ApprovalRuntime, Machine Control Protocol, and Cancellation
 > Scope note: establish the persistent bidirectional Harness protocol and typed interception/control contracts before language SDK wrappers are added. Implement prompt/Tool Hooks plus the separate ApprovalRuntime first; later capability milestones add Knowledge/Memory Hook points on the same contract.
-- [ ] Define a versioned Harness machine protocol over persistent stdin/stdout JSON framing for `agentpm harness --machine`; human output must never share stdout with protocol frames.
-- [ ] Add handshake/version/capability negotiation for machine clients and every shared `process` service role (model, embedding, Hook, Knowledge, Memory, approval); the config registry determines the typed role expected from the handshake.
+- [ ] Define the versioned `agentpm harness --machine` JSONL envelope from `spec.md` with protocol/version/kind/correlation IDs and typed request/response/event/error payloads; human output must never share stdout with protocol frames.
+- [ ] Implement machine message families for Session initialization/host registration, start Run, event streaming, Run/preflight/terminal responses, cancellation, external Memory-operation control, shutdown, and correlated host-service request/response dispatch.
+- [ ] Add the common AgentPM process-service JSONL envelope/initialize handshake from `spec.md` for model, embedding, Hook, Knowledge, Memory, and approval roles; process stdout is protocol-only and diagnostics use stderr.
+- [ ] Require role-specific live capability advertisement during initialization and validate configured role/protocol/readiness before marking a service ready. Host implementations over the SDK machine protocol must advertise the same semantic capabilities as process implementations.
+- [ ] Implement the minimum role method contracts from `spec.md`: model `generate`; embedding `embed`; Hook `invoke`; Knowledge `retrieve`; Memory primitive record/retrieval/count/operation-state/batch methods; approval `request_approval`. MCP and ToolRuntime keep their separate public protocol boundaries.
 - [ ] Implement common managed-process lifecycle states/events and defaults from `spec.md`: startup/handshake readiness, request timeout, one default restart for subsequent requests, no automatic replay of the failed in-flight request, exhausted-service unavailable state, and clean Session shutdown.
 - [ ] Keep event messages distinct from control requests and service/provider requests.
 - [ ] Add correlation IDs and bounded request timeouts where configured.
-- [ ] Add `HookRuntime` with the exact version-1 Hook IDs from `spec.md`, ordered config/SDK registrations, and constrained request/response patch types.
+- [ ] Add `HookRuntime` with the exact version-1 Hook IDs from `spec.md`, ordered config/SDK registrations, and **closed per-Hook request/response patch schemas** rather than generic JSON merge-patch. Implement the allowed contracts for prompt shaping, Tool candidate subsetting/reordering, Tool argument patch/reject, Knowledge request/retrieval shaping, Memory read/write shaping, and Memory-operation allow/reject/model-guidance.
 - [ ] Invoke a Hook only when its corresponding authorized decision/action is actually eligible; candidate/suppression events may still be emitted when no actionable capability exists, but Hooks must never be called as a capability-manufacturing escape hatch.
 - [ ] Implement prompt/context-shaping Hook before model request.
 - [ ] Implement Tool candidate/selection influence hook where applicable without granting new capabilities.
@@ -227,7 +477,8 @@
 
 ## Milestone 12: Local KnowledgeRuntime and EmbeddingProvider Contract
 > Scope note: add on-demand context/vector Knowledge to the Harness using installed Knowledge packages and existing public AgentPM query machinery. Introduce typed embedding-provider fallback but defer full Pinecone/pgvector runtimes to the next milestone.
-- [ ] Add `KnowledgeRuntime` interface and normalized Knowledge request/result models.
+- [ ] Add `KnowledgeRuntime` interface and normalized Knowledge request/result models using the runtime action contract from `spec.md` (`initialize/attest` + `retrieve`), including exact authorized package/version identity and normalized source/chunk/citation metadata.
+- [ ] Add KnowledgeRuntime live capability/readiness advertisement for supported modes/features and mapped package/version/corpus realization attestations; an explicitly mapped runtime that cannot attest the expected package/corpus is unavailable rather than trusted implicitly.
 - [ ] Add semantic model action for Knowledge access distinct from Tool calls.
 - [ ] Enforce Loop `access.knowledge` independently from `access.tools`.
 - [ ] Keep bound Knowledge packages distinct model surfaces rather than auto-federating them.
@@ -238,7 +489,7 @@
 - [ ] Keep retrieval citation/provenance output separate from final-answer formatting; `return_citations` does not force the model's final response to cite sources.
 - [ ] Reuse public `agentpm knowledge query` behavior/machinery when it can satisfy the request rather than reimplementing search privately in Harness.
 - [ ] Add a machine/query interface if existing public Knowledge query output is insufficient for Harness-safe structured consumption.
-- [ ] Add typed `EmbeddingProvider` service request/response contract with provider/model/dimensions/normalization/text and returned numeric vector.
+- [ ] Add typed `EmbeddingProvider` service request/response contract with provider/model/dimensions/normalization/text and returned numeric vector, plus live advertisement of the embedding-space tuples/patterns the provider can satisfy.
 - [ ] Resolve `knowledge.embedding_matches` by exact provider/model/dimensions/normalized tuple when local query needs a compatible query vector; reject ambiguous/duplicate matches rather than choosing heuristically.
 - [ ] Validate returned vector dimensions/numeric finiteness/declared compatibility before local retrieval.
 - [ ] Suppress a vector Knowledge surface when neither local query nor a compatible embedding provider/custom runtime can realize it.
@@ -265,7 +516,7 @@
 
 ## Milestone 14: Built-In SQLite MemoryRuntime and Direct Memory Access
 > Scope note: implement persistent local Memory Blueprint realization, generated-contract enforcement, trusted scopes, direct document/collection/sequence access, retention/capacity, and capability advertisement. Lifecycle operations/triggers come in the next milestone.
-- [ ] Add `MemoryRuntime` interface and normalized direct Memory read/write/update/delete request/result types.
+- [ ] Add `MemoryRuntime` interface and normalized primitive contracts from `spec.md`: direct create/upsert/update/delete/archive, retrieval, scoped count/capacity, deterministic sequence allocation, durable operation-state load/store, and atomic batch/transaction capability. Keep Blueprint trigger/lifecycle interpretation in Harness.
 - [ ] Implement built-in SQLite runtime at default `.agentpm-state/memory.sqlite3`.
 - [ ] Add local store schema versioning/migration mechanism.
 - [ ] Implement the version-1 SQLite schema from `spec.md`: `memory_meta`, `memory_records`, `memory_sequence_state`, `memory_operation_state`, and `memory_vectors`, including required indexes/uniqueness and schema-version migration handling.
@@ -278,7 +529,7 @@
 - [ ] Implement sequence append/chronological retrieval with `memory_sequence_state`, zero-based never-reused ordinals, and ordinal reservation/insertion in one transaction.
 - [ ] Enforce `append_only` for direct model mutations.
 - [ ] Implement `key`, `filter`, `chronological`, and practical local `full_text` retrieval where declared.
-- [ ] Implement local `semantic` retrieval only when `memory.local.semantic` resolves a ready configured EmbeddingProvider/model/dimensions; store little-endian f32 vectors/content hashes and use exact cosine search; otherwise do not advertise semantic.
+- [ ] Implement local `semantic` retrieval only when `memory.local.semantic` resolves a ready configured EmbeddingProvider/model/dimensions; store little-endian f32 vectors/content hashes and use exact cosine search in Rust; otherwise do not advertise semantic. **Do not require sqlite-vec or any SQLite vector extension** for Phase 7B correctness/tests; an extension may only be a future optional optimization.
 - [ ] Add the normalized MemoryRuntime capability descriptor from `spec.md` (`space_models`, `retrieval_modes`, `retention_actions`, `constraints`, `capacity`, `durable_trigger_state`, `atomic_batches`) and compare live resolved capabilities to each Blueprint space/operation during preflight.
 - [ ] Suppress direct Memory spaces the selected runtime cannot faithfully realize.
 - [ ] Enforce Loop `memory.read/write` for direct model access only.
@@ -331,7 +582,7 @@
 
 ## Milestone 17: MCP Export and `agentpm serve --mcp` Machine Lifecycle
 > Scope note: realize Agent-authored `bindings.mcp` as outward AgentPM MCP server surfaces. Preserve current shared-runner implementation while adding machine readiness/events and Harness Session lifecycle management.
-- [ ] Add machine mode to `agentpm serve --mcp` with structured handshake/ready/shutdown/error messages.
+- [ ] Add machine mode to `agentpm serve --mcp` with a documented versioned protocol envelope and structured handshake/ready/shutdown/error/event messages; Harness must not parse human stderr/stdout text to determine readiness or call activity.
 - [ ] Support `--port 0` and return the actual bound endpoint in machine readiness.
 - [ ] Keep default host loopback and let Harness choose ephemeral ports for managed surfaces.
 - [ ] Keep existing `serve --mcp` Tool invocation through shared runner code; do not spawn public `agentpm run` per MCP request.
@@ -373,6 +624,9 @@
 - [ ] Add provider/model prompt when required values are missing.
 - [ ] Add trusted scope-value prompts for unresolved required Memory scopes where interactive resolution is appropriate.
 - [ ] Add run view centered on current phase/objective, recent model/action activity, selected outcome/transition, and terminal result.
+- [ ] Add a clearly visible message composer as the primary user input surface when the Session is ready for a new Run; submitting a message starts that Run, while active-run state exposes working/cancel/approval affordances instead of accepting ambiguous mid-Run chat input.
+- [ ] Show the latest assistant/PhaseResult user-facing output prominently in the Run column so the TUI is an agent interaction surface first and an observability dashboard around it, not only a debugger.
+- [ ] Show both current-Run usage and cumulative Session usage where space permits, with unknown token/cost values shown as unknown rather than estimated.
 - [ ] Add interactive approval checkpoint view and approve/deny controls routed through ApprovalRuntime.
 - [ ] Add cancellation/quit behavior through the canonical Engine cancellation path.
 - [ ] Add expandable/toggleable views for prompts, Tool args/results, Knowledge results, Memory events, Hook decisions, MCP activity, and raw events subject to trace policy.
@@ -400,7 +654,8 @@
 - [ ] Document local SQLite schema/location/migration expectations and Memory inspection/export/shareable semantics.
 - [ ] Document `agentpm run --machine` and `agentpm serve --mcp --machine` as public integration surfaces.
 - [ ] Run end-to-end scenarios against OpenAI, Anthropic, and Ollama where credentials/runtime are available; use deterministic mocks for required automated CI coverage.
-- [ ] Run the same representative Loop across headless, machine/SDK, and TUI paths and confirm identical Engine outcomes/events modulo UI/transport.
+- [ ] Run the same representative Loop across **one-shot plain headless**, persistent machine/SDK, and interactive TUI paths and confirm identical HarnessEngine phase/outcome/runtime semantics modulo presentation/control transport.
+- [ ] Verify one-shot headless specifically works from direct text, stdin, and input-file forms; creates one Session/Run; prints only the user-facing terminal result to stdout; routes diagnostics separately; writes trace/report; maps terminal states to documented exit behavior; and shuts down all owned services deterministically.
 - [ ] Verify Node/Python SDK parity for Hooks/events/approvals/cancellation/providers/reports.
 - [ ] Verify all required run reports/traces are generated and contain no secrets.
 - [ ] Verify all existing package kinds, publish/install/new/build/query flows, registry/API/web behavior, and metadata-only SDK loaders remain compatible.
