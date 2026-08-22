@@ -753,6 +753,8 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 > Scope note: build a focused Ratatui client over the existing bootstrap/engine/event/control interfaces. TUI code owns presentation and interactive resolution only; it must not duplicate Loop traversal, capability composition, runtime execution, Hook logic, or approval semantics already implemented below it.
 - [ ] Add Ratatui frontend as the default TTY mode for `agentpm harness` and start it early enough to render bootstrap/preflight/service progress rather than showing a blank terminal until readiness completes.
 - [ ] Add start/readiness screen showing selected Agent/Loop, provider/model + value source, Consumer Context, Profiles/Skills/Tools, Knowledge, Memory, Hooks, outward/inward MCP, warnings, pending live checks, and effective readiness.
+- [ ] Give Tools its own readiness row on the start screen (ready/suppressed counts with expandable reasons) alongside Knowledge/Memory/Hooks/MCP; the per-phase Effective Capabilities list inside the Run view is not a substitute for Agent-level Tool readiness.
+- [ ] Show a compact source tag (for example `config`, `cli`, `env`, `default`) next to the resolved Model/provider value on the start screen per the Milestone 1/`spec.md` resolved-value source-metadata requirement; a bare model name with no source is insufficient.
 - [ ] Clearly show Consumer Context loaded/unavailable state with path/size/approximate token metadata.
 - [ ] Show capability suppression/unavailability/pending reasons with a concise default view plus expandable detail.
 
@@ -763,13 +765,19 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Re-run/recompute affected preflight/readiness after interactive Agent/model/provider/scope resolution before allowing the Run to start.
 
 - [ ] Add primary Run view centered on current phase/objective, concise assistant/model/action activity, selected outcome/transition, approval state, errors/limits, and terminal result.
-- [ ] Add a clearly visible message composer whenever the Session is ready for a new Run; submitting the message creates the next Run through the canonical Engine path.
-- [ ] During an active Run, replace/disable free-form composer behavior with clear working/cancel/approval status rather than accepting ambiguous mid-Run chat input.
+- [ ] Add a clearly visible message composer only while the Session has no active Run (idle/ready-for-next-Run); submitting the message creates the next Run through the canonical Engine path. Use inviting placeholder copy (for example "Type a message to start the next Run…") rather than pre-filled draft text with a live cursor, so an idle composer is never visually confusable with an in-progress one.
+- [ ] While a Run is active — including while it is waiting on an approval checkpoint per the Milestone 4/9 single-active-Run invariant — replace the composer entirely with a non-editable working-status bar: a working/progress indicator naming the current phase plus a `[C] Cancel Run` control routed through canonical cancellation. Do not merely grey out or disable the composer in place; a dimmed text box still reads as an input field, which is the exact ambiguity this element exists to remove.
+- [ ] Bind `Enter` to Send only while the composer is shown (Session idle) and bind `C` to Cancel only while a Run is active; the footer keybind legend must reflect whichever state is current rather than always advertising both.
+- [ ] On a Run's transition from active to terminal, keep the most recently completed PhaseResult/assistant output visible without an intermediate blank state, and reveal the idle composer only once the Run has actually reached a terminal/runtime-terminal status.
+- [ ] Replace the Phase Objective block with a compact Run Summary once the Run is terminal — terminal status, duration, checkpoint outcomes, and the realized phase path (for example `assess -> execute -> respond -> $end`) — rather than leaving a stale in-progress phase objective on screen after the Run has ended.
+- [ ] Build the active-vs-terminal composer/working-bar/Run-Summary behavior above against the reviewed TUI reference mockup (provided at implementation time) demonstrating one Run shown at both points in its lifecycle; treat visual/interaction fidelity to that reference as part of this milestone's acceptance, not only the underlying state routing.
 - [ ] Show the latest user-facing assistant/PhaseResult output prominently so the TUI is an Agent interaction surface first with observability around it, not only a debugger.
-- [ ] Show current-Run usage and cumulative Session usage where space permits; display unavailable token/cost data as unknown rather than estimates.
+- [ ] Show current-Run usage and cumulative Session usage where space permits; display unavailable token/cost data as an explicit "unknown" label (for example "cost: unknown (provider does not report pricing)") rather than omitting the field or estimating a value.
 - [ ] Add interactive checkpoint approval/deny controls routed through the existing ApprovalRuntime/Engine request path.
 - [ ] Add cancellation/quit through canonical cancellation and wait for graceful trace/report/service cleanup when possible.
 - [ ] Add expandable/toggleable views for canonical prompt sections, Tool args/results, Skill resources, Knowledge results/citations, Memory reads/writes/lifecycle, Hook decisions, MCP activity, and raw events according to trace/content policy.
+- [ ] Render event/action labels in the trace/detail view using the exact canonical Milestone 3 event type names (for example `memory_write_completed`); do not introduce TUI-only event name variants.
+- [ ] Ensure approval decision events (`approval_requested`/`approval_approved`/`approval_denied`) are visible in the trace/detail view whenever an approval outcome is also shown in the Run view, so the two panels can never disagree about whether or when an approval occurred.
 - [ ] Support repeated Runs in one Session; Consumer Context reloads at each Run start and Session usage accumulates.
 - [ ] Surface report/trace paths and terminal status after/between Runs.
 
@@ -801,6 +809,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Run the same representative Loop across **one-shot plain headless**, persistent machine/Node SDK, persistent machine/Python SDK, and interactive TUI paths and confirm identical HarnessEngine phase/outcome/action/runtime semantics modulo presentation/control transport.
 - [ ] Verify one-shot headless from direct text, stdin, and input-file: one Session/Run, user-facing terminal output only on stdout, diagnostics separately, report/trace written, documented exit behavior, `approval_required` behavior, and deterministic shutdown.
 - [ ] Verify repeated TUI/SDK Runs preserve Session-owned services/usage while resetting RunState/phase transcripts/Run usage and reloading Consumer Context.
+- [ ] Verify the built TUI against the Milestone 19 reference mockup specifically for the active-Run vs. terminal-Run distinction: no editable composer and a visible Cancel control while active, composer restored with placeholder-only text once terminal, and no intermediate blank/ambiguous state during the transition.
 - [ ] Run representative OpenAI, Anthropic, and Ollama scenarios where credentials/runtime are available; retain deterministic mocked coverage in required CI.
 - [ ] Verify configured process and SDK-hosted provider implementations use the same semantic contracts/capability advertisement and that custom provider failures never silently trigger unconfigured fallback.
 - [ ] Verify Node/Python parity for Hooks/events/approvals/cancellation/model+embedding+Knowledge+Memory providers/reports/usage.
