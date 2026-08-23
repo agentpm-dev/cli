@@ -223,6 +223,8 @@ This gives us the Harness command shell, portable contract corrections, strict `
 - [ ] Support multiple sequential Runs inside one `HarnessSession`; create fresh RunState, Loop-step state, phase transcripts, PhaseResults, and per-Run usage for each Run while preserving Session-level services/identity/usage aggregation.
 - [ ] Enforce the single-active-Run invariant from `spec.md` at the Session/Engine level: reject an attempt to start a new Run while another Run is active (including while that Run is waiting on an approval checkpoint) without mutating the active Run's state, and only accept the next Run once the prior one reaches a terminal/runtime-terminal status.
 
+- [ ] Emit events from Milestone 3 when applicable
+
 - [ ] Add the normalized model-facing execution contracts used by both fake and later real ModelRuntime implementations:
     - `ModelRequest`,
     - `ModelTurn`,
