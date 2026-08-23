@@ -27,7 +27,7 @@ pub enum HarnessExecutionSurface {
     Tui,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[allow(dead_code)]
 pub enum PreflightDiagnosticSeverity {
@@ -38,7 +38,7 @@ pub enum PreflightDiagnosticSeverity {
     Info,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreflightDiagnostic {
     pub severity: PreflightDiagnosticSeverity,
     pub code: String,
@@ -47,13 +47,13 @@ pub struct PreflightDiagnostic {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreflightReport {
     pub status: PreflightStatus,
     pub diagnostics: Vec<PreflightDiagnostic>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PreflightStatus {
     Ready,

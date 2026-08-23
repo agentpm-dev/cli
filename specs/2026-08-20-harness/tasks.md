@@ -365,6 +365,7 @@ This gives us the Harness command shell, portable contract corrections, strict `
 - [ ] Record provider-reported token/usage metadata when available and preserve unknown values rather than fabricating them.
 
 - [ ] Add **one-shot plain headless** execution: one Harness Session + exactly one Run from direct text, stdin, or input-file input, using the same HarnessEngine and final Run/report/event machinery as all later surfaces.
+- [ ] Expose the Milestone 3 explicit report-path/export override on the one-shot headless CLI surface while retaining default `.agentpm-state/runs/<run-id>/report.json` generation.
 - [ ] In one-shot plain headless mode, configured `type: host` implementations are unavailable because no machine/SDK host exists; return an actionable diagnostic rather than silently falling back.
 - [ ] In plain headless mode, write only the user-facing terminal/final/handoff output to stdout; route diagnostics/status to stderr and durable report/trace output.
 - [ ] Flush report/trace and deterministically shut down Session-owned resources before process exit.
@@ -468,6 +469,7 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 > Scope note: establish the persistent bidirectional Harness machine protocol plus the shared process/host service transport used by custom providers, Hooks, and approvals. Activate prompt/Tool Hooks and approval/control against the existing Engine seams; later Knowledge/Memory milestones activate their Hook/action methods on the same contracts. This milestone must preserve one HarnessEngine and transport-independent semantic runtime interfaces.
 - [ ] Define and implement versioned `agentpm harness --machine` JSONL framing/envelopes from `spec.md` with protocol version, message kind/type, correlation IDs, typed request/response/event/error payloads, and protocol-only stdout; diagnostics use stderr.
 - [ ] Implement machine message families for Session initialization/host capability registration, preflight, start Run, event streaming, terminal/Run/report results, cancellation, external Memory-operation control placeholder, shutdown, and correlated host-service request/response dispatch.
+- [ ] Apply the Milestone 3 trace content policy and unconditional secret-redaction rules to machine-protocol event delivery and terminal Run/report payloads; machine subscribers must not receive content that would be suppressed from traces under the same policy.
 - [ ] Reject a `start_run` request received while the Session already has an active Run with a stable structured session-busy/active-Run error per `spec.md`; do not queue it and do not mutate the active Run.
 - [ ] Keep machine events distinct from control requests and service/provider requests even though all share the same framed transport.
 
@@ -782,6 +784,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Add interactive checkpoint approval/deny controls routed through the existing ApprovalRuntime/Engine request path.
 - [ ] Add cancellation/quit through canonical cancellation and wait for graceful trace/report/service cleanup when possible.
 - [ ] Add expandable/toggleable views for canonical prompt sections, Tool args/results, Skill resources, Knowledge results/citations, Memory reads/writes/lifecycle, Hook decisions, MCP activity, and raw events according to trace/content policy.
+- [ ] Apply the Milestone 3 trace content policy and unconditional secret-redaction rules to every TUI event/detail/rendering path; expanded views may reveal more event categories, but must not bypass configured content exposure.
 - [ ] Render event/action labels in the trace/detail view using the exact canonical Milestone 3 event type names (for example `memory_write_completed`); do not introduce TUI-only event name variants.
 - [ ] Ensure approval decision events (`approval_requested`/`approval_approved`/`approval_denied`) are visible in the trace/detail view whenever an approval outcome is also shown in the Run view, so the two panels can never disagree about whether or when an approval occurred.
 - [ ] Support repeated Runs in one Session; Consumer Context reloads at each Run start and Session usage accumulates.

@@ -8,6 +8,7 @@ mod auth;
 mod commands;
 mod config;
 mod harness_config;
+mod harness_observability;
 mod harness_plan;
 mod io;
 mod keys;
