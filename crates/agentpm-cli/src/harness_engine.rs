@@ -9,8 +9,9 @@ use crate::harness_observability::{
 };
 use crate::harness_plan::{PreflightDiagnostic, PreflightStatus};
 use crate::harness_runtime::{
-    ActionDispatchResult, ActionDispatcher, ApprovalController, ApprovalDecision, ModelRequest,
-    ModelRuntime, SemanticAction, TranscriptEntry, TranscriptEntryKind,
+    ActionDispatchResult, ActionDispatcher, ApprovalController, ApprovalDecision,
+    CapabilityDescriptor, ModelRequest, ModelRuntime, PromptAssemblyInput, RuntimeSnapshot,
+    SemanticAction, TranscriptEntry, TranscriptEntryKind, assemble_logical_prompt,
 };
 use crate::manifest::{
     LoopManifest, LoopPhase, LoopPhaseFailureAction, LoopToolFailureAction,
@@ -55,15 +56,17 @@ impl RuntimeTerminalStatus {
 pub struct RunContext {
     pub run_id: String,
     pub input: String,
+    pub runtime: RuntimeSnapshot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EffectivePhase {
     pub phase_id: String,
     pub tools_allowed: Option<bool>,
     pub knowledge_allowed: Option<bool>,
     pub memory_read_allowed: Option<bool>,
     pub memory_write_allowed: Option<bool>,
+    pub capability_catalog: Vec<CapabilityDescriptor>,
 }
 
 impl EffectivePhase {
@@ -79,6 +82,7 @@ impl EffectivePhase {
             memory_write_allowed: access
                 .and_then(|access| access.memory.as_ref())
                 .and_then(|memory| memory.write),
+            capability_catalog: phase_completion_descriptors(phase),
         }
     }
 
@@ -181,16 +185,31 @@ pub struct HarnessSession {
     pub session_id: String,
     pub emitter: HarnessEventEmitter,
     pub usage: SessionUsage,
+    pub runtime_snapshot: RuntimeSnapshot,
     active_run: Option<RunState>,
 }
 
 impl HarnessSession {
     pub fn new() -> Self {
         let session_id = allocate_harness_session_id();
+        let runtime_snapshot = RuntimeSnapshot::empty(session_id.clone());
         Self {
             emitter: HarnessEventEmitter::new(session_id.clone()),
             session_id,
             usage: SessionUsage::default(),
+            runtime_snapshot,
+            active_run: None,
+        }
+    }
+
+    pub fn with_runtime_snapshot(mut runtime_snapshot: RuntimeSnapshot) -> Self {
+        let session_id = allocate_harness_session_id();
+        runtime_snapshot.session_id = session_id.clone();
+        Self {
+            emitter: HarnessEventEmitter::new(session_id.clone()),
+            session_id,
+            usage: SessionUsage::default(),
+            runtime_snapshot,
             active_run: None,
         }
     }
@@ -210,6 +229,10 @@ impl HarnessSession {
     }
 
     fn start_run(&mut self, input: String) -> Result<String> {
+        self.start_run_with_id(allocate_harness_run_id(), input)
+    }
+
+    fn start_run_with_id(&mut self, run_id: String, input: String) -> Result<String> {
         if let Some(run) = &self.active_run
             && matches!(
                 run.status,
@@ -222,7 +245,6 @@ impl HarnessSession {
             ));
         }
         self.active_run = None;
-        let run_id = allocate_harness_run_id();
         self.usage.record_run_started();
         self.emitter.emit(
             HarnessEventType::RunStarted,
@@ -239,6 +261,7 @@ impl HarnessSession {
             context: RunContext {
                 run_id: run_id.clone(),
                 input,
+                runtime: self.runtime_snapshot.clone(),
             },
             status: RuntimeTerminalStatus::Running,
             current_phase_id: None,
@@ -305,7 +328,26 @@ impl HarnessEngine {
         dispatcher: &mut dyn ActionDispatcher,
         approvals: &mut dyn ApprovalController,
     ) -> Result<HarnessRunResult> {
-        let run_id = session.start_run(input.into())?;
+        self.execute_run_with_id(
+            session,
+            allocate_harness_run_id(),
+            input,
+            model,
+            dispatcher,
+            approvals,
+        )
+    }
+
+    pub fn execute_run_with_id(
+        &mut self,
+        session: &mut HarnessSession,
+        run_id: String,
+        input: impl Into<String>,
+        model: &mut dyn ModelRuntime,
+        dispatcher: &mut dyn ActionDispatcher,
+        approvals: &mut dyn ApprovalController,
+    ) -> Result<HarnessRunResult> {
+        let run_id = session.start_run_with_id(run_id, input.into())?;
         let mut current_phase = self.loop_manifest.r#loop.entry_phase.clone();
         loop {
             // Checkpoints are evaluated before entering the target phase. A
@@ -565,7 +607,26 @@ impl HarnessEngine {
             if state.model_calls >= self.options.runtime_limits.max_model_calls_per_phase {
                 return self.limit_phase(session, &phase_execution_id, "max_model_calls_per_phase");
             }
+            let prompt = assemble_logical_prompt(PromptAssemblyInput {
+                phase_id: &phase.id,
+                phase_objective: &phase.objective,
+                explicit_outcomes: &explicit_outcomes,
+                run_input: &self.active_run(session)?.context.input,
+                consumer_context: self
+                    .active_run(session)?
+                    .context
+                    .runtime
+                    .consumer_context
+                    .as_ref(),
+                prior_phase_results: &self.active_run(session)?.phase_results,
+                effective_phase: &effective_phase,
+                transcript: &state.transcript,
+                repair_feedback: repair_feedback.as_deref(),
+            });
             let request = ModelRequest {
+                runtime: self.active_run(session)?.context.runtime.clone(),
+                model: self.active_run(session)?.context.runtime.model.clone(),
+                prompt,
                 run_id: run_id.clone(),
                 phase_execution_id: phase_execution_id.clone(),
                 phase_id: phase.id.clone(),
@@ -576,6 +637,25 @@ impl HarnessEngine {
                 effective_phase: effective_phase.clone(),
                 repair_feedback: repair_feedback.clone(),
             };
+            session.emitter.emit(
+                HarnessEventType::PromptPrepared,
+                HarnessEventPayload::Lifecycle {
+                    message: "Canonical model prompt prepared.".into(),
+                    fields: BTreeMap::from([
+                        ("phase_id".into(), json!(phase.id)),
+                        ("sections".into(), json!(request.prompt.sections.len())),
+                        (
+                            "action_descriptors".into(),
+                            json!(request.prompt.action_aliases.len()),
+                        ),
+                    ]),
+                },
+                HarnessEventBuilder {
+                    run_id: Some(run_id.clone()),
+                    phase_execution_id: Some(phase_execution_id.clone()),
+                    ..HarnessEventBuilder::default()
+                },
+            )?;
             session.emitter.emit(
                 HarnessEventType::ModelRequestStarted,
                 HarnessEventPayload::Lifecycle {
@@ -1486,6 +1566,28 @@ fn action_dispatch_event_type(action: &SemanticAction, ok: bool) -> HarnessEvent
     }
 }
 
+fn phase_completion_descriptors(phase: &LoopPhase) -> Vec<CapabilityDescriptor> {
+    let description = if phase.outcomes.is_empty() {
+        "Complete the phase with implicit outcome `complete`.".to_string()
+    } else {
+        format!(
+            "Complete the phase with one authored outcome: {}.",
+            phase
+                .outcomes
+                .iter()
+                .map(|outcome| outcome.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    vec![CapabilityDescriptor {
+        action_kind: "phase_completion".into(),
+        identity: format!("{}/completion", phase.id),
+        description,
+        source: "loop".into(),
+    }]
+}
+
 fn terminal_event_type(status: HarnessTerminalStatus) -> HarnessEventType {
     match status {
         HarnessTerminalStatus::Ended | HarnessTerminalStatus::HandedOff => {
@@ -1550,6 +1652,7 @@ mod tests {
         LoopAccessMemory, LoopCheckpoint, LoopErrorPolicy, LoopLimits, LoopMetadata, LoopOutcome,
         LoopPhaseAccess, LoopPhaseFailurePolicy, LoopToolFailurePolicy, LoopTransition,
     };
+    use std::path::PathBuf;
 
     fn limits() -> HarnessRuntimeLimits {
         HarnessRuntimeLimits {
@@ -1660,6 +1763,8 @@ mod tests {
                 },
             )],
             usage: RunUsage::default(),
+            finish_reason: None,
+            provider_metadata: BTreeMap::new(),
         }
     }
 
@@ -1674,6 +1779,8 @@ mod tests {
                 },
             )],
             usage: RunUsage::default(),
+            finish_reason: None,
+            provider_metadata: BTreeMap::new(),
         }
     }
 
@@ -1839,6 +1946,60 @@ mod tests {
     }
 
     #[test]
+    fn model_request_contains_canonical_prompt_sections_and_runtime_snapshot() {
+        let mut snapshot = RuntimeSnapshot::empty("session-test".into());
+        snapshot.workspace_root = PathBuf::from("/workspace");
+        snapshot.state_dir = PathBuf::from("/workspace/.agentpm-state");
+        snapshot.runtime_scopes = BTreeMap::from([("user".into(), "user-1".into())]);
+        snapshot.consumer_context = Some(crate::harness_runtime::ConsumerContextSnapshot {
+            state: "Available".into(),
+            file: Some("ops-context.md".into()),
+            path: Some(PathBuf::from("/workspace/ops-context.md")),
+            content: None,
+        });
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let mut session = HarnessSession::with_runtime_snapshot(snapshot);
+        let mut model = ScriptedModelRuntime::new(vec![
+            completion("a", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let result = engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+        assert!(matches!(result, HarnessRunResult::Terminal(_)));
+        let request = &model.requests[0];
+        let titles: Vec<_> = request
+            .prompt
+            .sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            vec![
+                "HARNESS CONTROL",
+                "AUTHORED PHASE + BEHAVIOR",
+                "CONSUMER / RUN CONTEXT",
+                "CROSS-PHASE STATE",
+                "EFFECTIVE CAPABILITY CATALOG",
+                "CURRENT PHASE-LOCAL TRANSCRIPT"
+            ]
+        );
+        assert_eq!(request.runtime.runtime_scopes["user"], "user-1");
+        assert_eq!(request.prompt.action_aliases.len(), 1);
+        assert!(request.prompt.render_text().contains("Harness authority"));
+    }
+
+    #[test]
     fn multi_turn_phase_processes_multiple_ordered_actions() {
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let mut session = HarnessSession::new();
@@ -1862,6 +2023,8 @@ mod tests {
                     ),
                 ],
                 usage: RunUsage::default(),
+                finish_reason: None,
+                provider_metadata: BTreeMap::new(),
             },
             completion("a", "execute"),
             completion("b", "review"),
@@ -1910,6 +2073,8 @@ mod tests {
                     ),
                 ],
                 usage: RunUsage::default(),
+                finish_reason: None,
+                provider_metadata: BTreeMap::new(),
             },
             completion("repair", "execute"),
             completion("b", "review"),
@@ -1962,6 +2127,8 @@ mod tests {
                     },
                 )],
                 usage: RunUsage::default(),
+                finish_reason: None,
+                provider_metadata: BTreeMap::new(),
             },
             completion("a", "execute"),
             completion("b", "review"),
@@ -2057,6 +2224,8 @@ mod tests {
                     assistant_content: Some("implicit".into()),
                     actions: Vec::new(),
                     usage: RunUsage::default(),
+                    finish_reason: None,
+                    provider_metadata: BTreeMap::new(),
                 },
             ],
         );
@@ -2558,6 +2727,8 @@ mod tests {
                 },
             )],
             usage: RunUsage::default(),
+            finish_reason: None,
+            provider_metadata: BTreeMap::new(),
         }]);
         let mut dispatcher = ScriptedActionDispatcher::default();
         dispatcher.push_result("@zack/guide", ActionDispatchResult::failure("unavailable"));

@@ -445,7 +445,9 @@ fn is_content_key(key: &str) -> bool {
 fn is_secret_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     key.contains("secret")
-        || key.contains("token")
+        || key == "token"
+        || key.ends_with("_token")
+        || key.ends_with("-token")
         || key.contains("password")
         || key.contains("api_key")
         || key == "key"
