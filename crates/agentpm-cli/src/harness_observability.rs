@@ -185,6 +185,8 @@ pub enum HarnessEventPayload {
         outcome: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         transition_to: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output: Option<Value>,
     },
     Action {
         action_kind: String,
@@ -432,8 +434,10 @@ fn is_content_key(key: &str) -> bool {
         key,
         "content"
             | "prompt"
+            | "assistant_content"
             | "arguments"
             | "argument"
+            | "query"
             | "result"
             | "input"
             | "output"

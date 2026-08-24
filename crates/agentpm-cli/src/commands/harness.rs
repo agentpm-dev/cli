@@ -16,7 +16,6 @@ use crate::{
     },
     harness_observability::{JsonlTraceSink, RunOutputPaths, allocate_harness_run_id},
     harness_runtime::action::ScriptedActionDispatcher,
-    harness_runtime::approval::ScriptedApprovalController,
 };
 use anyhow::{anyhow, bail};
 use std::collections::BTreeMap;
@@ -97,7 +96,7 @@ impl HarnessArgs {
             PreflightStatus::Failed => bail!("Harness preflight failed"),
         }
 
-        surface.run(&plan, &self)
+        run_surface(surface, plan, self)
     }
 
     fn surface(&self) -> HarnessExecutionSurface {
@@ -130,6 +129,23 @@ impl HarnessExecutionSurface {
     }
 }
 
+fn run_surface(
+    surface: HarnessExecutionSurface,
+    plan: ResolvedHarnessPlan,
+    args: HarnessArgs,
+) -> Result<()> {
+    if surface == HarnessExecutionSurface::Headless {
+        return run_headless_worker(move || surface.run(&plan, &args));
+    }
+    surface.run(&plan, &args)
+}
+
+fn run_headless_worker(run: impl FnOnce() -> Result<()> + Send + 'static) -> Result<()> {
+    std::thread::spawn(run)
+        .join()
+        .map_err(|_| anyhow!("Harness headless worker panicked"))?
+}
+
 fn run_tui_surface(_plan: &ResolvedHarnessPlan) -> Result<()> {
     Ok(())
 }
@@ -152,11 +168,13 @@ fn run_headless_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Resul
         &mut model,
         &mut dispatcher,
     )?;
-    print_terminal_output(&terminal)?;
     match terminal.status {
         crate::harness_observability::HarnessTerminalStatus::Ended
-        | crate::harness_observability::HarnessTerminalStatus::HandedOff => Ok(()),
-        status => bail!("Harness Run finished with terminal status {:?}", status),
+        | crate::harness_observability::HarnessTerminalStatus::HandedOff => {
+            print_terminal_output(&terminal)?;
+            Ok(())
+        }
+        status => bail!("{}", terminal_status_error_message(&terminal, status)?),
     }
 }
 
@@ -183,6 +201,23 @@ fn print_terminal_output(terminal: &RuntimeTerminalResult) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(output)?);
     }
     Ok(())
+}
+
+fn terminal_status_error_message(
+    terminal: &RuntimeTerminalResult,
+    status: crate::harness_observability::HarnessTerminalStatus,
+) -> Result<String> {
+    let base = format!("Harness Run finished with terminal status {status:?}");
+    let Some(output) = &terminal.output else {
+        return Ok(base);
+    };
+    if let Some(error) = output.get("error").and_then(|value| value.as_str()) {
+        return Ok(format!("{base}: {error}"));
+    }
+    if let Some(text) = output.as_str() {
+        return Ok(format!("{base}: {text}"));
+    }
+    Ok(format!("{base}: {}", serde_json::to_string(output)?))
 }
 
 fn read_run_input(input: Option<&str>, input_file: Option<&PathBuf>) -> Result<String> {
@@ -221,7 +256,7 @@ fn execute_headless_plan(
     model: &mut dyn ModelRuntime,
     dispatcher: &mut dyn ActionDispatcher,
 ) -> Result<RuntimeTerminalResult> {
-    let mut approvals = ScriptedApprovalController::default();
+    let mut approvals = HeadlessApprovalController;
     execute_headless_plan_with_approvals(
         plan,
         input,
@@ -263,12 +298,26 @@ fn execute_headless_plan_with_approvals(
     let HarnessRunResult::Terminal(result) = result else {
         bail!("Harness --headless cannot wait for interactive approval");
     };
-    let terminal = *result;
+    let mut terminal = *result;
+    if plan.config.config.trace.enabled {
+        terminal.report.trace_path = Some(output_paths.events_path.display().to_string());
+    }
     session.emitter.flush()?;
     terminal
         .report
         .write_pretty(&output_paths.report_path, &plan.config.config.trace.content)?;
     Ok(terminal)
+}
+
+struct HeadlessApprovalController;
+
+impl ApprovalController for HeadlessApprovalController {
+    fn request_approval(
+        &mut self,
+        _checkpoint: &crate::manifest::LoopCheckpoint,
+    ) -> crate::harness_runtime::ApprovalDecision {
+        crate::harness_runtime::ApprovalDecision::Pending
+    }
 }
 
 fn load_plan_loop(plan: &ResolvedHarnessPlan) -> Result<crate::manifest::LoopManifest> {
@@ -485,13 +534,18 @@ fn capability_counts(plan: &ResolvedHarnessPlan) -> BTreeMap<&'static str, usize
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness_config::{HarnessConfig, HarnessConfigSource, ResolvedHarnessConfig};
-    use crate::harness_observability::{HarnessTerminalStatus, RunUsage};
+    use crate::harness_config::{
+        HarnessConfig, HarnessConfigSource, HarnessTraceConfig, HarnessTraceContent,
+        HarnessTraceLevel, ResolvedHarnessConfig,
+    };
+    use crate::harness_observability::{
+        HarnessTerminalStatus, ReportPackageIdentity, RunReport, RunUsage,
+    };
+    use crate::harness_runtime::SemanticAction;
     use crate::harness_runtime::action::SemanticActionProposal;
     use crate::harness_runtime::model::{
         ModelCapabilityAdvertisement, ModelRuntimeFailure, ModelTurn, ScriptedModelRuntime,
     };
-    use crate::harness_runtime::{ApprovalDecision, SemanticAction};
     use crate::semver::types::PackageKind;
     use serde_json::json;
     use std::fs;
@@ -576,6 +630,19 @@ mod tests {
     }
 
     #[test]
+    fn failed_headless_terminal_status_includes_terminal_error_detail() {
+        let terminal = RuntimeTerminalResult {
+            status: HarnessTerminalStatus::Failed,
+            output: Some(json!({ "error": "OPENAI_API_KEY is required for provider `openai`" })),
+            report: minimal_run_report("run-1"),
+        };
+        let message =
+            terminal_status_error_message(&terminal, HarnessTerminalStatus::Failed).unwrap();
+        assert!(message.contains("terminal status Failed"));
+        assert!(message.contains("OPENAI_API_KEY"));
+    }
+
+    #[test]
     fn model_capability_validation_rejects_missing_semantic_or_structured_support() {
         let runtime = UnsupportedModelRuntime {
             semantic_actions: false,
@@ -590,6 +657,20 @@ mod tests {
         };
         let err = validate_model_capabilities(&runtime).unwrap_err();
         assert!(err.to_string().contains("structured output support"));
+    }
+
+    #[tokio::test]
+    async fn headless_worker_constructs_blocking_provider_outside_tokio_runtime() {
+        run_headless_worker(|| {
+            let _runtime = BuiltInModelRuntime::from_selection(ModelProviderSelection {
+                provider: "openai".into(),
+                model: "gpt-4o-mini".into(),
+                options: json!({}),
+            })
+            .map_err(|err| anyhow!(err.message))?;
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
@@ -619,6 +700,11 @@ mod tests {
             model: "test-model".into(),
             options: json!({}),
         });
+        plan.config.config.trace = HarnessTraceConfig {
+            enabled: true,
+            level: HarnessTraceLevel::Verbose,
+            content: HarnessTraceContent::Full,
+        };
         plan.loop_package = Some(ResolvedPackageInfo {
             key: "loop:@zack/review-loop@0.1.0".into(),
             kind: PackageKind::Loop,
@@ -651,9 +737,49 @@ mod tests {
             .join("runs")
             .join(&result.report.run_id)
             .join("events.jsonl");
+        assert_eq!(
+            result.report.trace_path.as_deref(),
+            Some(events_path.to_string_lossy().as_ref())
+        );
+        let report_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&report_path).unwrap()).unwrap();
+        assert_eq!(
+            report_json["trace_path"],
+            events_path.to_string_lossy().as_ref()
+        );
         let events = fs::read_to_string(&events_path).unwrap();
         assert!(events.contains("\"event_type\":\"run_started\""));
         assert!(events.contains("\"event_type\":\"run_completed\""));
+        let parsed_events = events
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect::<Vec<serde_json::Value>>();
+        let prompt_event = parsed_events
+            .iter()
+            .find(|event: &&serde_json::Value| event["event_type"] == "prompt_prepared")
+            .unwrap();
+        let prompt = prompt_event["payload"]["fields"]["prompt"]
+            .as_str()
+            .unwrap();
+        assert!(prompt.contains("Harness authority"));
+        assert!(prompt.contains("write a response"));
+        let model_completed = parsed_events
+            .iter()
+            .find(|event: &&serde_json::Value| event["event_type"] == "model_request_completed")
+            .unwrap();
+        assert_eq!(
+            model_completed["payload"]["fields"]["assistant_content"],
+            "final response"
+        );
+        assert_eq!(
+            model_completed["payload"]["fields"]["finish_reason"],
+            "stop"
+        );
+        let phase_result = parsed_events
+            .iter()
+            .find(|event: &&serde_json::Value| event["event_type"] == "phase_result_ready")
+            .unwrap();
+        assert_eq!(phase_result["payload"]["output"], "final response");
         assert_eq!(model.requests.len(), 1);
         assert_eq!(model.requests[0].prompt.sections.len(), 6);
     }
@@ -785,16 +911,12 @@ mod tests {
             Some(json!({ "assessment": "needs review" })),
         )]);
         let mut dispatcher = ScriptedActionDispatcher::default();
-        let mut approvals = ScriptedApprovalController::default();
-        approvals.push("approve-review", ApprovalDecision::Pending);
-
-        let result = execute_headless_plan_with_approvals(
+        let result = execute_headless_plan(
             &plan,
             "prepare a response".into(),
             Some(&report_path),
             &mut model,
             &mut dispatcher,
-            &mut approvals,
         )
         .unwrap();
 
@@ -830,6 +952,47 @@ mod tests {
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    fn minimal_run_report(run_id: &str) -> RunReport {
+        RunReport {
+            report_version: crate::harness_observability::HARNESS_REPORT_SCHEMA_VERSION,
+            session_id: "session-1".into(),
+            run_id: run_id.into(),
+            agent: ReportPackageIdentity {
+                name: "@zack/test-agent".into(),
+                version: "0.1.0".into(),
+            },
+            loop_package: ReportPackageIdentity {
+                name: "@zack/review-loop".into(),
+                version: "0.1.0".into(),
+            },
+            started_at: chrono::Utc::now(),
+            ended_at: None,
+            duration_ms: None,
+            terminal_status: HarnessTerminalStatus::Failed,
+            terminal_output: None,
+            preflight_status: PreflightStatus::Ready,
+            diagnostics: Vec::new(),
+            runtime: Default::default(),
+            runtime_sources: BTreeMap::new(),
+            consumer_context: None,
+            scope_summaries: Vec::new(),
+            phase_summaries: Vec::new(),
+            checkpoint_summaries: Vec::new(),
+            action_summaries: Vec::new(),
+            tool_summaries: Vec::new(),
+            mcp_summaries: Vec::new(),
+            knowledge_summaries: Vec::new(),
+            memory_summaries: Vec::new(),
+            usage: RunUsage::default(),
+            retry_count: 0,
+            repair_count: 0,
+            error_count: 0,
+            approval_summary: BTreeMap::new(),
+            cancellation_summary: BTreeMap::new(),
+            trace_path: None,
+        }
     }
 
     fn minimal_plan(root: &Path) -> ResolvedHarnessPlan {

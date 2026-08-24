@@ -481,6 +481,7 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 - [ ] Require `initialize`/handshake with protocol version, role identity, implementation/service ID, and live role-specific capability advertisement before a service becomes ready.
 - [ ] Implement minimum role methods from `spec.md`: model `generate`; embedding `embed`; Hook `invoke`; Knowledge `retrieve`/attestation; Memory primitive record/retrieval/count/operation-state/batch methods; approval `request_approval`.
 - [ ] Use the same semantic role contracts for SDK-hosted implementations over the machine protocol; only transport differs.
+- [ ] Audit and formalize provider/runtime threading now that persistent surfaces are live: the Milestone 5 OS-thread bridge is only for one-shot plain headless execution; machine/TUI/service-backed Runs need explicit async/blocking boundaries, cancellation propagation, event/trace visibility, and no dependence on the opaque one-shot headless worker path.
 - [ ] Activate configured custom **process** ModelRuntime providers through this service protocol and prove they normalize into the same `ModelTurn` path as built-in providers.
 - [ ] Support generic registered **host** service dispatch at the machine-protocol level so Node/Python SDKs can provide ergonomic wrappers in Milestones 10/11; do not require raw host callbacks to know Harness RunState internals.
 - [ ] Add correlation IDs, configured request timeouts, cancellation propagation where meaningful, typed service errors, duration/error events, and protocol validation.

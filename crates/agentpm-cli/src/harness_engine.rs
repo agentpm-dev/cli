@@ -8,6 +8,7 @@ use crate::harness_observability::{
     RunReport, RunUsage, SessionUsage, allocate_harness_run_id, allocate_harness_session_id,
 };
 use crate::harness_plan::{PreflightDiagnostic, PreflightStatus};
+use crate::harness_runtime::model::ModelTurn;
 use crate::harness_runtime::{
     ActionDispatchResult, ActionDispatcher, ApprovalController, ApprovalDecision,
     CapabilityDescriptor, ModelRequest, ModelRuntime, PromptAssemblyInput, RuntimeSnapshot,
@@ -459,6 +460,7 @@ impl HarnessEngine {
                     phase_id: phase.id.clone(),
                     outcome: Some(outcome),
                     transition_to: Some(target.clone()),
+                    output: None,
                 },
                 HarnessEventBuilder {
                     run_id: Some(run_id.clone()),
@@ -546,6 +548,7 @@ impl HarnessEngine {
                 phase_id: phase.id.clone(),
                 outcome: None,
                 transition_to: None,
+                output: None,
             },
             HarnessEventBuilder {
                 run_id: Some(run_id.clone()),
@@ -571,6 +574,7 @@ impl HarnessEngine {
                 phase_id: phase.id.clone(),
                 outcome: None,
                 transition_to: None,
+                output: None,
             },
             HarnessEventBuilder {
                 run_id: Some(run_id.clone()),
@@ -644,6 +648,7 @@ impl HarnessEngine {
                     fields: BTreeMap::from([
                         ("phase_id".into(), json!(phase.id)),
                         ("sections".into(), json!(request.prompt.sections.len())),
+                        ("prompt".into(), json!(request.prompt.render_text())),
                         (
                             "action_descriptors".into(),
                             json!(request.prompt.action_aliases.len()),
@@ -700,10 +705,7 @@ impl HarnessEngine {
                 HarnessEventType::ModelRequestCompleted,
                 HarnessEventPayload::Lifecycle {
                     message: "Model request completed.".into(),
-                    fields: BTreeMap::from([(
-                        "semantic_actions".into(),
-                        json!(turn.actions.len()),
-                    )]),
+                    fields: model_turn_trace_fields(&turn),
                 },
                 HarnessEventBuilder {
                     run_id: Some(run_id.clone()),
@@ -788,6 +790,7 @@ impl HarnessEngine {
                             phase_id: phase.id.clone(),
                             outcome: Some(selected.clone()),
                             transition_to: None,
+                            output: None,
                         },
                         HarnessEventBuilder {
                             run_id: Some(run_id.clone()),
@@ -826,6 +829,7 @@ impl HarnessEngine {
                         phase_id: phase.id.clone(),
                         outcome: Some(selected.clone()),
                         transition_to: None,
+                        output: None,
                     },
                     HarnessEventBuilder {
                         run_id: Some(run_id),
@@ -897,7 +901,7 @@ impl HarnessEngine {
                         action_kind: proposal.action.kind().into(),
                         identity: proposal.action.identity(),
                         status: "accepted".into(),
-                        fields: BTreeMap::new(),
+                        fields: action_trace_fields(&proposal.action),
                     },
                     HarnessEventBuilder {
                         run_id: Some(run_id.clone()),
@@ -1016,7 +1020,7 @@ impl HarnessEngine {
                     action_kind: action.kind().into(),
                     identity: action.identity(),
                     status: if result.ok { "completed" } else { "failed" }.into(),
-                    fields: BTreeMap::from([("attempt".into(), json!(attempts))]),
+                    fields: action_result_trace_fields(action, &result, attempts),
                 },
                 HarnessEventBuilder {
                     run_id: Some(run_id.clone()),
@@ -1123,6 +1127,7 @@ impl HarnessEngine {
                 phase_id: phase.id.clone(),
                 outcome: Some(outcome),
                 transition_to: None,
+                output,
             },
             HarnessEventBuilder {
                 run_id: Some(run_id),
@@ -1516,6 +1521,92 @@ impl HarnessEngine {
 enum CheckpointFlow {
     ContinueTo(String),
     Pending(PendingApprovalState),
+}
+
+fn model_turn_trace_fields(turn: &ModelTurn) -> BTreeMap<String, Value> {
+    let mut fields = BTreeMap::from([("semantic_actions".into(), json!(turn.actions.len()))]);
+    if let Some(content) = &turn.assistant_content {
+        fields.insert("assistant_content".into(), json!(content));
+    }
+    if let Some(reason) = &turn.finish_reason {
+        fields.insert("finish_reason".into(), json!(reason));
+    }
+    if !turn.actions.is_empty() {
+        fields.insert(
+            "proposed_actions".into(),
+            json!(
+                turn.actions
+                    .iter()
+                    .map(|proposal| {
+                        json!({
+                            "id": proposal.id,
+                            "action_kind": proposal.action.kind(),
+                            "identity": proposal.action.identity(),
+                            "fields": action_trace_fields(&proposal.action),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            ),
+        );
+    }
+    fields
+}
+
+fn action_result_trace_fields(
+    action: &SemanticAction,
+    result: &ActionDispatchResult,
+    attempt: u64,
+) -> BTreeMap<String, Value> {
+    let mut fields = action_trace_fields(action);
+    fields.insert("attempt".into(), json!(attempt));
+    fields.insert("result".into(), result.output.clone());
+    if let Some(error) = &result.error {
+        fields.insert("error".into(), json!(error));
+    }
+    if let Some(status) = result.terminal_status {
+        fields.insert("terminal_status".into(), json!(status));
+    }
+    fields
+}
+
+fn action_trace_fields(action: &SemanticAction) -> BTreeMap<String, Value> {
+    match action {
+        SemanticAction::AgentPmTool { arguments, .. } => {
+            BTreeMap::from([("arguments".into(), arguments.clone())])
+        }
+        SemanticAction::ExternalMcpTool {
+            server,
+            tool,
+            arguments,
+        } => BTreeMap::from([
+            ("server".into(), json!(server)),
+            ("tool".into(), json!(tool)),
+            ("arguments".into(), arguments.clone()),
+        ]),
+        SemanticAction::SkillResourceRead { resource, .. } => {
+            BTreeMap::from([("resource".into(), json!(resource))])
+        }
+        SemanticAction::KnowledgeRequest { query, .. } => {
+            BTreeMap::from([("query".into(), json!(query))])
+        }
+        SemanticAction::MemoryRead { space, .. } => {
+            BTreeMap::from([("space".into(), json!(space))])
+        }
+        SemanticAction::MemoryWrite { space, content, .. } => BTreeMap::from([
+            ("space".into(), json!(space)),
+            ("content".into(), content.clone()),
+        ]),
+        SemanticAction::PhaseCompletion { outcome, output } => {
+            let mut fields = BTreeMap::new();
+            if let Some(outcome) = outcome {
+                fields.insert("outcome".into(), json!(outcome));
+            }
+            if let Some(output) = output {
+                fields.insert("output".into(), output.clone());
+            }
+            fields
+        }
+    }
 }
 
 fn action_dispatch_event_type(action: &SemanticAction, ok: bool) -> HarnessEventType {
