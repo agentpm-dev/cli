@@ -400,6 +400,18 @@ fn sanitize_value(value: &mut Value, policy: &HarnessTraceContent, key: Option<&
         *value = Value::String("[secret redacted]".into());
         return;
     }
+    if let Some(key) = key
+        && is_content_key(key)
+    {
+        match policy {
+            HarnessTraceContent::None => *value = Value::Null,
+            HarnessTraceContent::Redacted => *value = Value::String("[redacted]".into()),
+            HarnessTraceContent::Full => {}
+        }
+        if *policy != HarnessTraceContent::Full {
+            return;
+        }
+    }
 
     match value {
         Value::Object(map) => sanitize_object(map, policy),
@@ -408,15 +420,7 @@ fn sanitize_value(value: &mut Value, policy: &HarnessTraceContent, key: Option<&
                 sanitize_value(item, policy, None);
             }
         }
-        _ => {
-            if key.is_some_and(is_content_key) {
-                match policy {
-                    HarnessTraceContent::None => *value = Value::Null,
-                    HarnessTraceContent::Redacted => *value = Value::String("[redacted]".into()),
-                    HarnessTraceContent::Full => {}
-                }
-            }
-        }
+        _ => {}
     }
 }
 
@@ -1218,6 +1222,50 @@ mod tests {
         assert_eq!(paths.report_path, override_path);
         assert!(paths.run_dir.exists());
         assert!(paths.report_path.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn redacted_content_policy_redacts_object_valued_output_fields() {
+        let event = HarnessEventEnvelope {
+            schema_version: HARNESS_EVENT_SCHEMA_VERSION,
+            event_id: "evt-1".into(),
+            session_id: "session-1".into(),
+            run_id: Some("run-1".into()),
+            session_sequence: 1,
+            run_sequence: Some(1),
+            timestamp: Utc::now(),
+            event_type: HarnessEventType::ModelRequestCompleted,
+            phase_execution_id: Some("phase-exec-1".into()),
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Lifecycle {
+                message: "Model request completed.".into(),
+                fields: BTreeMap::from([(
+                    "proposed_actions".into(),
+                    json!([
+                        {
+                            "action_kind": "phase_completion",
+                            "fields": {
+                                "outcome": "complete",
+                                "output": { "message": "final answer" }
+                            }
+                        }
+                    ]),
+                )]),
+            },
+        };
+
+        let redacted = apply_content_policy(&event, &HarnessTraceContent::Redacted).unwrap();
+        let value = serde_json::to_value(redacted).unwrap();
+        assert_eq!(
+            value["payload"]["fields"]["proposed_actions"][0]["fields"]["output"],
+            "[redacted]"
+        );
+        assert!(
+            !serde_json::to_string(&value)
+                .unwrap()
+                .contains("final answer")
+        );
     }
 
     #[test]
