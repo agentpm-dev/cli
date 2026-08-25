@@ -439,6 +439,7 @@ This gives us stable events, traces, JSON run reports, the core HarnessEngine, f
 - [ ] Add Harness `ToolRuntime` that spawns public `agentpm run --machine` with finalized arguments over JSON stdin and consumes only the stable machine envelope/error categories.
 - [ ] Route accepted `AgentPmTool` semantic actions from HarnessEngine to ToolRuntime; remove fake Tool execution from production paths while retaining deterministic fake runtimes for tests.
 - [ ] Build model-facing AgentPM Tool descriptors from canonical package identity, description, and input schema only; never expose secrets, entrypoint internals, or environment values to the model.
+- [ ] Replace the Milestone 5 placeholder provider-native `agentpm_tool` action schema with each resolved Tool's actual input schema; provider-native tool/function definitions and Harness pre-runtime validation must use the same authoritative schema.
 - [ ] Keep provider-safe aliases separate from canonical Tool identity and map provider proposals back before Hooks/events/runtime execution.
 - [ ] Do not infer destructive/read/write policy from arbitrary Tool action names/schema fields; use Agent bindings, Loop access/checkpoints, runtime readiness, and Hooks instead.
 - [ ] Keep Tool entrypoint/files/cwd/timeout/environment/interpreter semantics owned by public `agentpm run`; Harness may inspect readiness but must not implement a second private runner.
@@ -452,6 +453,8 @@ This gives us stable events, traces, JSON run reports, the core HarnessEngine, f
 - [ ] Warn strongly but do not suppress solely for missing required Tool env during preflight; actual `agentpm run` invocation remains authoritative because runtime environment may change/be supplied.
 
 - [ ] Add Skill activation descriptors containing compact manifest/name/description/resource inventory without eagerly injecting full `SKILL.md`, references, or scripts.
+- [ ] Replace the Milestone 5 placeholder provider-native `skill_resource_read` action schema with an enum/list constrained to the active Skill's authorized resource IDs for the current phase.
+- [ ] Replace the Milestone 5 combined-string `skill/resource` alias-decoding placeholder with structured Skill resource identity metadata before Skill resource actions become live; AgentPM package names and resource paths both may contain `/`, so `rsplit_once('/')` is not a valid long-term decoder.
 - [ ] Route authorized Skill-resource semantic actions through a package-root-safe resource loader; support entrypoint/reference access on demand and keep resource content phase/Skill scoped.
 - [ ] Resolve/canonicalize all Skill package-owned paths inside the exact installed Skill root and reject traversal/symlink escapes.
 - [ ] Keep multiple active Skills distinct and deterministic rather than merging them into one synthetic procedural block.
@@ -569,6 +572,7 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 ## Milestone 12: Local KnowledgeRuntime, Generic Custom KnowledgeRuntime, and EmbeddingProvider Execution
 > Scope note: make Knowledge semantic actions real. Add on-demand context/vector Knowledge using installed packages and existing public AgentPM query behavior, activate generic configured custom KnowledgeRuntime/EmbeddingProvider process-or-host services, and preserve explicit package/runtime routing. Pinecone and pgvector are reference provider implementations in the next milestone, not the point where the extension mechanism first appears.
 - [ ] Add/activate the production `KnowledgeRuntime` boundary and normalized Knowledge request/result models from `spec.md`, including exact authorized package/version identity, context-document/vector-query intent, retrieval options, normalized source/chunk/citation metadata, and typed failures.
+- [ ] Replace the Milestone 5 placeholder provider-native `knowledge_request` action schema with the finalized KnowledgeRuntime request contract, constrained to the bound package/surface and supported retrieval options.
 - [ ] Route accepted Knowledge semantic actions from HarnessEngine to KnowledgeRuntime; remove fake Knowledge execution from production paths.
 - [ ] Keep Knowledge semantic actions distinct from Tool actions and enforce Loop `access.knowledge` independently from `access.tools`.
 - [ ] Keep bound Knowledge packages as distinct model-visible surfaces; never auto-federate all active packages into one search surface.
@@ -623,6 +627,7 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 ## Milestone 14: Built-In SQLite MemoryRuntime, Generic Custom MemoryRuntime, and Direct Memory Access
 > Scope note: make direct Memory semantic actions real. Implement persistent local SQLite Memory Blueprint realization plus generic configured custom MemoryRuntime routing, generated-contract enforcement, trusted scopes, direct document/collection/sequence access, retention/capacity, semantic retrieval, and live capability advertisement. Lifecycle operations/triggers remain Milestone 15.
 - [ ] Add/activate production `MemoryRuntime` boundary with normalized primitive contracts from `spec.md`: direct record mutation, retrieval, scoped counts/capacity, sequence allocation, durable operation-state access, and atomic batch capability.
+- [ ] Replace the Milestone 5 placeholder provider-native `memory_read`/`memory_write` action schemas with bound-space-aware schemas; write schemas must use generated Memory content contracts for the selected package/space/record type.
 - [ ] Route accepted MemoryRead/MemoryWrite semantic actions from HarnessEngine to MemoryRuntime; remove fake Memory execution from production paths.
 - [ ] Keep Blueprint trigger/lifecycle meaning in Harness rather than delegating it to storage providers.
 - [ ] Build model-facing direct Memory descriptors only for bound/ready spaces and declared record types/retrieval modes; Memory remains on-demand and is never eagerly dumped into the prompt.
@@ -749,6 +754,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Require every import to declare explicit `scope.mode: global | phases`; global forbids `phases`, while phase scope requires a non-empty unique list already validated against the selected Loop.
 - [ ] Support optional allowed Tool-name filter; omitted means all currently advertised Tools are eligible within the explicitly configured scope.
 - [ ] Start/connect imports at Session bootstrap, perform MCP initialization and `tools/list`, validate configured filters, and normalize discovered Tool name/description/input schema into runtime Tool descriptors.
+- [ ] Replace the Milestone 5 placeholder provider-native `external_mcp_tool` action schema with each discovered MCP Tool's advertised input schema after `tools/list`, preserving the configured filter/scope.
 - [ ] Apply managed-service lifecycle to owned stdio imports and appropriate connection/readiness failure handling to remote HTTP imports; never replay an in-flight Tool call automatically after reconnect/restart.
 - [ ] Assign stable canonical internal identities such as `mcp:<server-id>/<tool-name>` and keep provider-safe model aliases separate.
 - [ ] Add discovered imported Tools as runtime augmentation candidates only in configured global/phase scope; never mutate Agent manifest/bindings to represent them.

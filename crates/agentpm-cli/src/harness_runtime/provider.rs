@@ -16,14 +16,32 @@ use std::env;
 pub struct ProviderRequest {
     pub selection: ModelProviderSelection,
     pub prompt: String,
-    // Reserved for provider-native function/tool alias mapping. The current
-    // text-mode contract still expects canonical Harness action identities.
+    // Provider-safe alias -> canonical Harness identity. Provider adapters use
+    // aliases in native tool/function definitions and map calls back here.
     pub action_aliases: BTreeMap<String, String>,
+    pub actions: Vec<ProviderActionTool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProviderActionTool {
+    pub alias: String,
+    pub action_kind: String,
+    pub identity: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProviderActionCall {
+    pub alias: String,
+    pub arguments: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderResponse {
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub action_calls: Vec<ProviderActionCall>,
     pub usage: RunUsage,
     pub finish_reason: Option<String>,
     pub metadata: BTreeMap<String, Value>,
@@ -121,27 +139,155 @@ impl ModelRuntime for BuiltInModelRuntime {
                 "selected model runtime does not advertise required Harness semantic action support",
             ));
         }
+        let actions = provider_action_tools(&request);
         let provider_request = ProviderRequest {
             selection: self.selection.clone(),
             prompt: request.prompt.render_text(),
-            // Keep aliases on the provider boundary now so native function/tool
-            // adapters can round-trip provider-safe names without changing the
-            // ModelRuntime contract later.
             action_aliases: request
                 .prompt
                 .action_aliases
                 .iter()
                 .map(|alias| (alias.alias.clone(), alias.identity.clone()))
                 .collect(),
+            actions,
         };
         let response = self.transport.send(provider_request)?;
-        normalize_provider_response(response)
+        normalize_provider_response(response, &request.prompt.action_aliases)
     }
+}
+
+fn provider_action_tools(request: &ModelRequest) -> Vec<ProviderActionTool> {
+    request
+        .prompt
+        .action_aliases
+        .iter()
+        .filter_map(|alias| {
+            let descriptor =
+                request
+                    .effective_phase
+                    .capability_catalog
+                    .iter()
+                    .find(|descriptor| {
+                        descriptor.action_kind == alias.action_kind
+                            && descriptor.identity == alias.identity
+                    })?;
+            Some(ProviderActionTool {
+                alias: alias.alias.clone(),
+                action_kind: alias.action_kind.clone(),
+                identity: alias.identity.clone(),
+                description: descriptor.description.clone(),
+                parameters: action_parameters_schema(alias.action_kind.as_str(), request),
+            })
+        })
+        .collect()
+}
+
+fn action_parameters_schema(action_kind: &str, request: &ModelRequest) -> Value {
+    match action_kind {
+        "phase_completion" => phase_completion_parameters_schema(request),
+        "agentpm_tool" | "external_mcp_tool" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "arguments": {
+                    "type": "object",
+                    "description": "JSON arguments for the selected Tool capability."
+                }
+            },
+            "required": ["arguments"]
+        }),
+        "skill_resource_read" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "resource": { "type": "string", "minLength": 1 }
+            },
+            "required": ["resource"]
+        }),
+        "knowledge_request" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "query": { "type": "string", "minLength": 1 }
+            },
+            "required": ["query"]
+        }),
+        "memory_read" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "space": { "type": "string", "minLength": 1 }
+            },
+            "required": ["space"]
+        }),
+        "memory_write" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "space": { "type": "string", "minLength": 1 },
+                "content": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Memory record content proposed by the model."
+                }
+            },
+            "required": ["space", "content"]
+        }),
+        _ => json!({
+            "type": "object",
+            "additionalProperties": true
+        }),
+    }
+}
+
+fn phase_completion_parameters_schema(request: &ModelRequest) -> Value {
+    let outcome_schema = if request.prompt.completion.implicit_complete {
+        json!({ "type": "string", "const": "complete" })
+    } else {
+        json!({
+            "type": "string",
+            "enum": request.prompt.completion.explicit_outcomes
+        })
+    };
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "outcome": outcome_schema,
+            "output": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Structured phase output to pass to later phases or terminal output."
+            }
+        },
+        "required": ["outcome"]
+    })
 }
 
 fn normalize_provider_response(
     response: ProviderResponse,
+    aliases: &[super::model::ActionAlias],
 ) -> Result<ModelTurn, ModelRuntimeFailure> {
+    if !response.action_calls.is_empty() {
+        let actions = response
+            .action_calls
+            .iter()
+            .enumerate()
+            .map(|(index, call)| {
+                Ok(SemanticActionProposal::new(
+                    format!("provider-action-{}", index + 1),
+                    semantic_action_from_provider_call(call, aliases)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, ModelRuntimeFailure>>()?;
+        return Ok(ModelTurn {
+            assistant_content: non_empty_text(&response.text),
+            actions,
+            usage: response.usage,
+            finish_reason: response.finish_reason,
+            provider_metadata: response.metadata,
+        });
+    }
     let trimmed = response.text.trim();
     let parsed = parse_json_response(trimmed);
     if let Some(value) = parsed {
@@ -154,6 +300,15 @@ fn normalize_provider_response(
         finish_reason: response.finish_reason,
         provider_metadata: response.metadata,
     })
+}
+
+fn non_empty_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
 }
 
 fn parse_json_response(text: &str) -> Option<Value> {
@@ -258,6 +413,86 @@ fn semantic_action_from_json(value: &Value) -> Result<SemanticAction, ModelRunti
     }
 }
 
+fn semantic_action_from_provider_call(
+    call: &ProviderActionCall,
+    aliases: &[super::model::ActionAlias],
+) -> Result<SemanticAction, ModelRuntimeFailure> {
+    let alias = aliases
+        .iter()
+        .find(|alias| alias.alias == call.alias)
+        .ok_or_else(|| {
+            ModelRuntimeFailure::new(format!(
+                "provider action alias `{}` is not recognized",
+                call.alias
+            ))
+        })?;
+    match alias.action_kind.as_str() {
+        "phase_completion" => Ok(SemanticAction::PhaseCompletion {
+            outcome: call
+                .arguments
+                .get("outcome")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            output: call.arguments.get("output").cloned(),
+        }),
+        "agentpm_tool" => Ok(SemanticAction::AgentPmTool {
+            tool: alias.identity.clone(),
+            arguments: call
+                .arguments
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+        }),
+        "external_mcp_tool" => {
+            let (server, tool) = split_identity(&alias.identity)?;
+            Ok(SemanticAction::ExternalMcpTool {
+                server,
+                tool,
+                arguments: call
+                    .arguments
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})),
+            })
+        }
+        "skill_resource_read" => {
+            let (skill, resource) = split_identity(&alias.identity)?;
+            Ok(SemanticAction::SkillResourceRead { skill, resource })
+        }
+        "knowledge_request" => Ok(SemanticAction::KnowledgeRequest {
+            package: alias.identity.clone(),
+            query: required_string(&call.arguments, "query")?,
+        }),
+        "memory_read" => Ok(SemanticAction::MemoryRead {
+            package: alias.identity.clone(),
+            space: required_string(&call.arguments, "space")?,
+        }),
+        "memory_write" => Ok(SemanticAction::MemoryWrite {
+            package: alias.identity.clone(),
+            space: required_string(&call.arguments, "space")?,
+            content: call
+                .arguments
+                .get("content")
+                .cloned()
+                .unwrap_or(Value::Null),
+        }),
+        other => Err(ModelRuntimeFailure::new(format!(
+            "unsupported provider action kind `{other}`"
+        ))),
+    }
+}
+
+fn split_identity(identity: &str) -> Result<(String, String), ModelRuntimeFailure> {
+    identity
+        .rsplit_once('/')
+        .map(|(left, right)| (left.to_string(), right.to_string()))
+        .ok_or_else(|| {
+            ModelRuntimeFailure::new(format!(
+                "provider action identity `{identity}` cannot be split"
+            ))
+        })
+}
+
 fn required_string(value: &Value, key: &str) -> Result<String, ModelRuntimeFailure> {
     value
         .get(key)
@@ -284,6 +519,10 @@ impl ModelProviderTransport for OpenAiTransport {
             "messages".into(),
             json!([{ "role": "user", "content": request.prompt }]),
         );
+        if !request.actions.is_empty() {
+            body.insert("tools".into(), openai_tool_definitions(&request.actions));
+            body.entry("tool_choice").or_insert(json!("auto"));
+        }
         let value: Value = self
             .client
             .post(url)
@@ -301,8 +540,24 @@ fn provider_response_from_openai(value: Value) -> Result<ProviderResponse, Model
     let text = value
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
-        .ok_or_else(|| ModelRuntimeFailure::new("openai response did not contain message content"))?
+        .unwrap_or_default()
         .to_string();
+    let action_calls = value
+        .pointer("/choices/0/message/tool_calls")
+        .and_then(Value::as_array)
+        .map(|calls| {
+            calls
+                .iter()
+                .map(openai_tool_call)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    if text.is_empty() && action_calls.is_empty() {
+        return Err(ModelRuntimeFailure::new(
+            "openai response did not contain message content or tool calls",
+        ));
+    }
     let usage = usage_from_json(value.get("usage"));
     let finish_reason = value
         .pointer("/choices/0/finish_reason")
@@ -310,6 +565,7 @@ fn provider_response_from_openai(value: Value) -> Result<ProviderResponse, Model
         .map(str::to_string);
     Ok(ProviderResponse {
         text,
+        action_calls,
         usage,
         finish_reason,
         metadata: BTreeMap::from([("provider".into(), json!("openai"))]),
@@ -335,6 +591,9 @@ impl ModelProviderTransport for AnthropicTransport {
             "messages".into(),
             json!([{ "role": "user", "content": request.prompt }]),
         );
+        if !request.actions.is_empty() {
+            body.insert("tools".into(), anthropic_tool_definitions(&request.actions));
+        }
         let value: Value = self
             .client
             .post(url)
@@ -350,20 +609,25 @@ impl ModelProviderTransport for AnthropicTransport {
 }
 
 fn provider_response_from_anthropic(value: Value) -> Result<ProviderResponse, ModelRuntimeFailure> {
-    let text = value
+    let content_items = value
         .get("content")
         .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .filter(|text| !text.is_empty())
-        .ok_or_else(|| {
-            ModelRuntimeFailure::new("anthropic response did not contain text content")
-        })?;
+        .ok_or_else(|| ModelRuntimeFailure::new("anthropic response did not contain content"))?;
+    let text = content_items
+        .iter()
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let action_calls = content_items
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("tool_use"))
+        .map(anthropic_tool_call)
+        .collect::<Result<Vec<_>, _>>()?;
+    if text.is_empty() && action_calls.is_empty() {
+        return Err(ModelRuntimeFailure::new(
+            "anthropic response did not contain text content or tool calls",
+        ));
+    }
     let usage = usage_from_json(value.get("usage"));
     let finish_reason = value
         .get("stop_reason")
@@ -371,6 +635,7 @@ fn provider_response_from_anthropic(value: Value) -> Result<ProviderResponse, Mo
         .map(str::to_string);
     Ok(ProviderResponse {
         text,
+        action_calls,
         usage,
         finish_reason,
         metadata: BTreeMap::from([("provider".into(), json!("anthropic"))]),
@@ -394,6 +659,9 @@ impl ModelProviderTransport for OllamaTransport {
             "messages".into(),
             json!([{ "role": "user", "content": request.prompt }]),
         );
+        if !request.actions.is_empty() {
+            body.insert("tools".into(), openai_tool_definitions(&request.actions));
+        }
         let value: Value = self
             .client
             .post(url)
@@ -410,16 +678,108 @@ fn provider_response_from_ollama(value: Value) -> Result<ProviderResponse, Model
     let text = value
         .pointer("/message/content")
         .and_then(Value::as_str)
-        .ok_or_else(|| ModelRuntimeFailure::new("ollama response did not contain message content"))?
+        .unwrap_or_default()
         .to_string();
+    let action_calls = value
+        .pointer("/message/tool_calls")
+        .and_then(Value::as_array)
+        .map(|calls| {
+            calls
+                .iter()
+                .map(ollama_tool_call)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    if text.is_empty() && action_calls.is_empty() {
+        return Err(ModelRuntimeFailure::new(
+            "ollama response did not contain message content or tool calls",
+        ));
+    }
     Ok(ProviderResponse {
         text,
+        action_calls,
         usage: usage_from_json(Some(&value)),
         finish_reason: value
             .get("done_reason")
             .and_then(Value::as_str)
             .map(str::to_string),
         metadata: BTreeMap::from([("provider".into(), json!("ollama"))]),
+    })
+}
+
+fn openai_tool_definitions(actions: &[ProviderActionTool]) -> Value {
+    json!(
+        actions
+            .iter()
+            .map(|action| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": action.alias,
+                        "description": action.description,
+                        "parameters": action.parameters
+                    }
+                })
+            })
+            .collect::<Vec<_>>()
+    )
+}
+
+fn anthropic_tool_definitions(actions: &[ProviderActionTool]) -> Value {
+    json!(
+        actions
+            .iter()
+            .map(|action| {
+                json!({
+                    "name": action.alias,
+                    "description": action.description,
+                    "input_schema": action.parameters
+                })
+            })
+            .collect::<Vec<_>>()
+    )
+}
+
+fn openai_tool_call(value: &Value) -> Result<ProviderActionCall, ModelRuntimeFailure> {
+    let function = value
+        .get("function")
+        .ok_or_else(|| ModelRuntimeFailure::new("openai tool call is missing function"))?;
+    let alias = required_string(function, "name")?;
+    let arguments = function
+        .get("arguments")
+        .and_then(Value::as_str)
+        .map(parse_tool_arguments)
+        .transpose()?
+        .unwrap_or_else(|| json!({}));
+    Ok(ProviderActionCall { alias, arguments })
+}
+
+fn anthropic_tool_call(value: &Value) -> Result<ProviderActionCall, ModelRuntimeFailure> {
+    Ok(ProviderActionCall {
+        alias: required_string(value, "name")?,
+        arguments: value.get("input").cloned().unwrap_or_else(|| json!({})),
+    })
+}
+
+fn ollama_tool_call(value: &Value) -> Result<ProviderActionCall, ModelRuntimeFailure> {
+    let function = value
+        .get("function")
+        .ok_or_else(|| ModelRuntimeFailure::new("ollama tool call is missing function"))?;
+    let alias = required_string(function, "name")?;
+    let arguments = match function.get("arguments") {
+        Some(Value::String(raw)) => parse_tool_arguments(raw)?,
+        Some(value) => value.clone(),
+        None => json!({}),
+    };
+    Ok(ProviderActionCall { alias, arguments })
+}
+
+fn parse_tool_arguments(raw: &str) -> Result<Value, ModelRuntimeFailure> {
+    serde_json::from_str(raw).map_err(|err| {
+        ModelRuntimeFailure::new(format!(
+            "provider tool call arguments are invalid JSON: {err}"
+        ))
     })
 }
 
@@ -487,7 +847,8 @@ mod tests {
     use super::*;
     use crate::harness_engine::EffectivePhase;
     use crate::harness_runtime::model::{
-        CapabilityDescriptor, CompletionContract, LogicalPrompt, PromptSection, RuntimeSnapshot,
+        ActionAlias, CapabilityDescriptor, CompletionContract, LogicalPrompt, PromptSection,
+        RuntimeSnapshot,
     };
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -510,11 +871,12 @@ mod tests {
                 ]
             })
             .to_string(),
+            action_calls: Vec::new(),
             usage: RunUsage::default(),
             finish_reason: Some("stop".into()),
             metadata: BTreeMap::new(),
         };
-        let turn = normalize_provider_response(response).unwrap();
+        let turn = normalize_provider_response(response, &[]).unwrap();
         assert_eq!(turn.assistant_content.as_deref(), Some("done"));
         assert_eq!(turn.actions.len(), 1);
         assert!(matches!(
@@ -525,14 +887,178 @@ mod tests {
     }
 
     #[test]
+    fn provider_response_normalizes_native_action_calls_through_aliases() {
+        let response = ProviderResponse {
+            text: "I am completing this phase.".into(),
+            action_calls: vec![ProviderActionCall {
+                alias: "action_1".into(),
+                arguments: json!({
+                    "outcome": "ready",
+                    "output": { "ok": true }
+                }),
+            }],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            metadata: BTreeMap::new(),
+        };
+        let request = model_request();
+        let turn = normalize_provider_response(response, &request.prompt.action_aliases).unwrap();
+        assert_eq!(
+            turn.assistant_content.as_deref(),
+            Some("I am completing this phase.")
+        );
+        assert_eq!(turn.actions.len(), 1);
+        assert!(matches!(
+            &turn.actions[0].action,
+            SemanticAction::PhaseCompletion {
+                outcome: Some(outcome),
+                ..
+            } if outcome == "ready"
+        ));
+    }
+
+    #[test]
+    fn placeholder_action_parameter_schemas_cover_all_action_kinds() {
+        let request = model_request();
+        let required_cases = [
+            ("agentpm_tool", "arguments"),
+            ("external_mcp_tool", "arguments"),
+            ("skill_resource_read", "resource"),
+            ("knowledge_request", "query"),
+            ("memory_read", "space"),
+        ];
+
+        for (action_kind, required_field) in required_cases {
+            let schema = action_parameters_schema(action_kind, &request);
+            assert_eq!(schema["type"], "object");
+            assert_eq!(schema["additionalProperties"], false);
+            assert!(
+                schema["required"]
+                    .as_array()
+                    .expect("schema required array")
+                    .contains(&json!(required_field)),
+                "{action_kind} should require {required_field}"
+            );
+        }
+
+        let memory_write_schema = action_parameters_schema("memory_write", &request);
+        assert_eq!(memory_write_schema["type"], "object");
+        assert!(
+            memory_write_schema["required"]
+                .as_array()
+                .expect("memory_write required array")
+                .contains(&json!("space"))
+        );
+        assert!(
+            memory_write_schema["required"]
+                .as_array()
+                .expect("memory_write required array")
+                .contains(&json!("content"))
+        );
+    }
+
+    #[test]
+    fn provider_call_decoding_covers_all_non_phase_action_kinds() {
+        let action = decode_provider_call(
+            action_alias("action_1", "agentpm_tool", "@zack/search"),
+            json!({ "arguments": { "q": "incident" } }),
+        );
+        match action {
+            SemanticAction::AgentPmTool { tool, arguments } => {
+                assert_eq!(tool, "@zack/search");
+                assert_eq!(arguments["q"], json!("incident"));
+            }
+            other => panic!("expected agentpm tool action, got {other:?}"),
+        }
+
+        let action = decode_provider_call(
+            action_alias("action_1", "external_mcp_tool", "incident-data/search"),
+            json!({ "arguments": { "state": "open" } }),
+        );
+        match action {
+            SemanticAction::ExternalMcpTool {
+                server,
+                tool,
+                arguments,
+            } => {
+                assert_eq!(server, "incident-data");
+                assert_eq!(tool, "search");
+                assert_eq!(arguments["state"], json!("open"));
+            }
+            other => panic!("expected external MCP tool action, got {other:?}"),
+        }
+
+        let action = decode_provider_call(
+            action_alias(
+                "action_1",
+                "skill_resource_read",
+                "handoff-skill/entrypoint",
+            ),
+            json!({ "resource": "entrypoint" }),
+        );
+        match action {
+            SemanticAction::SkillResourceRead { skill, resource } => {
+                assert_eq!(skill, "handoff-skill");
+                assert_eq!(resource, "entrypoint");
+            }
+            other => panic!("expected skill resource read action, got {other:?}"),
+        }
+
+        let action = decode_provider_call(
+            action_alias("action_1", "knowledge_request", "@zack/guide"),
+            json!({ "query": "incident handoff" }),
+        );
+        match action {
+            SemanticAction::KnowledgeRequest { package, query } => {
+                assert_eq!(package, "@zack/guide");
+                assert_eq!(query, "incident handoff");
+            }
+            other => panic!("expected knowledge request action, got {other:?}"),
+        }
+
+        let action = decode_provider_call(
+            action_alias("action_1", "memory_read", "@zack/state"),
+            json!({ "space": "conversation_state" }),
+        );
+        match action {
+            SemanticAction::MemoryRead { package, space } => {
+                assert_eq!(package, "@zack/state");
+                assert_eq!(space, "conversation_state");
+            }
+            other => panic!("expected memory read action, got {other:?}"),
+        }
+
+        let action = decode_provider_call(
+            action_alias("action_1", "memory_write", "@zack/state"),
+            json!({
+                "space": "conversation_state",
+                "content": { "summary": "updated" }
+            }),
+        );
+        match action {
+            SemanticAction::MemoryWrite {
+                package,
+                space,
+                content,
+            } => {
+                assert_eq!(package, "@zack/state");
+                assert_eq!(space, "conversation_state");
+                assert_eq!(content["summary"], json!("updated"));
+            }
+            other => panic!("expected memory write action, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn provider_response_preserves_plain_text_as_assistant_content() {
         let response = ProviderResponse {
             text: "plain final text".into(),
+            action_calls: Vec::new(),
             usage: RunUsage::default(),
             finish_reason: None,
             metadata: BTreeMap::new(),
         };
-        let turn = normalize_provider_response(response).unwrap();
+        let turn = normalize_provider_response(response, &[]).unwrap();
         assert_eq!(turn.assistant_content.as_deref(), Some("plain final text"));
         assert!(turn.actions.is_empty());
     }
@@ -600,6 +1126,7 @@ mod tests {
                 ]
             })
             .to_string(),
+            action_calls: Vec::new(),
             usage: usage_from_json(Some(&json!({
                 "prompt_tokens": 10,
                 "completion_tokens": 5
@@ -630,6 +1157,7 @@ mod tests {
     fn built_in_runtime_generate_passes_aliases_to_transport() {
         let transport = SharedMockTransport::new(vec![ProviderResponse {
             text: json!({ "outcome": "ready" }).to_string(),
+            action_calls: Vec::new(),
             usage: RunUsage::default(),
             finish_reason: Some("stop".into()),
             metadata: BTreeMap::new(),
@@ -643,7 +1171,14 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(
             requests[0].action_aliases.get("action_1"),
-            Some(&"outcome:ready".to_string())
+            Some(&"review/completion".to_string())
+        );
+        assert_eq!(requests[0].actions.len(), 1);
+        assert_eq!(requests[0].actions[0].alias, "action_1");
+        assert_eq!(requests[0].actions[0].action_kind, "phase_completion");
+        assert_eq!(
+            requests[0].actions[0].parameters["properties"]["outcome"]["enum"],
+            json!(["ready"])
         );
         assert!(requests[0].prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
     }
@@ -654,6 +1189,7 @@ mod tests {
             selection("openai"),
             Box::new(MockModelTransport::new(vec![ProviderResponse {
                 text: json!({ "actions": [{ "tool": "@zack/search" }] }).to_string(),
+                action_calls: Vec::new(),
                 usage: RunUsage::default(),
                 finish_reason: None,
                 metadata: BTreeMap::new(),
@@ -720,10 +1256,91 @@ mod tests {
         assert_eq!(ollama.metadata["provider"], json!("ollama"));
     }
 
+    #[test]
+    fn provider_adapters_translate_native_tool_definitions_and_calls() {
+        let request = model_request();
+        let tools = provider_action_tools(&request);
+        assert_eq!(tools.len(), 1);
+
+        let openai_tools = openai_tool_definitions(&tools);
+        assert_eq!(openai_tools[0]["type"], "function");
+        assert_eq!(openai_tools[0]["function"]["name"], "action_1");
+        assert_eq!(
+            openai_tools[0]["function"]["parameters"]["properties"]["outcome"]["enum"],
+            json!(["ready"])
+        );
+
+        let anthropic_tools = anthropic_tool_definitions(&tools);
+        assert_eq!(anthropic_tools[0]["name"], "action_1");
+        assert_eq!(
+            anthropic_tools[0]["input_schema"]["properties"]["outcome"]["enum"],
+            json!(["ready"])
+        );
+
+        let openai = provider_response_from_openai(json!({
+            "choices": [
+                {
+                    "message": {
+                        "content": null,
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "action_1",
+                                    "arguments": "{\"outcome\":\"ready\",\"output\":{\"ok\":true}}"
+                                }
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls"
+                }
+            ],
+            "usage": { "prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3 }
+        }))
+        .unwrap();
+        assert_eq!(openai.action_calls.len(), 1);
+        assert_eq!(openai.action_calls[0].alias, "action_1");
+
+        let anthropic = provider_response_from_anthropic(json!({
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "action_1",
+                    "input": { "outcome": "ready", "output": { "ok": true } }
+                }
+            ],
+            "stop_reason": "tool_use",
+            "usage": { "input_tokens": 1, "output_tokens": 2 }
+        }))
+        .unwrap();
+        assert_eq!(anthropic.action_calls.len(), 1);
+        assert_eq!(anthropic.action_calls[0].alias, "action_1");
+
+        let ollama = provider_response_from_ollama(json!({
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "action_1",
+                            "arguments": { "outcome": "ready", "output": { "ok": true } }
+                        }
+                    }
+                ]
+            },
+            "done_reason": "stop"
+        }))
+        .unwrap();
+        assert_eq!(ollama.action_calls.len(), 1);
+        assert_eq!(ollama.action_calls[0].alias, "action_1");
+    }
+
     fn model_request() -> ModelRequest {
         let capability = CapabilityDescriptor {
             action_kind: "phase_completion".into(),
-            identity: "outcome:ready".into(),
+            identity: "review/completion".into(),
             description: "Complete with ready.".into(),
             source: "loop".into(),
         };
@@ -734,7 +1351,7 @@ mod tests {
                 sections: vec![PromptSection {
                     number: 5,
                     title: "EFFECTIVE CAPABILITY CATALOG".into(),
-                    content: "- action_1 [phase_completion] outcome:ready".into(),
+                    content: "- action_1 [phase_completion] review/completion".into(),
                 }],
                 action_aliases: vec![crate::harness_runtime::model::ActionAlias {
                     alias: "action_1".into(),
@@ -765,6 +1382,25 @@ mod tests {
             },
             repair_feedback: None,
         }
+    }
+
+    fn action_alias(alias: &str, action_kind: &str, identity: &str) -> ActionAlias {
+        ActionAlias {
+            alias: alias.into(),
+            action_kind: action_kind.into(),
+            identity: identity.into(),
+        }
+    }
+
+    fn decode_provider_call(alias: ActionAlias, arguments: Value) -> SemanticAction {
+        semantic_action_from_provider_call(
+            &ProviderActionCall {
+                alias: alias.alias.clone(),
+                arguments,
+            },
+            &[alias],
+        )
+        .expect("provider action call should decode")
     }
 
     struct SharedMockTransport {
