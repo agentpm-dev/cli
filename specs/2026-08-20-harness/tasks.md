@@ -736,6 +736,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Keep default managed host loopback and honor `mcp.exports.host`; use ephemeral ports per logical surface rather than static config mapping.
 - [ ] Keep existing `serve --mcp` Tool invocation through the shared internal Tool runner; do **not** spawn public `agentpm run` per MCP request.
 - [ ] Ensure Milestone 7 runner hardening (schema/runtime/env/timeout/cancellation semantics) is inherited by MCP calls through the shared runner.
+- [ ] Add `serve --mcp` lifecycle cleanup for concurrent shared-runner Tool invocations: SIGINT/SIGTERM or managed Session shutdown must terminate any nested child process groups started by in-flight Tool calls without installing a permanent process-global `_exit` handler that bypasses graceful MCP/Harness cleanup.
 - [ ] Emit machine Tool-call started/completed/failed events containing canonical AgentPM identity and external MCP-safe normalized name.
 
 - [ ] Add Harness McpRuntime export lifecycle that honors `mcp.exports.enabled`; when enabled, start one managed `agentpm serve --mcp --machine` subprocess per authored Agent `bindings.mcp` surface.
@@ -750,7 +751,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Apply managed-process restart policy: failed in-flight call is never replayed; optional restart restores only subsequent calls; exhausted restart makes the surface unavailable.
 - [ ] Ensure Session shutdown/cancellation terminates all Harness-owned MCP export subprocesses cleanly.
 
-- [ ] Add tests for exports disabled/enabled, multiple surfaces, ephemeral ports/host, Tool filtering, normalized-name collisions, ready subset/empty surface behavior, call events, shared-runner failures, process restart-without-replay, calls with no active Run, and cleanup.
+- [ ] Add tests for exports disabled/enabled, multiple surfaces, ephemeral ports/host, Tool filtering, normalized-name collisions, ready subset/empty surface behavior, call events, shared-runner failures, concurrent in-flight Tool cleanup on MCP server termination, process restart-without-replay, calls with no active Run, and cleanup.
 
 ## Milestone 18: External MCP Import and Runtime Tool Augmentation
 > Scope note: let workspace runtime configuration add environment-specific MCP functionality to an already-published Agent. Imported MCP Tools become normal phase Tool capabilities only in explicitly configured scope and run through the same Harness Tool selection/validation/Hook/retry/failure pipeline as AgentPM Tools, while retaining distinct McpRuntime transport.

@@ -1,14 +1,22 @@
 use crate::manifest::{Entrypoint, read_lock_or_default};
 use anyhow::{Context, Result, anyhow, bail};
+use jsonschema::{Draft, JSONSchema};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::fmt;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::Mutex;
+#[cfg(unix)]
+use std::sync::atomic::AtomicI32;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 #[allow(dead_code)]
@@ -25,25 +33,62 @@ const ERR_INTERPRETER_UNSUPPORTED: &str = "unsupported interpreter override or c
 const ERR_INTERPRETER_OVERRIDE_MISMATCH: &str = "interpreter override mismatch";
 const ERR_INTERPRETER_NOT_EXECUTABLE: &str = "interpreter not found or not executable";
 const ERR_INTERPRETER_HEALTHCHECK_FAILED: &str = "interpreter command failed health check";
+const ERR_RUNTIME_VERSION_UNSATISFIED: &str = "runtime minimum version not satisfied";
+const ERR_RUNTIME_VERSION_UNREADABLE: &str = "runtime version could not be read";
+const ERR_TOOL_INPUT_SCHEMA_INVALID: &str = "tool input failed schema validation";
+const ERR_TOOL_INPUT_SCHEMA_MALFORMED: &str = "tool input schema is invalid";
+const ERR_TOOL_OUTPUT_SCHEMA_INVALID: &str = "tool output failed schema validation";
+const ERR_TOOL_OUTPUT_SCHEMA_MALFORMED: &str = "tool output schema is invalid";
+const ERR_TOOL_OUTPUT_LIMIT_EXCEEDED: &str = "tool output exceeded limit";
 const ERR_TOOL_TIMED_OUT: &str = "tool execution timed out";
 const ERR_TOOL_OUTPUT_NOT_JSON: &str = "tool stdout was not valid JSON";
 const ERR_TOOL_EXITED_UNSUCCESSFULLY: &str = "tool exited unsuccessfully";
 const ERR_ENTRYPOINT_CWD_MISSING: &str = "entrypoint cwd does not exist";
 
+#[cfg(unix)]
+const ACTIVE_CHILD_GROUP_SLOT_COUNT: usize = 1024;
+#[cfg(unix)]
+static ACTIVE_CHILD_PGIDS: [AtomicI32; ACTIVE_CHILD_GROUP_SLOT_COUNT] =
+    [const { AtomicI32::new(0) }; ACTIVE_CHILD_GROUP_SLOT_COUNT];
+#[cfg(unix)]
+static SIGNAL_HANDLER_STATE: Mutex<SignalHandlerState> = Mutex::new(SignalHandlerState {
+    active_guards: 0,
+    previous_sigint: None,
+    previous_sigterm: None,
+});
+
+#[cfg(unix)]
+struct SignalHandlerState {
+    active_guards: usize,
+    previous_sigint: Option<libc::sighandler_t>,
+    previous_sigterm: Option<libc::sighandler_t>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunnerErrorKind {
     Resolution,
     Runtime,
+    Schema,
     Timeout,
+    OutputLimit,
     MalformedOutput,
     SubprocessFailure,
     Other,
 }
 
 pub(crate) fn classify_runner_error(err: &anyhow::Error) -> RunnerErrorKind {
+    if let Some(classified) = err
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ClassifiedRunnerError>())
+    {
+        return classified.kind;
+    }
+
     let message = format!("{err:#}");
     if message.contains(ERR_TOOL_TIMED_OUT) {
         RunnerErrorKind::Timeout
+    } else if message.contains(ERR_TOOL_OUTPUT_LIMIT_EXCEEDED) {
+        RunnerErrorKind::OutputLimit
     } else if message.contains(ERR_TOOL_OUTPUT_NOT_JSON) {
         RunnerErrorKind::MalformedOutput
     } else if message.contains(ERR_REQUIRED_ENV_MISSING)
@@ -52,8 +97,15 @@ pub(crate) fn classify_runner_error(err: &anyhow::Error) -> RunnerErrorKind {
         || message.contains(ERR_INTERPRETER_OVERRIDE_MISMATCH)
         || message.contains(ERR_INTERPRETER_NOT_EXECUTABLE)
         || message.contains(ERR_INTERPRETER_HEALTHCHECK_FAILED)
+        || message.contains(ERR_RUNTIME_VERSION_UNSATISFIED)
+        || message.contains(ERR_RUNTIME_VERSION_UNREADABLE)
     {
         RunnerErrorKind::Runtime
+    } else if message.contains(ERR_TOOL_INPUT_SCHEMA_INVALID)
+        || message.contains(ERR_TOOL_INPUT_SCHEMA_MALFORMED)
+        || message.contains(ERR_TOOL_OUTPUT_SCHEMA_MALFORMED)
+    {
+        RunnerErrorKind::Schema
     } else if message.contains(ERR_INSTALLED_TOOL_NOT_FOUND)
         || message.contains(ERR_INSTALLED_TOOL_DIR_MISSING)
         || message.contains(ERR_LOCKFILE_DEPENDENCY_MISSING)
@@ -62,10 +114,26 @@ pub(crate) fn classify_runner_error(err: &anyhow::Error) -> RunnerErrorKind {
         RunnerErrorKind::Resolution
     } else if message.contains(ERR_TOOL_EXITED_UNSUCCESSFULLY) {
         RunnerErrorKind::SubprocessFailure
+    } else if message.contains(ERR_TOOL_OUTPUT_SCHEMA_INVALID) {
+        RunnerErrorKind::MalformedOutput
     } else {
         RunnerErrorKind::Other
     }
 }
+
+#[derive(Debug)]
+struct ClassifiedRunnerError {
+    kind: RunnerErrorKind,
+    message: String,
+}
+
+impl fmt::Display for ClassifiedRunnerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ClassifiedRunnerError {}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +157,8 @@ pub struct RunOptions {
     pub timeout_ms: Option<u64>,
     pub env_overrides: HashMap<String, String>,
     pub output_limit_bytes: usize,
+    #[cfg(unix)]
+    pub cleanup_child_process_group_on_signal: bool,
 }
 
 impl Default for RunOptions {
@@ -97,6 +167,8 @@ impl Default for RunOptions {
             timeout_ms: None,
             env_overrides: HashMap::new(),
             output_limit_bytes: DEFAULT_OUTPUT_LIMIT_BYTES,
+            #[cfg(unix)]
+            cleanup_child_process_group_on_signal: false,
         }
     }
 }
@@ -322,18 +394,36 @@ pub fn run_installed_tool(
     // When async CLI commands wire into it (for example `agentpm run` in Milestone 2),
     // call it through `tokio::task::spawn_blocking` rather than on the async executor.
     let resolved = resolve_installed_tool(project_dir, spec)?;
+    validate_json_schema(
+        &resolved.manifest.inputs,
+        input,
+        ERR_TOOL_INPUT_SCHEMA_MALFORMED,
+        ERR_TOOL_INPUT_SCHEMA_INVALID,
+        RunnerErrorKind::Schema,
+        RunnerErrorKind::Schema,
+        &resolved.package,
+    )?;
+
     let run_dir = create_run_dir(project_dir)?;
     let prepared = prepare_invocation(&resolved, input, options)
         .with_context(|| format!("preparing {}", resolved.package))?;
 
     let input_bytes = serde_json::to_vec(input).context("serializing JSON input")?;
+    #[cfg(unix)]
+    let cleanup_child_process_group_on_signal = options.cleanup_child_process_group_on_signal;
+    #[cfg(not(unix))]
+    let cleanup_child_process_group_on_signal = false;
     let output = execute_with_timeout(
         &prepared.command,
         &prepared.args,
         &prepared.cwd,
         &prepared.env,
         &input_bytes,
-        prepared.timeout_ms,
+        ExecuteLimits {
+            timeout_ms: prepared.timeout_ms,
+            cleanup_child_process_group_on_signal,
+            output_limit_bytes: options.output_limit_bytes,
+        },
     )?;
 
     let combined_size = output.stdout.len() + output.stderr.len();
@@ -348,12 +438,17 @@ pub fn run_installed_tool(
                 combined_size, options.output_limit_bytes
             ),
         )?;
-        bail!(
-            "tool output exceeded limit: {} bytes > {} bytes (logs: {})",
-            combined_size,
-            options.output_limit_bytes,
-            run_dir.display()
-        );
+        return Err(ClassifiedRunnerError {
+            kind: RunnerErrorKind::OutputLimit,
+            message: format!(
+                "{}: {} bytes > {} bytes (logs: {})",
+                ERR_TOOL_OUTPUT_LIMIT_EXCEEDED,
+                combined_size,
+                options.output_limit_bytes,
+                run_dir.display()
+            ),
+        }
+        .into());
     }
 
     if !output.status.success() {
@@ -377,6 +472,7 @@ pub fn run_installed_tool(
         );
     }
 
+    let child_stderr = output.stderr.clone();
     let parsed = serde_json::from_slice(&output.stdout)
         .with_context(|| format!("{} (logs: {})", ERR_TOOL_OUTPUT_NOT_JSON, run_dir.display()));
     let output = match parsed {
@@ -393,9 +489,78 @@ pub fn run_installed_tool(
         }
     };
 
+    if let Err(err) = validate_json_schema(
+        &resolved.manifest.outputs,
+        &output,
+        ERR_TOOL_OUTPUT_SCHEMA_MALFORMED,
+        ERR_TOOL_OUTPUT_SCHEMA_INVALID,
+        RunnerErrorKind::Schema,
+        RunnerErrorKind::MalformedOutput,
+        &resolved.package,
+    ) {
+        preserve_failure_artifacts(
+            &run_dir,
+            &input_bytes,
+            &serde_json::to_vec(&output).unwrap_or_default(),
+            &child_stderr,
+            &err.to_string(),
+        )?;
+        return Err(err);
+    }
+
     let _ = fs::remove_dir_all(&run_dir);
 
     Ok(RunResult { resolved, output })
+}
+
+#[allow(dead_code)]
+fn validate_json_schema(
+    schema: &Value,
+    instance: &Value,
+    malformed_label: &str,
+    invalid_label: &str,
+    malformed_kind: RunnerErrorKind,
+    invalid_kind: RunnerErrorKind,
+    package: &str,
+) -> Result<()> {
+    if schema.is_null() {
+        return Ok(());
+    }
+
+    let compiled = match JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(schema)
+    {
+        Ok(compiled) => compiled,
+        Err(err) => {
+            return Err(ClassifiedRunnerError {
+                kind: malformed_kind,
+                message: format!("{malformed_label} for {package}: {err}"),
+            }
+            .into());
+        }
+    };
+
+    if let Err(errors) = compiled.validate(instance) {
+        let messages = errors
+            .map(|error| {
+                format!(
+                    "{} at instance {} vs schema {}",
+                    error, error.instance_path, error.schema_path
+                )
+            })
+            .collect::<Vec<_>>();
+        return Err(ClassifiedRunnerError {
+            kind: invalid_kind,
+            message: format!(
+                "{invalid_label} for {package}:\n- {}",
+                messages.join("\n- ")
+            ),
+        }
+        .into());
+    }
+
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -596,7 +761,17 @@ fn resolve_interpreter_command(command: &str, runtime: Option<&RuntimeDecl>) -> 
         );
     }
 
-    ensure_interpreter_available(&resolved)?;
+    let version_output = ensure_interpreter_available(&resolved)?;
+    if let Some(runtime) = runtime
+        && let Some(required_version) = runtime.version.as_deref()
+    {
+        enforce_runtime_minimum_version(
+            &resolved,
+            runtime.runtime_type.as_str(),
+            required_version,
+            &version_output,
+        )?;
+    }
     Ok(resolved)
 }
 
@@ -629,17 +804,105 @@ fn canonical_interpreter(command: &str) -> String {
 }
 
 #[allow(dead_code)]
-fn ensure_interpreter_available(command: &str) -> Result<()> {
-    let status = Command::new(command)
+fn ensure_interpreter_available(command: &str) -> Result<String> {
+    let output = Command::new(command)
         .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .output()
         .with_context(|| format!("{ERR_INTERPRETER_NOT_EXECUTABLE}: {command}"))?;
-    if !status.success() {
+    if !output.status.success() {
         bail!("{ERR_INTERPRETER_HEALTHCHECK_FAILED}: {command}");
     }
+    let mut text = String::new();
+    text.push_str(&String::from_utf8_lossy(&output.stdout));
+    if !output.stderr.is_empty() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(text)
+}
+
+#[allow(dead_code)]
+fn enforce_runtime_minimum_version(
+    command: &str,
+    runtime_type: &str,
+    required_version: &str,
+    version_output: &str,
+) -> Result<()> {
+    let required = parse_runtime_version(required_version).with_context(|| {
+        format!("{ERR_RUNTIME_VERSION_UNREADABLE}: invalid required version {required_version}")
+    })?;
+    let actual = extract_runtime_version(version_output).ok_or_else(|| {
+        anyhow!("{ERR_RUNTIME_VERSION_UNREADABLE}: {runtime_type} from {command}")
+    })?;
+
+    if actual < required {
+        bail!(
+            "{}: {} requires >= {}, got {} from {}",
+            ERR_RUNTIME_VERSION_UNSATISFIED,
+            runtime_type,
+            required,
+            actual,
+            command
+        );
+    }
+
     Ok(())
+}
+
+#[allow(dead_code)]
+fn parse_runtime_version(raw: &str) -> Result<Version> {
+    let normalized = raw
+        .trim()
+        .strip_prefix(">=")
+        .or_else(|| raw.trim().strip_prefix('='))
+        .unwrap_or_else(|| raw.trim())
+        .trim();
+    let parts = normalized.split('.').collect::<Vec<_>>();
+    if parts.is_empty() || parts.len() > 3 {
+        bail!("invalid runtime version");
+    }
+    let major = parts[0].parse::<u64>().context("invalid major version")?;
+    let minor = parts
+        .get(1)
+        .map(|part| part.parse::<u64>())
+        .transpose()
+        .context("invalid minor version")?
+        .unwrap_or(0);
+    let patch = parts
+        .get(2)
+        .map(|part| part.parse::<u64>())
+        .transpose()
+        .context("invalid patch version")?
+        .unwrap_or(0);
+    Ok(Version::new(major, minor, patch))
+}
+
+#[allow(dead_code)]
+fn extract_runtime_version(output: &str) -> Option<Version> {
+    let bytes = output.as_bytes();
+    for start in 0..bytes.len() {
+        if !bytes[start].is_ascii_digit() {
+            continue;
+        }
+        let mut end = start + 1;
+        while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
+            end += 1;
+        }
+        let candidate = &output[start..end].trim_matches('.');
+        if let Ok(version) = parse_runtime_version(candidate) {
+            return Some(version);
+        }
+    }
+    None
+}
+
+#[allow(dead_code)]
+struct ExecuteLimits {
+    timeout_ms: u64,
+    cleanup_child_process_group_on_signal: bool,
+    output_limit_bytes: usize,
 }
 
 #[allow(dead_code)]
@@ -649,7 +912,7 @@ fn execute_with_timeout(
     cwd: &Path,
     env: &HashMap<String, String>,
     input: &[u8],
-    timeout_ms: u64,
+    limits: ExecuteLimits,
 ) -> Result<Output> {
     let mut cmd = Command::new(command);
     cmd.args(args)
@@ -678,6 +941,31 @@ fn execute_with_timeout(
         .spawn()
         .with_context(|| format!("spawning tool process via {command}"))?;
 
+    #[cfg(unix)]
+    let _signal_guard = if limits.cleanup_child_process_group_on_signal {
+        Some(ActiveChildProcessGroupSignalGuard::new(child.id())?)
+    } else {
+        None
+    };
+
+    let stdout = child.stdout.take().context("capturing child stdout")?;
+    let stderr = child.stderr.take().context("capturing child stderr")?;
+    let retained_limit = limits.output_limit_bytes.saturating_add(1);
+    let retained_total = Arc::new(AtomicUsize::new(0));
+    let output_exceeded = Arc::new(AtomicBool::new(false));
+    let stdout_reader = spawn_output_reader(
+        stdout,
+        retained_limit,
+        Arc::clone(&retained_total),
+        Arc::clone(&output_exceeded),
+    );
+    let stderr_reader = spawn_output_reader(
+        stderr,
+        retained_limit,
+        Arc::clone(&retained_total),
+        Arc::clone(&output_exceeded),
+    );
+
     if let Some(mut stdin) = child.stdin.take() {
         stdin
             .write_all(input)
@@ -685,7 +973,7 @@ fn execute_with_timeout(
     }
 
     let start = Instant::now();
-    let timeout = Duration::from_millis(timeout_ms);
+    let timeout = Duration::from_millis(limits.timeout_ms);
     loop {
         if child
             .try_wait()
@@ -701,22 +989,71 @@ fn execute_with_timeout(
                 let _ = kill_process_group(child.id());
             }
             let _ = child.kill();
-            let output = child
-                .wait_with_output()
-                .context("collecting timed-out output")?;
+            child.wait().context("waiting for timed-out tool process")?;
+            let stdout = join_output_reader(stdout_reader)?;
+            let stderr = join_output_reader(stderr_reader)?;
             bail!(
                 "{} after {} ms (stdout {} bytes, stderr {} bytes)",
                 ERR_TOOL_TIMED_OUT,
-                timeout_ms,
-                output.stdout.len(),
-                output.stderr.len()
+                limits.timeout_ms,
+                stdout.len(),
+                stderr.len()
             );
         }
 
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    child.wait_with_output().context("collecting tool output")
+    let status = child.wait().context("waiting for tool process")?;
+    let stdout = join_output_reader(stdout_reader)?;
+    let stderr = join_output_reader(stderr_reader)?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+#[allow(dead_code)]
+fn spawn_output_reader<R>(
+    mut reader: R,
+    retained_limit: usize,
+    retained_total: Arc<AtomicUsize>,
+    output_exceeded: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut retained = Vec::new();
+        let mut chunk = [0_u8; 8192];
+        loop {
+            let read = reader.read(&mut chunk)?;
+            if read == 0 {
+                break;
+            }
+
+            let previous = retained_total.fetch_add(read, Ordering::SeqCst);
+            if previous + read > retained_limit {
+                output_exceeded.store(true, Ordering::SeqCst);
+            }
+            if previous < retained_limit {
+                let remaining = retained_limit - previous;
+                retained.extend_from_slice(&chunk[..read.min(remaining)]);
+            }
+        }
+        Ok(retained)
+    })
+}
+
+#[allow(dead_code)]
+fn join_output_reader(
+    reader: std::thread::JoinHandle<std::io::Result<Vec<u8>>>,
+) -> Result<Vec<u8>> {
+    reader
+        .join()
+        .map_err(|_| anyhow!("tool output reader thread panicked"))?
+        .context("reading tool process output")
 }
 
 #[cfg(unix)]
@@ -730,6 +1067,107 @@ fn kill_process_group(pid: u32) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+struct ActiveChildProcessGroupSignalGuard {
+    pgid: i32,
+    slot: usize,
+}
+
+#[cfg(unix)]
+impl ActiveChildProcessGroupSignalGuard {
+    fn new(pid: u32) -> Result<Self> {
+        let pgid = pid as i32;
+        let slot = register_active_child_process_group(pgid)?;
+        install_signal_handlers();
+        Ok(Self { pgid, slot })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ActiveChildProcessGroupSignalGuard {
+    fn drop(&mut self) {
+        unregister_active_child_process_group(self.slot, self.pgid);
+        restore_signal_handlers_if_idle();
+    }
+}
+
+#[cfg(unix)]
+fn register_active_child_process_group(pgid: i32) -> Result<usize> {
+    for (index, slot) in ACTIVE_CHILD_PGIDS.iter().enumerate() {
+        if slot
+            .compare_exchange(0, pgid, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return Ok(index);
+        }
+    }
+    bail!("too many active tool process groups for signal cleanup")
+}
+
+#[cfg(unix)]
+fn unregister_active_child_process_group(slot: usize, pgid: i32) {
+    ACTIVE_CHILD_PGIDS[slot]
+        .compare_exchange(pgid, 0, Ordering::SeqCst, Ordering::SeqCst)
+        .ok();
+}
+
+#[cfg(unix)]
+fn install_signal_handlers() {
+    let mut state = SIGNAL_HANDLER_STATE
+        .lock()
+        .expect("signal handler state poisoned");
+    if state.active_guards == 0 {
+        state.previous_sigint = Some(unsafe {
+            libc::signal(
+                libc::SIGINT,
+                terminate_active_process_groups as libc::sighandler_t,
+            )
+        });
+        state.previous_sigterm = Some(unsafe {
+            libc::signal(
+                libc::SIGTERM,
+                terminate_active_process_groups as libc::sighandler_t,
+            )
+        });
+    }
+    state.active_guards += 1;
+}
+
+#[cfg(unix)]
+fn restore_signal_handlers_if_idle() {
+    let mut state = SIGNAL_HANDLER_STATE
+        .lock()
+        .expect("signal handler state poisoned");
+    state.active_guards = state.active_guards.saturating_sub(1);
+    if state.active_guards == 0 {
+        if let Some(previous) = state.previous_sigint.take() {
+            unsafe {
+                libc::signal(libc::SIGINT, previous);
+            }
+        }
+        if let Some(previous) = state.previous_sigterm.take() {
+            unsafe {
+                libc::signal(libc::SIGTERM, previous);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+extern "C" fn terminate_active_process_groups(signal: libc::c_int) {
+    for slot in &ACTIVE_CHILD_PGIDS {
+        let pgid = slot.swap(0, Ordering::SeqCst);
+        if pgid > 0 {
+            unsafe {
+                libc::killpg(pgid, libc::SIGKILL);
+            }
+        }
+    }
+    unsafe {
+        libc::_exit(128 + signal);
+    }
 }
 
 #[allow(dead_code)]
@@ -893,6 +1331,26 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn signal_cleanup_tracks_multiple_active_process_groups() {
+        let first = register_active_child_process_group(111_111).unwrap();
+        let second = register_active_child_process_group(222_222).unwrap();
+
+        let active_pgids = ACTIVE_CHILD_PGIDS
+            .iter()
+            .map(|slot| slot.load(Ordering::SeqCst))
+            .filter(|pgid| *pgid > 0)
+            .collect::<Vec<_>>();
+
+        assert_ne!(first, second);
+        assert!(active_pgids.contains(&111_111));
+        assert!(active_pgids.contains(&222_222));
+
+        unregister_active_child_process_group(first, 111_111);
+        unregister_active_child_process_group(second, 222_222);
+    }
+
     #[test]
     fn fails_when_required_env_is_missing() {
         let root = TestProject::new();
@@ -963,6 +1421,297 @@ mod tests {
             format!("{err:#}").contains("runtime/type mismatch"),
             "{err:#}"
         );
+    }
+
+    #[test]
+    fn rejects_runtime_minimum_version_mismatch() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/future-python", "0.1.0"));
+        root.write_tool(
+            "@zack/future-python",
+            "0.1.0",
+            tool_manifest_with_runtime_version("python3", "python", "999.0.0"),
+            python_echo_script(),
+        );
+
+        let err = run_installed_tool(
+            root.path(),
+            &parse_tool_spec("@zack/future-python").unwrap(),
+            &serde_json::json!({}),
+            &RunOptions::default(),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("runtime minimum version not satisfied"),
+            "{err:#}"
+        );
+        assert_eq!(classify_runner_error(&err), RunnerErrorKind::Runtime);
+    }
+
+    #[test]
+    fn rejects_input_schema_before_launching_tool() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/schema-input", "0.1.0"));
+        root.write_tool(
+            "@zack/schema-input",
+            "0.1.0",
+            tool_manifest_with_schemas(
+                "python3",
+                r#"{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}"#,
+                r#"{"type":"object"}"#,
+            ),
+            python_marker_script(),
+        );
+
+        let err = run_installed_tool(
+            root.path(),
+            &parse_tool_spec("@zack/schema-input").unwrap(),
+            &serde_json::json!({}),
+            &RunOptions::default(),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("tool input failed schema validation"),
+            "{err:#}"
+        );
+        assert_eq!(classify_runner_error(&err), RunnerErrorKind::Schema);
+        assert!(
+            !root
+                .tool_dir("@zack/schema-input", "0.1.0")
+                .join("launched.txt")
+                .exists(),
+            "invalid input should fail before child process launch"
+        );
+    }
+
+    #[test]
+    fn rejects_output_schema_after_parsing_successful_tool_json() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/schema-output", "0.1.0"));
+        root.write_tool(
+            "@zack/schema-output",
+            "0.1.0",
+            tool_manifest_with_schemas(
+                "python3",
+                r#"{"type":"object"}"#,
+                r#"{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}"#,
+            ),
+            python_wrong_output_script(),
+        );
+
+        let err = run_installed_tool(
+            root.path(),
+            &parse_tool_spec("@zack/schema-output").unwrap(),
+            &serde_json::json!({}),
+            &RunOptions::default(),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("tool output failed schema validation"),
+            "{err:#}"
+        );
+        assert_eq!(
+            classify_runner_error(&err),
+            RunnerErrorKind::MalformedOutput
+        );
+        let run_dir = single_run_dir(root.path());
+        assert_eq!(
+            fs::read_to_string(run_dir.join("child.stderr")).unwrap(),
+            "diagnostic from stderr\n"
+        );
+    }
+
+    #[test]
+    fn malformed_output_schema_is_classified_as_schema_error() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/malformed-output-schema", "0.1.0"));
+        root.write_tool(
+            "@zack/malformed-output-schema",
+            "0.1.0",
+            tool_manifest_with_schemas(
+                "python3",
+                r#"{"type":"object"}"#,
+                r#"{"type":"not-a-json-schema-type"}"#,
+            ),
+            python_domain_failure_script(),
+        );
+
+        let err = run_installed_tool(
+            root.path(),
+            &parse_tool_spec("@zack/malformed-output-schema").unwrap(),
+            &serde_json::json!({}),
+            &RunOptions::default(),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("tool output schema is invalid"),
+            "{err:#}"
+        );
+        assert_eq!(classify_runner_error(&err), RunnerErrorKind::Schema);
+    }
+
+    #[test]
+    fn treats_schema_valid_domain_failure_payload_as_success() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/domain-output", "0.1.0"));
+        root.write_tool(
+            "@zack/domain-output",
+            "0.1.0",
+            tool_manifest_with_schemas(
+                "python3",
+                r#"{"type":"object"}"#,
+                r#"{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"},"error":{"type":"string"}}}"#,
+            ),
+            python_domain_failure_script(),
+        );
+
+        let result = run_installed_tool(
+            root.path(),
+            &parse_tool_spec("@zack/domain-output").unwrap(),
+            &serde_json::json!({}),
+            &RunOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(result.output["ok"], false);
+        assert_eq!(result.output["error"], "domain-level failure");
+    }
+
+    #[test]
+    fn rejects_malformed_json_output() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/malformed-output", "0.1.0"));
+        root.write_tool(
+            "@zack/malformed-output",
+            "0.1.0",
+            tool_manifest("python3"),
+            python_malformed_output_script(),
+        );
+
+        let err = run_installed_tool(
+            root.path(),
+            &parse_tool_spec("@zack/malformed-output").unwrap(),
+            &serde_json::json!({}),
+            &RunOptions::default(),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("tool stdout was not valid JSON"),
+            "{err:#}"
+        );
+        assert_eq!(
+            classify_runner_error(&err),
+            RunnerErrorKind::MalformedOutput
+        );
+    }
+
+    #[test]
+    fn rejects_subprocess_failure() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/failing-tool", "0.1.0"));
+        root.write_tool(
+            "@zack/failing-tool",
+            "0.1.0",
+            tool_manifest("python3"),
+            python_exit_failure_script(),
+        );
+
+        let err = run_installed_tool(
+            root.path(),
+            &parse_tool_spec("@zack/failing-tool").unwrap(),
+            &serde_json::json!({}),
+            &RunOptions::default(),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("tool exited unsuccessfully"),
+            "{err:#}"
+        );
+        assert_eq!(
+            classify_runner_error(&err),
+            RunnerErrorKind::SubprocessFailure
+        );
+    }
+
+    #[test]
+    fn rejects_output_limit_overrun() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/large-output", "0.1.0"));
+        root.write_tool(
+            "@zack/large-output",
+            "0.1.0",
+            tool_manifest("python3"),
+            python_large_output_script(),
+        );
+        let options = RunOptions {
+            output_limit_bytes: 16,
+            ..RunOptions::default()
+        };
+
+        let err = run_installed_tool(
+            root.path(),
+            &parse_tool_spec("@zack/large-output").unwrap(),
+            &serde_json::json!({}),
+            &options,
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("tool output exceeded limit"),
+            "{err:#}"
+        );
+        assert_eq!(classify_runner_error(&err), RunnerErrorKind::OutputLimit);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_kills_nested_child_process_group() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/nested-timeout", "0.1.0"));
+        root.write_tool(
+            "@zack/nested-timeout",
+            "0.1.0",
+            tool_manifest("python3"),
+            python_nested_sleep_script(),
+        );
+        let pid_path = root
+            .tool_dir("@zack/nested-timeout", "0.1.0")
+            .join("child.pid");
+        let options = RunOptions {
+            timeout_ms: Some(1000),
+            ..RunOptions::default()
+        };
+
+        let err = run_installed_tool(
+            root.path(),
+            &parse_tool_spec("@zack/nested-timeout").unwrap(),
+            &serde_json::json!({}),
+            &options,
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("tool execution timed out"),
+            "{err:#}"
+        );
+        let child_pid = fs::read_to_string(pid_path)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        for _ in 0..20 {
+            if unsafe { libc::kill(child_pid, 0) } != 0 {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("nested child process {child_pid} survived timeout cleanup");
     }
 
     #[test]
@@ -1075,6 +1824,58 @@ mod tests {
         )
     }
 
+    fn tool_manifest_with_runtime_version(
+        command: &str,
+        runtime_type: &str,
+        runtime_version: &str,
+    ) -> String {
+        format!(
+            r#"{{
+  "kind": "tool",
+  "name": "echo-tool",
+  "version": "0.1.0",
+  "entrypoint": {{
+    "command": "{command}",
+    "args": ["script.py"],
+    "cwd": ".",
+    "timeout_ms": 5000,
+    "env": {{}}
+  }},
+  "runtime": {{
+    "type": "{runtime_type}",
+    "version": "{runtime_version}"
+  }}
+}}"#
+        )
+    }
+
+    fn tool_manifest_with_schemas(command: &str, inputs: &str, outputs: &str) -> String {
+        let runtime_type = if command.starts_with("node") {
+            "node"
+        } else {
+            "python"
+        };
+        format!(
+            r#"{{
+  "kind": "tool",
+  "name": "schema-tool",
+  "version": "0.1.0",
+  "entrypoint": {{
+    "command": "{command}",
+    "args": ["script.py"],
+    "cwd": ".",
+    "timeout_ms": 5000,
+    "env": {{}}
+  }},
+  "runtime": {{
+    "type": "{runtime_type}"
+  }},
+  "inputs": {inputs},
+  "outputs": {outputs}
+}}"#
+        )
+    }
+
     fn tool_manifest_with_env(command: &str, required: bool, default: Option<&str>) -> String {
         let default_field = default
             .map(|v| format!(r#","default":"{v}""#))
@@ -1122,6 +1923,61 @@ print(json.dumps({"input": payload, "envValue": os.environ.get("SPECIAL_TOKEN", 
 "#
     }
 
+    fn python_marker_script() -> &'static str {
+        r#"import json, pathlib, sys
+json.load(sys.stdin)
+pathlib.Path("launched.txt").write_text("launched")
+print(json.dumps({"ok": True}))
+"#
+    }
+
+    fn python_wrong_output_script() -> &'static str {
+        r#"import json, sys
+json.load(sys.stdin)
+print("diagnostic from stderr", file=sys.stderr)
+print(json.dumps({"wrong": True}))
+"#
+    }
+
+    fn python_domain_failure_script() -> &'static str {
+        r#"import json, sys
+json.load(sys.stdin)
+print(json.dumps({"ok": False, "error": "domain-level failure"}))
+"#
+    }
+
+    fn python_malformed_output_script() -> &'static str {
+        r#"import json, sys
+json.load(sys.stdin)
+print("not-json")
+"#
+    }
+
+    fn python_exit_failure_script() -> &'static str {
+        r#"import json, sys
+json.load(sys.stdin)
+print(json.dumps({"error": "boom"}))
+sys.exit(7)
+"#
+    }
+
+    fn python_large_output_script() -> &'static str {
+        r#"import json, sys
+json.load(sys.stdin)
+print(json.dumps({"payload": "x" * 128}))
+"#
+    }
+
+    fn python_nested_sleep_script() -> &'static str {
+        r#"import json, pathlib, subprocess, sys, time
+json.load(sys.stdin)
+child = subprocess.Popen(["sleep", "10"])
+pathlib.Path("child.pid").write_text(str(child.pid))
+sys.stdout.flush()
+time.sleep(10)
+"#
+    }
+
     fn node_echo_script() -> &'static str {
         r#"let data = '';
 process.stdin.on('data', chunk => data += chunk);
@@ -1130,6 +1986,16 @@ process.stdin.on('end', () => {
   process.stdout.write(JSON.stringify({ input: payload, envValue: process.env.SPECIAL_TOKEN || '' }));
 });
 "#
+    }
+
+    fn single_run_dir(project_dir: &Path) -> PathBuf {
+        let runs_dir = project_dir.join(".agentpm").join("runs");
+        let entries = fs::read_dir(&runs_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 1, "runs dir: {}", runs_dir.display());
+        entries[0].clone()
     }
 
     struct TestProject {
@@ -1171,20 +2037,23 @@ process.stdin.on('end', () => {
 
         fn write_tool(&self, package: &str, version: &str, manifest: String, script: &str) {
             self.write_tool_manifest(package, version, manifest.clone());
-            let (namespace, name) = split_package(package).unwrap();
-            let dir = self
-                .root
-                .join(".agentpm")
-                .join("tools")
-                .join(namespace)
-                .join(name)
-                .join(version);
+            let dir = self.tool_dir(package, version);
             let script_name = if manifest.contains("\"command\": \"node") {
                 "script.js"
             } else {
                 "script.py"
             };
             fs::write(dir.join(script_name), script).unwrap();
+        }
+
+        fn tool_dir(&self, package: &str, version: &str) -> PathBuf {
+            let (namespace, name) = split_package(package).unwrap();
+            self.root
+                .join(".agentpm")
+                .join("tools")
+                .join(namespace)
+                .join(name)
+                .join(version)
         }
     }
 

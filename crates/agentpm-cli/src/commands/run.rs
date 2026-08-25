@@ -1,7 +1,9 @@
 use crate::prelude::*;
-use crate::runner::{RunOptions, parse_tool_spec, run_installed_tool};
-use anyhow::{Context, bail};
-use serde_json::Value;
+use crate::runner::{
+    RunOptions, RunnerErrorKind, classify_runner_error, parse_tool_spec, run_installed_tool,
+};
+use anyhow::{Context, anyhow, bail};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{IsTerminal, Read};
@@ -23,6 +25,10 @@ pub struct RunArgs {
     /// Override the manifest/default timeout for this invocation
     #[arg(long)]
     pub timeout_ms: Option<u64>,
+
+    /// Emit a stable machine-readable JSON result envelope on stdout
+    #[arg(long)]
+    pub machine: bool,
 }
 
 impl RunArgs {
@@ -41,18 +47,84 @@ impl RunArgs {
             Vec::new()
         };
 
-        let input = self.parse_input_value(&stdin_bytes, stdin_is_terminal)?;
-        let spec = parse_tool_spec(&self.spec)?;
+        if self.machine {
+            self.run_machine(project_dir, &stdin_bytes, stdin_is_terminal)
+                .await
+        } else {
+            let input = self.parse_input_value(&stdin_bytes, stdin_is_terminal)?;
+            let spec = parse_tool_spec(&self.spec)?;
+            let options = self.build_run_options();
+            let project_dir_cl = project_dir.clone();
+            let stdout = tokio::task::spawn_blocking(move || {
+                let result = run_installed_tool(&project_dir_cl, &spec, &input, &options)?;
+                Ok::<String, anyhow::Error>(format!("{}\n", serde_json::to_string(&result.output)?))
+            })
+            .await
+            .context("joining run worker thread")??;
+            print!("{stdout}");
+            Ok(())
+        }
+    }
+
+    async fn run_machine(
+        self,
+        project_dir: PathBuf,
+        stdin_bytes: &[u8],
+        stdin_is_terminal: bool,
+    ) -> Result<()> {
+        let input = match self.parse_input_value(stdin_bytes, stdin_is_terminal) {
+            Ok(input) => input,
+            Err(err) => return self.write_machine_error(err),
+        };
+        let spec = match parse_tool_spec(&self.spec) {
+            Ok(spec) => spec,
+            Err(err) => return self.write_machine_error(err),
+        };
         let options = self.build_run_options();
-        let project_dir_cl = project_dir.clone();
-        let stdout = tokio::task::spawn_blocking(move || {
-            let result = run_installed_tool(&project_dir_cl, &spec, &input, &options)?;
-            Ok::<String, anyhow::Error>(format!("{}\n", serde_json::to_string(&result.output)?))
+        let result = tokio::task::spawn_blocking(move || {
+            run_installed_tool(&project_dir, &spec, &input, &options)
         })
         .await
-        .context("joining run worker thread")??;
-        print!("{stdout}");
-        Ok(())
+        .context("joining run worker thread")
+        .and_then(|inner| inner);
+
+        match result {
+            Ok(result) => {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "schema_version": 1,
+                        "status": "success",
+                        "tool": {
+                            "package": result.resolved.package,
+                            "version": result.resolved.version.to_string()
+                        },
+                        "output": result.output
+                    }))?
+                );
+                Ok(())
+            }
+            Err(err) => self.write_machine_error(err),
+        }
+    }
+
+    fn write_machine_error(&self, err: anyhow::Error) -> Result<()> {
+        let category = runner_error_category(&err);
+        println!(
+            "{}",
+            serde_json::to_string(&json!({
+                "schema_version": 1,
+                "status": "error",
+                "error": {
+                    "category": category,
+                    "message": format!("{err:#}")
+                }
+            }))?
+        );
+        eprintln!("{err:#}");
+        Err(anyhow!(
+            "agentpm run --machine failed with {category} error"
+        ))
     }
 
     fn parse_input_value(&self, stdin_bytes: &[u8], stdin_is_terminal: bool) -> Result<Value> {
@@ -86,8 +158,23 @@ impl RunArgs {
         RunOptions {
             timeout_ms: self.timeout_ms,
             env_overrides: HashMap::new(),
+            #[cfg(unix)]
+            cleanup_child_process_group_on_signal: true,
             ..RunOptions::default()
         }
+    }
+}
+
+fn runner_error_category(err: &anyhow::Error) -> &'static str {
+    match classify_runner_error(err) {
+        RunnerErrorKind::Resolution => "resolution",
+        RunnerErrorKind::Runtime => "runtime",
+        RunnerErrorKind::Schema => "schema",
+        RunnerErrorKind::Timeout => "timeout",
+        RunnerErrorKind::OutputLimit => "output_limit",
+        RunnerErrorKind::MalformedOutput => "malformed_output",
+        RunnerErrorKind::SubprocessFailure => "subprocess_failure",
+        RunnerErrorKind::Other => "other",
     }
 }
 
@@ -102,6 +189,25 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+    #[cfg(unix)]
+    #[test]
+    fn run_surface_opts_into_scoped_signal_cleanup() {
+        assert!(!RunOptions::default().cleanup_child_process_group_on_signal);
+
+        let args = RunArgs {
+            spec: "@zack/echo-json".to_string(),
+            input: Some(r#"{"message":"hi"}"#.to_string()),
+            input_file: None,
+            timeout_ms: None,
+            machine: false,
+        };
+
+        assert!(
+            args.build_run_options()
+                .cleanup_child_process_group_on_signal
+        );
+    }
 
     #[test]
     fn uses_stdin_input() {
@@ -119,6 +225,7 @@ mod tests {
             input: None,
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
 
         let stdout = run_with(
@@ -141,6 +248,7 @@ mod tests {
             input: None,
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
 
         let err = args.parse_input_value(&[], false).unwrap_err();
@@ -166,6 +274,7 @@ mod tests {
             input: Some(r#"{"message":"inline"}"#.to_string()),
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
 
         let stdout = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap();
@@ -192,6 +301,7 @@ mod tests {
             input: None,
             input_file: Some(payload),
             timeout_ms: None,
+            machine: false,
         };
 
         let stdout = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap();
@@ -207,6 +317,7 @@ mod tests {
             input: Some("{bad json}".to_string()),
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
 
         let err = args.parse_input_value(&[], true).unwrap_err();
@@ -227,6 +338,7 @@ mod tests {
             input: None,
             input_file: Some(payload.clone()),
             timeout_ms: None,
+            machine: false,
         };
 
         let err = args.parse_input_value(&[], true).unwrap_err();
@@ -253,6 +365,7 @@ mod tests {
             input: Some(r#"{"message":"locked"}"#.to_string()),
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
 
         let stdout = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap();
@@ -281,6 +394,7 @@ mod tests {
             input: Some(r#"{"message":"exact"}"#.to_string()),
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
 
         let stdout = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap();
@@ -296,6 +410,7 @@ mod tests {
             input: Some("{}".to_string()),
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
 
         let err = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap_err();
@@ -321,6 +436,7 @@ mod tests {
             input: Some("{}".to_string()),
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
 
         let err = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap_err();
@@ -347,6 +463,7 @@ mod tests {
             input: Some("{}".to_string()),
             input_file: None,
             timeout_ms: Some(100),
+            machine: false,
         };
 
         let err = run_with(
@@ -393,6 +510,7 @@ mod tests {
             input: Some("{}".to_string()),
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
         let latest = run_with(&latest, root.path(), &[], true, run_installed_tool).unwrap();
         let latest_json: Value = serde_json::from_str(latest.trim()).unwrap();
@@ -403,6 +521,7 @@ mod tests {
             input: Some("{}".to_string()),
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
         let range = run_with(&range, root.path(), &[], true, run_installed_tool).unwrap();
         let range_json: Value = serde_json::from_str(range.trim()).unwrap();
@@ -426,6 +545,7 @@ mod tests {
             input: Some(r#"{"message":"node"}"#.to_string()),
             input_file: None,
             timeout_ms: None,
+            machine: false,
         };
 
         let stdout = run_with(
