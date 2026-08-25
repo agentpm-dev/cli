@@ -3,6 +3,7 @@
 use super::action::SemanticActionProposal;
 use crate::harness_engine::{EffectivePhase, PhaseResult};
 use crate::harness_observability::RunUsage;
+use crate::manifest::{ProfileConstraintStrength, ProfileMetadata};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,6 +43,12 @@ pub struct ConsumerContextSnapshot {
     pub path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub byte_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approximate_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -56,6 +63,19 @@ pub struct ServiceReadinessSnapshot {
     pub kind: String,
     pub identity: String,
     pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProfileSnapshot {
+    pub name: String,
+    pub version: String,
+    pub profile: ProfileMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ProfileBindingSnapshot {
+    pub global: Vec<String>,
+    pub phases: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -74,6 +94,8 @@ pub struct RuntimeSnapshot {
     pub consumer_context: Option<ConsumerContextSnapshot>,
     pub services: Vec<ServiceReadinessSnapshot>,
     pub hook_registrations: Vec<String>,
+    pub profiles: Vec<ProfileSnapshot>,
+    pub profile_bindings: ProfileBindingSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelProviderSelection>,
 }
@@ -92,6 +114,8 @@ impl RuntimeSnapshot {
             consumer_context: None,
             services: Vec::new(),
             hook_registrations: Vec::new(),
+            profiles: Vec::new(),
+            profile_bindings: ProfileBindingSnapshot::default(),
             model: None,
         }
     }
@@ -196,7 +220,12 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         control.push_str(&format!("\nRepair feedback from previous turn: {feedback}"));
     }
 
-    let authored = format!("Phase objective:\n  {}", input.phase_objective);
+    let mut authored = format!("Phase objective:\n  {}", input.phase_objective);
+    let profiles = render_active_profiles(input.effective_phase);
+    if !profiles.is_empty() {
+        authored.push_str("\n\n");
+        authored.push_str(&profiles);
+    }
 
     let mut context = format!("Run input:\n{}", input.run_input);
     if let Some(consumer_context) = input.consumer_context {
@@ -304,6 +333,83 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         action_aliases,
         completion,
         diagnostics,
+    }
+}
+
+fn render_active_profiles(effective_phase: &EffectivePhase) -> String {
+    effective_phase
+        .active_profiles
+        .iter()
+        .map(|profile| {
+            let mut block = format!("Profile: {}@{}", profile.name, profile.version);
+            block.push_str(&render_profile_metadata(&profile.profile));
+            block
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn render_profile_metadata(profile: &ProfileMetadata) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("\n  Identity role: {}", profile.identity.role));
+    if let Some(description) = &profile.identity.description {
+        lines.push(format!("  Identity description: {description}"));
+    }
+    push_list(&mut lines, "  Expertise", &profile.identity.expertise);
+    push_list(&mut lines, "  Objectives", &profile.objectives);
+    push_list(&mut lines, "  Principles", &profile.principles);
+    if let Some(audience) = &profile.audience {
+        if let Some(description) = &audience.description {
+            lines.push(format!("  Audience: {description}"));
+        }
+        if let Some(assumed_knowledge) = &audience.assumed_knowledge {
+            lines.push(format!("  Audience assumed knowledge: {assumed_knowledge}"));
+        }
+        push_list(&mut lines, "  Audience adaptation", &audience.adaptation);
+    }
+    push_list(&mut lines, "  Tone", &profile.communication.tone);
+    lines.push(format!(
+        "  Verbosity: {:?}",
+        profile.communication.verbosity
+    ));
+    push_list(
+        &mut lines,
+        "  Communication guidelines",
+        &profile.communication.guidelines,
+    );
+    push_list(
+        &mut lines,
+        "  Formatting",
+        &profile.communication.formatting,
+    );
+    if let Some(vocabulary) = &profile.communication.vocabulary {
+        push_list(&mut lines, "  Preferred vocabulary", &vocabulary.prefer);
+        push_list(&mut lines, "  Avoided vocabulary", &vocabulary.avoid);
+    }
+    push_list(&mut lines, "  Boundaries", &profile.boundaries);
+    if !profile.constraints.is_empty() {
+        lines.push("  Constraints:".into());
+        for constraint in &profile.constraints {
+            let strength = match constraint.strength {
+                ProfileConstraintStrength::Required => "required",
+                ProfileConstraintStrength::Preferred => "preferred",
+            };
+            lines.push(format!(
+                "  - [{strength}] {}: {}",
+                constraint.id, constraint.instruction
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+fn push_list(lines: &mut Vec<String>, label: &str, values: &[String]) {
+    if values.is_empty() {
+        return;
+    }
+    lines.push(format!("{label}:"));
+    for value in values {
+        lines.push(format!("  - {value}"));
     }
 }
 

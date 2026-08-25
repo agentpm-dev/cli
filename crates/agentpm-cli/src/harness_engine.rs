@@ -11,18 +11,20 @@ use crate::harness_plan::{PreflightDiagnostic, PreflightStatus};
 use crate::harness_runtime::model::ModelTurn;
 use crate::harness_runtime::{
     ActionDispatchResult, ActionDispatcher, ApprovalController, ApprovalDecision,
-    CapabilityDescriptor, ModelRequest, ModelRuntime, PromptAssemblyInput, RuntimeSnapshot,
-    SemanticAction, TranscriptEntry, TranscriptEntryKind, assemble_logical_prompt,
+    CapabilityDescriptor, ModelRequest, ModelRuntime, ProfileSnapshot, PromptAssemblyInput,
+    RuntimeSnapshot, SemanticAction, TranscriptEntry, TranscriptEntryKind, assemble_logical_prompt,
 };
 use crate::manifest::{
     LoopManifest, LoopPhase, LoopPhaseFailureAction, LoopToolFailureAction,
-    LoopToolFailureExhaustedAction,
+    LoopToolFailureExhaustedAction, ProfileMetadata,
 };
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -67,12 +69,33 @@ pub struct EffectivePhase {
     pub knowledge_allowed: Option<bool>,
     pub memory_read_allowed: Option<bool>,
     pub memory_write_allowed: Option<bool>,
+    pub authored_profile_candidates: Vec<String>,
+    pub active_profiles: Vec<ActiveProfile>,
     pub capability_catalog: Vec<CapabilityDescriptor>,
+    pub suppressed_capabilities: Vec<SuppressedCapability>,
 }
 
 impl EffectivePhase {
-    fn from_phase(phase: &LoopPhase) -> Self {
+    fn from_phase(phase: &LoopPhase, runtime: &RuntimeSnapshot) -> Self {
         let access = phase.access.as_ref();
+        let authored_profile_candidates = profile_candidates_for_phase(phase, runtime);
+        let mut active_profiles = Vec::new();
+        let mut suppressed_capabilities = Vec::new();
+        for candidate in &authored_profile_candidates {
+            if let Some(profile) = runtime
+                .profiles
+                .iter()
+                .find(|profile| profile.name == *candidate)
+            {
+                active_profiles.push(ActiveProfile::from_snapshot(profile));
+            } else {
+                suppressed_capabilities.push(SuppressedCapability {
+                    kind: "profile".into(),
+                    identity: candidate.clone(),
+                    reason: "resolved profile metadata unavailable".into(),
+                });
+            }
+        }
         Self {
             phase_id: phase.id.clone(),
             tools_allowed: access.and_then(|access| access.tools),
@@ -83,7 +106,10 @@ impl EffectivePhase {
             memory_write_allowed: access
                 .and_then(|access| access.memory.as_ref())
                 .and_then(|memory| memory.write),
+            authored_profile_candidates,
+            active_profiles,
             capability_catalog: phase_completion_descriptors(phase),
+            suppressed_capabilities,
         }
     }
 
@@ -100,6 +126,48 @@ impl EffectivePhase {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActiveProfile {
+    pub name: String,
+    pub version: String,
+    pub profile: ProfileMetadata,
+}
+
+impl ActiveProfile {
+    fn from_snapshot(snapshot: &ProfileSnapshot) -> Self {
+        Self {
+            name: snapshot.name.clone(),
+            version: snapshot.version.clone(),
+            profile: snapshot.profile.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SuppressedCapability {
+    pub kind: String,
+    pub identity: String,
+    pub reason: String,
+}
+
+fn profile_candidates_for_phase(phase: &LoopPhase, runtime: &RuntimeSnapshot) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut candidates = Vec::new();
+    for profile in runtime.profile_bindings.global.iter().chain(
+        runtime
+            .profile_bindings
+            .phases
+            .get(&phase.id)
+            .into_iter()
+            .flatten(),
+    ) {
+        if seen.insert(profile.clone()) {
+            candidates.push(profile.clone());
+        }
+    }
+    candidates
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -258,11 +326,12 @@ impl HarnessSession {
                 ..HarnessEventBuilder::default()
             },
         )?;
+        let runtime = self.snapshot_runtime_for_run(&run_id)?;
         self.active_run = Some(RunState {
             context: RunContext {
                 run_id: run_id.clone(),
                 input,
-                runtime: self.runtime_snapshot.clone(),
+                runtime,
             },
             status: RuntimeTerminalStatus::Running,
             current_phase_id: None,
@@ -283,6 +352,82 @@ impl HarnessSession {
         });
         Ok(run_id)
     }
+
+    fn snapshot_runtime_for_run(&mut self, run_id: &str) -> Result<RuntimeSnapshot> {
+        let mut runtime = self.runtime_snapshot.clone();
+        let Some(context) = runtime.consumer_context.as_mut() else {
+            return Ok(runtime);
+        };
+        let Some(path) = context.path.clone() else {
+            if context.file.is_some() {
+                self.emitter.emit(
+                    HarnessEventType::ConsumerContextUnavailable,
+                    HarnessEventPayload::Lifecycle {
+                        message: "Consumer context is unavailable for this Run.".into(),
+                        fields: BTreeMap::from([("state".into(), json!(context.state))]),
+                    },
+                    HarnessEventBuilder {
+                        run_id: Some(run_id.to_string()),
+                        ..HarnessEventBuilder::default()
+                    },
+                )?;
+            }
+            return Ok(runtime);
+        };
+        match fs::read(&path) {
+            Ok(bytes) => {
+                let content = String::from_utf8_lossy(&bytes).to_string();
+                context.state = "Available".into();
+                context.byte_size = Some(bytes.len() as u64);
+                context.approximate_tokens = Some(estimate_tokens(&content));
+                context.sha256 = Some(format!("sha256:{:x}", Sha256::digest(&bytes)));
+                context.content = Some(content);
+                self.emitter.emit(
+                    HarnessEventType::ConsumerContextLoaded,
+                    HarnessEventPayload::Lifecycle {
+                        message: "Consumer context loaded for this Run.".into(),
+                        fields: BTreeMap::from([
+                            ("path".into(), json!(path)),
+                            ("byte_size".into(), json!(context.byte_size)),
+                            (
+                                "approximate_tokens".into(),
+                                json!(context.approximate_tokens),
+                            ),
+                            ("sha256".into(), json!(context.sha256)),
+                        ]),
+                    },
+                    HarnessEventBuilder {
+                        run_id: Some(run_id.to_string()),
+                        ..HarnessEventBuilder::default()
+                    },
+                )?;
+            }
+            Err(err) => {
+                context.state = "Unavailable".into();
+                context.content = None;
+                self.emitter.emit(
+                    HarnessEventType::ConsumerContextUnavailable,
+                    HarnessEventPayload::Lifecycle {
+                        message: "Consumer context could not be loaded for this Run.".into(),
+                        fields: BTreeMap::from([
+                            ("path".into(), json!(path)),
+                            ("error".into(), json!(err.to_string())),
+                        ]),
+                    },
+                    HarnessEventBuilder {
+                        run_id: Some(run_id.to_string()),
+                        ..HarnessEventBuilder::default()
+                    },
+                )?;
+            }
+        }
+        Ok(runtime)
+    }
+}
+
+fn estimate_tokens(content: &str) -> u64 {
+    let words = content.split_whitespace().count() as u64;
+    words.max((content.len() as u64).div_ceil(4))
 }
 
 impl Default for HarnessSession {
@@ -536,7 +681,8 @@ impl HarnessEngine {
         self.phase_executions += 1;
         let phase_execution_id = format!("phase-exec-{}", self.phase_executions);
         let run_id = self.active_run(session)?.run_id().to_string();
-        let effective_phase = EffectivePhase::from_phase(phase);
+        let effective_phase =
+            EffectivePhase::from_phase(phase, &self.active_run(session)?.context.runtime);
         {
             let run = self.active_run_mut(session)?;
             run.current_phase_id = Some(phase.id.clone());
@@ -560,7 +706,36 @@ impl HarnessEngine {
             HarnessEventType::EffectivePhaseComputed,
             HarnessEventPayload::Lifecycle {
                 message: "Effective phase computed.".into(),
-                fields: BTreeMap::from([("phase_id".into(), json!(phase.id))]),
+                fields: BTreeMap::from([
+                    ("phase_id".into(), json!(phase.id)),
+                    (
+                        "profile_candidates".into(),
+                        json!(effective_phase.authored_profile_candidates.clone()),
+                    ),
+                    (
+                        "active_profiles".into(),
+                        json!(effective_phase.active_profiles.clone()),
+                    ),
+                    (
+                        "suppressed_profiles".into(),
+                        json!(
+                            effective_phase
+                                .suppressed_capabilities
+                                .iter()
+                                .filter(|capability| capability.kind == "profile")
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        ),
+                    ),
+                    (
+                        "capability_descriptors".into(),
+                        json!(effective_phase.capability_catalog.clone()),
+                    ),
+                    (
+                        "suppressed_capabilities".into(),
+                        json!(effective_phase.suppressed_capabilities.clone()),
+                    ),
+                ]),
             },
             HarnessEventBuilder {
                 run_id: Some(run_id.clone()),
@@ -1333,7 +1508,27 @@ impl HarnessEngine {
             diagnostics: Vec::<PreflightDiagnostic>::new(),
             runtime: Default::default(),
             runtime_sources: BTreeMap::new(),
-            consumer_context: None,
+            consumer_context: run
+                .context
+                .runtime
+                .consumer_context
+                .as_ref()
+                .map(
+                    |context| crate::harness_observability::ConsumerContextReportSummary {
+                        status: if context.content.is_some() {
+                            "loaded".into()
+                        } else {
+                            context.state.to_ascii_lowercase()
+                        },
+                        path: context.file.clone().or_else(|| {
+                            context.path.as_ref().map(|path| path.display().to_string())
+                        }),
+                        byte_size: context.byte_size,
+                        approximate_tokens: context.approximate_tokens,
+                        sha256: context.sha256.clone(),
+                        content_included: false,
+                    },
+                ),
             scope_summaries: Vec::new(),
             phase_summaries: run.phase_summaries.clone(),
             checkpoint_summaries: run.checkpoint_summaries.clone(),
@@ -1743,6 +1938,7 @@ mod tests {
         LoopAccessMemory, LoopCheckpoint, LoopErrorPolicy, LoopLimits, LoopMetadata, LoopOutcome,
         LoopPhaseAccess, LoopPhaseFailurePolicy, LoopToolFailurePolicy, LoopTransition,
     };
+    use std::collections::VecDeque;
     use std::path::PathBuf;
 
     fn limits() -> HarnessRuntimeLimits {
@@ -1856,6 +2052,93 @@ mod tests {
             usage: RunUsage::default(),
             finish_reason: None,
             provider_metadata: BTreeMap::new(),
+        }
+    }
+
+    fn profile_snapshot(name: &str, version: &str, role: &str) -> ProfileSnapshot {
+        ProfileSnapshot {
+            name: name.into(),
+            version: version.into(),
+            profile: serde_json::from_value(json!({
+                "identity": {
+                    "role": role,
+                    "description": "Profile identity description.",
+                    "expertise": ["support operations"]
+                },
+                "objectives": ["Keep the answer actionable."],
+                "principles": ["Prefer evidence over speculation."],
+                "audience": {
+                    "description": "Operators.",
+                    "assumed_knowledge": "Basic incident terminology.",
+                    "adaptation": ["Use direct next steps."]
+                },
+                "communication": {
+                    "tone": ["calm", "precise"],
+                    "verbosity": "concise",
+                    "guidelines": ["Lead with the decision."],
+                    "formatting": ["Use compact bullets."],
+                    "vocabulary": {
+                        "prefer": ["next checkpoint"],
+                        "avoid": ["obviously"]
+                    }
+                },
+                "boundaries": ["Do not invent evidence."],
+                "constraints": [
+                    {
+                        "id": "cite-evidence",
+                        "strength": "required",
+                        "instruction": "Tie recommendations to observed evidence."
+                    },
+                    {
+                        "id": "state-risk",
+                        "strength": "preferred",
+                        "instruction": "Name residual risk when present."
+                    }
+                ]
+            }))
+            .unwrap(),
+        }
+    }
+
+    fn temp_context_file(label: &str, content: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "agentpm-harness-engine-{label}-{}-context.md",
+            std::process::id()
+        ));
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    struct MutatingModelRuntime {
+        turns: VecDeque<ModelTurn>,
+        requests: Vec<ModelRequest>,
+        mutate_path: PathBuf,
+        replacement: String,
+    }
+
+    impl MutatingModelRuntime {
+        fn new(turns: Vec<ModelTurn>, mutate_path: PathBuf, replacement: &str) -> Self {
+            Self {
+                turns: turns.into(),
+                requests: Vec::new(),
+                mutate_path,
+                replacement: replacement.into(),
+            }
+        }
+    }
+
+    impl ModelRuntime for MutatingModelRuntime {
+        fn generate(
+            &mut self,
+            request: ModelRequest,
+        ) -> std::result::Result<ModelTurn, ModelRuntimeFailure> {
+            self.requests.push(request);
+            if self.requests.len() == 1 {
+                std::fs::write(&self.mutate_path, &self.replacement).unwrap();
+            }
+            self.turns
+                .pop_front()
+                .ok_or_else(|| ModelRuntimeFailure::new("no scripted turn"))
         }
     }
 
@@ -2047,6 +2330,9 @@ mod tests {
             file: Some("ops-context.md".into()),
             path: Some(PathBuf::from("/workspace/ops-context.md")),
             content: None,
+            byte_size: None,
+            approximate_tokens: None,
+            sha256: None,
         });
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let mut session = HarnessSession::with_runtime_snapshot(snapshot);
@@ -2088,6 +2374,274 @@ mod tests {
         assert_eq!(request.runtime.runtime_scopes["user"], "user-1");
         assert_eq!(request.prompt.action_aliases.len(), 1);
         assert!(request.prompt.render_text().contains("Harness authority"));
+    }
+
+    #[test]
+    fn effective_phase_injects_profiles_global_then_phase_and_dedupes() {
+        let mut snapshot = RuntimeSnapshot::empty("session-test".into());
+        snapshot.profiles = vec![
+            profile_snapshot("@zack/global-style", "0.1.0", "Global role"),
+            profile_snapshot("@zack/phase-style", "0.2.0", "Phase role"),
+        ];
+        snapshot.profile_bindings = crate::harness_runtime::model::ProfileBindingSnapshot {
+            global: vec!["@zack/global-style".into(), "@zack/phase-style".into()],
+            phases: BTreeMap::from([(
+                "assess".into(),
+                vec![
+                    "@zack/phase-style".into(),
+                    "@zack/global-style".into(),
+                    "@zack/missing-style".into(),
+                ],
+            )]),
+        };
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let mut session = HarnessSession::with_runtime_snapshot(snapshot);
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new(vec![
+            completion("a", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+
+        engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+        let effective = &model.requests[0].effective_phase;
+        assert_eq!(
+            effective.authored_profile_candidates,
+            vec![
+                "@zack/global-style",
+                "@zack/phase-style",
+                "@zack/missing-style"
+            ]
+        );
+        assert_eq!(effective.active_profiles.len(), 2);
+        assert_eq!(effective.suppressed_capabilities.len(), 1);
+        let prompt = model.requests[0].prompt.render_text();
+        let global_index = prompt.find("Profile: @zack/global-style@0.1.0").unwrap();
+        let phase_index = prompt.find("Profile: @zack/phase-style@0.2.0").unwrap();
+        assert!(global_index < phase_index);
+        assert_eq!(prompt.matches("Profile: @zack/global-style").count(), 1);
+        assert!(prompt.contains("[required] cite-evidence"));
+        assert!(prompt.contains("Preferred vocabulary"));
+        let effective_event = handle
+            .events()
+            .into_iter()
+            .find(|event| event.event_type == HarnessEventType::EffectivePhaseComputed)
+            .unwrap();
+        let HarnessEventPayload::Lifecycle { fields, .. } = effective_event.payload else {
+            panic!("expected lifecycle payload");
+        };
+        assert_eq!(
+            fields["suppressed_profiles"][0]["identity"],
+            "@zack/missing-style"
+        );
+    }
+
+    #[test]
+    fn consumer_context_is_snapshotted_per_run_and_reloaded_next_run() {
+        let path = temp_context_file("reload", "first run context\n");
+        let mut snapshot = RuntimeSnapshot::empty("session-test".into());
+        snapshot.consumer_context = Some(crate::harness_runtime::ConsumerContextSnapshot {
+            state: "Available".into(),
+            file: Some("context.md".into()),
+            path: Some(path.clone()),
+            content: None,
+            byte_size: None,
+            approximate_tokens: None,
+            sha256: None,
+        });
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let mut session = HarnessSession::with_runtime_snapshot(snapshot);
+        let mut first_model = MutatingModelRuntime::new(
+            vec![
+                completion("a", "execute"),
+                completion("b", "review"),
+                completion("c", "ready"),
+            ],
+            path.clone(),
+            "edited during first run\n",
+        );
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let first_result = engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut first_model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+        let HarnessRunResult::Terminal(first_result) = first_result else {
+            panic!("expected terminal result");
+        };
+        let report_context = first_result.report.consumer_context.as_ref().unwrap();
+        assert_eq!(report_context.status, "loaded");
+        assert!(report_context.byte_size.is_some());
+        assert!(report_context.approximate_tokens.is_some());
+        assert!(
+            first_model
+                .requests
+                .iter()
+                .all(|request| request.prompt.render_text().contains("first run context"))
+        );
+        assert!(first_model.requests.iter().all(|request| {
+            !request
+                .prompt
+                .render_text()
+                .contains("edited during first run")
+        }));
+
+        session.clear_terminal_active_run();
+        let mut second_model = ScriptedModelRuntime::new(vec![
+            completion("d", "execute"),
+            completion("e", "review"),
+            completion("f", "ready"),
+        ]);
+        engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut second_model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+        assert!(
+            second_model.requests[0]
+                .prompt
+                .render_text()
+                .contains("edited during first run")
+        );
+        let context = second_model.requests[0]
+            .runtime
+            .consumer_context
+            .as_ref()
+            .unwrap();
+        assert!(context.byte_size.is_some());
+        assert!(context.approximate_tokens.is_some());
+        assert!(context.sha256.as_deref().unwrap().starts_with("sha256:"));
+    }
+
+    #[test]
+    fn missing_consumer_context_without_resolved_path_is_evented_and_non_fatal() {
+        let mut snapshot = RuntimeSnapshot::empty("session-test".into());
+        snapshot.consumer_context = Some(crate::harness_runtime::ConsumerContextSnapshot {
+            state: "Unavailable".into(),
+            file: Some("missing-context.md".into()),
+            path: None,
+            content: None,
+            byte_size: None,
+            approximate_tokens: None,
+            sha256: None,
+        });
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let mut session = HarnessSession::with_runtime_snapshot(snapshot);
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new(vec![
+            completion("a", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+
+        let result = engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+
+        assert!(matches!(result, HarnessRunResult::Terminal(_)));
+        assert!(
+            model.requests[0]
+                .prompt
+                .diagnostics
+                .iter()
+                .any(|diagnostic| {
+                    diagnostic.contains("consumer context content is not loaded")
+                })
+        );
+        assert_consumer_context_unavailable_event(&handle);
+    }
+
+    #[test]
+    fn consumer_context_deleted_before_run_start_is_evented_and_non_fatal() {
+        let path = temp_context_file("deleted", "deleted before run\n");
+        std::fs::remove_file(&path).unwrap();
+        let mut snapshot = RuntimeSnapshot::empty("session-test".into());
+        snapshot.consumer_context = Some(crate::harness_runtime::ConsumerContextSnapshot {
+            state: "Available".into(),
+            file: Some("context.md".into()),
+            path: Some(path),
+            content: None,
+            byte_size: Some(19),
+            approximate_tokens: Some(5),
+            sha256: Some("sha256:preflight".into()),
+        });
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let mut session = HarnessSession::with_runtime_snapshot(snapshot);
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new(vec![
+            completion("a", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+
+        let result = engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(
+            result.report.consumer_context.as_ref().unwrap().status,
+            "unavailable"
+        );
+        assert!(
+            !model.requests[0]
+                .prompt
+                .render_text()
+                .contains("deleted before run")
+        );
+        assert_consumer_context_unavailable_event(&handle);
+    }
+
+    fn assert_consumer_context_unavailable_event(handle: &InMemoryEventSink) {
+        assert!(
+            handle
+                .events()
+                .iter()
+                .any(|event| event.event_type == HarnessEventType::ConsumerContextUnavailable)
+        );
     }
 
     #[test]

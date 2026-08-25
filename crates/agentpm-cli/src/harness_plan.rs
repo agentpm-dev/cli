@@ -4,16 +4,25 @@ use crate::harness_config::{
 };
 use crate::manifest::{
     AgentBindingScope, AgentBindings, AgentManifest, KnowledgeManifest, MemoryManifest,
-    MemoryOperation, PackageReference, SkillManifest, load_manifest_value,
-    parse_knowledge_manifest, parse_loop_manifest, parse_memory_manifest, parse_skill_manifest,
+    MemoryOperation, PackageReference, ProfileCapabilityHints, SkillManifest, load_manifest_value,
+    parse_knowledge_manifest, parse_loop_manifest, parse_memory_manifest, parse_profile_manifest,
+    parse_skill_manifest,
 };
 use crate::prelude::*;
 use crate::semver::types::{
     Lock, LockV2, LockedPackage, LockedRoot, PackageKind, split_package_ref,
 };
+use crate::{
+    harness_runtime::model::{
+        ModelCapabilityAdvertisement, ModelProviderSelection, ProfileBindingSnapshot,
+        ProfileSnapshot,
+    },
+    harness_runtime::provider::built_in_capabilities,
+};
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
@@ -91,6 +100,9 @@ pub struct ConsumerContextReadiness {
     pub state: CapabilityState,
     pub file: Option<String>,
     pub path: Option<PathBuf>,
+    pub byte_size: Option<u64>,
+    pub approximate_tokens: Option<u64>,
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -123,6 +135,8 @@ pub struct ResolvedHarnessPlan {
     pub package_graph: BTreeMap<String, ResolvedPackageInfo>,
     pub runtime_scopes: BTreeMap<String, String>,
     pub consumer_context: ConsumerContextReadiness,
+    pub profile_bindings: ProfileBindingSnapshot,
+    pub profiles: BTreeMap<String, ProfileSnapshot>,
     pub capabilities: Vec<StaticCapabilityCandidate>,
     pub report: PreflightReport,
 }
@@ -157,6 +171,8 @@ struct PlanParts {
     package_graph: BTreeMap<String, ResolvedPackageInfo>,
     runtime_scopes: BTreeMap<String, String>,
     consumer_context: ConsumerContextReadiness,
+    profile_bindings: ProfileBindingSnapshot,
+    profiles: BTreeMap<String, ProfileSnapshot>,
     capabilities: Vec<StaticCapabilityCandidate>,
     diagnostics: Vec<PreflightDiagnostic>,
 }
@@ -180,12 +196,17 @@ pub fn resolve_harness_plan(
     let mut diagnostics = Vec::new();
     let mut package_graph = BTreeMap::new();
     let mut capabilities = Vec::new();
+    let mut profile_bindings = ProfileBindingSnapshot::default();
+    let mut profiles = BTreeMap::new();
     let mut selected_manifest = None;
     let mut loop_package = None;
     let mut consumer_context = ConsumerContextReadiness {
         state: CapabilityState::NotConfigured,
         file: None,
         path: None,
+        byte_size: None,
+        approximate_tokens: None,
+        sha256: None,
     };
 
     let Some(lock) = read_required_lock(&lock_path, &mut diagnostics)? else {
@@ -198,6 +219,8 @@ pub fn resolve_harness_plan(
             package_graph,
             runtime_scopes: options.runtime_scopes.clone(),
             consumer_context,
+            profile_bindings,
+            profiles,
             capabilities,
             diagnostics,
         }));
@@ -213,6 +236,8 @@ pub fn resolve_harness_plan(
             package_graph,
             runtime_scopes: options.runtime_scopes.clone(),
             consumer_context,
+            profile_bindings,
+            profiles,
             capabilities,
             diagnostics,
         }));
@@ -249,6 +274,8 @@ pub fn resolve_harness_plan(
             &options.runtime_scopes,
             options.surface,
             &mut consumer_context,
+            &mut profile_bindings,
+            &mut profiles,
             &mut capabilities,
             &mut diagnostics,
         )?;
@@ -263,6 +290,8 @@ pub fn resolve_harness_plan(
         package_graph,
         runtime_scopes: options.runtime_scopes.clone(),
         consumer_context,
+        profile_bindings,
+        profiles,
         capabilities,
         diagnostics,
     }))
@@ -283,6 +312,8 @@ fn build_plan(parts: PlanParts) -> ResolvedHarnessPlan {
         package_graph: parts.package_graph,
         runtime_scopes: parts.runtime_scopes,
         consumer_context: parts.consumer_context,
+        profile_bindings: parts.profile_bindings,
+        profiles: parts.profiles,
         capabilities: parts.capabilities,
         report,
     }
@@ -651,6 +682,8 @@ fn validate_selected_agent(
     runtime_scopes: &BTreeMap<String, String>,
     surface: HarnessExecutionSurface,
     consumer_context: &mut ConsumerContextReadiness,
+    profile_bindings: &mut ProfileBindingSnapshot,
+    profiles: &mut BTreeMap<String, ProfileSnapshot>,
     capabilities: &mut Vec<StaticCapabilityCandidate>,
     diagnostics: &mut Vec<PreflightDiagnostic>,
 ) -> Result<()> {
@@ -670,6 +703,7 @@ fn validate_selected_agent(
     let mut tool_readiness = BTreeMap::new();
     validate_consumer_context(workspace_root, bindings, consumer_context, diagnostics);
     validate_phase_bindings(bindings, &loop_phase_ids, diagnostics);
+    *profile_bindings = collect_profile_bindings(bindings, &loop_phase_ids);
     validate_bound_scopes(
         workspace_root,
         agent,
@@ -680,6 +714,14 @@ fn validate_selected_agent(
         capabilities,
         diagnostics,
     )?;
+    *profiles = load_active_profiles(
+        workspace_root,
+        agent,
+        profile_bindings,
+        package_graph,
+        config,
+        diagnostics,
+    );
     validate_mcp_exports(agent, bindings, package_graph, diagnostics);
     validate_config_mappings(config, agent, package_graph, diagnostics);
     validate_mcp_import_scopes(config, &loop_phase_ids, capabilities, diagnostics);
@@ -898,6 +940,241 @@ fn validate_bound_scopes(
         )?;
     }
     Ok(())
+}
+
+fn collect_profile_bindings(
+    bindings: &AgentBindings,
+    loop_phase_ids: &BTreeSet<String>,
+) -> ProfileBindingSnapshot {
+    let global = bindings
+        .global
+        .as_ref()
+        .map(|scope| {
+            scope
+                .profiles
+                .iter()
+                .map(|profile| package_identity(profile))
+                .collect()
+        })
+        .unwrap_or_default();
+    let phases = bindings
+        .phases
+        .iter()
+        .filter(|(phase, _)| loop_phase_ids.contains(*phase))
+        .map(|(phase, scope)| {
+            (
+                phase.clone(),
+                scope
+                    .profiles
+                    .iter()
+                    .map(|profile| package_identity(profile))
+                    .collect(),
+            )
+        })
+        .collect();
+    ProfileBindingSnapshot { global, phases }
+}
+
+fn load_active_profiles(
+    workspace_root: &Path,
+    agent: &ResolvedAgentRoot,
+    bindings: &ProfileBindingSnapshot,
+    package_graph: &BTreeMap<String, ResolvedPackageInfo>,
+    config: &ResolvedHarnessConfig,
+    diagnostics: &mut Vec<PreflightDiagnostic>,
+) -> BTreeMap<String, ProfileSnapshot> {
+    let declared_profiles = package_names(package_graph, &agent.profiles);
+    let active_identities = active_profile_identities(bindings);
+    let mut loaded = BTreeMap::new();
+    for identity in active_identities {
+        if !declared_profiles.contains(&identity) {
+            continue;
+        }
+        let Some(package) = package_by_name(package_graph, PackageKind::Profile, &identity) else {
+            continue;
+        };
+        let manifest_path = package.root.join("agent.json");
+        match load_manifest_value(&manifest_path)
+            .and_then(|(value, _)| parse_profile_manifest(&value))
+        {
+            Ok(manifest) => {
+                validate_profile_compatibility(
+                    &manifest.name,
+                    &manifest.profile,
+                    config,
+                    diagnostics,
+                );
+                loaded.insert(
+                    manifest.name.clone(),
+                    ProfileSnapshot {
+                        name: manifest.name,
+                        version: manifest.version,
+                        profile: manifest.profile,
+                    },
+                );
+            }
+            Err(err) => push_diag(
+                diagnostics,
+                PreflightDiagnosticSeverity::Warning,
+                "profile_manifest_unavailable",
+                format!(
+                    "Profile `{identity}` is active but its manifest could not be loaded: {err}"
+                ),
+                Some(path_for_report(workspace_root, &manifest_path)),
+            ),
+        }
+    }
+    warn_profile_role_conflicts(&loaded, diagnostics);
+    loaded
+}
+
+fn active_profile_identities(bindings: &ProfileBindingSnapshot) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut identities = Vec::new();
+    for identity in bindings
+        .global
+        .iter()
+        .chain(bindings.phases.values().flatten())
+    {
+        if seen.insert(identity.clone()) {
+            identities.push(identity.clone());
+        }
+    }
+    identities
+}
+
+fn validate_profile_compatibility(
+    profile_name: &str,
+    profile: &crate::manifest::ProfileMetadata,
+    config: &ResolvedHarnessConfig,
+    diagnostics: &mut Vec<PreflightDiagnostic>,
+) {
+    let Some(compatibility) = &profile.compatibility else {
+        return;
+    };
+    let capabilities = config.config.model.as_ref().map(|model| {
+        built_in_capabilities(&ModelProviderSelection {
+            provider: model.provider.clone(),
+            model: model.model.clone(),
+            options: model.options.clone(),
+        })
+    });
+    if let Some(required_tokens) = compatibility.minimum_context_tokens {
+        match capabilities
+            .as_ref()
+            .and_then(|capabilities| capabilities.context_window_tokens)
+        {
+            Some(actual_tokens) if actual_tokens < required_tokens => push_diag(
+                diagnostics,
+                PreflightDiagnosticSeverity::Warning,
+                "profile_min_context_insufficient",
+                format!(
+                    "Profile `{profile_name}` requests at least {required_tokens} context tokens, but the selected model advertises {actual_tokens}."
+                ),
+                None::<String>,
+            ),
+            Some(_) => {}
+            None => push_diag(
+                diagnostics,
+                PreflightDiagnosticSeverity::Info,
+                "profile_min_context_unverified",
+                format!(
+                    "Profile `{profile_name}` requests at least {required_tokens} context tokens, but the selected model context window is unverified."
+                ),
+                None::<String>,
+            ),
+        }
+    }
+    if let Some(requires) = &compatibility.requires {
+        validate_profile_capability_hints(
+            profile_name,
+            requires,
+            capabilities.as_ref(),
+            PreflightDiagnosticSeverity::Warning,
+            "profile_required_capability_unavailable",
+            diagnostics,
+        );
+    }
+    if let Some(recommends) = &compatibility.recommends {
+        validate_profile_capability_hints(
+            profile_name,
+            recommends,
+            capabilities.as_ref(),
+            PreflightDiagnosticSeverity::Info,
+            "profile_recommended_capability_unverified",
+            diagnostics,
+        );
+    }
+}
+
+fn validate_profile_capability_hints(
+    profile_name: &str,
+    hints: &ProfileCapabilityHints,
+    capabilities: Option<&ModelCapabilityAdvertisement>,
+    severity: PreflightDiagnosticSeverity,
+    code: &str,
+    diagnostics: &mut Vec<PreflightDiagnostic>,
+) {
+    for (capability, required, available) in [
+        (
+            "tool_use",
+            hints.tool_use,
+            capabilities.map(|capabilities| capabilities.semantic_actions),
+        ),
+        (
+            "structured_output",
+            hints.structured_output,
+            capabilities.map(|capabilities| capabilities.structured_output),
+        ),
+        (
+            "multimodal_input",
+            hints.multimodal_input,
+            capabilities.map(|capabilities| capabilities.multimodal_input),
+        ),
+    ] {
+        if required != Some(true) {
+            continue;
+        }
+        if available == Some(true) {
+            continue;
+        }
+        let state = if available == Some(false) {
+            "unavailable"
+        } else {
+            "unverified"
+        };
+        push_diag(
+            diagnostics,
+            severity,
+            code,
+            format!(
+                "Profile `{profile_name}` declares {capability} as {state} for the selected model."
+            ),
+            None::<String>,
+        );
+    }
+}
+
+fn warn_profile_role_conflicts(
+    profiles: &BTreeMap<String, ProfileSnapshot>,
+    diagnostics: &mut Vec<PreflightDiagnostic>,
+) {
+    let roles = profiles
+        .values()
+        .map(|profile| profile.profile.identity.role.as_str())
+        .collect::<BTreeSet<_>>();
+    if roles.len() > 1 {
+        push_diag(
+            diagnostics,
+            PreflightDiagnosticSeverity::Warning,
+            "profile_identity_conflict",
+            format!(
+                "Active Profiles declare different identity roles: {}. Harness will preserve both as distinct authored inputs without inventing precedence.",
+                roles.into_iter().collect::<Vec<_>>().join(", ")
+            ),
+            None::<String>,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1648,7 +1925,27 @@ fn validate_consumer_context(
     match resolve_workspace_file(workspace_root, &context.file) {
         Ok(path) if path.is_file() => {
             readiness.state = CapabilityState::Available;
-            readiness.path = Some(path);
+            readiness.path = Some(path.clone());
+            match fs::read(&path) {
+                Ok(bytes) => {
+                    readiness.byte_size = Some(bytes.len() as u64);
+                    readiness.approximate_tokens = Some(estimate_consumer_context_tokens(&bytes));
+                    readiness.sha256 = Some(format!("sha256:{:x}", Sha256::digest(&bytes)));
+                }
+                Err(err) => {
+                    readiness.state = CapabilityState::Unavailable;
+                    push_diag(
+                        diagnostics,
+                        PreflightDiagnosticSeverity::Warning,
+                        "unreadable_consumer_context",
+                        format!(
+                            "Consumer context `{}` could not be read during preflight: {err}.",
+                            context.file
+                        ),
+                        Some("/bindings/consumer_context/file"),
+                    );
+                }
+            }
         }
         Ok(path) => {
             readiness.state = CapabilityState::Unavailable;
@@ -1675,6 +1972,12 @@ fn validate_consumer_context(
             );
         }
     }
+}
+
+fn estimate_consumer_context_tokens(bytes: &[u8]) -> u64 {
+    let content = String::from_utf8_lossy(bytes);
+    let words = content.split_whitespace().count() as u64;
+    words.max((content.len() as u64).div_ceil(4))
 }
 
 fn validate_runtime_scopes(
@@ -2287,6 +2590,7 @@ mod tests {
         write_skill(root);
         write_memory(root);
         write_knowledge(root);
+        write_profile(root, "@zack/style", "0.1.0", "Support reviewer", None);
     }
 
     fn package_root(root: &Path, kind: PackageKind, name: &str, version: &str) -> PathBuf {
@@ -2371,6 +2675,60 @@ mod tests {
                 },
                 "inputs": { "type": "object" },
                 "outputs": { "type": "object" }
+            }),
+        );
+    }
+
+    fn write_profile(
+        root: &Path,
+        name: &str,
+        version: &str,
+        role: &str,
+        compatibility: Option<Value>,
+    ) {
+        let mut profile = json!({
+            "identity": {
+                "role": role,
+                "description": "Authored behavior guidance for Harness tests.",
+                "expertise": ["incident review"]
+            },
+            "objectives": ["Keep responses actionable."],
+            "principles": ["State uncertainty clearly."],
+            "audience": {
+                "description": "Operators using AgentPM examples.",
+                "assumed_knowledge": "Basic incident workflow familiarity.",
+                "adaptation": ["Prefer direct next steps."]
+            },
+            "communication": {
+                "tone": ["calm", "precise"],
+                "verbosity": "concise",
+                "guidelines": ["Use concrete nouns."],
+                "formatting": ["Use short bullets when helpful."],
+                "vocabulary": {
+                    "prefer": ["next checkpoint"],
+                    "avoid": ["obviously"]
+                }
+            },
+            "boundaries": ["Do not claim work was completed without evidence."],
+            "constraints": [
+                {
+                    "id": "cite-evidence",
+                    "strength": "required",
+                    "instruction": "Tie recommendations to observed evidence."
+                }
+            ]
+        });
+        if let Some(compatibility) = compatibility {
+            profile["compatibility"] = compatibility;
+        }
+        write_json(
+            &package_root(root, PackageKind::Profile, name, version).join("agent.json"),
+            json!({
+                "kind": "profile",
+                "name": name,
+                "version": version,
+                "description": "Harness test profile.",
+                "profile": profile
             }),
         );
     }
@@ -2485,6 +2843,15 @@ mod tests {
             "@zack/local-agent"
         );
         assert!(plan.state_dir.ends_with("tmp/harness-state"));
+        assert_eq!(plan.consumer_context.state, CapabilityState::Available);
+        assert!(plan.consumer_context.byte_size.is_some());
+        assert!(plan.consumer_context.approximate_tokens.is_some());
+        assert!(
+            plan.consumer_context
+                .sha256
+                .as_deref()
+                .is_some_and(|sha| sha.starts_with("sha256:"))
+        );
     }
 
     #[test]
@@ -2587,6 +2954,95 @@ mod tests {
         assert!(codes.contains("unknown_phase_binding"));
         assert!(codes.contains("bad_memory_selector"));
         assert!(!codes.contains("unresolved_runtime_scope"));
+    }
+
+    #[test]
+    fn preflight_loads_active_profiles_and_reports_advisory_compatibility() {
+        let root = temp_dir("profile-compatibility");
+        write_base_workspace(&root);
+        let mut packages = base_packages();
+        insert_package(
+            &mut packages,
+            PackageKind::Profile,
+            "@zack/phase-style",
+            "0.2.0",
+        );
+        let mut root_lock = base_root();
+        root_lock.profiles = vec![
+            "profile:@zack/style@0.1.0".to_string(),
+            "profile:@zack/phase-style@0.2.0".to_string(),
+        ];
+        write_profile(
+            &root,
+            "@zack/phase-style",
+            "0.2.0",
+            "Different phase role",
+            Some(json!({
+                "minimum_context_tokens": 999_999_999u64,
+                "requires": {
+                    "multimodal_input": true,
+                    "tool_use": false
+                },
+                "recommends": {
+                    "structured_output": true
+                }
+            })),
+        );
+        write_json(
+            &root.join("agentpm.harness.json"),
+            json!({
+                "version": 1,
+                "model": {
+                    "provider": "openai",
+                    "model": "gpt-4o-mini"
+                }
+            }),
+        );
+        write_json(
+            &root.join("agent.json"),
+            json!({
+                "kind": "agent",
+                "name": "@zack/local-agent",
+                "version": "0.1.0",
+                "profiles": ["@zack/style@0.1.0", "@zack/phase-style@0.2.0"],
+                "loop": "@zack/review-loop@0.1.0",
+                "bindings": {
+                    "global": {
+                        "profiles": ["@zack/style", "@zack/phase-style"]
+                    },
+                    "phases": {
+                        "inspect": {
+                            "profiles": ["@zack/phase-style", "@zack/style"]
+                        }
+                    }
+                }
+            }),
+        );
+        lock_with_root(&root, root_lock, packages);
+
+        let plan = resolve_harness_plan(&root, &options()).unwrap();
+
+        assert!(plan.profiles.contains_key("@zack/style"));
+        assert!(plan.profiles.contains_key("@zack/phase-style"));
+        assert_eq!(
+            plan.profile_bindings.global,
+            vec!["@zack/style", "@zack/phase-style"]
+        );
+        assert_eq!(
+            plan.profile_bindings.phases["inspect"],
+            vec!["@zack/phase-style", "@zack/style"]
+        );
+        let codes = codes(&plan);
+        assert!(codes.contains("profile_min_context_insufficient"));
+        assert!(codes.contains("profile_required_capability_unavailable"));
+        assert!(codes.contains("profile_identity_conflict"));
+        assert!(
+            !plan
+                .report
+                .diagnostics
+                .iter()
+                .any(|diag| diag.message.contains("tool_use") && diag.message.contains("false"))
+        );
     }
 
     #[test]

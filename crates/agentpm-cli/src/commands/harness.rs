@@ -352,6 +352,9 @@ fn runtime_snapshot_from_plan(plan: &ResolvedHarnessPlan) -> RuntimeSnapshot {
             file: plan.consumer_context.file.clone(),
             path: plan.consumer_context.path.clone(),
             content: None,
+            byte_size: plan.consumer_context.byte_size,
+            approximate_tokens: plan.consumer_context.approximate_tokens,
+            sha256: plan.consumer_context.sha256.clone(),
         }),
         services: plan
             .capabilities
@@ -371,6 +374,8 @@ fn runtime_snapshot_from_plan(plan: &ResolvedHarnessPlan) -> RuntimeSnapshot {
             .iter()
             .map(|binding| format!("{:?}:{}", binding.hook, binding.implementation))
             .collect(),
+        profiles: plan.profiles.values().cloned().collect(),
+        profile_bindings: plan.profile_bindings.clone(),
         model: plan
             .config
             .config
@@ -458,10 +463,22 @@ fn print_harness_preflight(
     stream.line(format!("Resolved packages: {}", plan.package_graph.len()))?;
     stream.line(format!("Runtime scopes: {}", plan.runtime_scopes.len()))?;
     match &plan.consumer_context.file {
-        Some(file) => stream.line(format!(
-            "Consumer context: {file} ({:?})",
-            plan.consumer_context.state
-        ))?,
+        Some(file) => {
+            let mut line = format!(
+                "Consumer context: {file} ({:?})",
+                plan.consumer_context.state
+            );
+            if let Some(byte_size) = plan.consumer_context.byte_size {
+                line.push_str(&format!(", {byte_size} bytes"));
+            }
+            if let Some(approximate_tokens) = plan.consumer_context.approximate_tokens {
+                line.push_str(&format!(", ~{approximate_tokens} tokens"));
+            }
+            if let Some(sha256) = &plan.consumer_context.sha256 {
+                line.push_str(&format!(", {sha256}"));
+            }
+            stream.line(line)?
+        }
         None => stream.line("Consumer context: not configured")?,
     }
 
@@ -1031,7 +1048,12 @@ mod tests {
                 state: CapabilityState::NotConfigured,
                 file: None,
                 path: None,
+                byte_size: None,
+                approximate_tokens: None,
+                sha256: None,
             },
+            profile_bindings: crate::harness_runtime::model::ProfileBindingSnapshot::default(),
+            profiles: BTreeMap::new(),
             capabilities: Vec::new(),
             report: crate::harness_plan::PreflightReport {
                 status: PreflightStatus::Ready,

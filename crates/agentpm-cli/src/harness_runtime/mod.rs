@@ -9,7 +9,7 @@ pub use action::{ActionDispatchResult, ActionDispatcher, SemanticAction};
 pub use approval::{ApprovalController, ApprovalDecision};
 pub use model::{
     CapabilityDescriptor, ConsumerContextSnapshot, ModelProviderSelection, ModelRequest,
-    ModelRuntime, PackageSnapshot, PromptAssemblyInput, RuntimeSnapshot, ServiceReadinessSnapshot,
-    TranscriptEntry, TranscriptEntryKind, assemble_logical_prompt,
+    ModelRuntime, PackageSnapshot, ProfileSnapshot, PromptAssemblyInput, RuntimeSnapshot,
+    ServiceReadinessSnapshot, TranscriptEntry, TranscriptEntryKind, assemble_logical_prompt,
 };
 pub use provider::BuiltInModelRuntime;

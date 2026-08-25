@@ -449,6 +449,7 @@ This gives us stable events, traces, JSON run reports, the core HarnessEngine, f
 - [ ] Map ToolRuntime machine failures into Loop Tool retry/error policy without parsing human strings.
 - [ ] Retry as fresh `agentpm run` invocations with the same finalized arguments; a later model proposal with changed arguments is a new logical Tool action.
 - [ ] Treat a schema-valid Tool result as phase-local Tool data and return it to the current phase transcript even when its domain content contains values such as `ok: false`.
+- [ ] Populate `EffectivePhase` with ready/suppressed AgentPM Tool descriptors, preserving authored/global/phase/Skill-inherited ordering, Loop access decisions, runtime readiness, and explicit suppression reasons.
 - [ ] Suppress known runtime-incompatible Tools during EffectivePhase computation with explicit reasons.
 - [ ] Warn strongly but do not suppress solely for missing required Tool env during preflight; actual `agentpm run` invocation remains authoritative because runtime environment may change/be supplied.
 
@@ -459,6 +460,7 @@ This gives us stable events, traces, JSON run reports, the core HarnessEngine, f
 - [ ] Resolve/canonicalize all Skill package-owned paths inside the exact installed Skill root and reject traversal/symlink escapes.
 - [ ] Keep multiple active Skills distinct and deterministic rather than merging them into one synthetic procedural block.
 - [ ] Expand each bound Skill's declared Tool dependencies into the Skill's global/phase binding scope without requiring duplicate direct Agent Tool bindings.
+- [ ] Populate `EffectivePhase` with ready/suppressed Skill activation and Skill-resource descriptors, preserving authored ordering, resource readiness, and explicit suppression reasons.
 - [ ] De-dupe same-scope direct + inherited Tool identity and emit a composition warning; do not treat global-direct + phase-inherited availability as inherently redundant.
 - [ ] Never auto-execute Skill scripts or infer a script interpreter/executor from extension; scripts execute only through an independently authorized Tool capability.
 - [ ] Emit Skill activation/resource events but do not add a mutable `before_skill_activation` Hook.
@@ -577,6 +579,7 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 - [ ] Keep Knowledge semantic actions distinct from Tool actions and enforce Loop `access.knowledge` independently from `access.tools`.
 - [ ] Keep bound Knowledge packages as distinct model-visible surfaces; never auto-federate all active packages into one search surface.
 - [ ] Return successful Knowledge results/failures as structured phase-local transcript data for the next model turn.
+- [ ] Populate `EffectivePhase` with ready/suppressed Knowledge surface descriptors, preserving bound package identity, authored ordering, Loop access decisions, runtime readiness, and explicit suppression reasons.
 
 - [ ] Implement local **context** Knowledge readiness/descriptors with compact package/document inventory and on-demand loading of exactly one declared document.
 - [ ] Treat document `role` as a discovery/reasoning hint only; do not infer eager loading or special authority.
@@ -631,6 +634,7 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 - [ ] Route accepted MemoryRead/MemoryWrite semantic actions from HarnessEngine to MemoryRuntime; remove fake Memory execution from production paths.
 - [ ] Keep Blueprint trigger/lifecycle meaning in Harness rather than delegating it to storage providers.
 - [ ] Build model-facing direct Memory descriptors only for bound/ready spaces and declared record types/retrieval modes; Memory remains on-demand and is never eagerly dumped into the prompt.
+- [ ] Populate `EffectivePhase` with ready/suppressed direct Memory read/write descriptors, preserving bound package/space/record-type identity, authored ordering, Loop access decisions, runtime readiness, and explicit suppression reasons.
 - [ ] Enforce Loop `memory.read`/`memory.write` only over direct model-facing Memory actions.
 - [ ] Return Memory read/write success/failure as structured phase-local transcript data; valid backend failures are Memory service failures, not Tool failures.
 
@@ -670,6 +674,7 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 ## Milestone 15: Memory Lifecycle Operations, Durable Trigger State, and External Invocation
 > Scope note: complete the canonical Harness interpretation of Memory Blueprint lifecycle operations and automatic/external triggers. Harness owns participation, trigger meaning, model-assisted transform/consolidate semantics, source handling, provenance, and external invocation; MemoryRuntime supplies primitive durable operations, trigger state, and atomic batches.
 - [ ] Resolve participating global/phase Memory operation bindings separately from direct space bindings; global operations participate for the Run and phase-bound operations only while that phase execution is active.
+- [ ] Populate `EffectivePhase`/Run operation state with ready/suppressed participating Memory operation descriptors, preserving global-versus-phase participation, operation identity, backend readiness, and explicit suppression reasons without making lifecycle operations ordinary model actions.
 - [ ] Allow a participating operation to access its declared internal input/output/target spaces even when those spaces are not directly bound/model-visible in the current phase.
 - [ ] Keep Loop `memory.read/write` restrictions limited to direct model access; they must not disable internally authorized lifecycle operation reads/writes.
 - [ ] Require live backend readiness for all referenced operation spaces plus durable trigger state/atomic batches where the operation needs them; suppress only the unavailable operation where safe.
@@ -758,6 +763,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Apply managed-service lifecycle to owned stdio imports and appropriate connection/readiness failure handling to remote HTTP imports; never replay an in-flight Tool call automatically after reconnect/restart.
 - [ ] Assign stable canonical internal identities such as `mcp:<server-id>/<tool-name>` and keep provider-safe model aliases separate.
 - [ ] Add discovered imported Tools as runtime augmentation candidates only in configured global/phase scope; never mutate Agent manifest/bindings to represent them.
+- [ ] Populate `EffectivePhase` with ready/suppressed imported MCP Tool augmentation descriptors, preserving configured global/phase scope, discovered Tool identity, Loop `access.tools`, runtime readiness, and explicit suppression reasons.
 
 - [ ] Route imported MCP Tool actions through the same logical Tool pipeline as AgentPM Tools for EffectivePhase `access.tools`, candidate/selection Hooks, argument schema validation, `max_tool_calls_per_phase`, Loop retry/error policy, phase-local result handling, and Tool events.
 - [ ] Dispatch the actual call through McpRuntime rather than `agentpm run` and normalize MCP result/protocol failure into the common Tool action result/failure model.

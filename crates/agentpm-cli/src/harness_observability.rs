@@ -438,6 +438,7 @@ fn is_content_key(key: &str) -> bool {
         key,
         "content"
             | "prompt"
+            | "active_profiles"
             | "assistant_content"
             | "arguments"
             | "argument"
@@ -650,6 +651,10 @@ pub struct ConsumerContextReportSummary {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub byte_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approximate_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
     pub content_included: bool,
@@ -1269,6 +1274,69 @@ mod tests {
     }
 
     #[test]
+    fn content_policy_redacts_active_profile_event_payloads() {
+        let event = HarnessEventEnvelope {
+            schema_version: HARNESS_EVENT_SCHEMA_VERSION,
+            event_id: "evt-1".into(),
+            session_id: "session-1".into(),
+            run_id: Some("run-1".into()),
+            session_sequence: 1,
+            run_sequence: Some(1),
+            timestamp: Utc::now(),
+            event_type: HarnessEventType::EffectivePhaseComputed,
+            phase_execution_id: Some("phase-exec-1".into()),
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Lifecycle {
+                message: "Effective phase computed.".into(),
+                fields: BTreeMap::from([
+                    ("profile_candidates".into(), json!(["@zack/support-style"])),
+                    (
+                        "active_profiles".into(),
+                        json!([
+                            {
+                                "name": "@zack/support-style",
+                                "profile": {
+                                    "objectives": ["Do not leak authored profile objectives."],
+                                    "constraints": [
+                                        {
+                                            "id": "private-guidance",
+                                            "instruction": "Never expose this instruction text."
+                                        }
+                                    ]
+                                }
+                            }
+                        ]),
+                    ),
+                ]),
+            },
+        };
+
+        let redacted = serde_json::to_value(
+            apply_content_policy(&event, &HarnessTraceContent::Redacted).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            redacted["payload"]["fields"]["active_profiles"],
+            "[redacted]"
+        );
+        assert!(
+            !serde_json::to_string(&redacted)
+                .unwrap()
+                .contains("Never expose this instruction text")
+        );
+
+        let none =
+            serde_json::to_value(apply_content_policy(&event, &HarnessTraceContent::None).unwrap())
+                .unwrap();
+        assert!(none["payload"]["fields"].get("active_profiles").is_none());
+        assert_eq!(
+            none["payload"]["fields"]["profile_candidates"][0],
+            "@zack/support-style"
+        );
+    }
+
+    #[test]
     fn run_report_serializes_and_redacts_sensitive_output() {
         let dir = temp_dir("report");
         let path = dir.join("report.json");
@@ -1357,6 +1425,8 @@ mod tests {
         report.consumer_context = Some(ConsumerContextReportSummary {
             status: "loaded".into(),
             path: Some("context.md".into()),
+            byte_size: Some(128),
+            approximate_tokens: Some(32),
             sha256: Some("sha256:abc".into()),
             content_included: false,
         });

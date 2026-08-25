@@ -85,7 +85,9 @@ impl BuiltInModelRuntime {
     }
 }
 
-fn built_in_capabilities(selection: &ModelProviderSelection) -> ModelCapabilityAdvertisement {
+pub(crate) fn built_in_capabilities(
+    selection: &ModelProviderSelection,
+) -> ModelCapabilityAdvertisement {
     let model = selection.model.to_ascii_lowercase();
     ModelCapabilityAdvertisement {
         context_window_tokens: match selection.provider.as_str() {
@@ -1378,7 +1380,10 @@ mod tests {
                 knowledge_allowed: None,
                 memory_read_allowed: None,
                 memory_write_allowed: None,
+                authored_profile_candidates: Vec::new(),
+                active_profiles: Vec::new(),
                 capability_catalog: vec![capability],
+                suppressed_capabilities: Vec::new(),
             },
             repair_feedback: None,
         }
