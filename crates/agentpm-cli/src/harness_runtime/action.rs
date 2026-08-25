@@ -1,0 +1,163 @@
+#![allow(dead_code)]
+
+use crate::harness_observability::HarnessTerminalStatus;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, VecDeque};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SemanticActionProposal {
+    pub id: String,
+    pub action: SemanticAction,
+}
+
+impl SemanticActionProposal {
+    pub fn new(id: impl Into<String>, action: SemanticAction) -> Self {
+        Self {
+            id: id.into(),
+            action,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SemanticAction {
+    AgentPmTool {
+        tool: String,
+        arguments: Value,
+    },
+    ExternalMcpTool {
+        server: String,
+        tool: String,
+        arguments: Value,
+    },
+    SkillResourceRead {
+        skill: String,
+        resource: String,
+    },
+    KnowledgeRequest {
+        package: String,
+        query: String,
+    },
+    MemoryRead {
+        package: String,
+        space: String,
+    },
+    MemoryWrite {
+        package: String,
+        space: String,
+        content: Value,
+    },
+    PhaseCompletion {
+        outcome: Option<String>,
+        output: Option<Value>,
+    },
+}
+
+impl SemanticAction {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::AgentPmTool { .. } => "agentpm_tool",
+            Self::ExternalMcpTool { .. } => "external_mcp_tool",
+            Self::SkillResourceRead { .. } => "skill_resource_read",
+            Self::KnowledgeRequest { .. } => "knowledge_request",
+            Self::MemoryRead { .. } => "memory_read",
+            Self::MemoryWrite { .. } => "memory_write",
+            Self::PhaseCompletion { .. } => "phase_completion",
+        }
+    }
+
+    pub fn identity(&self) -> String {
+        match self {
+            Self::AgentPmTool { tool, .. } => tool.clone(),
+            Self::ExternalMcpTool { server, tool, .. } => format!("{server}/{tool}"),
+            Self::SkillResourceRead { skill, resource } => format!("{skill}/{resource}"),
+            Self::KnowledgeRequest { package, .. } => package.clone(),
+            Self::MemoryRead { package, space } | Self::MemoryWrite { package, space, .. } => {
+                format!("{package}/{space}")
+            }
+            Self::PhaseCompletion { outcome, .. } => {
+                outcome.clone().unwrap_or_else(|| "complete".to_string())
+            }
+        }
+    }
+
+    pub fn is_tool_call(&self) -> bool {
+        matches!(
+            self,
+            Self::AgentPmTool { .. } | Self::ExternalMcpTool { .. }
+        )
+    }
+
+    pub fn is_completion(&self) -> bool {
+        matches!(self, Self::PhaseCompletion { .. })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActionDispatchResult {
+    pub ok: bool,
+    pub output: Value,
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_status: Option<HarnessTerminalStatus>,
+}
+
+impl ActionDispatchResult {
+    pub fn success(output: Value) -> Self {
+        Self {
+            ok: true,
+            output,
+            error: None,
+            terminal_status: None,
+        }
+    }
+
+    pub fn failure(message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            output: Value::Null,
+            error: Some(message.into()),
+            terminal_status: None,
+        }
+    }
+
+    pub fn terminal_failure(status: HarnessTerminalStatus, message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            output: json!({ "terminal_status": status }),
+            error: Some(message.into()),
+            terminal_status: Some(status),
+        }
+    }
+}
+
+pub trait ActionDispatcher {
+    fn dispatch(&mut self, action: &SemanticAction) -> ActionDispatchResult;
+}
+
+#[derive(Default)]
+pub struct ScriptedActionDispatcher {
+    results: BTreeMap<String, VecDeque<ActionDispatchResult>>,
+    pub dispatched: Vec<SemanticAction>,
+}
+
+impl ScriptedActionDispatcher {
+    pub fn push_result(&mut self, identity: impl Into<String>, result: ActionDispatchResult) {
+        self.results
+            .entry(identity.into())
+            .or_default()
+            .push_back(result);
+    }
+}
+
+impl ActionDispatcher for ScriptedActionDispatcher {
+    fn dispatch(&mut self, action: &SemanticAction) -> ActionDispatchResult {
+        self.dispatched.push(action.clone());
+        self.results
+            .get_mut(&action.identity())
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| ActionDispatchResult::success(json!({ "ok": true })))
+    }
+}

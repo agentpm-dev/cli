@@ -499,7 +499,7 @@ pub struct MemoryManifest {
     pub memory: MemoryMetadata,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct ProfileIdentity {
     pub role: String,
@@ -508,7 +508,7 @@ pub struct ProfileIdentity {
     pub expertise: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct ProfileAudience {
     pub description: Option<String>,
@@ -517,7 +517,7 @@ pub struct ProfileAudience {
     pub adaptation: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct ProfileVocabulary {
     #[serde(default)]
@@ -534,7 +534,7 @@ pub enum ProfileVerbosity {
     Detailed,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct ProfileCommunication {
     pub tone: Vec<String>,
@@ -553,7 +553,7 @@ pub enum ProfileConstraintStrength {
     Preferred,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct ProfileConstraint {
     pub id: String,
@@ -561,7 +561,7 @@ pub struct ProfileConstraint {
     pub instruction: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
 #[serde(default)]
 #[allow(dead_code)]
 pub struct ProfileCapabilityHints {
@@ -570,7 +570,7 @@ pub struct ProfileCapabilityHints {
     pub multimodal_input: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
 #[serde(default)]
 #[allow(dead_code)]
 pub struct ProfileCompatibility {
@@ -579,7 +579,7 @@ pub struct ProfileCompatibility {
     pub recommends: Option<ProfileCapabilityHints>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct ProfileMetadata {
     pub identity: ProfileIdentity,
@@ -595,7 +595,7 @@ pub struct ProfileMetadata {
     pub compatibility: Option<ProfileCompatibility>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[allow(dead_code)]
 pub struct ProfileManifest {
     pub kind: String,

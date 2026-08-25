@@ -223,6 +223,8 @@ This gives us the Harness command shell, portable contract corrections, strict `
 - [ ] Support multiple sequential Runs inside one `HarnessSession`; create fresh RunState, Loop-step state, phase transcripts, PhaseResults, and per-Run usage for each Run while preserving Session-level services/identity/usage aggregation.
 - [ ] Enforce the single-active-Run invariant from `spec.md` at the Session/Engine level: reject an attempt to start a new Run while another Run is active (including while that Run is waiting on an approval checkpoint) without mutating the active Run's state, and only accept the next Run once the prior one reaches a terminal/runtime-terminal status.
 
+- [ ] Emit events from Milestone 3 when applicable
+
 - [ ] Add the normalized model-facing execution contracts used by both fake and later real ModelRuntime implementations:
     - `ModelRequest`,
     - `ModelTurn`,
@@ -338,6 +340,8 @@ This gives us the Harness command shell, portable contract corrections, strict `
 ## Milestone 5: ModelRuntime, Prompt Assembly, OpenAI, Anthropic, and Ollama
 > Scope note: replace the fake model side of Milestone 4 with real built-in ModelRuntime implementations and make the canonical prompt/action contract operational. Complete a text-only multi-phase Harness Run through one-shot plain headless mode before real Tool/Knowledge/Memory capability executors are added. Custom process/SDK-hosted model-provider configuration may already resolve in preflight, but its shared external-service transport becomes live in Milestone 9; this milestone must not invent a second provider protocol.
 - [ ] Reuse the normalized `ModelRequest`, `ModelTurn`, semantic-action, usage, and repair contracts established in Milestone 4; do not introduce provider-specific Engine state/models.
+- [ ] Expand Milestone 4's minimal `RunContext` and fake-runtime `ModelRequest` into the production immutable Run/model-request snapshots described in `spec.md`, sourced from `ResolvedHarnessPlan` and run inputs before provider prompt assembly. Include session/run IDs, workspace/state roots, resolved Agent/Loop/package graph, resolved runtime config/source metadata, runtime scope values, consumer-context snapshot, service/provider handles or readiness descriptors, hook registrations, run input, prior PhaseResults, EffectivePhase/capability catalog, phase-local transcript, repair feedback, and any remaining `ModelTurn` metadata needed for real provider responses/usage as applicable to this milestone.
+- [ ] Expand Milestone 4's minimal `HarnessSession` into the production Session container for resolved plan state and Session-owned runtime resources. Preserve session ID, event sinks, cumulative usage, single-active-Run enforcement, and sequential Run reuse while adding immutable selected Agent/Loop/package/config context plus placeholders or handles for model/provider, Hook, Approval, Knowledge, Memory, MCP, trace, and report resources as they become live in later milestones.
 - [ ] Add the production `ModelRuntime` boundary used by HarnessEngine: Engine creates `ModelRequest`; provider adapter translates it; provider response normalizes to `ModelTurn`; Engine alone validates/dispatches semantic actions and appends structured results before the next model call.
 - [ ] Implement live selected-model capability advertisement equivalent to `semantic_actions`, `structured_output`, `multimodal_input`, optional `context_window_tokens`, and `usage_reporting`; keep capability reporting tied to the selected model/runtime rather than a closed AgentPM model catalog.
 - [ ] Keep model provider IDs and concrete model IDs as open runtime strings. Reserve built-in provider IDs `openai`, `anthropic`, and `ollama` as defined by the config contract.
@@ -365,6 +369,7 @@ This gives us the Harness command shell, portable contract corrections, strict `
 - [ ] Record provider-reported token/usage metadata when available and preserve unknown values rather than fabricating them.
 
 - [ ] Add **one-shot plain headless** execution: one Harness Session + exactly one Run from direct text, stdin, or input-file input, using the same HarnessEngine and final Run/report/event machinery as all later surfaces.
+- [ ] Expose the Milestone 3 explicit report-path/export override on the one-shot headless CLI surface while retaining default `.agentpm-state/runs/<run-id>/report.json` generation.
 - [ ] In one-shot plain headless mode, configured `type: host` implementations are unavailable because no machine/SDK host exists; return an actionable diagnostic rather than silently falling back.
 - [ ] In plain headless mode, write only the user-facing terminal/final/handoff output to stdout; route diagnostics/status to stderr and durable report/trace output.
 - [ ] Flush report/trace and deterministically shut down Session-owned resources before process exit.
@@ -434,6 +439,7 @@ This gives us stable events, traces, JSON run reports, the core HarnessEngine, f
 - [ ] Add Harness `ToolRuntime` that spawns public `agentpm run --machine` with finalized arguments over JSON stdin and consumes only the stable machine envelope/error categories.
 - [ ] Route accepted `AgentPmTool` semantic actions from HarnessEngine to ToolRuntime; remove fake Tool execution from production paths while retaining deterministic fake runtimes for tests.
 - [ ] Build model-facing AgentPM Tool descriptors from canonical package identity, description, and input schema only; never expose secrets, entrypoint internals, or environment values to the model.
+- [ ] Replace the Milestone 5 placeholder provider-native `agentpm_tool` action schema with each resolved Tool's actual input schema; provider-native tool/function definitions and Harness pre-runtime validation must use the same authoritative schema.
 - [ ] Keep provider-safe aliases separate from canonical Tool identity and map provider proposals back before Hooks/events/runtime execution.
 - [ ] Do not infer destructive/read/write policy from arbitrary Tool action names/schema fields; use Agent bindings, Loop access/checkpoints, runtime readiness, and Hooks instead.
 - [ ] Keep Tool entrypoint/files/cwd/timeout/environment/interpreter semantics owned by public `agentpm run`; Harness may inspect readiness but must not implement a second private runner.
@@ -443,14 +449,18 @@ This gives us stable events, traces, JSON run reports, the core HarnessEngine, f
 - [ ] Map ToolRuntime machine failures into Loop Tool retry/error policy without parsing human strings.
 - [ ] Retry as fresh `agentpm run` invocations with the same finalized arguments; a later model proposal with changed arguments is a new logical Tool action.
 - [ ] Treat a schema-valid Tool result as phase-local Tool data and return it to the current phase transcript even when its domain content contains values such as `ok: false`.
+- [ ] Populate `EffectivePhase` with ready/suppressed AgentPM Tool descriptors, preserving authored/global/phase/Skill-inherited ordering, Loop access decisions, runtime readiness, and explicit suppression reasons.
 - [ ] Suppress known runtime-incompatible Tools during EffectivePhase computation with explicit reasons.
 - [ ] Warn strongly but do not suppress solely for missing required Tool env during preflight; actual `agentpm run` invocation remains authoritative because runtime environment may change/be supplied.
 
 - [ ] Add Skill activation descriptors containing compact manifest/name/description/resource inventory without eagerly injecting full `SKILL.md`, references, or scripts.
+- [ ] Replace the Milestone 5 placeholder provider-native `skill_resource_read` action schema with an enum/list constrained to the active Skill's authorized resource IDs for the current phase.
+- [ ] Replace the Milestone 5 combined-string `skill/resource` alias-decoding placeholder with structured Skill resource identity metadata before Skill resource actions become live; AgentPM package names and resource paths both may contain `/`, so `rsplit_once('/')` is not a valid long-term decoder.
 - [ ] Route authorized Skill-resource semantic actions through a package-root-safe resource loader; support entrypoint/reference access on demand and keep resource content phase/Skill scoped.
 - [ ] Resolve/canonicalize all Skill package-owned paths inside the exact installed Skill root and reject traversal/symlink escapes.
 - [ ] Keep multiple active Skills distinct and deterministic rather than merging them into one synthetic procedural block.
 - [ ] Expand each bound Skill's declared Tool dependencies into the Skill's global/phase binding scope without requiring duplicate direct Agent Tool bindings.
+- [ ] Populate `EffectivePhase` with ready/suppressed Skill activation and Skill-resource descriptors, preserving authored ordering, resource readiness, and explicit suppression reasons.
 - [ ] De-dupe same-scope direct + inherited Tool identity and emit a composition warning; do not treat global-direct + phase-inherited availability as inherently redundant.
 - [ ] Never auto-execute Skill scripts or infer a script interpreter/executor from extension; scripts execute only through an independently authorized Tool capability.
 - [ ] Emit Skill activation/resource events but do not add a mutable `before_skill_activation` Hook.
@@ -468,6 +478,7 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 > Scope note: establish the persistent bidirectional Harness machine protocol plus the shared process/host service transport used by custom providers, Hooks, and approvals. Activate prompt/Tool Hooks and approval/control against the existing Engine seams; later Knowledge/Memory milestones activate their Hook/action methods on the same contracts. This milestone must preserve one HarnessEngine and transport-independent semantic runtime interfaces.
 - [ ] Define and implement versioned `agentpm harness --machine` JSONL framing/envelopes from `spec.md` with protocol version, message kind/type, correlation IDs, typed request/response/event/error payloads, and protocol-only stdout; diagnostics use stderr.
 - [ ] Implement machine message families for Session initialization/host capability registration, preflight, start Run, event streaming, terminal/Run/report results, cancellation, external Memory-operation control placeholder, shutdown, and correlated host-service request/response dispatch.
+- [ ] Apply the Milestone 3 trace content policy and unconditional secret-redaction rules to machine-protocol event delivery and terminal Run/report payloads; machine subscribers must not receive content that would be suppressed from traces under the same policy.
 - [ ] Reject a `start_run` request received while the Session already has an active Run with a stable structured session-busy/active-Run error per `spec.md`; do not queue it and do not mutate the active Run.
 - [ ] Keep machine events distinct from control requests and service/provider requests even though all share the same framed transport.
 
@@ -475,6 +486,7 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 - [ ] Require `initialize`/handshake with protocol version, role identity, implementation/service ID, and live role-specific capability advertisement before a service becomes ready.
 - [ ] Implement minimum role methods from `spec.md`: model `generate`; embedding `embed`; Hook `invoke`; Knowledge `retrieve`/attestation; Memory primitive record/retrieval/count/operation-state/batch methods; approval `request_approval`.
 - [ ] Use the same semantic role contracts for SDK-hosted implementations over the machine protocol; only transport differs.
+- [ ] Audit and formalize provider/runtime threading now that persistent surfaces are live: the Milestone 5 OS-thread bridge is only for one-shot plain headless execution; machine/TUI/service-backed Runs need explicit async/blocking boundaries, cancellation propagation, event/trace visibility, and no dependence on the opaque one-shot headless worker path.
 - [ ] Activate configured custom **process** ModelRuntime providers through this service protocol and prove they normalize into the same `ModelTurn` path as built-in providers.
 - [ ] Support generic registered **host** service dispatch at the machine-protocol level so Node/Python SDKs can provide ergonomic wrappers in Milestones 10/11; do not require raw host callbacks to know Harness RunState internals.
 - [ ] Add correlation IDs, configured request timeouts, cancellation propagation where meaningful, typed service errors, duration/error events, and protocol validation.
@@ -562,10 +574,12 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 ## Milestone 12: Local KnowledgeRuntime, Generic Custom KnowledgeRuntime, and EmbeddingProvider Execution
 > Scope note: make Knowledge semantic actions real. Add on-demand context/vector Knowledge using installed packages and existing public AgentPM query behavior, activate generic configured custom KnowledgeRuntime/EmbeddingProvider process-or-host services, and preserve explicit package/runtime routing. Pinecone and pgvector are reference provider implementations in the next milestone, not the point where the extension mechanism first appears.
 - [ ] Add/activate the production `KnowledgeRuntime` boundary and normalized Knowledge request/result models from `spec.md`, including exact authorized package/version identity, context-document/vector-query intent, retrieval options, normalized source/chunk/citation metadata, and typed failures.
+- [ ] Replace the Milestone 5 placeholder provider-native `knowledge_request` action schema with the finalized KnowledgeRuntime request contract, constrained to the bound package/surface and supported retrieval options.
 - [ ] Route accepted Knowledge semantic actions from HarnessEngine to KnowledgeRuntime; remove fake Knowledge execution from production paths.
 - [ ] Keep Knowledge semantic actions distinct from Tool actions and enforce Loop `access.knowledge` independently from `access.tools`.
 - [ ] Keep bound Knowledge packages as distinct model-visible surfaces; never auto-federate all active packages into one search surface.
 - [ ] Return successful Knowledge results/failures as structured phase-local transcript data for the next model turn.
+- [ ] Populate `EffectivePhase` with ready/suppressed Knowledge surface descriptors, preserving bound package identity, authored ordering, Loop access decisions, runtime readiness, and explicit suppression reasons.
 
 - [ ] Implement local **context** Knowledge readiness/descriptors with compact package/document inventory and on-demand loading of exactly one declared document.
 - [ ] Treat document `role` as a discovery/reasoning hint only; do not infer eager loading or special authority.
@@ -616,9 +630,11 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 ## Milestone 14: Built-In SQLite MemoryRuntime, Generic Custom MemoryRuntime, and Direct Memory Access
 > Scope note: make direct Memory semantic actions real. Implement persistent local SQLite Memory Blueprint realization plus generic configured custom MemoryRuntime routing, generated-contract enforcement, trusted scopes, direct document/collection/sequence access, retention/capacity, semantic retrieval, and live capability advertisement. Lifecycle operations/triggers remain Milestone 15.
 - [ ] Add/activate production `MemoryRuntime` boundary with normalized primitive contracts from `spec.md`: direct record mutation, retrieval, scoped counts/capacity, sequence allocation, durable operation-state access, and atomic batch capability.
+- [ ] Replace the Milestone 5 placeholder provider-native `memory_read`/`memory_write` action schemas with bound-space-aware schemas; write schemas must use generated Memory content contracts for the selected package/space/record type.
 - [ ] Route accepted MemoryRead/MemoryWrite semantic actions from HarnessEngine to MemoryRuntime; remove fake Memory execution from production paths.
 - [ ] Keep Blueprint trigger/lifecycle meaning in Harness rather than delegating it to storage providers.
 - [ ] Build model-facing direct Memory descriptors only for bound/ready spaces and declared record types/retrieval modes; Memory remains on-demand and is never eagerly dumped into the prompt.
+- [ ] Populate `EffectivePhase` with ready/suppressed direct Memory read/write descriptors, preserving bound package/space/record-type identity, authored ordering, Loop access decisions, runtime readiness, and explicit suppression reasons.
 - [ ] Enforce Loop `memory.read`/`memory.write` only over direct model-facing Memory actions.
 - [ ] Return Memory read/write success/failure as structured phase-local transcript data; valid backend failures are Memory service failures, not Tool failures.
 
@@ -658,6 +674,7 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 ## Milestone 15: Memory Lifecycle Operations, Durable Trigger State, and External Invocation
 > Scope note: complete the canonical Harness interpretation of Memory Blueprint lifecycle operations and automatic/external triggers. Harness owns participation, trigger meaning, model-assisted transform/consolidate semantics, source handling, provenance, and external invocation; MemoryRuntime supplies primitive durable operations, trigger state, and atomic batches.
 - [ ] Resolve participating global/phase Memory operation bindings separately from direct space bindings; global operations participate for the Run and phase-bound operations only while that phase execution is active.
+- [ ] Populate `EffectivePhase`/Run operation state with ready/suppressed participating Memory operation descriptors, preserving global-versus-phase participation, operation identity, backend readiness, and explicit suppression reasons without making lifecycle operations ordinary model actions.
 - [ ] Allow a participating operation to access its declared internal input/output/target spaces even when those spaces are not directly bound/model-visible in the current phase.
 - [ ] Keep Loop `memory.read/write` restrictions limited to direct model access; they must not disable internally authorized lifecycle operation reads/writes.
 - [ ] Require live backend readiness for all referenced operation spaces plus durable trigger state/atomic batches where the operation needs them; suppress only the unavailable operation where safe.
@@ -742,9 +759,11 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Require every import to declare explicit `scope.mode: global | phases`; global forbids `phases`, while phase scope requires a non-empty unique list already validated against the selected Loop.
 - [ ] Support optional allowed Tool-name filter; omitted means all currently advertised Tools are eligible within the explicitly configured scope.
 - [ ] Start/connect imports at Session bootstrap, perform MCP initialization and `tools/list`, validate configured filters, and normalize discovered Tool name/description/input schema into runtime Tool descriptors.
+- [ ] Replace the Milestone 5 placeholder provider-native `external_mcp_tool` action schema with each discovered MCP Tool's advertised input schema after `tools/list`, preserving the configured filter/scope.
 - [ ] Apply managed-service lifecycle to owned stdio imports and appropriate connection/readiness failure handling to remote HTTP imports; never replay an in-flight Tool call automatically after reconnect/restart.
 - [ ] Assign stable canonical internal identities such as `mcp:<server-id>/<tool-name>` and keep provider-safe model aliases separate.
 - [ ] Add discovered imported Tools as runtime augmentation candidates only in configured global/phase scope; never mutate Agent manifest/bindings to represent them.
+- [ ] Populate `EffectivePhase` with ready/suppressed imported MCP Tool augmentation descriptors, preserving configured global/phase scope, discovered Tool identity, Loop `access.tools`, runtime readiness, and explicit suppression reasons.
 
 - [ ] Route imported MCP Tool actions through the same logical Tool pipeline as AgentPM Tools for EffectivePhase `access.tools`, candidate/selection Hooks, argument schema validation, `max_tool_calls_per_phase`, Loop retry/error policy, phase-local result handling, and Tool events.
 - [ ] Dispatch the actual call through McpRuntime rather than `agentpm run` and normalize MCP result/protocol failure into the common Tool action result/failure model.
@@ -782,6 +801,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Add interactive checkpoint approval/deny controls routed through the existing ApprovalRuntime/Engine request path.
 - [ ] Add cancellation/quit through canonical cancellation and wait for graceful trace/report/service cleanup when possible.
 - [ ] Add expandable/toggleable views for canonical prompt sections, Tool args/results, Skill resources, Knowledge results/citations, Memory reads/writes/lifecycle, Hook decisions, MCP activity, and raw events according to trace/content policy.
+- [ ] Apply the Milestone 3 trace content policy and unconditional secret-redaction rules to every TUI event/detail/rendering path; expanded views may reveal more event categories, but must not bypass configured content exposure.
 - [ ] Render event/action labels in the trace/detail view using the exact canonical Milestone 3 event type names (for example `memory_write_completed`); do not introduce TUI-only event name variants.
 - [ ] Ensure approval decision events (`approval_requested`/`approval_approved`/`approval_denied`) are visible in the trace/detail view whenever an approval outcome is also shown in the Run view, so the two panels can never disagree about whether or when an approval occurred.
 - [ ] Support repeated Runs in one Session; Consumer Context reloads at each Run start and Session usage accumulates.
