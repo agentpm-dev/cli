@@ -999,16 +999,16 @@ fn load_active_profiles(
         {
             Ok(manifest) => {
                 validate_profile_compatibility(
-                    &manifest.name,
+                    &package.name,
                     &manifest.profile,
                     config,
                     diagnostics,
                 );
                 loaded.insert(
-                    manifest.name.clone(),
+                    package.name.clone(),
                     ProfileSnapshot {
-                        name: manifest.name,
-                        version: manifest.version,
+                        name: package.name.clone(),
+                        version: package.version.clone(),
                         profile: manifest.profile,
                     },
                 );
@@ -2686,6 +2686,10 @@ mod tests {
         role: &str,
         compatibility: Option<Value>,
     ) {
+        let manifest_name = name
+            .rsplit_once('/')
+            .map(|(_, package_name)| package_name)
+            .unwrap_or(name);
         let mut profile = json!({
             "identity": {
                 "role": role,
@@ -2725,7 +2729,7 @@ mod tests {
             &package_root(root, PackageKind::Profile, name, version).join("agent.json"),
             json!({
                 "kind": "profile",
-                "name": name,
+                "name": manifest_name,
                 "version": version,
                 "description": "Harness test profile.",
                 "profile": profile
