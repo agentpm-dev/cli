@@ -455,7 +455,6 @@ This gives us stable events, traces, JSON run reports, the core HarnessEngine, f
 
 - [ ] Add Skill activation descriptors containing compact manifest/name/description/resource inventory without eagerly injecting full `SKILL.md`, references, or scripts.
 - [ ] Replace the Milestone 5 placeholder provider-native `skill_resource_read` action schema with an enum/list constrained to the active Skill's authorized resource IDs for the current phase.
-- [ ] Replace the Milestone 5 combined-string `skill/resource` alias-decoding placeholder with structured Skill resource identity metadata before Skill resource actions become live; AgentPM package names and resource paths both may contain `/`, so `rsplit_once('/')` is not a valid long-term decoder.
 - [ ] Route authorized Skill-resource semantic actions through a package-root-safe resource loader; support entrypoint/reference access on demand and keep resource content phase/Skill scoped.
 - [ ] Resolve/canonicalize all Skill package-owned paths inside the exact installed Skill root and reject traversal/symlink escapes.
 - [ ] Keep multiple active Skills distinct and deterministic rather than merging them into one synthetic procedural block.
@@ -511,6 +510,7 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 - [ ] Apply configured approval timeout as runtime/control failure, never as authored denial/rejection.
 
 - [ ] Add first-class cancellation control; propagate cancellation through HarnessEngine, active ModelRuntime/service requests, `agentpm run` ToolRuntime processes, and owned child services where meaningful.
+- [ ] Verify cancellation of an in-flight Harness ToolRuntime terminates the spawned `agentpm run --machine` process, and that `agentpm run` still cleans up its nested Tool process group.
 - [ ] Graceful cancellation must produce `cancelled`, flush report/trace, and shut down owned processes; hard kill remains fallback only.
 - [ ] Add canonical external Memory-operation control request shape now, returning a clear not-yet-live/unavailable response until Milestone 15 wires it to Memory operations.
 
@@ -761,6 +761,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Support optional allowed Tool-name filter; omitted means all currently advertised Tools are eligible within the explicitly configured scope.
 - [ ] Start/connect imports at Session bootstrap, perform MCP initialization and `tools/list`, validate configured filters, and normalize discovered Tool name/description/input schema into runtime Tool descriptors.
 - [ ] Replace the Milestone 5 placeholder provider-native `external_mcp_tool` action schema with each discovered MCP Tool's advertised input schema after `tools/list`, preserving the configured filter/scope.
+- [ ] Replace any combined-string `server/tool` alias-decoding placeholder with structured external MCP Tool identity metadata before imported MCP Tool actions become live; server IDs and Tool names must not depend on `/` splitting such as `rsplit_once('/')`.
 - [ ] Apply managed-service lifecycle to owned stdio imports and appropriate connection/readiness failure handling to remote HTTP imports; never replay an in-flight Tool call automatically after reconnect/restart.
 - [ ] Assign stable canonical internal identities such as `mcp:<server-id>/<tool-name>` and keep provider-safe model aliases separate.
 - [ ] Add discovered imported Tools as runtime augmentation candidates only in configured global/phase scope; never mutate Agent manifest/bindings to represent them.

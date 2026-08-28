@@ -178,16 +178,17 @@ fn provider_action_tools(request: &ModelRequest) -> Vec<ProviderActionTool> {
                 action_kind: alias.action_kind.clone(),
                 identity: alias.identity.clone(),
                 description: descriptor.description.clone(),
-                parameters: action_parameters_schema(alias.action_kind.as_str(), request),
+                parameters: action_parameters_schema(alias, request),
             })
         })
         .collect()
 }
 
-fn action_parameters_schema(action_kind: &str, request: &ModelRequest) -> Value {
-    match action_kind {
+fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRequest) -> Value {
+    match alias.action_kind.as_str() {
         "phase_completion" => phase_completion_parameters_schema(request),
-        "agentpm_tool" | "external_mcp_tool" => json!({
+        "agentpm_tool" => agentpm_tool_parameters_schema(alias, request),
+        "external_mcp_tool" => json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
@@ -198,14 +199,7 @@ fn action_parameters_schema(action_kind: &str, request: &ModelRequest) -> Value 
             },
             "required": ["arguments"]
         }),
-        "skill_resource_read" => json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "resource": { "type": "string", "minLength": 1 }
-            },
-            "required": ["resource"]
-        }),
+        "skill_resource_read" => skill_resource_read_parameters_schema(alias, request),
         "knowledge_request" => json!({
             "type": "object",
             "additionalProperties": false,
@@ -240,6 +234,62 @@ fn action_parameters_schema(action_kind: &str, request: &ModelRequest) -> Value 
             "additionalProperties": true
         }),
     }
+}
+
+fn agentpm_tool_parameters_schema(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    let input_schema = request
+        .runtime
+        .tools
+        .iter()
+        .find(|tool| tool.name == alias.identity)
+        .map(|tool| tool.input_schema.clone())
+        .unwrap_or_else(|| {
+            json!({
+                "type": "object",
+                "additionalProperties": true
+            })
+        });
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "arguments": input_schema
+        },
+        "required": ["arguments"]
+    })
+}
+
+fn skill_resource_read_parameters_schema(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    let resources = request
+        .runtime
+        .skills
+        .iter()
+        .find(|skill| skill.name == alias.identity)
+        .map(|skill| {
+            skill
+                .resources
+                .iter()
+                .map(|resource| resource.id.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "resource": {
+                "type": "string",
+                "enum": resources,
+            }
+        },
+        "required": ["resource"]
+    })
 }
 
 fn phase_completion_parameters_schema(request: &ModelRequest) -> Value {
@@ -458,8 +508,11 @@ fn semantic_action_from_provider_call(
             })
         }
         "skill_resource_read" => {
-            let (skill, resource) = split_identity(&alias.identity)?;
-            Ok(SemanticAction::SkillResourceRead { skill, resource })
+            let resource = required_string(&call.arguments, "resource")?;
+            Ok(SemanticAction::SkillResourceRead {
+                skill: alias.identity.clone(),
+                resource,
+            })
         }
         "knowledge_request" => Ok(SemanticAction::KnowledgeRequest {
             package: alias.identity.clone(),
@@ -850,7 +903,7 @@ mod tests {
     use crate::harness_engine::EffectivePhase;
     use crate::harness_runtime::model::{
         ActionAlias, CapabilityDescriptor, CompletionContract, LogicalPrompt, PromptSection,
-        RuntimeSnapshot,
+        RuntimeSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
     };
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -920,18 +973,47 @@ mod tests {
     }
 
     #[test]
-    fn placeholder_action_parameter_schemas_cover_all_action_kinds() {
+    fn action_parameter_schemas_use_resolved_tool_and_skill_metadata() {
         let request = model_request();
+        let tool_schema = action_parameters_schema(
+            &action_alias("action_2", "agentpm_tool", "@zack/search"),
+            &request,
+        );
+        assert_eq!(
+            tool_schema["properties"]["arguments"]["required"],
+            json!(["q"])
+        );
+        assert_eq!(
+            tool_schema["properties"]["arguments"]["properties"]["q"]["type"],
+            json!("string")
+        );
+
+        let skill_schema = action_parameters_schema(
+            &action_alias("action_3", "skill_resource_read", "@zack/handoff-skill"),
+            &request,
+        );
+        assert_eq!(
+            skill_schema["properties"]["resource"]["enum"],
+            json!(["entrypoint", "references/architecture.md"])
+        );
+
         let required_cases = [
-            ("agentpm_tool", "arguments"),
-            ("external_mcp_tool", "arguments"),
-            ("skill_resource_read", "resource"),
-            ("knowledge_request", "query"),
-            ("memory_read", "space"),
+            (
+                action_alias("action_4", "external_mcp_tool", "incident-data/search"),
+                "arguments",
+            ),
+            (
+                action_alias("action_5", "knowledge_request", "@zack/guide"),
+                "query",
+            ),
+            (
+                action_alias("action_6", "memory_read", "@zack/state"),
+                "space",
+            ),
         ];
 
-        for (action_kind, required_field) in required_cases {
-            let schema = action_parameters_schema(action_kind, &request);
+        for (alias, required_field) in required_cases {
+            let schema = action_parameters_schema(&alias, &request);
             assert_eq!(schema["type"], "object");
             assert_eq!(schema["additionalProperties"], false);
             assert!(
@@ -939,11 +1021,15 @@ mod tests {
                     .as_array()
                     .expect("schema required array")
                     .contains(&json!(required_field)),
-                "{action_kind} should require {required_field}"
+                "{} should require {required_field}",
+                alias.action_kind
             );
         }
 
-        let memory_write_schema = action_parameters_schema("memory_write", &request);
+        let memory_write_schema = action_parameters_schema(
+            &action_alias("action_7", "memory_write", "@zack/state"),
+            &request,
+        );
         assert_eq!(memory_write_schema["type"], "object");
         assert!(
             memory_write_schema["required"]
@@ -991,17 +1077,13 @@ mod tests {
         }
 
         let action = decode_provider_call(
-            action_alias(
-                "action_1",
-                "skill_resource_read",
-                "handoff-skill/entrypoint",
-            ),
-            json!({ "resource": "entrypoint" }),
+            action_alias("action_1", "skill_resource_read", "@zack/handoff-skill"),
+            json!({ "resource": "references/architecture.md" }),
         );
         match action {
             SemanticAction::SkillResourceRead { skill, resource } => {
-                assert_eq!(skill, "handoff-skill");
-                assert_eq!(resource, "entrypoint");
+                assert_eq!(skill, "@zack/handoff-skill");
+                assert_eq!(resource, "references/architecture.md");
             }
             other => panic!("expected skill resource read action, got {other:?}"),
         }
@@ -1346,8 +1428,45 @@ mod tests {
             description: "Complete with ready.".into(),
             source: "loop".into(),
         };
+        let mut runtime = RuntimeSnapshot::empty("session-test".into());
+        runtime.tools.push(ToolRuntimeSnapshot {
+            name: "@zack/search".into(),
+            version: "0.1.0".into(),
+            description: "Search incidents.".into(),
+            root: None,
+            input_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "q": { "type": "string" }
+                },
+                "required": ["q"]
+            }),
+            state: "available".into(),
+            source: "agent_binding".into(),
+        });
+        runtime.skills.push(SkillRuntimeSnapshot {
+            name: "@zack/handoff-skill".into(),
+            version: "0.1.0".into(),
+            description: "Read handoff resources.".into(),
+            root: None,
+            resources: vec![
+                SkillResourceSnapshot {
+                    id: "entrypoint".into(),
+                    path: "SKILL.md".into(),
+                    kind: "entrypoint".into(),
+                },
+                SkillResourceSnapshot {
+                    id: "references/architecture.md".into(),
+                    path: "references/architecture.md".into(),
+                    kind: "reference".into(),
+                },
+            ],
+            state: "available".into(),
+            source: "agent_binding".into(),
+        });
         ModelRequest {
-            runtime: RuntimeSnapshot::empty("session-test".into()),
+            runtime,
             model: Some(selection("openai")),
             prompt: LogicalPrompt {
                 sections: vec![PromptSection {
@@ -1382,6 +1501,8 @@ mod tests {
                 memory_write_allowed: None,
                 authored_profile_candidates: Vec::new(),
                 active_profiles: Vec::new(),
+                active_tools: Vec::new(),
+                active_skills: Vec::new(),
                 capability_catalog: vec![capability],
                 suppressed_capabilities: Vec::new(),
             },

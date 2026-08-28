@@ -17,6 +17,7 @@ mod keys;
 mod manifest;
 mod prelude;
 mod runner;
+mod runtime_version;
 mod semver;
 mod ui;
 mod workspace;
