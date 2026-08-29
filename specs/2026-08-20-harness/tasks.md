@@ -495,7 +495,8 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 - [ ] Add `HookRuntime` using the exact version-1 Hook IDs and **closed per-Hook request/response contracts** from `spec.md`; never use generic RunState/config merge patch.
 - [ ] Invoke a Hook only when its corresponding authorized action/decision is eligible; Hooks must not manufacture capabilities.
 - [ ] Make the existing `before_model_request` seam live after canonical prompt assembly and before ModelRuntime provider translation.
-- [ ] Make Tool candidate/selection and before-Tool-call Hooks live; selection Hooks may only reorder/subset existing effective Tool IDs, and before-call Hooks may patch arguments/reject without changing Tool identity.
+- [ ] Make the `before_tool_selection` Hook live after `EffectivePhase` computes ready Tool candidates and before the model-visible Tool/action catalog is finalized; it may only reorder/subset existing effective Tool IDs and must not add capabilities.
+- [ ] Make the `before_tool_call` Hook live after the model proposes an authorized AgentPM Tool action and before `ToolRuntime` dispatch; it may patch arguments or reject the call without changing Tool identity.
 - [ ] Revalidate every successful Hook patch before passing the updated safe snapshot to the next binding/runtime.
 - [ ] Keep Knowledge/Memory Hook contracts registered/transportable now, but invoke their actual execution points only when those runtimes become live in Milestones 12/14/15.
 - [ ] Apply ordered configured Hook bindings first, then SDK-hosted registrations in host registration order.
