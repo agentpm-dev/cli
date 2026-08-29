@@ -353,7 +353,9 @@ fn map_runner_error(err: anyhow::Error) -> RpcError {
     let code = match classify_runner_error(&err) {
         RunnerErrorKind::Resolution => -32602,
         RunnerErrorKind::Runtime => -32001,
+        RunnerErrorKind::Schema => -32602,
         RunnerErrorKind::Timeout => -32002,
+        RunnerErrorKind::OutputLimit => -32003,
         RunnerErrorKind::MalformedOutput => -32003,
         RunnerErrorKind::SubprocessFailure => -32004,
         RunnerErrorKind::Other => -32000,

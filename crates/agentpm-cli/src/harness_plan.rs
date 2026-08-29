@@ -9,6 +9,7 @@ use crate::manifest::{
     parse_skill_manifest,
 };
 use crate::prelude::*;
+use crate::runtime_version::{extract_runtime_version, parse_runtime_version};
 use crate::semver::types::{
     Lock, LockV2, LockedPackage, LockedRoot, PackageKind, split_package_ref,
 };
@@ -27,6 +28,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1212,6 +1214,7 @@ fn validate_binding_scope(
         capabilities,
         diagnostics,
     );
+    validate_skill_manifests(workspace_root, &active_skills, package_graph, diagnostics)?;
     let active_knowledge = validate_string_bindings(
         &scope.knowledge,
         &declared_knowledge,
@@ -1253,6 +1256,22 @@ fn validate_binding_scope(
         capabilities,
         diagnostics,
     )?;
+    Ok(())
+}
+
+fn validate_skill_manifests(
+    workspace_root: &Path,
+    active_skills: &BTreeSet<String>,
+    package_graph: &BTreeMap<String, ResolvedPackageInfo>,
+    diagnostics: &mut Vec<PreflightDiagnostic>,
+) -> Result<()> {
+    for skill_name in active_skills {
+        let Some(skill_package) = package_by_name(package_graph, PackageKind::Skill, skill_name)
+        else {
+            continue;
+        };
+        load_skill_manifest(workspace_root, skill_package, diagnostics)?;
+    }
     Ok(())
 }
 
@@ -1508,6 +1527,8 @@ struct ToolReadinessManifest {
 struct ToolRuntimeDecl {
     #[serde(rename = "type")]
     runtime_type: String,
+    #[serde(default)]
+    version: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -1635,6 +1656,94 @@ fn tool_runtime_ready(
             "tool_runtime_unavailable",
             format!(
                 "Tool `{tool_name}` requires `{command}`, but that command is not available on PATH and the Tool will not be exposed."
+            ),
+            None::<String>,
+        );
+        return false;
+    }
+    if let Some(required_version) = runtime.version.as_deref()
+        && !tool_runtime_version_ready(
+            tool_name,
+            &command,
+            &runtime.runtime_type,
+            required_version,
+            diagnostics,
+        )
+    {
+        return false;
+    }
+    true
+}
+
+fn tool_runtime_version_ready(
+    tool_name: &str,
+    command: &str,
+    runtime_type: &str,
+    required_version: &str,
+    diagnostics: &mut Vec<PreflightDiagnostic>,
+) -> bool {
+    let required = match parse_runtime_version(required_version) {
+        Ok(version) => version,
+        Err(err) => {
+            push_diag(
+                diagnostics,
+                PreflightDiagnosticSeverity::Warning,
+                "tool_runtime_version_unreadable",
+                format!(
+                    "Tool `{tool_name}` declares invalid runtime version `{required_version}` for `{runtime_type}` and will not be exposed: {err}"
+                ),
+                None::<String>,
+            );
+            return false;
+        }
+    };
+    let output = match Command::new(command)
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        Ok(_) | Err(_) => {
+            push_diag(
+                diagnostics,
+                PreflightDiagnosticSeverity::Warning,
+                "tool_runtime_version_unreadable",
+                format!(
+                    "Tool `{tool_name}` runtime version could not be read from `{command}` and will not be exposed."
+                ),
+                None::<String>,
+            );
+            return false;
+        }
+    };
+    let mut text = String::new();
+    text.push_str(&String::from_utf8_lossy(&output.stdout));
+    if !output.stderr.is_empty() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    let Some(actual) = extract_runtime_version(&text) else {
+        push_diag(
+            diagnostics,
+            PreflightDiagnosticSeverity::Warning,
+            "tool_runtime_version_unreadable",
+            format!(
+                "Tool `{tool_name}` runtime version could not be parsed from `{command}` and will not be exposed."
+            ),
+            None::<String>,
+        );
+        return false;
+    };
+    if actual < required {
+        push_diag(
+            diagnostics,
+            PreflightDiagnosticSeverity::Warning,
+            "tool_runtime_version_unsatisfied",
+            format!(
+                "Tool `{tool_name}` requires {runtime_type} >= {required}, but `{command}` reports {actual}; the Tool will not be exposed."
             ),
             None::<String>,
         );
@@ -3166,6 +3275,67 @@ mod tests {
                 .filter(|diagnostic| diagnostic.code == "tool_runtime_mismatch")
                 .count(),
             1
+        );
+        assert!(
+            plan.capabilities.iter().any(|capability| {
+                capability.kind == "tool"
+                    && capability.identity == "@zack/search"
+                    && capability.state == CapabilityState::Unavailable
+            }),
+            "expected @zack/search to be unavailable, got: {:#?}",
+            plan.capabilities
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preflight_suppresses_tool_below_declared_runtime_minimum_version() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_dir("tool-runtime-version");
+        write_base_workspace(&root);
+        let python = root.join("python3");
+        fs::write(&python, "#!/bin/sh\necho 'Python 3.10.0'\n").unwrap();
+        let mut permissions = fs::metadata(&python).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&python, permissions).unwrap();
+        write_json(
+            &package_root(&root, PackageKind::Tool, "@zack/search", "0.1.0").join("agent.json"),
+            json!({
+                "kind": "tool",
+                "name": "@zack/search",
+                "version": "0.1.0",
+                "description": "Runtime minimum version tool.",
+                "entrypoint": {
+                    "command": python,
+                    "args": ["tool.py"],
+                    "cwd": ".",
+                    "timeout_ms": 1000,
+                    "env": {}
+                },
+                "runtime": {
+                    "type": "python",
+                    "version": "999.0.0"
+                },
+                "inputs": { "type": "object" },
+                "outputs": { "type": "object" }
+            }),
+        );
+        lock_with_root(&root, base_root(), base_packages());
+
+        let plan = resolve_harness_plan(
+            &root,
+            &HarnessBootstrapOptions {
+                runtime_scopes: BTreeMap::from([("user".to_string(), "user-1".to_string())]),
+                ..options()
+            },
+        )
+        .unwrap();
+
+        assert!(
+            codes(&plan).contains("tool_runtime_version_unsatisfied"),
+            "{:#?}",
+            plan.report.diagnostics
         );
         assert!(
             plan.capabilities.iter().any(|capability| {

@@ -3,11 +3,14 @@ use crate::harness_plan::{
     PreflightStatus, ResolvedHarnessPlan, ResolvedPackageInfo, resolve_harness_plan,
 };
 use crate::harness_runtime::{
-    ActionDispatcher, ApprovalController, BuiltInModelRuntime, ConsumerContextSnapshot,
-    ModelProviderSelection, ModelRuntime, PackageSnapshot, RuntimeSnapshot,
-    ServiceReadinessSnapshot,
+    ActionDispatcher, AgentPmActionDispatcher, ApprovalController, BuiltInModelRuntime,
+    ConsumerContextSnapshot, ModelProviderSelection, ModelRuntime, PackageSnapshot,
+    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot, SkillResourceSnapshot,
+    SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
-use crate::manifest::{load_manifest_value, parse_loop_manifest};
+use crate::manifest::{
+    load_manifest_value, parse_loop_manifest, parse_skill_manifest, parse_tool_manifest,
+};
 use crate::prelude::*;
 use crate::{
     harness_engine::{
@@ -15,12 +18,13 @@ use crate::{
         RuntimeTerminalResult,
     },
     harness_observability::{JsonlTraceSink, RunOutputPaths, allocate_harness_run_id},
-    harness_runtime::action::ScriptedActionDispatcher,
 };
 use anyhow::{anyhow, bail};
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
+
+use crate::semver::types::PackageKind;
 
 #[derive(Args, Debug, Clone)]
 pub struct HarnessArgs {
@@ -160,7 +164,8 @@ fn run_headless_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Resul
     let mut model =
         BuiltInModelRuntime::from_selection(selection).map_err(|err| anyhow!(err.message))?;
     validate_model_capabilities(&model)?;
-    let mut dispatcher = ScriptedActionDispatcher::default();
+    let runtime = runtime_snapshot_from_plan(plan);
+    let mut dispatcher = AgentPmActionDispatcher::from_runtime(&runtime)?;
     let terminal = execute_headless_plan(
         plan,
         input,
@@ -376,6 +381,19 @@ fn runtime_snapshot_from_plan(plan: &ResolvedHarnessPlan) -> RuntimeSnapshot {
             .collect(),
         profiles: plan.profiles.values().cloned().collect(),
         profile_bindings: plan.profile_bindings.clone(),
+        tools: tool_snapshots_from_plan(plan),
+        skills: skill_snapshots_from_plan(plan),
+        capability_candidates: plan
+            .capabilities
+            .iter()
+            .map(|capability| RuntimeCapabilitySnapshot {
+                kind: capability.kind.clone(),
+                identity: capability.identity.clone(),
+                scope: capability.scope.clone(),
+                source: capability.source.clone(),
+                state: capability_state_label(capability.state).into(),
+            })
+            .collect(),
         model: plan
             .config
             .config
@@ -386,6 +404,106 @@ fn runtime_snapshot_from_plan(plan: &ResolvedHarnessPlan) -> RuntimeSnapshot {
                 model: model.model.clone(),
                 options: model.options.clone(),
             }),
+    }
+}
+
+fn tool_snapshots_from_plan(plan: &ResolvedHarnessPlan) -> Vec<ToolRuntimeSnapshot> {
+    let bound_tools = plan
+        .capabilities
+        .iter()
+        .filter(|capability| capability.kind == "tool")
+        .map(|capability| {
+            (
+                capability.identity.clone(),
+                (
+                    capability_state_label(capability.state).to_string(),
+                    capability.source.clone(),
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    plan.package_graph
+        .values()
+        .filter(|package| package.kind == PackageKind::Tool)
+        .filter_map(|package| {
+            let (state, source) = bound_tools.get(&package.name)?;
+            let path = package.root.join("agent.json");
+            let manifest = load_manifest_value(&path)
+                .and_then(|(value, _)| parse_tool_manifest(&value))
+                .ok()?;
+            Some(ToolRuntimeSnapshot {
+                name: package.name.clone(),
+                version: package.version.clone(),
+                description: manifest
+                    .description
+                    .unwrap_or_else(|| "AgentPM Tool capability.".into()),
+                root: Some(package.root.clone()),
+                input_schema: manifest.inputs,
+                state: state.clone(),
+                source: source.clone(),
+            })
+        })
+        .collect()
+}
+
+fn skill_snapshots_from_plan(plan: &ResolvedHarnessPlan) -> Vec<SkillRuntimeSnapshot> {
+    let bound_skills = plan
+        .capabilities
+        .iter()
+        .filter(|capability| capability.kind == "skill")
+        .map(|capability| {
+            (
+                capability.identity.clone(),
+                (
+                    capability_state_label(capability.state).to_string(),
+                    capability.source.clone(),
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    plan.package_graph
+        .values()
+        .filter(|package| package.kind == PackageKind::Skill)
+        .filter_map(|package| {
+            let (state, source) = bound_skills.get(&package.name)?;
+            let path = package.root.join("agent.json");
+            let manifest = load_manifest_value(&path)
+                .and_then(|(value, _)| parse_skill_manifest(&value))
+                .ok()?;
+            let mut resources = vec![SkillResourceSnapshot {
+                id: "entrypoint".into(),
+                path: manifest.skill.entrypoint.clone(),
+                kind: "entrypoint".into(),
+            }];
+            resources.extend(manifest.skill.references.iter().map(|reference| {
+                SkillResourceSnapshot {
+                    id: reference.clone(),
+                    path: reference.clone(),
+                    kind: "reference".into(),
+                }
+            }));
+            Some(SkillRuntimeSnapshot {
+                name: package.name.clone(),
+                version: package.version.clone(),
+                description: manifest
+                    .description
+                    .unwrap_or_else(|| "AgentPM Skill resource.".into()),
+                root: Some(package.root.clone()),
+                resources,
+                state: state.clone(),
+                source: source.clone(),
+            })
+        })
+        .collect()
+}
+
+fn capability_state_label(state: CapabilityState) -> &'static str {
+    match state {
+        CapabilityState::Available => "available",
+        CapabilityState::Pending => "pending",
+        CapabilityState::Unavailable => "unavailable",
+        CapabilityState::Suppressed => "suppressed",
+        CapabilityState::NotConfigured => "not_configured",
     }
 }
 
@@ -559,6 +677,7 @@ mod tests {
         HarnessTerminalStatus, ReportPackageIdentity, RunReport, RunUsage,
     };
     use crate::harness_runtime::SemanticAction;
+    use crate::harness_runtime::action::ScriptedActionDispatcher;
     use crate::harness_runtime::action::SemanticActionProposal;
     use crate::harness_runtime::model::{
         ModelCapabilityAdvertisement, ModelRuntimeFailure, ModelTurn, ScriptedModelRuntime,

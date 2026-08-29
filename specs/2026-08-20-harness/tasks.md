@@ -455,7 +455,6 @@ This gives us stable events, traces, JSON run reports, the core HarnessEngine, f
 
 - [ ] Add Skill activation descriptors containing compact manifest/name/description/resource inventory without eagerly injecting full `SKILL.md`, references, or scripts.
 - [ ] Replace the Milestone 5 placeholder provider-native `skill_resource_read` action schema with an enum/list constrained to the active Skill's authorized resource IDs for the current phase.
-- [ ] Replace the Milestone 5 combined-string `skill/resource` alias-decoding placeholder with structured Skill resource identity metadata before Skill resource actions become live; AgentPM package names and resource paths both may contain `/`, so `rsplit_once('/')` is not a valid long-term decoder.
 - [ ] Route authorized Skill-resource semantic actions through a package-root-safe resource loader; support entrypoint/reference access on demand and keep resource content phase/Skill scoped.
 - [ ] Resolve/canonicalize all Skill package-owned paths inside the exact installed Skill root and reject traversal/symlink escapes.
 - [ ] Keep multiple active Skills distinct and deterministic rather than merging them into one synthetic procedural block.
@@ -511,6 +510,7 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 - [ ] Apply configured approval timeout as runtime/control failure, never as authored denial/rejection.
 
 - [ ] Add first-class cancellation control; propagate cancellation through HarnessEngine, active ModelRuntime/service requests, `agentpm run` ToolRuntime processes, and owned child services where meaningful.
+- [ ] Verify cancellation of an in-flight Harness ToolRuntime terminates the spawned `agentpm run --machine` process, and that `agentpm run` still cleans up its nested Tool process group.
 - [ ] Graceful cancellation must produce `cancelled`, flush report/trace, and shut down owned processes; hard kill remains fallback only.
 - [ ] Add canonical external Memory-operation control request shape now, returning a clear not-yet-live/unavailable response until Milestone 15 wires it to Memory operations.
 
@@ -736,6 +736,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Keep default managed host loopback and honor `mcp.exports.host`; use ephemeral ports per logical surface rather than static config mapping.
 - [ ] Keep existing `serve --mcp` Tool invocation through the shared internal Tool runner; do **not** spawn public `agentpm run` per MCP request.
 - [ ] Ensure Milestone 7 runner hardening (schema/runtime/env/timeout/cancellation semantics) is inherited by MCP calls through the shared runner.
+- [ ] Add `serve --mcp` lifecycle cleanup for concurrent shared-runner Tool invocations: SIGINT/SIGTERM or managed Session shutdown must terminate any nested child process groups started by in-flight Tool calls without installing a permanent process-global `_exit` handler that bypasses graceful MCP/Harness cleanup.
 - [ ] Emit machine Tool-call started/completed/failed events containing canonical AgentPM identity and external MCP-safe normalized name.
 
 - [ ] Add Harness McpRuntime export lifecycle that honors `mcp.exports.enabled`; when enabled, start one managed `agentpm serve --mcp --machine` subprocess per authored Agent `bindings.mcp` surface.
@@ -750,7 +751,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Apply managed-process restart policy: failed in-flight call is never replayed; optional restart restores only subsequent calls; exhausted restart makes the surface unavailable.
 - [ ] Ensure Session shutdown/cancellation terminates all Harness-owned MCP export subprocesses cleanly.
 
-- [ ] Add tests for exports disabled/enabled, multiple surfaces, ephemeral ports/host, Tool filtering, normalized-name collisions, ready subset/empty surface behavior, call events, shared-runner failures, process restart-without-replay, calls with no active Run, and cleanup.
+- [ ] Add tests for exports disabled/enabled, multiple surfaces, ephemeral ports/host, Tool filtering, normalized-name collisions, ready subset/empty surface behavior, call events, shared-runner failures, concurrent in-flight Tool cleanup on MCP server termination, process restart-without-replay, calls with no active Run, and cleanup.
 
 ## Milestone 18: External MCP Import and Runtime Tool Augmentation
 > Scope note: let workspace runtime configuration add environment-specific MCP functionality to an already-published Agent. Imported MCP Tools become normal phase Tool capabilities only in explicitly configured scope and run through the same Harness Tool selection/validation/Hook/retry/failure pipeline as AgentPM Tools, while retaining distinct McpRuntime transport.
@@ -760,9 +761,11 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Support optional allowed Tool-name filter; omitted means all currently advertised Tools are eligible within the explicitly configured scope.
 - [ ] Start/connect imports at Session bootstrap, perform MCP initialization and `tools/list`, validate configured filters, and normalize discovered Tool name/description/input schema into runtime Tool descriptors.
 - [ ] Replace the Milestone 5 placeholder provider-native `external_mcp_tool` action schema with each discovered MCP Tool's advertised input schema after `tools/list`, preserving the configured filter/scope.
+- [ ] Replace any combined-string `server/tool` alias-decoding placeholder with structured external MCP Tool identity metadata before imported MCP Tool actions become live; server IDs and Tool names must not depend on `/` splitting such as `rsplit_once('/')`.
 - [ ] Apply managed-service lifecycle to owned stdio imports and appropriate connection/readiness failure handling to remote HTTP imports; never replay an in-flight Tool call automatically after reconnect/restart.
 - [ ] Assign stable canonical internal identities such as `mcp:<server-id>/<tool-name>` and keep provider-safe model aliases separate.
 - [ ] Add discovered imported Tools as runtime augmentation candidates only in configured global/phase scope; never mutate Agent manifest/bindings to represent them.
+- [ ] Reconcile imported-MCP scope encoding before `mcp_import` candidates become live in `EffectivePhase`: config currently labels phase scope as `phases:a,b`, while existing runtime candidate matching expects `global` or `phase:<id>`. Prefer typed scope metadata, or normalize to one string format, so phase-scoped imports are not silently dropped.
 - [ ] Populate `EffectivePhase` with ready/suppressed imported MCP Tool augmentation descriptors, preserving configured global/phase scope, discovered Tool identity, Loop `access.tools`, runtime readiness, and explicit suppression reasons.
 
 - [ ] Route imported MCP Tool actions through the same logical Tool pipeline as AgentPM Tools for EffectivePhase `access.tools`, candidate/selection Hooks, argument schema validation, `max_tool_calls_per_phase`, Loop retry/error policy, phase-local result handling, and Tool events.

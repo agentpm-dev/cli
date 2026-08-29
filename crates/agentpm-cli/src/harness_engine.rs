@@ -12,7 +12,8 @@ use crate::harness_runtime::model::ModelTurn;
 use crate::harness_runtime::{
     ActionDispatchResult, ActionDispatcher, ApprovalController, ApprovalDecision,
     CapabilityDescriptor, ModelRequest, ModelRuntime, ProfileSnapshot, PromptAssemblyInput,
-    RuntimeSnapshot, SemanticAction, TranscriptEntry, TranscriptEntryKind, assemble_logical_prompt,
+    RuntimeCapabilitySnapshot, RuntimeSnapshot, SemanticAction, SkillRuntimeSnapshot,
+    ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind, assemble_logical_prompt,
 };
 use crate::manifest::{
     LoopManifest, LoopPhase, LoopPhaseFailureAction, LoopToolFailureAction,
@@ -20,6 +21,7 @@ use crate::manifest::{
 };
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
+use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -71,6 +73,8 @@ pub struct EffectivePhase {
     pub memory_write_allowed: Option<bool>,
     pub authored_profile_candidates: Vec<String>,
     pub active_profiles: Vec<ActiveProfile>,
+    pub active_tools: Vec<ToolRuntimeSnapshot>,
+    pub active_skills: Vec<SkillRuntimeSnapshot>,
     pub capability_catalog: Vec<CapabilityDescriptor>,
     pub suppressed_capabilities: Vec<SuppressedCapability>,
 }
@@ -92,10 +96,22 @@ impl EffectivePhase {
                 suppressed_capabilities.push(SuppressedCapability {
                     kind: "profile".into(),
                     identity: candidate.clone(),
+                    source: "agent_binding".into(),
                     reason: "resolved profile metadata unavailable".into(),
                 });
             }
         }
+        let mut active_tools = Vec::new();
+        let mut active_skills = Vec::new();
+        let mut capability_catalog = phase_completion_descriptors(phase);
+        capability_catalog.extend(runtime_capability_descriptors(
+            phase,
+            runtime,
+            access.and_then(|access| access.tools),
+            &mut suppressed_capabilities,
+            &mut active_tools,
+            &mut active_skills,
+        ));
         Self {
             phase_id: phase.id.clone(),
             tools_allowed: access.and_then(|access| access.tools),
@@ -108,7 +124,9 @@ impl EffectivePhase {
                 .and_then(|memory| memory.write),
             authored_profile_candidates,
             active_profiles,
-            capability_catalog: phase_completion_descriptors(phase),
+            active_tools,
+            active_skills,
+            capability_catalog,
             suppressed_capabilities,
         }
     }
@@ -126,6 +144,134 @@ impl EffectivePhase {
             }
         }
     }
+}
+
+fn runtime_capability_descriptors(
+    phase: &LoopPhase,
+    runtime: &RuntimeSnapshot,
+    tools_allowed: Option<bool>,
+    suppressed_capabilities: &mut Vec<SuppressedCapability>,
+    active_tools: &mut Vec<ToolRuntimeSnapshot>,
+    active_skills: &mut Vec<SkillRuntimeSnapshot>,
+) -> Vec<CapabilityDescriptor> {
+    let mut descriptors = Vec::new();
+    let mut seen_tools = BTreeSet::new();
+    let mut seen_skills = BTreeSet::new();
+    for candidate in runtime
+        .capability_candidates
+        .iter()
+        .filter(|candidate| candidate_scope_matches_phase(&candidate.scope, &phase.id))
+    {
+        match candidate.kind.as_str() {
+            "tool" => {
+                if !seen_tools.insert(candidate.identity.clone()) {
+                    continue;
+                }
+                if tools_allowed == Some(false) {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "tool".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: "Loop access.tools=false for this phase".into(),
+                    });
+                    continue;
+                }
+                if !is_available_candidate(candidate) {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "tool".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: format!("Tool readiness state is {}", candidate.state),
+                    });
+                    continue;
+                }
+                let Some(tool) = runtime
+                    .tools
+                    .iter()
+                    .find(|tool| tool.name == candidate.identity)
+                else {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "tool".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: "resolved Tool metadata unavailable".into(),
+                    });
+                    continue;
+                };
+                active_tools.push(tool.clone());
+                descriptors.push(CapabilityDescriptor {
+                    action_kind: "agentpm_tool".into(),
+                    identity: tool.name.clone(),
+                    description: tool.description.clone(),
+                    source: candidate.source.clone(),
+                });
+            }
+            "skill" => {
+                if !seen_skills.insert(candidate.identity.clone()) {
+                    continue;
+                }
+                if !is_available_candidate(candidate) {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "skill".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: format!("Skill readiness state is {}", candidate.state),
+                    });
+                    continue;
+                }
+                let Some(skill) = runtime
+                    .skills
+                    .iter()
+                    .find(|skill| skill.name == candidate.identity)
+                else {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "skill".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: "resolved Skill metadata unavailable".into(),
+                    });
+                    continue;
+                };
+                active_skills.push(skill.clone());
+                descriptors.push(CapabilityDescriptor {
+                    action_kind: "skill_resource_read".into(),
+                    identity: skill.name.clone(),
+                    description: skill_resource_descriptor_description(skill),
+                    source: candidate.source.clone(),
+                });
+            }
+            _ => {}
+        }
+    }
+    descriptors
+}
+
+fn candidate_scope_matches_phase(scope: &str, phase_id: &str) -> bool {
+    scope == "global" || scope.strip_prefix("phase:") == Some(phase_id)
+}
+
+fn is_available_candidate(candidate: &RuntimeCapabilitySnapshot) -> bool {
+    candidate.state == "available"
+}
+
+fn skill_resource_descriptor_description(
+    skill: &crate::harness_runtime::SkillRuntimeSnapshot,
+) -> String {
+    let resources = skill
+        .resources
+        .iter()
+        .map(|resource| resource.id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{} Available resources: {}.",
+        skill.description,
+        if resources.is_empty() {
+            "none".into()
+        } else {
+            resources
+        }
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -149,6 +295,7 @@ impl ActiveProfile {
 pub struct SuppressedCapability {
     pub kind: String,
     pub identity: String,
+    pub source: String,
     pub reason: String,
 }
 
@@ -170,6 +317,60 @@ fn profile_candidates_for_phase(phase: &LoopPhase, runtime: &RuntimeSnapshot) ->
     candidates
 }
 
+fn validate_semantic_action(action: &SemanticAction, phase: &EffectivePhase) -> Result<(), String> {
+    match action {
+        SemanticAction::AgentPmTool { tool, arguments } => {
+            let Some(tool_snapshot) = phase
+                .active_tools
+                .iter()
+                .find(|candidate| candidate.name == *tool)
+            else {
+                return Err(format!(
+                    "Tool `{tool}` is not available in the current EffectivePhase."
+                ));
+            };
+            validate_json_schema_value(&tool_snapshot.input_schema, arguments)
+                .map_err(|err| format!("Tool `{tool}` arguments are invalid: {err}"))
+        }
+        SemanticAction::SkillResourceRead { skill, resource } => {
+            let Some(skill_snapshot) = phase
+                .active_skills
+                .iter()
+                .find(|candidate| candidate.name == *skill)
+            else {
+                return Err(format!(
+                    "Skill `{skill}` is not available in the current EffectivePhase."
+                ));
+            };
+            if skill_snapshot
+                .resources
+                .iter()
+                .any(|candidate| candidate.id == *resource)
+            {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Skill `{skill}` resource `{resource}` is not active in this phase."
+                ))
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_json_schema_value(schema: &Value, value: &Value) -> Result<(), String> {
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(schema)
+        .map_err(|err| format!("schema is invalid: {err}"))?;
+    compiled.validate(value).map_err(|errors| {
+        errors
+            .map(|error| format!("{} at instance {}", error, error.instance_path))
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PhaseExecutionState {
     pub phase_execution_id: String,
@@ -179,6 +380,7 @@ pub struct PhaseExecutionState {
     pub accepted_actions: u64,
     pub logical_tool_calls: u64,
     pub structured_repairs: u64,
+    pub tool_call_repairs: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -744,6 +946,70 @@ impl HarnessEngine {
             },
         )?;
         session.emitter.emit(
+            HarnessEventType::ToolCandidatesComputed,
+            HarnessEventPayload::Lifecycle {
+                message: "Tool candidates computed.".into(),
+                fields: BTreeMap::from([
+                    ("phase_id".into(), json!(phase.id)),
+                    (
+                        "ready".into(),
+                        json!(
+                            effective_phase
+                                .capability_catalog
+                                .iter()
+                                .filter(|descriptor| descriptor.action_kind == "agentpm_tool")
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        ),
+                    ),
+                    (
+                        "suppressed".into(),
+                        json!(
+                            effective_phase
+                                .suppressed_capabilities
+                                .iter()
+                                .filter(|capability| capability.kind == "tool")
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        ),
+                    ),
+                ]),
+            },
+            HarnessEventBuilder {
+                run_id: Some(run_id.clone()),
+                phase_execution_id: Some(phase_execution_id.clone()),
+                ..HarnessEventBuilder::default()
+            },
+        )?;
+        for skill in &effective_phase.active_skills {
+            session.emitter.emit(
+                HarnessEventType::SkillActivated,
+                HarnessEventPayload::Action {
+                    action_kind: "skill_resource_read".into(),
+                    identity: skill.name.clone(),
+                    status: "available".into(),
+                    fields: BTreeMap::from([
+                        ("source".into(), json!(skill.source.clone())),
+                        (
+                            "resources".into(),
+                            json!(
+                                skill
+                                    .resources
+                                    .iter()
+                                    .map(|resource| resource.id.clone())
+                                    .collect::<Vec<_>>()
+                            ),
+                        ),
+                    ]),
+                },
+                HarnessEventBuilder {
+                    run_id: Some(run_id.clone()),
+                    phase_execution_id: Some(phase_execution_id.clone()),
+                    ..HarnessEventBuilder::default()
+                },
+            )?;
+        }
+        session.emitter.emit(
             HarnessEventType::PhaseStarted,
             HarnessEventPayload::Phase {
                 phase_id: phase.id.clone(),
@@ -769,6 +1035,7 @@ impl HarnessEngine {
             accepted_actions: 0,
             logical_tool_calls: 0,
             structured_repairs: 0,
+            tool_call_repairs: 0,
         };
         // Explicit outcomes must be selected by the model. Phases with no
         // declared outcomes use the implicit `complete` outcome.
@@ -1050,6 +1317,39 @@ impl HarnessEngine {
                     )?;
                     continue;
                 }
+                if let Err(err) = validate_semantic_action(&proposal.action, &effective_phase) {
+                    session.emitter.emit(
+                        HarnessEventType::SemanticActionRejected,
+                        HarnessEventPayload::Action {
+                            action_kind: proposal.action.kind().into(),
+                            identity: proposal.action.identity(),
+                            status: "invalid_arguments".into(),
+                            fields: BTreeMap::from([("error".into(), json!(err))]),
+                        },
+                        HarnessEventBuilder {
+                            run_id: Some(run_id.clone()),
+                            phase_execution_id: Some(phase_execution_id.clone()),
+                            ..HarnessEventBuilder::default()
+                        },
+                    )?;
+                    repair_feedback = Some(err);
+                    if proposal.action.is_tool_call() {
+                        self.request_tool_call_repair(
+                            session,
+                            &mut state,
+                            &phase_execution_id,
+                            repair_feedback.clone(),
+                        )?;
+                    } else {
+                        self.request_repair(
+                            session,
+                            &mut state,
+                            &phase_execution_id,
+                            repair_feedback.clone(),
+                        )?;
+                    }
+                    continue;
+                }
                 if state.accepted_actions >= self.options.runtime_limits.max_actions_per_phase {
                     return self.limit_phase(session, &phase_execution_id, "max_actions_per_phase");
                 }
@@ -1070,13 +1370,18 @@ impl HarnessEngine {
                 self.active_run_mut(session)?
                     .usage
                     .accepted_semantic_actions += 1;
+                let action_source = action_source(&proposal.action, &effective_phase);
+                let mut action_fields = action_trace_fields(&proposal.action);
+                if let Some(source) = &action_source {
+                    action_fields.insert("source".into(), json!(source));
+                }
                 session.emitter.emit(
                     HarnessEventType::SemanticActionProposed,
                     HarnessEventPayload::Action {
                         action_kind: proposal.action.kind().into(),
                         identity: proposal.action.identity(),
                         status: "accepted".into(),
-                        fields: action_trace_fields(&proposal.action),
+                        fields: action_fields,
                     },
                     HarnessEventBuilder {
                         run_id: Some(run_id.clone()),
@@ -1084,7 +1389,13 @@ impl HarnessEngine {
                         ..HarnessEventBuilder::default()
                     },
                 )?;
-                let result = self.dispatch_with_retry(session, dispatcher, &proposal.action)?;
+                let result = self.dispatch_with_retry(
+                    session,
+                    dispatcher,
+                    &proposal.action,
+                    action_source.as_deref(),
+                    &phase_execution_id,
+                )?;
                 if !result.ok {
                     let error = result.error.unwrap_or_else(|| "action failed".to_string());
                     let terminal_status = result.terminal_status;
@@ -1116,7 +1427,7 @@ impl HarnessEngine {
                 }
                 state.transcript.push(TranscriptEntry {
                     kind: TranscriptEntryKind::ActionResult,
-                    content: result.output.clone(),
+                    content: action_result_transcript_content(&proposal.action, result.output),
                 });
                 self.active_run_mut(session)?
                     .action_summaries
@@ -1152,6 +1463,48 @@ impl HarnessEngine {
             return Err(anyhow!("structured output repair limit exhausted"));
         }
         state.structured_repairs += 1;
+        let repair_attempt = state.structured_repairs;
+        self.record_repair(
+            session,
+            state,
+            phase_execution_id,
+            feedback,
+            repair_attempt,
+            "structured_output",
+        )
+    }
+
+    fn request_tool_call_repair(
+        &self,
+        session: &mut HarnessSession,
+        state: &mut PhaseExecutionState,
+        phase_execution_id: &str,
+        feedback: Option<String>,
+    ) -> Result<()> {
+        if state.tool_call_repairs >= self.options.runtime_limits.max_tool_call_repairs {
+            return Err(anyhow!("tool call repair limit exhausted"));
+        }
+        state.tool_call_repairs += 1;
+        let repair_attempt = state.tool_call_repairs;
+        self.record_repair(
+            session,
+            state,
+            phase_execution_id,
+            feedback,
+            repair_attempt,
+            "tool_call",
+        )
+    }
+
+    fn record_repair(
+        &self,
+        session: &mut HarnessSession,
+        state: &mut PhaseExecutionState,
+        phase_execution_id: &str,
+        feedback: Option<String>,
+        repair_attempt: u64,
+        repair_kind: &str,
+    ) -> Result<()> {
         self.active_run_mut(session)?.repair_count += 1;
         let message = feedback.unwrap_or_else(|| "Repair requested.".to_string());
         state.transcript.push(TranscriptEntry {
@@ -1163,10 +1516,10 @@ impl HarnessEngine {
             HarnessEventType::ModelRepairRequested,
             HarnessEventPayload::Lifecycle {
                 message,
-                fields: BTreeMap::from([(
-                    "repair_attempt".into(),
-                    json!(state.structured_repairs),
-                )]),
+                fields: BTreeMap::from([
+                    ("repair_attempt".into(), json!(repair_attempt)),
+                    ("repair_kind".into(), json!(repair_kind)),
+                ]),
             },
             HarnessEventBuilder {
                 run_id: Some(run_id),
@@ -1182,23 +1535,47 @@ impl HarnessEngine {
         session: &mut HarnessSession,
         dispatcher: &mut dyn ActionDispatcher,
         action: &SemanticAction,
+        action_source: Option<&str>,
+        phase_execution_id: &str,
     ) -> Result<ActionDispatchResult> {
         let mut attempts = 0;
         loop {
             attempts += 1;
+            let run_id = self.active_run(session)?.run_id().to_string();
+            if let Some(event_type) = action_request_event_type(action) {
+                let mut fields = action_trace_fields(action);
+                fields.insert("attempt".into(), json!(attempts));
+                if let Some(source) = action_source {
+                    fields.insert("source".into(), json!(source));
+                }
+                session.emitter.emit(
+                    event_type,
+                    HarnessEventPayload::Action {
+                        action_kind: action.kind().into(),
+                        identity: action.identity(),
+                        status: "requested".into(),
+                        fields,
+                    },
+                    HarnessEventBuilder {
+                        run_id: Some(run_id.clone()),
+                        phase_execution_id: Some(phase_execution_id.to_string()),
+                        ..HarnessEventBuilder::default()
+                    },
+                )?;
+            }
             let result = dispatcher.dispatch(action);
             let event_type = action_dispatch_event_type(action, result.ok);
-            let run_id = self.active_run(session)?.run_id().to_string();
             session.emitter.emit(
                 event_type,
                 HarnessEventPayload::Action {
                     action_kind: action.kind().into(),
                     identity: action.identity(),
                     status: if result.ok { "completed" } else { "failed" }.into(),
-                    fields: action_result_trace_fields(action, &result, attempts),
+                    fields: action_result_trace_fields(action, &result, attempts, action_source),
                 },
                 HarnessEventBuilder {
                     run_id: Some(run_id.clone()),
+                    phase_execution_id: Some(phase_execution_id.to_string()),
                     ..HarnessEventBuilder::default()
                 },
             )?;
@@ -1228,6 +1605,9 @@ impl HarnessEngine {
                     LoopToolFailureAction::Retry => unreachable!(),
                 };
             }
+            if !should_retry_tool_failure(&result) {
+                return Ok(result);
+            }
             let max_retries = policy.max_retries.unwrap_or(0);
             if attempts > max_retries {
                 let exhausted = policy
@@ -1252,16 +1632,22 @@ impl HarnessEngine {
             }
             self.active_run_mut(session)?.retry_count += 1;
             self.active_run_mut(session)?.usage.tool_retries += 1;
+            let mut fields = action_trace_fields(action);
+            fields.insert("attempt".into(), json!(attempts + 1));
+            if let Some(source) = action_source {
+                fields.insert("source".into(), json!(source));
+            }
             session.emitter.emit(
                 HarnessEventType::ToolRetrying,
                 HarnessEventPayload::Action {
                     action_kind: action.kind().into(),
                     identity: action.identity(),
                     status: "retrying".into(),
-                    fields: BTreeMap::from([("attempt".into(), json!(attempts + 1))]),
+                    fields,
                 },
                 HarnessEventBuilder {
                     run_id: Some(run_id),
+                    phase_execution_id: Some(phase_execution_id.to_string()),
                     ..HarnessEventBuilder::default()
                 },
             )?;
@@ -1751,17 +2137,57 @@ fn action_result_trace_fields(
     action: &SemanticAction,
     result: &ActionDispatchResult,
     attempt: u64,
+    action_source: Option<&str>,
 ) -> BTreeMap<String, Value> {
     let mut fields = action_trace_fields(action);
     fields.insert("attempt".into(), json!(attempt));
+    if let Some(source) = action_source {
+        fields.insert("source".into(), json!(source));
+    }
     fields.insert("result".into(), result.output.clone());
     if let Some(error) = &result.error {
         fields.insert("error".into(), json!(error));
+    }
+    if let Some(category) = result.failure_category {
+        fields.insert("failure_category".into(), json!(category));
     }
     if let Some(status) = result.terminal_status {
         fields.insert("terminal_status".into(), json!(status));
     }
     fields
+}
+
+fn should_retry_tool_failure(result: &ActionDispatchResult) -> bool {
+    result
+        .failure_category
+        .map(|category| category.is_retryable_tool_failure())
+        .unwrap_or(true)
+}
+
+fn action_source(action: &SemanticAction, phase: &EffectivePhase) -> Option<String> {
+    match action {
+        SemanticAction::AgentPmTool { tool, .. } => capability_source(phase, "agentpm_tool", tool),
+        SemanticAction::SkillResourceRead { skill, .. } => {
+            capability_source(phase, "skill_resource_read", skill)
+        }
+        _ => None,
+    }
+}
+
+fn capability_source(phase: &EffectivePhase, action_kind: &str, identity: &str) -> Option<String> {
+    phase
+        .capability_catalog
+        .iter()
+        .find(|descriptor| descriptor.action_kind == action_kind && descriptor.identity == identity)
+        .map(|descriptor| descriptor.source.clone())
+}
+
+fn action_result_transcript_content(action: &SemanticAction, result: Value) -> Value {
+    json!({
+        "action_kind": action.kind(),
+        "identity": action.identity(),
+        "result": result,
+    })
 }
 
 fn action_trace_fields(action: &SemanticAction) -> BTreeMap<String, Value> {
@@ -1801,6 +2227,15 @@ fn action_trace_fields(action: &SemanticAction) -> BTreeMap<String, Value> {
             }
             fields
         }
+    }
+}
+
+fn action_request_event_type(action: &SemanticAction) -> Option<HarnessEventType> {
+    match action {
+        SemanticAction::AgentPmTool { .. } => Some(HarnessEventType::ToolInvoked),
+        SemanticAction::ExternalMcpTool { .. } => Some(HarnessEventType::McpToolInvoked),
+        SemanticAction::SkillResourceRead { .. } => Some(HarnessEventType::SkillResourceRequested),
+        _ => None,
     }
 }
 
@@ -1930,10 +2365,14 @@ mod tests {
     use super::*;
     use crate::harness_observability::InMemoryEventSink;
     use crate::harness_runtime::action::{
-        ActionDispatchResult, ScriptedActionDispatcher, SemanticActionProposal,
+        ActionDispatchResult, ActionFailureCategory, ScriptedActionDispatcher,
+        SemanticActionProposal,
     };
     use crate::harness_runtime::approval::ScriptedApprovalController;
-    use crate::harness_runtime::model::{ModelRuntimeFailure, ModelTurn, ScriptedModelRuntime};
+    use crate::harness_runtime::model::{
+        ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot, ScriptedModelRuntime,
+        SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    };
     use crate::manifest::{
         LoopAccessMemory, LoopCheckpoint, LoopErrorPolicy, LoopLimits, LoopMetadata, LoopOutcome,
         LoopPhaseAccess, LoopPhaseFailurePolicy, LoopToolFailurePolicy, LoopTransition,
@@ -2109,6 +2548,98 @@ mod tests {
         path
     }
 
+    fn runtime_with_tool_and_skill() -> RuntimeSnapshot {
+        let mut runtime = RuntimeSnapshot::empty("session-test".into());
+        runtime.tools.push(ToolRuntimeSnapshot {
+            name: "@zack/search".into(),
+            version: "0.1.0".into(),
+            description: "Search incident records.".into(),
+            root: None,
+            input_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "query": { "type": "string" }
+                },
+                "required": ["query"]
+            }),
+            state: "available".into(),
+            source: "agent_binding".into(),
+        });
+        runtime.skills.push(SkillRuntimeSnapshot {
+            name: "@zack/skill".into(),
+            version: "0.1.0".into(),
+            description: "Use procedural guidance.".into(),
+            root: None,
+            resources: vec![
+                SkillResourceSnapshot {
+                    id: "entrypoint".into(),
+                    path: "SKILL.md".into(),
+                    kind: "entrypoint".into(),
+                },
+                SkillResourceSnapshot {
+                    id: "references/handoff-template.md".into(),
+                    path: "references/handoff-template.md".into(),
+                    kind: "reference".into(),
+                },
+            ],
+            state: "available".into(),
+            source: "agent_binding".into(),
+        });
+        runtime.capability_candidates = vec![
+            RuntimeCapabilitySnapshot {
+                kind: "tool".into(),
+                identity: "@zack/search".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+            },
+            RuntimeCapabilitySnapshot {
+                kind: "skill".into(),
+                identity: "@zack/skill".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+            },
+        ];
+        runtime
+    }
+
+    fn session_with_tool_and_skill() -> HarnessSession {
+        HarnessSession::with_runtime_snapshot(runtime_with_tool_and_skill())
+    }
+
+    fn runtime_with_two_tools_and_skill() -> RuntimeSnapshot {
+        let mut runtime = runtime_with_tool_and_skill();
+        runtime.tools.push(ToolRuntimeSnapshot {
+            name: "@zack/comment".into(),
+            version: "0.1.0".into(),
+            description: "Draft a comment.".into(),
+            root: None,
+            input_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "body": { "type": "string" }
+                },
+                "required": ["body"]
+            }),
+            state: "available".into(),
+            source: "agent_binding".into(),
+        });
+        runtime.capability_candidates.insert(
+            1,
+            RuntimeCapabilitySnapshot {
+                kind: "tool".into(),
+                identity: "@zack/comment".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+            },
+        );
+        runtime
+    }
+
     struct MutatingModelRuntime {
         turns: VecDeque<ModelTurn>,
         requests: Vec<ModelRequest>,
@@ -2158,6 +2689,38 @@ mod tests {
         }
     }
 
+    fn tool_turn_with_arguments(tool: &str, arguments: Value) -> ModelTurn {
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "tool",
+                SemanticAction::AgentPmTool {
+                    tool: tool.into(),
+                    arguments,
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: None,
+            provider_metadata: BTreeMap::new(),
+        }
+    }
+
+    fn skill_read_turn(skill: &str, resource: &str) -> ModelTurn {
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "skill",
+                SemanticAction::SkillResourceRead {
+                    skill: skill.into(),
+                    resource: resource.into(),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: None,
+            provider_metadata: BTreeMap::new(),
+        }
+    }
+
     fn run_engine(
         loop_manifest: LoopManifest,
         turns: Vec<ModelTurn>,
@@ -2191,7 +2754,7 @@ mod tests {
             phase_failure: None,
         });
         let mut engine = HarnessEngine::new(loop_manifest, HarnessEngineOptions::new(limits()));
-        let mut session = HarnessSession::new();
+        let mut session = session_with_tool_and_skill();
         let mut model = ScriptedModelRuntime::new(vec![tool_turn("@zack/search")]);
         let mut dispatcher = ScriptedActionDispatcher::default();
         for result in dispatcher_results {
@@ -2647,7 +3210,7 @@ mod tests {
     #[test]
     fn multi_turn_phase_processes_multiple_ordered_actions() {
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
-        let mut session = HarnessSession::new();
+        let mut session = session_with_tool_and_skill();
         let mut model = ScriptedModelRuntime::new(vec![
             ModelTurn {
                 assistant_content: Some("I will act.".into()),
@@ -2656,14 +3219,14 @@ mod tests {
                         "tool-1",
                         SemanticAction::AgentPmTool {
                             tool: "@zack/search".into(),
-                            arguments: json!({}),
+                            arguments: json!({ "query": "incident" }),
                         },
                     ),
                     SemanticActionProposal::new(
                         "skill-1",
                         SemanticAction::SkillResourceRead {
                             skill: "@zack/skill".into(),
-                            resource: "SKILL.md".into(),
+                            resource: "entrypoint".into(),
                         },
                     ),
                 ],
@@ -2689,9 +3252,417 @@ mod tests {
         assert!(matches!(result, HarnessRunResult::Terminal(_)));
         assert_eq!(dispatcher.dispatched.len(), 2);
         assert_eq!(dispatcher.dispatched[0].identity(), "@zack/search");
-        assert_eq!(dispatcher.dispatched[1].identity(), "@zack/skill/SKILL.md");
+        assert_eq!(
+            dispatcher.dispatched[1].identity(),
+            "@zack/skill/entrypoint"
+        );
         assert_eq!(model.requests.len(), 4);
         assert!(model.requests[1].transcript.len() > model.requests[0].transcript.len());
+    }
+
+    #[test]
+    fn invalid_tool_arguments_request_repair_before_dispatch() {
+        let mut runtime_limits = limits();
+        runtime_limits.max_structured_output_repairs = 0;
+        runtime_limits.max_tool_call_repairs = 1;
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(runtime_limits));
+        let mut session = session_with_tool_and_skill();
+        let mut model = ScriptedModelRuntime::new(vec![
+            ModelTurn {
+                assistant_content: None,
+                actions: vec![SemanticActionProposal::new(
+                    "bad-tool",
+                    SemanticAction::AgentPmTool {
+                        tool: "@zack/search".into(),
+                        arguments: json!({ "query": 42 }),
+                    },
+                )],
+                usage: RunUsage::default(),
+                finish_reason: None,
+                provider_metadata: BTreeMap::new(),
+            },
+            tool_turn("@zack/search"),
+            completion("a", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+
+        let result = engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Ended);
+        assert_eq!(result.report.repair_count, 1);
+        assert_eq!(dispatcher.dispatched.len(), 1);
+        assert_eq!(dispatcher.dispatched[0].identity(), "@zack/search");
+        assert!(
+            model.requests[1]
+                .prompt
+                .render_text()
+                .contains("arguments are invalid")
+        );
+    }
+
+    #[test]
+    fn tool_call_repair_limit_exhaustion_fails_before_dispatch() {
+        let mut runtime_limits = limits();
+        runtime_limits.max_tool_call_repairs = 0;
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(runtime_limits));
+        let mut session = session_with_tool_and_skill();
+        let mut model = ScriptedModelRuntime::new(vec![ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "bad-tool",
+                SemanticAction::AgentPmTool {
+                    tool: "@zack/search".into(),
+                    arguments: json!({ "query": 42 }),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: None,
+            provider_metadata: BTreeMap::new(),
+        }]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+
+        let result = engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Failed);
+        assert_eq!(result.report.repair_count, 0);
+        assert_eq!(
+            result.output,
+            Some(json!({ "error": "tool call repair limit exhausted" }))
+        );
+        assert!(dispatcher.dispatched.is_empty());
+    }
+
+    #[test]
+    fn two_tools_preserve_order_and_validate_against_each_tool_schema() {
+        let mut runtime_limits = limits();
+        runtime_limits.max_tool_call_repairs = 1;
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(runtime_limits));
+        let mut session = HarnessSession::with_runtime_snapshot(runtime_with_two_tools_and_skill());
+        let mut model = ScriptedModelRuntime::new(vec![
+            tool_turn_with_arguments("@zack/comment", json!({ "query": "wrong schema" })),
+            tool_turn("@zack/search"),
+            tool_turn_with_arguments("@zack/comment", json!({ "body": "ready" })),
+            completion("a", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+
+        let result = engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Ended);
+        assert_eq!(result.report.repair_count, 1);
+        let tool_descriptors = model.requests[0]
+            .effective_phase
+            .capability_catalog
+            .iter()
+            .filter(|descriptor| descriptor.action_kind == "agentpm_tool")
+            .map(|descriptor| descriptor.identity.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(tool_descriptors, vec!["@zack/search", "@zack/comment"]);
+        assert_eq!(dispatcher.dispatched.len(), 2);
+        assert_eq!(dispatcher.dispatched[0].identity(), "@zack/search");
+        assert_eq!(dispatcher.dispatched[1].identity(), "@zack/comment");
+        assert!(
+            model.requests[1]
+                .prompt
+                .render_text()
+                .contains("Tool `@zack/comment` arguments are invalid")
+        );
+    }
+
+    #[test]
+    fn phase_scoped_tool_candidates_are_active_only_for_matching_phase() {
+        let mut runtime = runtime_with_two_tools_and_skill();
+        runtime.capability_candidates = vec![
+            RuntimeCapabilitySnapshot {
+                kind: "tool".into(),
+                identity: "@zack/search".into(),
+                scope: "phase:assess".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+            },
+            RuntimeCapabilitySnapshot {
+                kind: "tool".into(),
+                identity: "@zack/comment".into(),
+                scope: "phase:execute".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+            },
+        ];
+
+        let loop_manifest = base_loop();
+        let assess = EffectivePhase::from_phase(&loop_manifest.r#loop.phases[0], &runtime);
+        let execute = EffectivePhase::from_phase(&loop_manifest.r#loop.phases[1], &runtime);
+
+        assert!(
+            assess
+                .capability_catalog
+                .iter()
+                .any(|descriptor| descriptor.action_kind == "agentpm_tool"
+                    && descriptor.identity == "@zack/search")
+        );
+        assert!(
+            !assess
+                .capability_catalog
+                .iter()
+                .any(|descriptor| descriptor.action_kind == "agentpm_tool"
+                    && descriptor.identity == "@zack/comment")
+        );
+        assert!(
+            execute
+                .capability_catalog
+                .iter()
+                .any(|descriptor| descriptor.action_kind == "agentpm_tool"
+                    && descriptor.identity == "@zack/comment")
+        );
+    }
+
+    #[test]
+    fn schema_valid_tool_domain_failure_is_returned_to_phase_transcript() {
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let mut session = session_with_tool_and_skill();
+        let mut model = ScriptedModelRuntime::new(vec![
+            tool_turn("@zack/search"),
+            completion("a", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        dispatcher.push_result(
+            "@zack/search",
+            ActionDispatchResult::success(json!({
+                "ok": false,
+                "error": "domain-level failure",
+                "reason": "manual_review_required"
+            })),
+        );
+        let mut approvals = ScriptedApprovalController::default();
+
+        let result = engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Ended);
+        assert_eq!(dispatcher.dispatched.len(), 1);
+        let next_prompt = model.requests[1].prompt.render_text();
+        assert!(next_prompt.contains("ActionResult [agentpm_tool @zack/search]"));
+        assert!(next_prompt.contains("\"ok\":false"));
+        assert!(next_prompt.contains("domain-level failure"));
+    }
+
+    #[test]
+    fn skill_resource_content_is_loaded_on_demand_and_phase_local() {
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let mut session = session_with_tool_and_skill();
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new(vec![
+            skill_read_turn("@zack/skill", "entrypoint"),
+            skill_read_turn("@zack/skill", "references/handoff-template.md"),
+            completion("a", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        dispatcher.push_result(
+            "@zack/skill/entrypoint",
+            ActionDispatchResult::success(json!({
+                "action_kind": "skill_resource_read",
+                "ok": true,
+                "skill": "@zack/skill",
+                "resource": "entrypoint",
+                "content": "Use concise handoff guidance."
+            })),
+        );
+        dispatcher.push_result(
+            "@zack/skill/references/handoff-template.md",
+            ActionDispatchResult::success(json!({
+                "action_kind": "skill_resource_read",
+                "ok": true,
+                "skill": "@zack/skill",
+                "resource": "references/handoff-template.md",
+                "content": "Use the handoff template."
+            })),
+        );
+        let mut approvals = ScriptedApprovalController::default();
+
+        let result = engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+
+        assert!(matches!(result, HarnessRunResult::Terminal(_)));
+        let prompt_with_one_resource = model.requests[1].prompt.render_text();
+        assert!(prompt_with_one_resource.contains("Loaded resource: entrypoint"));
+        assert!(prompt_with_one_resource.contains("Use concise handoff guidance."));
+        assert!(
+            prompt_with_one_resource
+                .contains("ActionResult [skill_resource_read @zack/skill/entrypoint]")
+        );
+        let prompt_with_grouped_resources = model.requests[2].prompt.render_text();
+        assert_eq!(
+            prompt_with_grouped_resources
+                .matches("Skill: @zack/skill")
+                .count(),
+            1
+        );
+        assert!(prompt_with_grouped_resources.contains("Loaded resource: entrypoint"));
+        assert!(
+            prompt_with_grouped_resources
+                .contains("Loaded resource: references/handoff-template.md")
+        );
+        assert!(prompt_with_grouped_resources.contains("Use concise handoff guidance."));
+        assert!(prompt_with_grouped_resources.contains("Use the handoff template."));
+        assert!(
+            !model.requests[3]
+                .prompt
+                .render_text()
+                .contains("Use concise handoff guidance.")
+        );
+        let event_types: Vec<_> = handle
+            .events()
+            .iter()
+            .map(|event| event.event_type)
+            .collect();
+        assert!(event_types.contains(&HarnessEventType::SkillActivated));
+        assert!(event_types.contains(&HarnessEventType::SkillResourceRequested));
+        assert!(event_types.contains(&HarnessEventType::SkillResourceLoaded));
+        let skill_requested = handle
+            .events()
+            .into_iter()
+            .find(|event| event.event_type == HarnessEventType::SkillResourceRequested)
+            .unwrap();
+        let HarnessEventPayload::Action { fields, .. } = skill_requested.payload else {
+            panic!("expected action payload");
+        };
+        assert_eq!(fields["source"], "agent_binding");
+    }
+
+    #[test]
+    fn unavailable_tool_is_suppressed_from_effective_phase() {
+        let mut runtime = runtime_with_tool_and_skill();
+        runtime.tools[0].state = "unavailable".into();
+        runtime.capability_candidates[0].state = "unavailable".into();
+        let phase = &base_loop().r#loop.phases[0];
+        let effective = EffectivePhase::from_phase(phase, &runtime);
+
+        assert!(
+            !effective
+                .capability_catalog
+                .iter()
+                .any(|descriptor| descriptor.action_kind == "agentpm_tool")
+        );
+        assert!(
+            effective.suppressed_capabilities.iter().any(
+                |capability| capability.kind == "tool" && capability.identity == "@zack/search"
+            )
+        );
+    }
+
+    #[test]
+    fn loop_access_suppresses_skill_inherited_tools_but_not_skill_resources() {
+        let mut runtime = runtime_with_tool_and_skill();
+        runtime.capability_candidates = vec![
+            RuntimeCapabilitySnapshot {
+                kind: "skill".into(),
+                identity: "@zack/skill".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+            },
+            RuntimeCapabilitySnapshot {
+                kind: "tool".into(),
+                identity: "@zack/search".into(),
+                scope: "global".into(),
+                source: "skill:@zack/skill".into(),
+                state: "available".into(),
+            },
+        ];
+        let mut loop_manifest = base_loop();
+        loop_manifest.r#loop.phases[0].access = Some(LoopPhaseAccess {
+            tools: Some(false),
+            knowledge: None,
+            memory: None,
+        });
+
+        let effective = EffectivePhase::from_phase(&loop_manifest.r#loop.phases[0], &runtime);
+
+        assert!(
+            effective
+                .capability_catalog
+                .iter()
+                .any(|descriptor| descriptor.action_kind == "skill_resource_read"
+                    && descriptor.identity == "@zack/skill")
+        );
+        assert!(
+            !effective
+                .capability_catalog
+                .iter()
+                .any(|descriptor| descriptor.action_kind == "agentpm_tool")
+        );
+        assert!(
+            effective
+                .suppressed_capabilities
+                .iter()
+                .any(|capability| capability.kind == "tool"
+                    && capability.identity == "@zack/search"
+                    && capability.source == "skill:@zack/skill"
+                    && capability.reason == "Loop access.tools=false for this phase")
+        );
     }
 
     #[test]
@@ -2759,7 +3730,10 @@ mod tests {
             }),
         });
         let mut engine = HarnessEngine::new(loop_manifest, HarnessEngineOptions::new(limits()));
-        let mut session = HarnessSession::new();
+        let mut session = session_with_tool_and_skill();
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
         let mut model = ScriptedModelRuntime::new(vec![
             tool_turn("@zack/search"),
             ModelTurn {
@@ -2768,7 +3742,7 @@ mod tests {
                     "skill",
                     SemanticAction::SkillResourceRead {
                         skill: "@zack/skill".into(),
-                        resource: "SKILL.md".into(),
+                        resource: "entrypoint".into(),
                     },
                 )],
                 usage: RunUsage::default(),
@@ -2796,6 +3770,20 @@ mod tests {
             dispatcher.dispatched[0],
             SemanticAction::SkillResourceRead { .. }
         ));
+        let events = handle.events();
+        let tool_candidates = events
+            .iter()
+            .find(|event| event.event_type == HarnessEventType::ToolCandidatesComputed)
+            .unwrap();
+        let HarnessEventPayload::Lifecycle { fields, .. } = &tool_candidates.payload else {
+            panic!("expected lifecycle payload");
+        };
+        assert_eq!(fields["suppressed"][0]["identity"], "@zack/search");
+        assert_eq!(fields["suppressed"][0]["source"], "agent_binding");
+        assert_eq!(
+            fields["suppressed"][0]["reason"],
+            "Loop access.tools=false for this phase"
+        );
     }
 
     #[test]
@@ -2917,7 +3905,7 @@ mod tests {
             phase_failure: None,
         });
         let mut engine = HarnessEngine::new(loop_manifest, HarnessEngineOptions::new(limits()));
-        let mut session = HarnessSession::new();
+        let mut session = session_with_tool_and_skill();
         let mut model = ScriptedModelRuntime::new(vec![
             tool_turn("@zack/search"),
             completion("a", "execute"),
@@ -2952,7 +3940,7 @@ mod tests {
     #[test]
     fn default_action_failure_becomes_runtime_failed() {
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
-        let mut session = HarnessSession::new();
+        let mut session = session_with_tool_and_skill();
         let mut model = ScriptedModelRuntime::new(vec![tool_turn("@zack/search")]);
         let mut dispatcher = ScriptedActionDispatcher::default();
         dispatcher.push_result("@zack/search", ActionDispatchResult::failure("boom"));
@@ -3053,6 +4041,48 @@ mod tests {
         assert_eq!(handoff_result.status, HarnessTerminalStatus::HandedOff);
         assert_eq!(handoff_result.report.retry_count, 1);
         assert_eq!(handoff_dispatcher.dispatched.len(), 2);
+    }
+
+    #[test]
+    fn deterministic_tool_failure_categories_do_not_retry() {
+        let mut loop_manifest = base_loop();
+        loop_manifest.r#loop.error_policy = Some(LoopErrorPolicy {
+            tool_failure: Some(LoopToolFailurePolicy {
+                action: LoopToolFailureAction::Retry,
+                max_retries: Some(2),
+                on_exhausted: Some(LoopToolFailureExhaustedAction::FailPhase),
+            }),
+            phase_failure: None,
+        });
+        let mut engine = HarnessEngine::new(loop_manifest, HarnessEngineOptions::new(limits()));
+        let mut session = session_with_tool_and_skill();
+        let mut model = ScriptedModelRuntime::new(vec![tool_turn("@zack/search")]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        dispatcher.push_result(
+            "@zack/search",
+            ActionDispatchResult::failure_with_category(
+                ActionFailureCategory::Schema,
+                "authoritative Tool input schema rejected arguments",
+            ),
+        );
+        let mut approvals = ScriptedApprovalController::default();
+
+        let result = engine
+            .execute_run(
+                &mut session,
+                "hello",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Failed);
+        assert_eq!(result.report.retry_count, 0);
+        assert_eq!(dispatcher.dispatched.len(), 1);
     }
 
     #[test]
@@ -3234,7 +4264,7 @@ mod tests {
         let mut model_limit = limits();
         model_limit.max_model_calls_per_phase = 1;
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(model_limit));
-        let mut session = HarnessSession::new();
+        let mut session = session_with_tool_and_skill();
         let mut model =
             ScriptedModelRuntime::new(vec![tool_turn("@zack/search"), completion("a", "execute")]);
         let mut dispatcher = ScriptedActionDispatcher::default();
@@ -3256,7 +4286,7 @@ mod tests {
         let mut action_limit = limits();
         action_limit.max_actions_per_phase = 0;
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(action_limit));
-        let mut session = HarnessSession::new();
+        let mut session = session_with_tool_and_skill();
         let mut model = ScriptedModelRuntime::new(vec![completion("a", "execute")]);
         let result = engine
             .execute_run(
@@ -3275,7 +4305,7 @@ mod tests {
         let mut tool_limit = limits();
         tool_limit.max_tool_calls_per_phase = 0;
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(tool_limit));
-        let mut session = HarnessSession::new();
+        let mut session = session_with_tool_and_skill();
         let mut model = ScriptedModelRuntime::new(vec![tool_turn("@zack/search")]);
         let result = engine
             .execute_run(
@@ -3315,7 +4345,7 @@ mod tests {
     #[test]
     fn report_and_events_include_phase_transition_action_and_usage_data() {
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
-        let mut session = HarnessSession::new();
+        let mut session = session_with_tool_and_skill();
         let memory = InMemoryEventSink::default();
         let handle = memory.clone();
         session.emitter.add_sink(Box::new(memory));
@@ -3342,17 +4372,29 @@ mod tests {
         assert_eq!(result.report.action_summaries.len(), 1);
         assert_eq!(result.report.tool_summaries.len(), 1);
         assert_eq!(result.report.usage.accepted_semantic_actions, 4);
-        let event_types: Vec<_> = handle
-            .events()
-            .iter()
-            .map(|event| event.event_type)
-            .collect();
+        let events = handle.events();
+        let event_types: Vec<_> = events.iter().map(|event| event.event_type).collect();
         assert!(event_types.contains(&HarnessEventType::RunStarted));
+        assert!(event_types.contains(&HarnessEventType::ToolCandidatesComputed));
         assert!(event_types.contains(&HarnessEventType::PhaseStarted));
+        assert!(event_types.contains(&HarnessEventType::SemanticActionProposed));
+        assert!(event_types.contains(&HarnessEventType::ToolInvoked));
         assert!(event_types.contains(&HarnessEventType::ToolCompleted));
         assert!(event_types.contains(&HarnessEventType::TransitionSelected));
         assert!(event_types.contains(&HarnessEventType::RunCompleted));
         assert!(event_types.contains(&HarnessEventType::SessionUsageUpdated));
+        let tool_invoked = events
+            .iter()
+            .find(|event| event.event_type == HarnessEventType::ToolInvoked)
+            .unwrap();
+        assert_eq!(
+            tool_invoked.phase_execution_id.as_deref(),
+            Some("phase-exec-1")
+        );
+        let HarnessEventPayload::Action { fields, .. } = &tool_invoked.payload else {
+            panic!("expected action payload");
+        };
+        assert_eq!(fields["source"], "agent_binding");
     }
 
     #[test]

@@ -66,6 +66,46 @@ pub struct ServiceReadinessSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolRuntimeSnapshot {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
+    pub input_schema: Value,
+    pub state: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillResourceSnapshot {
+    pub id: String,
+    pub path: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillRuntimeSnapshot {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
+    pub resources: Vec<SkillResourceSnapshot>,
+    pub state: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeCapabilitySnapshot {
+    pub kind: String,
+    pub identity: String,
+    pub scope: String,
+    pub source: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileSnapshot {
     pub name: String,
     pub version: String,
@@ -96,6 +136,9 @@ pub struct RuntimeSnapshot {
     pub hook_registrations: Vec<String>,
     pub profiles: Vec<ProfileSnapshot>,
     pub profile_bindings: ProfileBindingSnapshot,
+    pub tools: Vec<ToolRuntimeSnapshot>,
+    pub skills: Vec<SkillRuntimeSnapshot>,
+    pub capability_candidates: Vec<RuntimeCapabilitySnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelProviderSelection>,
 }
@@ -116,6 +159,9 @@ impl RuntimeSnapshot {
             hook_registrations: Vec::new(),
             profiles: Vec::new(),
             profile_bindings: ProfileBindingSnapshot::default(),
+            tools: Vec::new(),
+            skills: Vec::new(),
+            capability_candidates: Vec::new(),
             model: None,
         }
     }
@@ -226,6 +272,11 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         authored.push_str("\n\n");
         authored.push_str(&profiles);
     }
+    let loaded_skill_resources = render_loaded_skill_resources(input.transcript);
+    if !loaded_skill_resources.is_empty() {
+        authored.push_str("\n\n");
+        authored.push_str(&loaded_skill_resources);
+    }
 
     let mut context = format!("Run input:\n{}", input.run_input);
     if let Some(consumer_context) = input.consumer_context {
@@ -292,7 +343,7 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         input
             .transcript
             .iter()
-            .map(|entry| format!("- {:?}: {}", entry.kind, entry.content))
+            .map(render_transcript_entry)
             .collect::<Vec<_>>()
             .join("\n")
     };
@@ -334,6 +385,75 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         completion,
         diagnostics,
     }
+}
+
+fn render_transcript_entry(entry: &TranscriptEntry) -> String {
+    if entry.kind == TranscriptEntryKind::ActionResult
+        && let (Some(action_kind), Some(identity), Some(result)) = (
+            entry.content.get("action_kind").and_then(Value::as_str),
+            entry.content.get("identity").and_then(Value::as_str),
+            entry.content.get("result"),
+        )
+    {
+        return format!("- ActionResult [{action_kind} {identity}]: {result}");
+    }
+    format!("- {:?}: {}", entry.kind, entry.content)
+}
+
+fn render_loaded_skill_resources(transcript: &[TranscriptEntry]) -> String {
+    let mut grouped: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    for entry in transcript
+        .iter()
+        .filter(|entry| entry.kind == TranscriptEntryKind::ActionResult)
+    {
+        if entry.content.get("action_kind").and_then(Value::as_str) != Some("skill_resource_read") {
+            continue;
+        }
+        let result = entry.content.get("result").unwrap_or(&entry.content);
+        if result.get("ok").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        let Some(skill) = result.get("skill").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(resource) = result.get("resource").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(content) = result.get("content").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some((_, resources)) = grouped.iter_mut().find(|(candidate, _)| candidate == skill) {
+            resources.push((resource.into(), content.into()));
+        } else {
+            grouped.push((skill.into(), vec![(resource.into(), content.into())]));
+        }
+    }
+
+    grouped
+        .into_iter()
+        .map(|(skill, resources)| {
+            let loaded_resources = resources
+                .into_iter()
+                .map(|(resource, content)| {
+                    format!(
+                        "  Loaded resource: {resource}\n\n{}",
+                        indent_skill_content(&content)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            format!("Skill: {skill}\n\n{loaded_resources}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn indent_skill_content(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| format!("  {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn render_active_profiles(effective_phase: &EffectivePhase) -> String {

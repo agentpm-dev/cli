@@ -55,6 +55,39 @@ pub enum SemanticAction {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionFailureCategory {
+    Resolution,
+    Runtime,
+    Schema,
+    Timeout,
+    OutputLimit,
+    MalformedOutput,
+    SubprocessFailure,
+    Other,
+}
+
+impl ActionFailureCategory {
+    pub fn from_machine_category(value: &str) -> Option<Self> {
+        match value {
+            "resolution" => Some(Self::Resolution),
+            "runtime" => Some(Self::Runtime),
+            "schema" => Some(Self::Schema),
+            "timeout" => Some(Self::Timeout),
+            "output_limit" => Some(Self::OutputLimit),
+            "malformed_output" => Some(Self::MalformedOutput),
+            "subprocess_failure" => Some(Self::SubprocessFailure),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
+
+    pub fn is_retryable_tool_failure(self) -> bool {
+        matches!(self, Self::Timeout | Self::SubprocessFailure)
+    }
+}
+
 impl SemanticAction {
     pub fn kind(&self) -> &'static str {
         match self {
@@ -101,6 +134,8 @@ pub struct ActionDispatchResult {
     pub output: Value,
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_category: Option<ActionFailureCategory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_status: Option<HarnessTerminalStatus>,
 }
 
@@ -110,6 +145,7 @@ impl ActionDispatchResult {
             ok: true,
             output,
             error: None,
+            failure_category: None,
             terminal_status: None,
         }
     }
@@ -119,6 +155,20 @@ impl ActionDispatchResult {
             ok: false,
             output: Value::Null,
             error: Some(message.into()),
+            failure_category: None,
+            terminal_status: None,
+        }
+    }
+
+    pub fn failure_with_category(
+        category: ActionFailureCategory,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            ok: false,
+            output: Value::Null,
+            error: Some(message.into()),
+            failure_category: Some(category),
             terminal_status: None,
         }
     }
@@ -128,6 +178,7 @@ impl ActionDispatchResult {
             ok: false,
             output: json!({ "terminal_status": status }),
             error: Some(message.into()),
+            failure_category: None,
             terminal_status: Some(status),
         }
     }
