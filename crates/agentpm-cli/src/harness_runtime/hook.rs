@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
 use super::action::SemanticAction;
-use super::model::{CompletionContract, ModelProviderSelection, ModelRequest, PromptSection};
+use super::model::{
+    CONSUMER_RUN_CONTEXT_SECTION_TITLE, CompletionContract, ModelProviderSelection, ModelRequest,
+    PromptSection,
+};
 use super::service::{
     HostServiceInvoker, ProcessServiceClient, ProcessServiceConfig, ServiceLifecycleEmitter,
 };
@@ -137,6 +140,10 @@ impl HookRuntimeFailure {
 pub trait HookRuntime {
     fn has_hook(&self, _hook: HarnessHookId) -> bool {
         false
+    }
+
+    fn binding_count(&self, hook: &HarnessHookId) -> usize {
+        usize::from(self.has_hook(hook.clone()))
     }
 
     fn before_tool_selection(
@@ -313,6 +320,13 @@ impl ConfiguredHookRuntime {
 impl HookRuntime for ConfiguredHookRuntime {
     fn has_hook(&self, hook: HarnessHookId) -> bool {
         self.bindings.iter().any(|binding| binding.hook == hook)
+    }
+
+    fn binding_count(&self, hook: &HarnessHookId) -> usize {
+        self.bindings
+            .iter()
+            .filter(|binding| &binding.hook == hook)
+            .count()
     }
 
     fn before_tool_selection(
@@ -746,7 +760,7 @@ fn append_before_model_request_context_to_hook(
 ) -> Result<(), String> {
     let Some(section) = sections
         .iter_mut()
-        .find(|section| section.title == "CONSUMER / RUN CONTEXT" && section.mutable)
+        .find(|section| section.title == CONSUMER_RUN_CONTEXT_SECTION_TITLE && section.mutable)
     else {
         return Err("before_model_request could not find a mutable context section".into());
     };
@@ -788,7 +802,7 @@ fn merge_before_model_request_provider_options(
 }
 
 fn is_before_model_request_mutable_section(section: &PromptSection) -> bool {
-    section.title == "CONSUMER / RUN CONTEXT"
+    section.title == CONSUMER_RUN_CONTEXT_SECTION_TITLE
 }
 
 pub fn apply_before_tool_call_decision(
@@ -1415,7 +1429,7 @@ for line in sys.stdin:
             .prompt
             .sections
             .iter()
-            .find(|section| section.title == "CONSUMER / RUN CONTEXT")
+            .find(|section| section.title == CONSUMER_RUN_CONTEXT_SECTION_TITLE)
             .unwrap();
         assert!(!control.content.contains("Additional safe context."));
         assert!(context.content.contains("Additional safe context."));
@@ -1545,7 +1559,7 @@ for line in sys.stdin:
                     },
                     PromptSection {
                         number: 3,
-                        title: "CONSUMER / RUN CONTEXT".into(),
+                        title: CONSUMER_RUN_CONTEXT_SECTION_TITLE.into(),
                         content: "context".into(),
                     },
                 ],

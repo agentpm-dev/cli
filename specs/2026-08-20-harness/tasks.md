@@ -602,6 +602,7 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 - [ ] Suppress a known-unrealizable Knowledge surface with a diagnostic rather than exposing a model action that cannot succeed.
 
 - [ ] Make `before_knowledge_request` and `after_knowledge_retrieval` Hook points live through HookRuntime; Hooks remain confined to the already-authorized package/mode/options and result identities, and all changes are revalidated.
+- [ ] When activating Knowledge/Memory Hook seams in Milestones 12/14/15, drain and emit queued nonfatal Hook failures before every terminal rejection/failure exit, including engine-side patch-validation failures.
 - [ ] Preserve failure semantics: malformed/unauthorized model request -> bounded structured repair; valid backend/runtime failure -> structured Knowledge failure returned to the phase, not Loop Tool failure; repeated inability to complete may eventually become phase failure.
 - [ ] Emit Knowledge surface/readiness/request/retrieval/citation/failure events with content governed by trace policy.
 
