@@ -10,7 +10,15 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::{Duration, Instant};
+
+const TOOL_CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const TOOL_CANCELLATION_GRACE_PERIOD: Duration = Duration::from_millis(1_500);
 
 #[derive(Debug, Clone)]
 pub struct AgentPmActionDispatcher {
@@ -18,6 +26,7 @@ pub struct AgentPmActionDispatcher {
     agentpm_binary: PathBuf,
     tools: BTreeMap<String, ToolRuntimeSnapshot>,
     skills: BTreeMap<String, SkillRuntimeSnapshot>,
+    cancellation_requested: Option<Arc<AtomicBool>>,
 }
 
 impl AgentPmActionDispatcher {
@@ -44,7 +53,13 @@ impl AgentPmActionDispatcher {
                 .cloned()
                 .map(|skill| (skill.name.clone(), skill))
                 .collect(),
+            cancellation_requested: None,
         })
+    }
+
+    pub fn with_cancellation_token(mut self, cancellation_requested: Arc<AtomicBool>) -> Self {
+        self.cancellation_requested = Some(cancellation_requested);
+        self
     }
 
     fn dispatch_tool(&self, tool_name: &str, arguments: &Value) -> ActionDispatchResult {
@@ -63,14 +78,24 @@ impl AgentPmActionDispatcher {
             .stderr(Stdio::piped())
             .spawn()
             .and_then(|mut child| {
-                if let Some(stdin) = child.stdin.as_mut() {
+                if let Some(mut stdin) = child.stdin.take() {
                     stdin.write_all(arguments.to_string().as_bytes())?;
                 }
-                child.wait_with_output()
+                wait_for_tool_child(child, self.cancellation_requested.as_deref())
             });
         let output = match output {
             Ok(output) => output,
             Err(err) => {
+                if self
+                    .cancellation_requested
+                    .as_deref()
+                    .is_some_and(|token| token.load(Ordering::SeqCst))
+                {
+                    return ActionDispatchResult::terminal_failure(
+                        crate::harness_observability::HarnessTerminalStatus::Cancelled,
+                        format!("ToolRuntime cancelled agentpm run for `{tool_name}`"),
+                    );
+                }
                 return ActionDispatchResult::failure_with_category(
                     ActionFailureCategory::Runtime,
                     format!("ToolRuntime failed to invoke agentpm run for `{tool_name}`: {err}"),
@@ -154,6 +179,58 @@ impl AgentPmActionDispatcher {
     }
 }
 
+fn wait_for_tool_child(
+    mut child: Child,
+    cancellation_requested: Option<&AtomicBool>,
+) -> std::io::Result<Output> {
+    loop {
+        if cancellation_requested.is_some_and(|token| token.load(Ordering::SeqCst)) {
+            terminate_tool_child_on_cancellation(&mut child)?;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "ToolRuntime cancellation requested",
+            ));
+        }
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output();
+        }
+        std::thread::sleep(TOOL_CANCELLATION_POLL_INTERVAL);
+    }
+}
+
+fn terminate_tool_child_on_cancellation(child: &mut Child) -> std::io::Result<()> {
+    request_graceful_tool_child_shutdown(child)?;
+    let started = Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        if started.elapsed() >= TOOL_CANCELLATION_GRACE_PERIOD {
+            child.kill()?;
+            let _ = child.wait()?;
+            return Ok(());
+        }
+        std::thread::sleep(TOOL_CANCELLATION_POLL_INTERVAL);
+    }
+}
+
+#[cfg(unix)]
+fn request_graceful_tool_child_shutdown(child: &mut Child) -> std::io::Result<()> {
+    let rc = unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() != std::io::ErrorKind::NotFound {
+            return Err(err);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn request_graceful_tool_child_shutdown(child: &mut Child) -> std::io::Result<()> {
+    child.kill()
+}
+
 impl ActionDispatcher for AgentPmActionDispatcher {
     fn dispatch(&mut self, action: &SemanticAction) -> ActionDispatchResult {
         match action {
@@ -224,7 +301,11 @@ struct MachineRunError {
 mod tests {
     use super::*;
     use crate::harness_runtime::model::{RuntimeSnapshot, SkillResourceSnapshot};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn skill_resource_loader_rejects_path_escape() {
@@ -397,6 +478,33 @@ printf '%s\n' '{"schema_version":1,"status":"error","error":{"category":"schema"
         assert!(!result.ok);
         assert_eq!(result.failure_category, Some(ActionFailureCategory::Schema));
         assert_eq!(result.error.as_deref(), Some("invalid arguments"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tool_runtime_cancellation_sends_catchable_signal_before_kill() {
+        let temp = temp_dir("tool-cancellation-signal");
+        let marker = temp.join("term-seen");
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg(r#"trap 'printf term > "$MARKER"; exit 0' TERM; while :; do sleep 1; done"#)
+            .env("MARKER", &marker)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let token = Arc::new(AtomicBool::new(false));
+        let waiter_token = Arc::clone(&token);
+        let waiter =
+            std::thread::spawn(move || wait_for_tool_child(child, Some(waiter_token.as_ref())));
+
+        std::thread::sleep(Duration::from_millis(100));
+        token.store(true, Ordering::SeqCst);
+        let err = waiter.join().unwrap().unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "term");
     }
 
     #[cfg(unix)]

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::harness_config::HarnessRuntimeLimits;
+use crate::harness_config::{HarnessHookId, HarnessRuntimeLimits};
 use crate::harness_observability::{
     ActionReportSummary, CheckpointReportSummary, HARNESS_REPORT_SCHEMA_VERSION,
     HarnessEventBuilder, HarnessEventEmitter, HarnessEventPayload, HarnessEventType,
@@ -8,11 +8,18 @@ use crate::harness_observability::{
     RunReport, RunUsage, SessionUsage, allocate_harness_run_id, allocate_harness_session_id,
 };
 use crate::harness_plan::{PreflightDiagnostic, PreflightStatus};
+use crate::harness_runtime::hook::{
+    apply_before_model_request_decision, apply_before_tool_call_decision,
+    apply_before_tool_selection_decision, before_model_request_hook_from_request,
+    before_tool_selection_hook_from_phase,
+};
+use crate::harness_runtime::model::CompletionContract;
 use crate::harness_runtime::model::ModelTurn;
 use crate::harness_runtime::{
     ActionDispatchResult, ActionDispatcher, ApprovalController, ApprovalDecision,
-    CapabilityDescriptor, ModelRequest, ModelRuntime, ProfileSnapshot, PromptAssemblyInput,
-    RuntimeCapabilitySnapshot, RuntimeSnapshot, SemanticAction, SkillRuntimeSnapshot,
+    BeforeToolCallHook, CapabilityDescriptor, HookRuntime, ModelRequest, ModelRuntime,
+    NoopHookRuntime, ProfileSnapshot, PromptAssemblyInput, RuntimeCapabilitySnapshot,
+    RuntimeSnapshot, SemanticAction, ServiceLifecycleEvents, SkillRuntimeSnapshot,
     ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind, assemble_logical_prompt,
 };
 use crate::manifest::{
@@ -659,6 +666,14 @@ pub struct HarnessEngine {
     phase_executions: u64,
 }
 
+pub struct HarnessRuntimeServices<'a> {
+    pub model: &'a mut dyn ModelRuntime,
+    pub dispatcher: &'a mut dyn ActionDispatcher,
+    pub approvals: &'a mut dyn ApprovalController,
+    pub hooks: &'a mut dyn HookRuntime,
+    pub service_events: Option<&'a mut ServiceLifecycleEvents>,
+}
+
 impl HarnessEngine {
     pub fn new(loop_manifest: LoopManifest, options: HarnessEngineOptions) -> Self {
         Self {
@@ -676,14 +691,15 @@ impl HarnessEngine {
         dispatcher: &mut dyn ActionDispatcher,
         approvals: &mut dyn ApprovalController,
     ) -> Result<HarnessRunResult> {
-        self.execute_run_with_id(
-            session,
-            allocate_harness_run_id(),
-            input,
+        let mut hooks = NoopHookRuntime;
+        let mut services = HarnessRuntimeServices {
             model,
             dispatcher,
             approvals,
-        )
+            hooks: &mut hooks,
+            service_events: None,
+        };
+        self.execute_run_with_id(session, allocate_harness_run_id(), input, &mut services)
     }
 
     pub fn execute_run_with_id(
@@ -691,20 +707,23 @@ impl HarnessEngine {
         session: &mut HarnessSession,
         run_id: String,
         input: impl Into<String>,
-        model: &mut dyn ModelRuntime,
-        dispatcher: &mut dyn ActionDispatcher,
-        approvals: &mut dyn ApprovalController,
+        services: &mut HarnessRuntimeServices<'_>,
     ) -> Result<HarnessRunResult> {
         let run_id = session.start_run_with_id(run_id, input.into())?;
+        self.emit_service_lifecycle_events(session, Some(&run_id), &mut services.service_events)?;
         let mut current_phase = self.loop_manifest.r#loop.entry_phase.clone();
         loop {
             // Checkpoints are evaluated before entering the target phase. A
             // rejection can route directly to another phase or terminal target,
             // while an unresolved approval either pauses or terminalizes the Run
             // depending on the execution surface.
-            if let Some(result) =
-                self.evaluate_checkpoints(session, &run_id, &current_phase, approvals)?
-            {
+            if let Some(result) = self.evaluate_checkpoints(
+                session,
+                &run_id,
+                &current_phase,
+                services.approvals,
+                &mut services.service_events,
+            )? {
                 match result {
                     CheckpointFlow::ContinueTo(target) => {
                         if let Some(terminal) = self.terminal_for_target(&target) {
@@ -767,7 +786,14 @@ impl HarnessEngine {
                 .phase(&current_phase)
                 .ok_or_else(|| anyhow!("Loop phase `{current_phase}` is not declared"))?
                 .clone();
-            let phase_result = match self.execute_phase(session, &phase, model, dispatcher) {
+            let phase_result = match self.execute_phase(
+                session,
+                &phase,
+                services.model,
+                services.dispatcher,
+                services.hooks,
+                &mut services.service_events,
+            ) {
                 Ok(result) => result,
                 Err(err) => {
                     return self.finalize(
@@ -870,12 +896,114 @@ impl HarnessEngine {
         }
     }
 
+    fn emit_nonfatal_hook_failures(
+        &self,
+        session: &mut HarnessSession,
+        run_id: &str,
+        phase_execution_id: &str,
+        hooks: &mut dyn HookRuntime,
+    ) -> Result<()> {
+        for failure in hooks.drain_nonfatal_failures() {
+            session.emitter.emit(
+                HarnessEventType::HookFailed,
+                HarnessEventPayload::Lifecycle {
+                    message: failure.message,
+                    fields: BTreeMap::from([
+                        ("hook".into(), json!(format!("{:?}", failure.hook))),
+                        ("nonfatal".into(), json!(true)),
+                    ]),
+                },
+                HarnessEventBuilder {
+                    run_id: Some(run_id.to_string()),
+                    phase_execution_id: Some(phase_execution_id.to_string()),
+                    ..HarnessEventBuilder::default()
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    fn emit_service_lifecycle_events(
+        &self,
+        session: &mut HarnessSession,
+        run_id: Option<&str>,
+        service_events: &mut Option<&mut ServiceLifecycleEvents>,
+    ) -> Result<()> {
+        let Some(events) = service_events.as_deref_mut() else {
+            return Ok(());
+        };
+        for event in events.drain() {
+            session.emitter.emit(
+                event.event_type,
+                HarnessEventPayload::Service {
+                    service: event.service,
+                    status: event.status,
+                    fields: BTreeMap::from([
+                        ("registry_id".into(), json!(event.registry_id)),
+                        ("message".into(), json!(event.message)),
+                    ]),
+                },
+                HarnessEventBuilder {
+                    run_id: run_id.map(str::to_string),
+                    ..HarnessEventBuilder::default()
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    fn emit_hook_started(
+        &self,
+        session: &mut HarnessSession,
+        run_id: &str,
+        phase_execution_id: &str,
+        hook: HarnessHookId,
+    ) -> Result<()> {
+        session.emitter.emit(
+            HarnessEventType::HookStarted,
+            HarnessEventPayload::Lifecycle {
+                message: format!("Hook `{}` started.", hook_id_label(&hook)),
+                fields: BTreeMap::from([("hook".into(), json!(hook_id_label(&hook)))]),
+            },
+            HarnessEventBuilder {
+                run_id: Some(run_id.to_string()),
+                phase_execution_id: Some(phase_execution_id.to_string()),
+                ..HarnessEventBuilder::default()
+            },
+        )?;
+        Ok(())
+    }
+
+    fn emit_hook_completed(
+        &self,
+        session: &mut HarnessSession,
+        run_id: &str,
+        phase_execution_id: &str,
+        hook: HarnessHookId,
+    ) -> Result<()> {
+        session.emitter.emit(
+            HarnessEventType::HookCompleted,
+            HarnessEventPayload::Lifecycle {
+                message: format!("Hook `{}` completed.", hook_id_label(&hook)),
+                fields: BTreeMap::from([("hook".into(), json!(hook_id_label(&hook)))]),
+            },
+            HarnessEventBuilder {
+                run_id: Some(run_id.to_string()),
+                phase_execution_id: Some(phase_execution_id.to_string()),
+                ..HarnessEventBuilder::default()
+            },
+        )?;
+        Ok(())
+    }
+
     fn execute_phase(
         &mut self,
         session: &mut HarnessSession,
         phase: &LoopPhase,
         model: &mut dyn ModelRuntime,
         dispatcher: &mut dyn ActionDispatcher,
+        hooks: &mut dyn HookRuntime,
+        service_events: &mut Option<&mut ServiceLifecycleEvents>,
     ) -> Result<PhaseResult> {
         // A phase execution is one entry into a Loop phase. Re-entering the same
         // phase later creates a new phase_execution_id and fresh phase-local
@@ -883,7 +1011,7 @@ impl HarnessEngine {
         self.phase_executions += 1;
         let phase_execution_id = format!("phase-exec-{}", self.phase_executions);
         let run_id = self.active_run(session)?.run_id().to_string();
-        let effective_phase =
+        let mut effective_phase =
             EffectivePhase::from_phase(phase, &self.active_run(session)?.context.runtime);
         {
             let run = self.active_run_mut(session)?;
@@ -904,6 +1032,79 @@ impl HarnessEngine {
                 ..HarnessEventBuilder::default()
             },
         )?;
+        let explicit_outcomes: Vec<String> = phase
+            .outcomes
+            .iter()
+            .map(|outcome| outcome.id.clone())
+            .collect();
+        let completion = CompletionContract {
+            phase_id: phase.id.clone(),
+            explicit_outcomes: explicit_outcomes.clone(),
+            implicit_complete: explicit_outcomes.is_empty(),
+        };
+        if hooks.has_hook(HarnessHookId::BeforeToolSelection) {
+            self.emit_hook_started(
+                session,
+                &run_id,
+                &phase_execution_id,
+                HarnessHookId::BeforeToolSelection,
+            )?;
+        }
+        match hooks.before_tool_selection(before_tool_selection_hook_from_phase(
+            &phase.id,
+            &phase.objective,
+            completion,
+            &effective_phase,
+        )) {
+            Ok(decision) => {
+                apply_before_tool_selection_decision(&mut effective_phase, decision).map_err(
+                    |err| anyhow!("before_tool_selection hook returned invalid patch: {err}"),
+                )?;
+                if hooks.has_hook(HarnessHookId::BeforeToolSelection) {
+                    self.emit_hook_completed(
+                        session,
+                        &run_id,
+                        &phase_execution_id,
+                        HarnessHookId::BeforeToolSelection,
+                    )?;
+                }
+            }
+            Err(err) => {
+                let is_rejection = err.is_rejection();
+                session.emitter.emit(
+                    if is_rejection {
+                        HarnessEventType::HookRejected
+                    } else {
+                        HarnessEventType::HookFailed
+                    },
+                    HarnessEventPayload::Lifecycle {
+                        message: err.message.clone(),
+                        fields: BTreeMap::from([(
+                            "hook".into(),
+                            json!(hook_id_label(&HarnessHookId::BeforeToolSelection)),
+                        )]),
+                    },
+                    HarnessEventBuilder {
+                        run_id: Some(run_id.clone()),
+                        phase_execution_id: Some(phase_execution_id.clone()),
+                        ..HarnessEventBuilder::default()
+                    },
+                )?;
+                return self.fail_phase(
+                    session,
+                    &phase.id,
+                    &phase_execution_id,
+                    format!(
+                        "before_tool_selection hook {}: {}",
+                        if is_rejection { "rejected" } else { "failed" },
+                        err.message
+                    ),
+                    None,
+                );
+            }
+        }
+        self.emit_nonfatal_hook_failures(session, &run_id, &phase_execution_id, hooks)?;
+        self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
         session.emitter.emit(
             HarnessEventType::EffectivePhaseComputed,
             HarnessEventPayload::Lifecycle {
@@ -1039,11 +1240,6 @@ impl HarnessEngine {
         };
         // Explicit outcomes must be selected by the model. Phases with no
         // declared outcomes use the implicit `complete` outcome.
-        let explicit_outcomes: Vec<String> = phase
-            .outcomes
-            .iter()
-            .map(|outcome| outcome.id.clone())
-            .collect();
         let mut repair_feedback = None;
 
         loop {
@@ -1103,6 +1299,86 @@ impl HarnessEngine {
                     ..HarnessEventBuilder::default()
                 },
             )?;
+            if hooks.has_hook(HarnessHookId::BeforeModelRequest) {
+                self.emit_hook_started(
+                    session,
+                    &run_id,
+                    &phase_execution_id,
+                    HarnessHookId::BeforeModelRequest,
+                )?;
+            }
+            let mut request = request;
+            match hooks.before_model_request(before_model_request_hook_from_request(&request)) {
+                Ok(decision) => {
+                    if let Err(err) = apply_before_model_request_decision(&mut request, decision) {
+                        session.emitter.emit(
+                            HarnessEventType::HookFailed,
+                            HarnessEventPayload::Lifecycle {
+                                message: err.clone(),
+                                fields: BTreeMap::from([(
+                                    "hook".into(),
+                                    json!(hook_id_label(&HarnessHookId::BeforeModelRequest)),
+                                )]),
+                            },
+                            HarnessEventBuilder {
+                                run_id: Some(run_id.clone()),
+                                phase_execution_id: Some(phase_execution_id.clone()),
+                                ..HarnessEventBuilder::default()
+                            },
+                        )?;
+                        return self.fail_phase(
+                            session,
+                            &phase.id,
+                            &phase_execution_id,
+                            format!("before_model_request hook returned invalid patch: {err}"),
+                            None,
+                        );
+                    }
+                }
+                Err(err) => {
+                    let is_rejection = err.is_rejection();
+                    session.emitter.emit(
+                        if is_rejection {
+                            HarnessEventType::HookRejected
+                        } else {
+                            HarnessEventType::HookFailed
+                        },
+                        HarnessEventPayload::Lifecycle {
+                            message: err.message.clone(),
+                            fields: BTreeMap::from([(
+                                "hook".into(),
+                                json!(hook_id_label(&HarnessHookId::BeforeModelRequest)),
+                            )]),
+                        },
+                        HarnessEventBuilder {
+                            run_id: Some(run_id.clone()),
+                            phase_execution_id: Some(phase_execution_id.clone()),
+                            ..HarnessEventBuilder::default()
+                        },
+                    )?;
+                    return self.fail_phase(
+                        session,
+                        &phase.id,
+                        &phase_execution_id,
+                        format!(
+                            "before_model_request hook {}: {}",
+                            if is_rejection { "rejected" } else { "failed" },
+                            err.message
+                        ),
+                        None,
+                    );
+                }
+            }
+            if hooks.has_hook(HarnessHookId::BeforeModelRequest) {
+                self.emit_hook_completed(
+                    session,
+                    &run_id,
+                    &phase_execution_id,
+                    HarnessHookId::BeforeModelRequest,
+                )?;
+            }
+            self.emit_nonfatal_hook_failures(session, &run_id, &phase_execution_id, hooks)?;
+            self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
             session.emitter.emit(
                 HarnessEventType::ModelRequestStarted,
                 HarnessEventPayload::Lifecycle {
@@ -1142,6 +1418,7 @@ impl HarnessEngine {
                     );
                 }
             };
+            self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
             self.merge_usage(session, &turn.usage);
             session.emitter.emit(
                 HarnessEventType::ModelRequestCompleted,
@@ -1370,16 +1647,114 @@ impl HarnessEngine {
                 self.active_run_mut(session)?
                     .usage
                     .accepted_semantic_actions += 1;
-                let action_source = action_source(&proposal.action, &effective_phase);
-                let mut action_fields = action_trace_fields(&proposal.action);
+                let action = if let SemanticAction::AgentPmTool { tool, arguments } =
+                    &proposal.action
+                {
+                    if hooks.has_hook(HarnessHookId::BeforeToolCall) {
+                        self.emit_hook_started(
+                            session,
+                            &run_id,
+                            &phase_execution_id,
+                            HarnessHookId::BeforeToolCall,
+                        )?;
+                    }
+                    let action = match hooks.before_tool_call(BeforeToolCallHook {
+                        phase_id: phase.id.clone(),
+                        tool: tool.clone(),
+                        arguments: arguments.clone(),
+                    }) {
+                        Ok(decision) => {
+                            let patched =
+                                apply_before_tool_call_decision(&proposal.action, decision)
+                                    .map_err(|err| {
+                                        anyhow!(
+                                            "before_tool_call hook returned invalid patch: {err}"
+                                        )
+                                    })?;
+                            if let Err(err) = validate_semantic_action(&patched, &effective_phase) {
+                                session.emitter.emit(
+                                    HarnessEventType::HookFailed,
+                                    HarnessEventPayload::Lifecycle {
+                                        message: err.clone(),
+                                        fields: BTreeMap::from([(
+                                            "hook".into(),
+                                            json!(hook_id_label(&HarnessHookId::BeforeToolCall)),
+                                        )]),
+                                    },
+                                    HarnessEventBuilder {
+                                        run_id: Some(run_id.clone()),
+                                        phase_execution_id: Some(phase_execution_id.clone()),
+                                        ..HarnessEventBuilder::default()
+                                    },
+                                )?;
+                                return self.fail_phase(
+                                    session,
+                                    &phase.id,
+                                    &phase_execution_id,
+                                    format!("before_tool_call hook produced invalid action: {err}"),
+                                    None,
+                                );
+                            }
+                            patched
+                        }
+                        Err(err) => {
+                            let is_rejection = err.is_rejection();
+                            session.emitter.emit(
+                                if is_rejection {
+                                    HarnessEventType::HookRejected
+                                } else {
+                                    HarnessEventType::HookFailed
+                                },
+                                HarnessEventPayload::Lifecycle {
+                                    message: err.message.clone(),
+                                    fields: BTreeMap::from([(
+                                        "hook".into(),
+                                        json!("before_tool_call"),
+                                    )]),
+                                },
+                                HarnessEventBuilder {
+                                    run_id: Some(run_id.clone()),
+                                    phase_execution_id: Some(phase_execution_id.clone()),
+                                    ..HarnessEventBuilder::default()
+                                },
+                            )?;
+                            return self.fail_phase(
+                                session,
+                                &phase.id,
+                                &phase_execution_id,
+                                format!(
+                                    "before_tool_call hook {} action: {}",
+                                    if is_rejection { "rejected" } else { "failed" },
+                                    err.message
+                                ),
+                                None,
+                            );
+                        }
+                    };
+                    if hooks.has_hook(HarnessHookId::BeforeToolCall) {
+                        self.emit_hook_completed(
+                            session,
+                            &run_id,
+                            &phase_execution_id,
+                            HarnessHookId::BeforeToolCall,
+                        )?;
+                    }
+                    self.emit_nonfatal_hook_failures(session, &run_id, &phase_execution_id, hooks)?;
+                    self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
+                    action
+                } else {
+                    proposal.action.clone()
+                };
+                let action_source = action_source(&action, &effective_phase);
+                let mut action_fields = action_trace_fields(&action);
                 if let Some(source) = &action_source {
                     action_fields.insert("source".into(), json!(source));
                 }
                 session.emitter.emit(
                     HarnessEventType::SemanticActionProposed,
                     HarnessEventPayload::Action {
-                        action_kind: proposal.action.kind().into(),
-                        identity: proposal.action.identity(),
+                        action_kind: action.kind().into(),
+                        identity: action.identity(),
                         status: "accepted".into(),
                         fields: action_fields,
                     },
@@ -1392,26 +1767,27 @@ impl HarnessEngine {
                 let result = self.dispatch_with_retry(
                     session,
                     dispatcher,
-                    &proposal.action,
+                    &action,
                     action_source.as_deref(),
                     &phase_execution_id,
                 )?;
+                self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
                 if !result.ok {
                     let error = result.error.unwrap_or_else(|| "action failed".to_string());
                     let terminal_status = result.terminal_status;
                     self.active_run_mut(session)?
                         .action_summaries
                         .push(ActionReportSummary {
-                            action_kind: proposal.action.kind().into(),
-                            identity: proposal.action.identity(),
+                            action_kind: action.kind().into(),
+                            identity: action.identity(),
                             status: "failed".into(),
                             error: Some(error.clone()),
                         });
-                    if proposal.action.is_tool_call() {
+                    if action.is_tool_call() {
                         self.active_run_mut(session)?.operation_summaries.push(
                             OperationReportSummary {
-                                operation_kind: proposal.action.kind().into(),
-                                identity: proposal.action.identity(),
+                                operation_kind: action.kind().into(),
+                                identity: action.identity(),
                                 status: "failed".into(),
                                 count: 1,
                             },
@@ -1427,21 +1803,21 @@ impl HarnessEngine {
                 }
                 state.transcript.push(TranscriptEntry {
                     kind: TranscriptEntryKind::ActionResult,
-                    content: action_result_transcript_content(&proposal.action, result.output),
+                    content: action_result_transcript_content(&action, result.output),
                 });
                 self.active_run_mut(session)?
                     .action_summaries
                     .push(ActionReportSummary {
-                        action_kind: proposal.action.kind().into(),
-                        identity: proposal.action.identity(),
+                        action_kind: action.kind().into(),
+                        identity: action.identity(),
                         status: "completed".into(),
                         error: None,
                     });
-                if proposal.action.is_tool_call() {
+                if action.is_tool_call() {
                     self.active_run_mut(session)?.operation_summaries.push(
                         OperationReportSummary {
-                            operation_kind: proposal.action.kind().into(),
-                            identity: proposal.action.identity(),
+                            operation_kind: action.kind().into(),
+                            identity: action.identity(),
                             status: "completed".into(),
                             count: 1,
                         },
@@ -1939,6 +2315,7 @@ impl HarnessEngine {
         run_id: &str,
         phase_id: &str,
         approvals: &mut dyn ApprovalController,
+        service_events: &mut Option<&mut ServiceLifecycleEvents>,
     ) -> Result<Option<CheckpointFlow>> {
         let checkpoints: Vec<_> = self
             .loop_manifest
@@ -1963,7 +2340,9 @@ impl HarnessEngine {
                     ..HarnessEventBuilder::default()
                 },
             )?;
-            match approvals.request_approval(&checkpoint) {
+            let decision = approvals.request_approval(&checkpoint);
+            self.emit_service_lifecycle_events(session, Some(run_id), service_events)?;
+            match decision {
                 ApprovalDecision::Approve => {
                     self.active_run_mut(session)?.checkpoint_summaries.push(
                         CheckpointReportSummary {
@@ -2024,6 +2403,28 @@ impl HarnessEngine {
                         },
                     );
                     return Ok(Some(CheckpointFlow::Pending(pending)));
+                }
+                ApprovalDecision::Failure(message) => {
+                    self.active_run_mut(session)?.checkpoint_summaries.push(
+                        CheckpointReportSummary {
+                            checkpoint_id: checkpoint.id.clone(),
+                            before_phase: checkpoint.before_phase.clone(),
+                            status: "failed".into(),
+                            on_reject: Some(checkpoint.on_reject.clone()),
+                        },
+                    );
+                    session.emitter.emit(
+                        HarnessEventType::ApprovalFailed,
+                        HarnessEventPayload::Lifecycle {
+                            message: format!("Approval `{}` failed: {message}", checkpoint.id),
+                            fields: BTreeMap::new(),
+                        },
+                        HarnessEventBuilder {
+                            run_id: Some(run_id.to_string()),
+                            ..HarnessEventBuilder::default()
+                        },
+                    )?;
+                    return Err(anyhow!("approval `{}` failed: {message}", checkpoint.id));
                 }
             }
         }
@@ -2323,6 +2724,19 @@ fn terminal_event_type(status: HarnessTerminalStatus) -> HarnessEventType {
     }
 }
 
+fn hook_id_label(hook: &HarnessHookId) -> &'static str {
+    match hook {
+        HarnessHookId::BeforeModelRequest => "before_model_request",
+        HarnessHookId::BeforeToolSelection => "before_tool_selection",
+        HarnessHookId::BeforeToolCall => "before_tool_call",
+        HarnessHookId::BeforeKnowledgeRequest => "before_knowledge_request",
+        HarnessHookId::AfterKnowledgeRetrieval => "after_knowledge_retrieval",
+        HarnessHookId::BeforeMemoryRead => "before_memory_read",
+        HarnessHookId::BeforeMemoryWrite => "before_memory_write",
+        HarnessHookId::BeforeMemoryOperation => "before_memory_operation",
+    }
+}
+
 fn status_str(status: HarnessTerminalStatus) -> &'static str {
     match status {
         HarnessTerminalStatus::Ended => "ended",
@@ -2369,9 +2783,14 @@ mod tests {
         SemanticActionProposal,
     };
     use crate::harness_runtime::approval::ScriptedApprovalController;
+    use crate::harness_runtime::hook::{
+        BeforeModelRequestContextSection, BeforeModelRequestDecision, BeforeModelRequestHook,
+        BeforeToolCallDecision, BeforeToolSelectionDecision, BeforeToolSelectionHook,
+        HookRuntimeFailure,
+    };
     use crate::harness_runtime::model::{
-        ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot, ScriptedModelRuntime,
-        SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+        ModelProviderSelection, ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot,
+        ScriptedModelRuntime, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
     };
     use crate::manifest::{
         LoopAccessMemory, LoopCheckpoint, LoopErrorPolicy, LoopLimits, LoopMetadata, LoopOutcome,
@@ -2609,6 +3028,70 @@ mod tests {
         HarnessSession::with_runtime_snapshot(runtime_with_tool_and_skill())
     }
 
+    #[derive(Default)]
+    struct TestHookRuntime {
+        tool_selection: Option<BeforeToolSelectionDecision>,
+        tool_selection_hooks: Vec<BeforeToolSelectionHook>,
+        model_request: Option<BeforeModelRequestDecision>,
+        tool_call: Option<BeforeToolCallDecision>,
+        tool_call_hooks: Vec<BeforeToolCallHook>,
+        fail_before_tool_call: Option<String>,
+        reject_before_tool_call: Option<String>,
+        fail_before_model: Option<String>,
+        active_hooks: Vec<HarnessHookId>,
+        before_model_hooks: Vec<BeforeModelRequestHook>,
+        before_model_calls: usize,
+    }
+
+    impl HookRuntime for TestHookRuntime {
+        fn has_hook(&self, hook: HarnessHookId) -> bool {
+            self.active_hooks.contains(&hook)
+        }
+
+        fn before_tool_selection(
+            &mut self,
+            hook: BeforeToolSelectionHook,
+        ) -> std::result::Result<BeforeToolSelectionDecision, HookRuntimeFailure> {
+            self.tool_selection_hooks.push(hook);
+            Ok(self.tool_selection.clone().unwrap_or_default())
+        }
+
+        fn before_model_request(
+            &mut self,
+            hook: BeforeModelRequestHook,
+        ) -> std::result::Result<BeforeModelRequestDecision, HookRuntimeFailure> {
+            self.before_model_calls += 1;
+            self.before_model_hooks.push(hook);
+            if let Some(message) = &self.fail_before_model {
+                return Err(HookRuntimeFailure::new(
+                    crate::harness_config::HarnessHookId::BeforeModelRequest,
+                    message.clone(),
+                ));
+            }
+            Ok(self.model_request.clone().unwrap_or_default())
+        }
+
+        fn before_tool_call(
+            &mut self,
+            hook: BeforeToolCallHook,
+        ) -> std::result::Result<BeforeToolCallDecision, HookRuntimeFailure> {
+            self.tool_call_hooks.push(hook);
+            if let Some(message) = &self.reject_before_tool_call {
+                return Err(HookRuntimeFailure::rejection(
+                    crate::harness_config::HarnessHookId::BeforeToolCall,
+                    message.clone(),
+                ));
+            }
+            if let Some(message) = &self.fail_before_tool_call {
+                return Err(HookRuntimeFailure::new(
+                    crate::harness_config::HarnessHookId::BeforeToolCall,
+                    message.clone(),
+                ));
+            }
+            Ok(self.tool_call.clone().unwrap_or_default())
+        }
+    }
+
     fn runtime_with_two_tools_and_skill() -> RuntimeSnapshot {
         let mut runtime = runtime_with_tool_and_skill();
         runtime.tools.push(ToolRuntimeSnapshot {
@@ -2638,6 +3121,416 @@ mod tests {
             },
         );
         runtime
+    }
+
+    #[test]
+    fn before_tool_selection_hook_subsets_model_visible_tool_catalog() {
+        let mut session = HarnessSession::with_runtime_snapshot(runtime_with_two_tools_and_skill());
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new([completion("done", "handoff")]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut hooks = TestHookRuntime {
+            tool_selection: Some(BeforeToolSelectionDecision {
+                candidate_ids: Some(vec!["@zack/comment".into()]),
+            }),
+            active_hooks: vec![HarnessHookId::BeforeToolSelection],
+            ..TestHookRuntime::default()
+        };
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let result = {
+            let mut services = HarnessRuntimeServices {
+                model: &mut model,
+                dispatcher: &mut dispatcher,
+                approvals: &mut approvals,
+                hooks: &mut hooks,
+                service_events: None,
+            };
+            engine
+                .execute_run_with_id(
+                    &mut session,
+                    "run-hooks-selection".into(),
+                    "input",
+                    &mut services,
+                )
+                .unwrap()
+        };
+
+        assert!(matches!(result, HarnessRunResult::Terminal(_)));
+        let prompt = model.requests[0].prompt.render_text();
+        assert!(prompt.contains("@zack/comment"));
+        assert!(!prompt.contains("@zack/search"));
+        let hook_input = hooks.tool_selection_hooks.first().expect("hook input");
+        assert_eq!(hook_input.phase.phase_id, "assess");
+        assert_eq!(
+            hook_input
+                .candidates
+                .iter()
+                .map(|candidate| candidate.canonical_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["@zack/search", "@zack/comment"]
+        );
+        let event_types: Vec<_> = handle
+            .events()
+            .iter()
+            .map(|event| event.event_type)
+            .collect();
+        assert!(event_types.contains(&HarnessEventType::HookStarted));
+        assert!(event_types.contains(&HarnessEventType::HookCompleted));
+        let phase_enter_position = event_types
+            .iter()
+            .position(|event_type| *event_type == HarnessEventType::PhaseEnterRequested)
+            .expect("phase enter event");
+        let hook_started_position = event_types
+            .iter()
+            .position(|event_type| *event_type == HarnessEventType::HookStarted)
+            .expect("hook started event");
+        let hook_completed_position = event_types
+            .iter()
+            .position(|event_type| *event_type == HarnessEventType::HookCompleted)
+            .expect("hook completed event");
+        let effective_phase_position = event_types
+            .iter()
+            .position(|event_type| *event_type == HarnessEventType::EffectivePhaseComputed)
+            .expect("effective phase event");
+        assert!(phase_enter_position < hook_started_position);
+        assert!(hook_completed_position < effective_phase_position);
+    }
+
+    #[test]
+    fn before_tool_call_hook_patches_arguments_and_revalidates() {
+        let mut session = session_with_tool_and_skill();
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model =
+            ScriptedModelRuntime::new([tool_turn("@zack/search"), completion("done", "handoff")]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut hooks = TestHookRuntime {
+            tool_call: Some(BeforeToolCallDecision {
+                arguments: Some(json!({ "query": "patched" })),
+            }),
+            active_hooks: vec![HarnessHookId::BeforeToolCall],
+            ..TestHookRuntime::default()
+        };
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let result = {
+            let mut services = HarnessRuntimeServices {
+                model: &mut model,
+                dispatcher: &mut dispatcher,
+                approvals: &mut approvals,
+                hooks: &mut hooks,
+                service_events: None,
+            };
+            engine
+                .execute_run_with_id(
+                    &mut session,
+                    "run-hooks-tool-call".into(),
+                    "input",
+                    &mut services,
+                )
+                .unwrap()
+        };
+
+        assert!(matches!(result, HarnessRunResult::Terminal(_)));
+        assert_eq!(
+            dispatcher.dispatched[0],
+            SemanticAction::AgentPmTool {
+                tool: "@zack/search".into(),
+                arguments: json!({ "query": "patched" }),
+            }
+        );
+        let hook_input = hooks.tool_call_hooks.first().expect("hook input");
+        assert_eq!(hook_input.phase_id, "assess");
+        assert_eq!(hook_input.tool, "@zack/search");
+        assert_eq!(hook_input.arguments, json!({ "query": "x" }));
+        let event_types: Vec<_> = handle
+            .events()
+            .iter()
+            .map(|event| event.event_type)
+            .collect();
+        assert!(event_types.contains(&HarnessEventType::HookStarted));
+        assert!(event_types.contains(&HarnessEventType::HookCompleted));
+    }
+
+    #[test]
+    fn before_tool_call_hook_revalidates_patched_arguments_before_dispatch() {
+        let mut session = session_with_tool_and_skill();
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model =
+            ScriptedModelRuntime::new([tool_turn("@zack/search"), completion("done", "handoff")]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut hooks = TestHookRuntime {
+            tool_call: Some(BeforeToolCallDecision {
+                arguments: Some(json!({})),
+            }),
+            active_hooks: vec![HarnessHookId::BeforeToolCall],
+            ..TestHookRuntime::default()
+        };
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let result = {
+            let mut services = HarnessRuntimeServices {
+                model: &mut model,
+                dispatcher: &mut dispatcher,
+                approvals: &mut approvals,
+                hooks: &mut hooks,
+                service_events: None,
+            };
+            engine
+                .execute_run_with_id(
+                    &mut session,
+                    "run-hooks-tool-call-invalid-args".into(),
+                    "input",
+                    &mut services,
+                )
+                .unwrap()
+        };
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Failed);
+        assert!(dispatcher.dispatched.is_empty());
+        let event_types: Vec<_> = handle
+            .events()
+            .iter()
+            .map(|event| event.event_type)
+            .collect();
+        assert!(event_types.contains(&HarnessEventType::HookFailed));
+        assert!(!event_types.contains(&HarnessEventType::ToolInvoked));
+    }
+
+    #[test]
+    fn before_tool_call_hook_rejection_blocks_dispatch_and_emits_rejected() {
+        let mut session = session_with_tool_and_skill();
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new([tool_turn("@zack/search")]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut hooks = TestHookRuntime {
+            reject_before_tool_call: Some("blocked by policy".into()),
+            active_hooks: vec![HarnessHookId::BeforeToolCall],
+            ..TestHookRuntime::default()
+        };
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let result = {
+            let mut services = HarnessRuntimeServices {
+                model: &mut model,
+                dispatcher: &mut dispatcher,
+                approvals: &mut approvals,
+                hooks: &mut hooks,
+                service_events: None,
+            };
+            engine
+                .execute_run_with_id(
+                    &mut session,
+                    "run-hooks-tool-call-reject".into(),
+                    "input",
+                    &mut services,
+                )
+                .unwrap()
+        };
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Failed);
+        assert!(dispatcher.dispatched.is_empty());
+        let event_types: Vec<_> = handle
+            .events()
+            .iter()
+            .map(|event| event.event_type)
+            .collect();
+        assert!(event_types.contains(&HarnessEventType::HookRejected));
+        assert!(!event_types.contains(&HarnessEventType::ToolInvoked));
+    }
+
+    #[test]
+    fn before_tool_call_hook_failure_emits_failed_not_rejected() {
+        let mut session = session_with_tool_and_skill();
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new([tool_turn("@zack/search")]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut hooks = TestHookRuntime {
+            fail_before_tool_call: Some("transport timeout".into()),
+            active_hooks: vec![HarnessHookId::BeforeToolCall],
+            ..TestHookRuntime::default()
+        };
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let result = {
+            let mut services = HarnessRuntimeServices {
+                model: &mut model,
+                dispatcher: &mut dispatcher,
+                approvals: &mut approvals,
+                hooks: &mut hooks,
+                service_events: None,
+            };
+            engine
+                .execute_run_with_id(
+                    &mut session,
+                    "run-hooks-tool-call-failure".into(),
+                    "input",
+                    &mut services,
+                )
+                .unwrap()
+        };
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Failed);
+        assert!(dispatcher.dispatched.is_empty());
+        let event_types: Vec<_> = handle
+            .events()
+            .iter()
+            .map(|event| event.event_type)
+            .collect();
+        assert!(event_types.contains(&HarnessEventType::HookFailed));
+        assert!(!event_types.contains(&HarnessEventType::HookRejected));
+        assert!(!event_types.contains(&HarnessEventType::ToolInvoked));
+    }
+
+    #[test]
+    fn before_model_request_hook_appends_context_and_merges_provider_options() {
+        let mut runtime = runtime_with_tool_and_skill();
+        runtime.model = Some(ModelProviderSelection {
+            provider: "test-provider".into(),
+            model: "test-model".into(),
+            options: json!({ "temperature": 0.1, "existing": true }),
+        });
+        let mut session = HarnessSession::with_runtime_snapshot(runtime);
+        let mut model = ScriptedModelRuntime::new([completion("done", "handoff")]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut provider_options = serde_json::Map::new();
+        provider_options.insert("temperature".into(), json!(0.2));
+        provider_options.insert("metadata".into(), json!({ "hook": true }));
+        let mut hooks = TestHookRuntime {
+            model_request: Some(BeforeModelRequestDecision {
+                context_sections: vec![BeforeModelRequestContextSection {
+                    title: "Policy Note".into(),
+                    content: "Prefer the safest concise answer.".into(),
+                }],
+                provider_options,
+            }),
+            active_hooks: vec![HarnessHookId::BeforeModelRequest],
+            ..TestHookRuntime::default()
+        };
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let result = {
+            let mut services = HarnessRuntimeServices {
+                model: &mut model,
+                dispatcher: &mut dispatcher,
+                approvals: &mut approvals,
+                hooks: &mut hooks,
+                service_events: None,
+            };
+            engine
+                .execute_run_with_id(
+                    &mut session,
+                    "run-hooks-model-patch".into(),
+                    "input",
+                    &mut services,
+                )
+                .unwrap()
+        };
+
+        assert!(matches!(result, HarnessRunResult::Terminal(_)));
+        let request = &model.requests[0];
+        assert!(request.prompt.render_text().contains("Hook Context:"));
+        assert!(
+            request
+                .prompt
+                .render_text()
+                .contains("Prefer the safest concise answer.")
+        );
+        let model = request.model.as_ref().expect("selected model");
+        assert_eq!(model.provider, "test-provider");
+        assert_eq!(model.model, "test-model");
+        assert_eq!(model.options["temperature"], json!(0.2));
+        assert_eq!(model.options["existing"], json!(true));
+        assert_eq!(
+            request.runtime.model.as_ref().unwrap().options,
+            model.options
+        );
+
+        let hook_input = hooks.before_model_hooks.first().expect("hook input");
+        assert_eq!(hook_input.phase.phase_id, "assess");
+        assert_eq!(
+            hook_input.phase.completion.explicit_outcomes,
+            vec!["execute", "handoff"]
+        );
+        assert!(
+            hook_input
+                .sections
+                .iter()
+                .any(|section| section.title == "CONSUMER / RUN CONTEXT" && section.mutable)
+        );
+        assert!(
+            hook_input
+                .sections
+                .iter()
+                .any(|section| section.title == "HARNESS CONTROL" && !section.mutable)
+        );
+    }
+
+    #[test]
+    fn before_model_request_hook_fails_closed_before_model_runtime() {
+        let mut session = session_with_tool_and_skill();
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new([completion("done", "handoff")]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut hooks = TestHookRuntime {
+            fail_before_model: Some("blocked by policy".into()),
+            active_hooks: vec![HarnessHookId::BeforeModelRequest],
+            ..TestHookRuntime::default()
+        };
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let result = {
+            let mut services = HarnessRuntimeServices {
+                model: &mut model,
+                dispatcher: &mut dispatcher,
+                approvals: &mut approvals,
+                hooks: &mut hooks,
+                service_events: None,
+            };
+            engine
+                .execute_run_with_id(
+                    &mut session,
+                    "run-hooks-model".into(),
+                    "input",
+                    &mut services,
+                )
+                .unwrap()
+        };
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Failed);
+        assert_eq!(hooks.before_model_calls, 1);
+        assert!(model.requests.is_empty());
+        let event_types: Vec<_> = handle
+            .events()
+            .iter()
+            .map(|event| event.event_type)
+            .collect();
+        assert!(event_types.contains(&HarnessEventType::HookStarted));
+        assert!(event_types.contains(&HarnessEventType::HookFailed));
     }
 
     struct MutatingModelRuntime {
