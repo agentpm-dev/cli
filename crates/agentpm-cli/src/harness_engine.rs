@@ -160,7 +160,7 @@ fn runtime_capability_descriptors(
     for candidate in runtime
         .capability_candidates
         .iter()
-        .filter(|candidate| candidate.scope == "global" || candidate.scope == phase.id)
+        .filter(|candidate| candidate_scope_matches_phase(&candidate.scope, &phase.id))
     {
         match candidate.kind.as_str() {
             "tool" => {
@@ -244,6 +244,10 @@ fn runtime_capability_descriptors(
         }
     }
     descriptors
+}
+
+fn candidate_scope_matches_phase(scope: &str, phase_id: &str) -> bool {
+    scope == "global" || scope.strip_prefix("phase:") == Some(phase_id)
 }
 
 fn is_available_candidate(candidate: &RuntimeCapabilitySnapshot) -> bool {
@@ -3402,6 +3406,53 @@ mod tests {
                 .prompt
                 .render_text()
                 .contains("Tool `@zack/comment` arguments are invalid")
+        );
+    }
+
+    #[test]
+    fn phase_scoped_tool_candidates_are_active_only_for_matching_phase() {
+        let mut runtime = runtime_with_two_tools_and_skill();
+        runtime.capability_candidates = vec![
+            RuntimeCapabilitySnapshot {
+                kind: "tool".into(),
+                identity: "@zack/search".into(),
+                scope: "phase:assess".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+            },
+            RuntimeCapabilitySnapshot {
+                kind: "tool".into(),
+                identity: "@zack/comment".into(),
+                scope: "phase:execute".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+            },
+        ];
+
+        let loop_manifest = base_loop();
+        let assess = EffectivePhase::from_phase(&loop_manifest.r#loop.phases[0], &runtime);
+        let execute = EffectivePhase::from_phase(&loop_manifest.r#loop.phases[1], &runtime);
+
+        assert!(
+            assess
+                .capability_catalog
+                .iter()
+                .any(|descriptor| descriptor.action_kind == "agentpm_tool"
+                    && descriptor.identity == "@zack/search")
+        );
+        assert!(
+            !assess
+                .capability_catalog
+                .iter()
+                .any(|descriptor| descriptor.action_kind == "agentpm_tool"
+                    && descriptor.identity == "@zack/comment")
+        );
+        assert!(
+            execute
+                .capability_catalog
+                .iter()
+                .any(|descriptor| descriptor.action_kind == "agentpm_tool"
+                    && descriptor.identity == "@zack/comment")
         );
     }
 
