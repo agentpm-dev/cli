@@ -469,7 +469,7 @@ The field names and nesting in this section are the Phase 7B version-1 contract.
 
 ### Shared service implementation descriptor
 
-Custom model providers, embedding providers, Hook implementations, Knowledge runtimes, Memory runtimes, and optional approval controllers use the same implementation descriptor. The registry in which the implementation appears determines which typed service protocol it must speak.
+Custom model providers, embedding providers, Hook implementations, Knowledge runtimes, Memory runtimes, and optional approval controllers use the same implementation descriptor. The registry in which the implementation appears determines which runtime role it provides and which transport Harness must use to reach it.
 
 A process-backed implementation is:
 
@@ -517,6 +517,14 @@ Rules:
 - Host lifecycle/restart belongs to the parent application. Harness only applies request timeout/cancellation semantics.
 
 Built-in implementations do not require entries in these registries.
+
+### Runtime contracts and transports
+
+The runtime contract is the semantic API. `agentpm-service` and the host-service portion of `agentpm-harness-machine` are two different transports for that same semantic API, not versions or subsets of each other.
+
+For example, HarnessEngine semantically calls `ModelRuntime.generate(ModelRequest) -> ModelTurn`. A built-in provider satisfies that call directly through Rust types. A `process` implementation satisfies it over the common external service protocol using `protocol: "agentpm-service"`. A `host` implementation satisfies it over the Harness machine protocol using correlated host-service request/response frames supplied by the parent SDK/application. The Engine sees the same typed runtime abstraction in all three cases.
+
+`ToolRuntime` and `McpRuntime` are intentional exceptions. Harness direct Tool calls use the public `agentpm run --machine` boundary, and MCP import/export uses MCP plus the public `agentpm serve --mcp --machine` lifecycle where applicable. They do not become generic `agentpm-service` providers.
 
 ### Common external service protocol
 

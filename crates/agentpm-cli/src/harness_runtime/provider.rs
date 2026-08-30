@@ -5,12 +5,15 @@ use super::model::{
     ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
     ModelRuntimeFailure, ModelTurn,
 };
+use super::service::{ProcessServiceClient, ProcessServiceConfig, ServiceLifecycleEmitter};
+use crate::harness_config::HarnessImplementation;
 use crate::harness_observability::RunUsage;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::env;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderRequest {
@@ -57,6 +60,12 @@ pub struct BuiltInModelRuntime {
     transport: Box<dyn ModelProviderTransport>,
 }
 
+pub struct ProcessModelRuntime {
+    selection: ModelProviderSelection,
+    capabilities: ModelCapabilityAdvertisement,
+    client: ProcessServiceClient,
+}
+
 impl BuiltInModelRuntime {
     pub fn new(
         selection: ModelProviderSelection,
@@ -85,6 +94,60 @@ impl BuiltInModelRuntime {
     }
 }
 
+impl ProcessModelRuntime {
+    pub fn start(
+        selection: ModelProviderSelection,
+        implementation: HarnessImplementation,
+        workspace_root: PathBuf,
+        lifecycle_events: Option<ServiceLifecycleEmitter>,
+    ) -> Result<Self, ModelRuntimeFailure> {
+        let mut initialize_payload = Map::new();
+        initialize_payload.insert("model".into(), json!(selection.model.clone()));
+        let client = ProcessServiceClient::start(ProcessServiceConfig {
+            service: "model".into(),
+            registry_id: selection.provider.clone(),
+            initialize_payload,
+            implementation,
+            workspace_root,
+            lifecycle_events,
+        })
+        .map_err(|err| ModelRuntimeFailure::new(format!("model service failed to start: {err}")))?;
+        let capabilities = process_model_capabilities_from_initialization(
+            client.initialization_result(),
+            &selection.provider,
+            &selection.model,
+        )?;
+        Ok(Self {
+            selection,
+            capabilities,
+            client,
+        })
+    }
+}
+
+impl ModelRuntime for ProcessModelRuntime {
+    fn capabilities(&self) -> ModelCapabilityAdvertisement {
+        self.capabilities.clone()
+    }
+
+    fn generate(&mut self, request: ModelRequest) -> Result<ModelTurn, ModelRuntimeFailure> {
+        let selection = request
+            .model
+            .clone()
+            .unwrap_or_else(|| self.selection.clone());
+        let payload = json!({
+            "selection": selection,
+            "request": request,
+        });
+        let response = self.client.request("generate", payload).map_err(|err| {
+            ModelRuntimeFailure::new(format!("model service generate failed: {err}"))
+        })?;
+        serde_json::from_value(response).map_err(|err| {
+            ModelRuntimeFailure::new(format!("model service returned invalid ModelTurn: {err}"))
+        })
+    }
+}
+
 pub(crate) fn built_in_capabilities(
     selection: &ModelProviderSelection,
 ) -> ModelCapabilityAdvertisement {
@@ -98,6 +161,74 @@ pub(crate) fn built_in_capabilities(
         },
         ..ModelCapabilityAdvertisement::default()
     }
+}
+
+#[derive(Default, Deserialize)]
+struct PartialModelCapabilityAdvertisement {
+    semantic_actions: Option<bool>,
+    structured_output: Option<bool>,
+    multimodal_input: Option<bool>,
+    context_window_tokens: Option<u64>,
+    usage_reporting: Option<bool>,
+}
+
+fn process_model_capabilities_from_initialization(
+    initialization_result: &Value,
+    expected_registry_id: &str,
+    expected_model: &str,
+) -> Result<ModelCapabilityAdvertisement, ModelRuntimeFailure> {
+    if initialization_result
+        .get("ready")
+        .and_then(Value::as_bool)
+        .is_some_and(|ready| !ready)
+    {
+        return Err(ModelRuntimeFailure::new(format!(
+            "model service `{expected_registry_id}` initialized but reported not ready"
+        )));
+    }
+    if let Some(registry_id) = initialization_result
+        .get("registry_id")
+        .and_then(Value::as_str)
+        && registry_id != expected_registry_id
+    {
+        return Err(ModelRuntimeFailure::new(format!(
+            "model service initialized as `{registry_id}`, expected `{expected_registry_id}`"
+        )));
+    }
+    if let Some(model) = initialization_result.get("model").and_then(Value::as_str)
+        && model != expected_model
+    {
+        return Err(ModelRuntimeFailure::new(format!(
+            "model service initialized model `{model}`, expected `{expected_model}`"
+        )));
+    }
+    let capabilities_value = initialization_result
+        .get("capabilities")
+        .unwrap_or(initialization_result);
+    if capabilities_value.is_null() {
+        return Ok(ModelCapabilityAdvertisement::default());
+    }
+    let partial: PartialModelCapabilityAdvertisement =
+        serde_json::from_value(capabilities_value.clone()).map_err(|err| {
+            ModelRuntimeFailure::new(format!("invalid model service capabilities: {err}"))
+        })?;
+    let mut capabilities = ModelCapabilityAdvertisement::default();
+    if let Some(semantic_actions) = partial.semantic_actions {
+        capabilities.semantic_actions = semantic_actions;
+    }
+    if let Some(structured_output) = partial.structured_output {
+        capabilities.structured_output = structured_output;
+    }
+    if let Some(multimodal_input) = partial.multimodal_input {
+        capabilities.multimodal_input = multimodal_input;
+    }
+    if let Some(context_window_tokens) = partial.context_window_tokens {
+        capabilities.context_window_tokens = Some(context_window_tokens);
+    }
+    if let Some(usage_reporting) = partial.usage_reporting {
+        capabilities.usage_reporting = usage_reporting;
+    }
+    Ok(capabilities)
 }
 
 fn openai_context_window(model: &str) -> Option<u64> {
@@ -141,9 +272,13 @@ impl ModelRuntime for BuiltInModelRuntime {
                 "selected model runtime does not advertise required Harness semantic action support",
             ));
         }
+        let selection = request
+            .model
+            .clone()
+            .unwrap_or_else(|| self.selection.clone());
         let actions = provider_action_tools(&request);
         let provider_request = ProviderRequest {
-            selection: self.selection.clone(),
+            selection,
             prompt: request.prompt.render_text(),
             action_aliases: request
                 .prompt
@@ -906,6 +1041,7 @@ mod tests {
         RuntimeSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
     };
     use std::cell::RefCell;
+    use std::fs;
     use std::rc::Rc;
 
     fn selection(provider: &str) -> ModelProviderSelection {
@@ -1192,6 +1328,26 @@ mod tests {
     }
 
     #[test]
+    fn process_model_initialization_rejects_mismatched_model_identity() {
+        let err = process_model_capabilities_from_initialization(
+            &json!({
+                "registry_id": "custom-process",
+                "model": "other-model",
+                "ready": true,
+                "capabilities": {
+                    "semantic_actions": true,
+                    "structured_output": true
+                }
+            }),
+            "custom-process",
+            "test-model",
+        )
+        .unwrap_err();
+
+        assert!(err.message.contains("expected `test-model`"));
+    }
+
+    #[test]
     fn built_in_runtime_generate_preserves_ordered_actions_and_usage() {
         let response = ProviderResponse {
             text: json!({
@@ -1419,6 +1575,98 @@ mod tests {
         .unwrap();
         assert_eq!(ollama.action_calls.len(), 1);
         assert_eq!(ollama.action_calls[0].alias, "action_1");
+    }
+
+    #[test]
+    fn process_model_runtime_uses_agentpm_service_semantic_contract() {
+        let temp = std::env::temp_dir().join(format!(
+            "agentpm-process-model-runtime-{}",
+            std::process::id()
+        ));
+        let _ = fs::create_dir_all(&temp);
+        let script = temp.join("model_service.py");
+        fs::write(
+            &script,
+            r#"
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg["kind"] == "initialize":
+        assert msg["payload"]["model"] == "test-model"
+        result = {
+            "registry_id": "custom-process",
+            "model": "test-model",
+            "ready": True,
+            "capabilities": {
+                "semantic_actions": True,
+                "structured_output": True,
+                "multimodal_input": True,
+                "context_window_tokens": 32768,
+                "usage_reporting": False
+            }
+        }
+        kind = "initialized"
+    else:
+        assert msg["service"] == "model"
+        assert msg["method"] == "generate"
+        assert msg["payload"]["request"]["phase_id"] == "review"
+        result = {
+            "assistant_content": "service model completed",
+            "actions": [],
+            "usage": {
+                "model_calls": 0,
+                "tokens": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+                "accepted_semantic_actions": 0,
+                "tool_calls": 0,
+                "tool_retries": 0,
+                "knowledge_requests": 0,
+                "memory_requests": 0,
+                "embedding_requests": 0,
+                "duration_ms": None,
+                "cost": {"amount": None, "currency": None}
+            },
+            "finish_reason": "stop",
+            "provider_metadata": {}
+        }
+        kind = "response"
+    print(json.dumps({
+        "protocol": "agentpm-service",
+        "version": 1,
+        "kind": kind,
+        "id": msg.get("id"),
+        "service": msg["service"],
+        "result": result
+    }), flush=True)
+"#,
+        )
+        .unwrap();
+        let mut runtime = ProcessModelRuntime::start(
+            selection("custom-process"),
+            HarnessImplementation::Process {
+                command: "python3".into(),
+                args: vec![script.display().to_string()],
+                cwd: None,
+                env: Vec::new(),
+                startup_timeout_ms: 1_000,
+                request_timeout_ms: 1_000,
+                restart: crate::harness_config::HarnessRestartPolicy::default(),
+            },
+            temp,
+            None,
+        )
+        .unwrap();
+        assert!(runtime.capabilities().multimodal_input);
+        assert_eq!(runtime.capabilities().context_window_tokens, Some(32768));
+        assert!(!runtime.capabilities().usage_reporting);
+
+        let turn = runtime.generate(model_request()).unwrap();
+
+        assert_eq!(
+            turn.assistant_content.as_deref(),
+            Some("service model completed")
+        );
+        assert_eq!(turn.finish_reason.as_deref(), Some("stop"));
+        assert_eq!(turn.usage.tokens.total_tokens, Some(3));
     }
 
     fn model_request() -> ModelRequest {

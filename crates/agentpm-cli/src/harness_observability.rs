@@ -53,10 +53,12 @@ pub enum HarnessTerminalStatus {
 pub enum HarnessEventType {
     SessionStarting,
     ServiceStarting,
+    ServiceHandshaking,
     ServiceReady,
     ServiceUnhealthy,
     ServiceRestarting,
     ServiceFailed,
+    ServiceStopped,
     PreflightCompleted,
     SessionStarted,
     SessionUsageUpdated,
@@ -389,8 +391,12 @@ pub fn apply_content_policy(
     policy: &HarnessTraceContent,
 ) -> Result<HarnessEventEnvelope> {
     let mut value = serde_json::to_value(event).context("serializing event for redaction")?;
-    sanitize_value(&mut value, policy, None);
+    apply_content_policy_to_value(&mut value, policy);
     serde_json::from_value(value).context("deserializing redacted event")
+}
+
+pub fn apply_content_policy_to_value(value: &mut Value, policy: &HarnessTraceContent) {
+    sanitize_value(value, policy, None);
 }
 
 fn sanitize_value(value: &mut Value, policy: &HarnessTraceContent, key: Option<&str>) {

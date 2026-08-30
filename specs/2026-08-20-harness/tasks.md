@@ -474,7 +474,7 @@ Covered milestones: 7-8.
 This gives us the hardened public `agentpm run --machine` surface, real Harness ToolRuntime execution through that boundary, and Skill progressive disclosure/resource reads. At this point the Harness can run practical AgentPM Tool/Skill scenarios while still treating Knowledge, Memory, MCP, and external providers as unavailable or pending where applicable.
 
 ## Milestone 9: HookRuntime, ApprovalRuntime, Machine Control Protocol, External Service Transport, and Cancellation
-> Scope note: establish the persistent bidirectional Harness machine protocol plus the shared process/host service transport used by custom providers, Hooks, and approvals. Activate prompt/Tool Hooks and approval/control against the existing Engine seams; later Knowledge/Memory milestones activate their Hook/action methods on the same contracts. This milestone must preserve one HarnessEngine and transport-independent semantic runtime interfaces.
+> Scope note: establish the persistent bidirectional Harness machine protocol plus both runtime service transports used by custom providers, Hooks, and approvals: `agentpm-service` for Harness-owned process implementations, and the host-service request/response lane inside `agentpm-harness-machine` for SDK/application-hosted implementations. Activate prompt/Tool Hooks and approval/control against the existing Engine seams; later Knowledge/Memory milestones activate their Hook/action methods on the same semantic runtime contracts. This milestone must preserve one HarnessEngine and transport-independent semantic runtime interfaces.
 - [ ] Define and implement versioned `agentpm harness --machine` JSONL framing/envelopes from `spec.md` with protocol version, message kind/type, correlation IDs, typed request/response/event/error payloads, and protocol-only stdout; diagnostics use stderr.
 - [ ] Implement machine message families for Session initialization/host capability registration, preflight, start Run, event streaming, terminal/Run/report results, cancellation, external Memory-operation control placeholder, shutdown, and correlated host-service request/response dispatch.
 - [ ] Apply the Milestone 3 trace content policy and unconditional secret-redaction rules to machine-protocol event delivery and terminal Run/report payloads; machine subscribers must not receive content that would be suppressed from traces under the same policy.
@@ -482,6 +482,7 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 - [ ] Keep machine events distinct from control requests and service/provider requests even though all share the same framed transport.
 
 - [ ] Implement the common persistent AgentPM process-service JSONL protocol for configured `model`, `embedding`, `hook`, `knowledge`, `memory`, and `approval` roles.
+- [ ] Keep `agentpm-service` separate from the Harness machine protocol: process implementations speak `agentpm-service`, host implementations speak the host-service lane of `agentpm-harness-machine`, and both carry the same typed semantic runtime requests/results.
 - [ ] Require `initialize`/handshake with protocol version, role identity, implementation/service ID, and live role-specific capability advertisement before a service becomes ready.
 - [ ] Implement minimum role methods from `spec.md`: model `generate`; embedding `embed`; Hook `invoke`; Knowledge `retrieve`/attestation; Memory primitive record/retrieval/count/operation-state/batch methods; approval `request_approval`.
 - [ ] Use the same semantic role contracts for SDK-hosted implementations over the machine protocol; only transport differs.
@@ -494,7 +495,8 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 - [ ] Add `HookRuntime` using the exact version-1 Hook IDs and **closed per-Hook request/response contracts** from `spec.md`; never use generic RunState/config merge patch.
 - [ ] Invoke a Hook only when its corresponding authorized action/decision is eligible; Hooks must not manufacture capabilities.
 - [ ] Make the existing `before_model_request` seam live after canonical prompt assembly and before ModelRuntime provider translation.
-- [ ] Make Tool candidate/selection and before-Tool-call Hooks live; selection Hooks may only reorder/subset existing effective Tool IDs, and before-call Hooks may patch arguments/reject without changing Tool identity.
+- [ ] Make the `before_tool_selection` Hook live after `EffectivePhase` computes ready Tool candidates and before the model-visible Tool/action catalog is finalized; it may only reorder/subset existing effective Tool IDs and must not add capabilities.
+- [ ] Make the `before_tool_call` Hook live after the model proposes an authorized AgentPM Tool action and before `ToolRuntime` dispatch; it may patch arguments or reject the call without changing Tool identity.
 - [ ] Revalidate every successful Hook patch before passing the updated safe snapshot to the next binding/runtime.
 - [ ] Keep Knowledge/Memory Hook contracts registered/transportable now, but invoke their actual execution points only when those runtimes become live in Milestones 12/14/15.
 - [ ] Apply ordered configured Hook bindings first, then SDK-hosted registrations in host registration order.
@@ -536,6 +538,7 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 - [ ] Register host providers by `(service role, configured registry ID)` and require them to satisfy a resolved `type: host` implementation (or explicit per-run host override allowed by the config precedence contract); an SDK registration must not silently replace a configured process implementation.
 - [ ] Make a registered host ModelRuntime fully usable now through Milestone 9 service dispatch and verify Harness remains authoritative for ModelTurn validation/action execution.
 - [ ] Allow host provider methods whose Engine runtime is introduced later (Knowledge/Memory) to register early but fail/gate explicitly until that runtime milestone rather than being silently ignored.
+- [ ] Preserve and expose host-service registration status in the SDK, including `active: false` plus an actionable reason for configured future roles whose Rust Engine dispatch is not live yet.
 - [ ] Keep provider credentials/application state on the host side unless explicitly returned by the typed contract.
 - [ ] Export all Harness/Hook/approval/provider types through public SDK entrypoints.
 
@@ -561,6 +564,7 @@ This gives us the hardened public `agentpm run --machine` surface, real Harness 
 - [ ] Register host providers by `(service role, configured registry ID)` and require them to satisfy a resolved `type: host` implementation (or explicit per-run host override allowed by config precedence); do not silently replace configured process implementations.
 - [ ] Make a Python host ModelRuntime fully usable through the Rust Harness service dispatch now; keep Harness authoritative for validation/state/actions.
 - [ ] Allow later Knowledge/Memory provider registrations to be gated explicitly until their Engine runtime is live rather than silently ignored.
+- [ ] Preserve and expose host-service registration status in the SDK, including `active: false` plus an actionable reason for configured future roles whose Rust Engine dispatch is not live yet.
 - [ ] Keep framing/correlation/process lifecycle and provider credentials/application state hidden from normal users.
 - [ ] Export all public Harness/Hook/approval/provider APIs.
 - [ ] Verify Node/Python field names, Hook/provider semantics, error categories, and registration precedence remain aligned.
@@ -592,14 +596,19 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 
 - [ ] Activate configured EmbeddingProvider process/host implementations through the Milestone 9 protocol with request tuple `provider/model/dimensions/normalized/text` and finite vector response.
 - [ ] Require live EmbeddingProvider advertisement of compatible embedding-space tuples/patterns and validate the requested installed Knowledge embedding metadata against that advertisement.
+- [ ] Apply the same readiness/capability enforcement to process and host EmbeddingProvider implementations: reject `ready:false`, provider/model/dimensions/normalization mismatches, malformed capability payloads, and unsupported requested embedding spaces before exposing or invoking the provider.
+- [ ] Emit equivalent service health diagnostics/events for process and host EmbeddingProvider failures/timeouts; host transport errors must not disappear behind generic model/action failures.
 - [ ] Resolve `knowledge.embedding_matches` by exact provider/model/dimensions/normalized tuple when local vector retrieval only lacks a query embedder; reject ambiguous matches and validate returned vector dimension/finiteness/normalization assumptions before search.
 
 - [ ] Honor explicit `knowledge.packages` mappings now: initialize/attest the configured custom KnowledgeRuntime against the exact installed package/version/corpus identity, route retrieval to it when ready, and **never silently fall back** to local retrieval on mismatch/failure.
 - [ ] For unmapped packages, follow the local-resolution order from `spec.md`: context/local query where possible -> compatible EmbeddingProvider fallback for query vector -> unavailable/suppressed when no realization exists.
 - [ ] Require custom KnowledgeRuntime live capability/readiness advertisement for supported modes/features and package/corpus attestations; configuration existence alone is not readiness.
+- [ ] Apply the same readiness/capability enforcement to process and host custom KnowledgeRuntime implementations: reject `ready:false`, registry/package/version/corpus attestation mismatches, malformed capability payloads, and unsupported Knowledge modes/features before exposing a surface.
+- [ ] Emit equivalent service health diagnostics/events for process and host KnowledgeRuntime failures/timeouts, and keep explicit custom-runtime failures from silently falling back to local retrieval.
 - [ ] Suppress a known-unrealizable Knowledge surface with a diagnostic rather than exposing a model action that cannot succeed.
 
 - [ ] Make `before_knowledge_request` and `after_knowledge_retrieval` Hook points live through HookRuntime; Hooks remain confined to the already-authorized package/mode/options and result identities, and all changes are revalidated.
+- [ ] When activating Knowledge/Memory Hook seams in Milestones 12/14/15, drain and emit queued nonfatal Hook failures before every terminal rejection/failure exit, including engine-side patch-validation failures.
 - [ ] Preserve failure semantics: malformed/unauthorized model request -> bounded structured repair; valid backend/runtime failure -> structured Knowledge failure returned to the phase, not Loop Tool failure; repeated inability to complete may eventually become phase failure.
 - [ ] Emit Knowledge surface/readiness/request/retrieval/citation/failure events with content governed by trace policy.
 
@@ -660,6 +669,8 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 - [ ] Advertise the normalized live MemoryRuntime capability descriptor from `spec.md` (`space_models`, `retrieval_modes`, `retention_actions`, `constraints`, `capacity`, `durable_trigger_state`, `atomic_batches`) containing only currently realizable capabilities.
 - [ ] Compare selected runtime capabilities to every bound space and suppress direct spaces it cannot faithfully realize, with explicit readiness diagnostics.
 - [ ] Honor explicit `memory.packages` mappings now: initialize the configured custom process/host MemoryRuntime, use its live capability descriptor, route direct operations to it, and never silently fall back to SQLite on failure/mismatch.
+- [ ] Apply the same readiness/capability enforcement to process and host custom MemoryRuntime implementations: reject `ready:false`, registry/package/version/Blueprint realization mismatches, malformed capability payloads, and unsupported space/retrieval/write/batch requirements before exposing direct Memory surfaces.
+- [ ] Emit equivalent service health diagnostics/events for process and host MemoryRuntime failures/timeouts, and keep explicit custom-runtime failures from silently falling back to SQLite.
 - [ ] For unmapped packages, use the built-in SQLite runtime.
 
 - [ ] Implement TTL anchor `(updated_at ?? created_at) + ttl`, lazy expiry enforcement, delete/archive retention actions, and exclusion of expired/archived records from active reads/counts/retrieval.

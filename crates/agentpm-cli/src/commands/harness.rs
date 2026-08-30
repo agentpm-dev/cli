@@ -4,25 +4,41 @@ use crate::harness_plan::{
 };
 use crate::harness_runtime::{
     ActionDispatcher, AgentPmActionDispatcher, ApprovalController, BuiltInModelRuntime,
-    ConsumerContextSnapshot, ModelProviderSelection, ModelRuntime, PackageSnapshot,
-    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot, SkillResourceSnapshot,
-    SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    ConfiguredApprovalController, ConfiguredHookRuntime, ConsumerContextSnapshot, HookRuntime,
+    HostServiceInvoker, ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest,
+    ModelRuntime, ModelRuntimeFailure, ModelTurn, PackageSnapshot, ProcessModelRuntime,
+    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceLifecycleEmitter, ServiceLifecycleEvents,
+    ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::manifest::{
     load_manifest_value, parse_loop_manifest, parse_skill_manifest, parse_tool_manifest,
 };
 use crate::prelude::*;
 use crate::{
+    harness_config::HarnessHookId,
     harness_engine::{
-        HarnessEngine, HarnessEngineOptions, HarnessRunResult, HarnessSession,
-        RuntimeTerminalResult,
+        HarnessEngine, HarnessEngineOptions, HarnessRunResult, HarnessRuntimeServices,
+        HarnessSession, RuntimeTerminalResult,
     },
-    harness_observability::{JsonlTraceSink, RunOutputPaths, allocate_harness_run_id},
+    harness_observability::{
+        HarnessEventEnvelope, HarnessEventSink, HarnessTerminalStatus, JsonlTraceSink,
+        RunOutputPaths, allocate_harness_run_id, apply_content_policy,
+        apply_content_policy_to_value,
+    },
+    harness_runtime::SdkHostHookRegistration,
 };
 use anyhow::{anyhow, bail};
-use std::collections::BTreeMap;
-use std::io::Read;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
+use std::time::{Duration, Instant};
 
 use crate::semver::types::PackageKind;
 
@@ -85,7 +101,9 @@ impl HarnessArgs {
             },
         )?;
 
-        if self.json {
+        if surface == HarnessExecutionSurface::Machine {
+            // Machine stdout is reserved exclusively for protocol JSONL frames.
+        } else if self.json {
             println!("{}", serde_json::to_string_pretty(&plan.report)?);
         } else {
             let stream = PreflightOutputStream::for_surface(surface);
@@ -120,6 +138,11 @@ fn validate_surface_flags(surface: HarnessExecutionSurface, args: &HarnessArgs) 
             "--json cannot be combined with --headless; headless stdout is reserved for final output"
         );
     }
+    if surface == HarnessExecutionSurface::Machine && args.json {
+        bail!(
+            "--json cannot be combined with --machine; machine stdout is reserved for protocol frames"
+        );
+    }
     Ok(())
 }
 
@@ -127,7 +150,7 @@ impl HarnessExecutionSurface {
     fn run(self, plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result<()> {
         match self {
             HarnessExecutionSurface::Headless => run_headless_surface(plan, args),
-            HarnessExecutionSurface::Machine => run_machine_surface(plan),
+            HarnessExecutionSurface::Machine => run_machine_surface(plan, args),
             HarnessExecutionSurface::Tui => run_tui_surface(plan),
         }
     }
@@ -154,24 +177,1276 @@ fn run_tui_surface(_plan: &ResolvedHarnessPlan) -> Result<()> {
     Ok(())
 }
 
-fn run_machine_surface(_plan: &ResolvedHarnessPlan) -> Result<()> {
+fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result<()> {
+    let writer = MachineProtocolWriter::stdout(plan.config.config.trace.content.clone());
+    let cancellation_requested = Arc::new(AtomicBool::new(false));
+    let active_run = Arc::new(AtomicBool::new(false));
+    let reader = spawn_machine_stdin_reader(
+        writer.clone(),
+        active_run.clone(),
+        cancellation_requested.clone(),
+    );
+    let bridge =
+        MachineHostBridgeHandle::new(writer.clone(), reader, cancellation_requested, active_run);
+    bridge.write_event_payload(
+        None,
+        "preflight",
+        json!({
+            "status": plan.report.status,
+            "report": plan.report,
+        }),
+    )?;
+    let mut initialized = false;
+    while let Some(request) = bridge.recv_control_request()? {
+        let id = request.id.clone();
+        if let Err(err) = validate_machine_request(&request) {
+            bridge.write_error(id.as_deref(), "protocol_error", err)?;
+            continue;
+        }
+        let method = request.method.as_deref().unwrap_or_default();
+        match method {
+            "initialize" => {
+                initialized = true;
+                bridge.write_response(
+                    id.as_deref(),
+                    json!({
+                        "session": {
+                            "protocol": AGENTPM_HARNESS_MACHINE_PROTOCOL,
+                            "version": AGENTPM_HARNESS_MACHINE_VERSION,
+                        },
+                        "preflight": plan.report,
+                        "required_host_services": required_host_services(plan),
+                    }),
+                )?;
+            }
+            "register_host_service" => {
+                match register_host_service(plan, &bridge, &request.payload) {
+                    Ok(service) => bridge.write_response(
+                        id.as_deref(),
+                        host_service_registration_response(&service),
+                    )?,
+                    Err(err) => {
+                        bridge.write_error(id.as_deref(), "host_registration_failed", err)?
+                    }
+                }
+            }
+            "preflight" => {
+                bridge.write_response(id.as_deref(), json!(plan.report))?;
+            }
+            "start_run" => {
+                if !initialized {
+                    bridge.write_error(
+                        id.as_deref(),
+                        "not_initialized",
+                        "initialize must complete before start_run",
+                    )?;
+                    continue;
+                }
+                if !matches!(
+                    plan.report.status,
+                    PreflightStatus::Ready | PreflightStatus::ReadyWithWarnings
+                ) {
+                    bridge.write_error(
+                        id.as_deref(),
+                        "preflight_not_ready",
+                        "preflight is not ready",
+                    )?;
+                    continue;
+                }
+                let missing = missing_required_host_services(plan, &bridge);
+                if !missing.is_empty() {
+                    bridge.write_error(
+                        id.as_deref(),
+                        "host_service_not_registered",
+                        format!("missing required host service registrations: {missing:?}"),
+                    )?;
+                    continue;
+                }
+                let input = request
+                    .payload
+                    .get("input")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| args.input.clone())
+                    .ok_or_else(|| anyhow!("machine start_run requires payload.input"))?;
+                bridge.set_active_run(true);
+                let terminal = match execute_machine_run(plan, input, &bridge) {
+                    Ok(terminal) => terminal,
+                    Err(err) => {
+                        bridge.set_active_run(false);
+                        bridge.write_error(id.as_deref(), "run_failed", err.to_string())?;
+                        continue;
+                    }
+                };
+                bridge.set_active_run(false);
+                bridge.write_response(
+                    id.as_deref(),
+                    json!({
+                        "status": terminal.status,
+                        "output": terminal.output,
+                        "report": terminal.report,
+                    }),
+                )?;
+            }
+            "cancel_run" => {
+                bridge.request_cancellation();
+                bridge.write_response(
+                    id.as_deref(),
+                    json!({
+                        "status": HarnessTerminalStatus::Cancelled,
+                        "accepted": true,
+                        "note": "Cancellation will be observed by active machine host-service waits."
+                    }),
+                )?;
+            }
+            "memory_operation" => {
+                bridge.write_error(
+                    id.as_deref(),
+                    "memory_operation_unavailable",
+                    "external Memory-operation control requests are reserved until the Memory runtime milestone",
+                )?;
+            }
+            "shutdown" => {
+                bridge.write_response(id.as_deref(), json!({ "shutdown": true }))?;
+                break;
+            }
+            other => bridge.write_error(
+                id.as_deref(),
+                "unknown_method",
+                format!("unknown machine method `{other}`"),
+            )?,
+        }
+    }
     Ok(())
+}
+
+fn execute_machine_run(
+    plan: &ResolvedHarnessPlan,
+    input: String,
+    bridge: &MachineHostBridgeHandle,
+) -> Result<RuntimeTerminalResult> {
+    let selection = model_selection(plan)?;
+    let mut service_events = ServiceLifecycleEvents::new();
+    bridge.set_host_service_lifecycle_emitter(service_events.emitter());
+    let mut model = model_runtime_from_plan(
+        plan,
+        selection,
+        Some(Box::new(bridge.clone())),
+        Some(&service_events),
+    )?;
+    validate_model_capabilities(model.as_ref())?;
+    let runtime = runtime_snapshot_from_plan(plan);
+    let mut dispatcher = AgentPmActionDispatcher::from_runtime(&runtime)?
+        .with_cancellation_token(bridge.cancellation_token());
+    let mut hooks = ConfiguredHookRuntime::from_config(
+        &plan.workspace_root,
+        &plan.config.config.hooks.bindings,
+        &plan.config.config.hooks.implementations,
+        Some(service_events.emitter()),
+    )?
+    .with_host_invoker(Box::new(bridge.clone()));
+    hooks.add_sdk_host_registrations(bridge.sdk_host_hooks());
+    let loop_manifest = load_plan_loop(plan)?;
+    let mut session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(plan));
+    session
+        .emitter
+        .add_sink(Box::new(MachineEventSink::new(bridge.writer())));
+    let run_id = allocate_harness_run_id();
+    let output_paths = RunOutputPaths::resolve(&plan.state_dir, &run_id, None)?;
+    if plan.config.config.trace.enabled {
+        session.emitter.add_sink(Box::new(JsonlTraceSink::create(
+            &output_paths.events_path,
+            plan.config.config.trace.clone(),
+        )?));
+    }
+    let mut approvals = if bridge.has_sdk_approval_controller() {
+        Box::new(SdkHostApprovalController {
+            invoker: Box::new(bridge.clone()),
+            request_timeout_ms: plan
+                .config
+                .config
+                .approvals
+                .timeout_ms
+                .unwrap_or(SDK_HOST_REQUEST_TIMEOUT_MS),
+        }) as Box<dyn ApprovalController>
+    } else {
+        approval_controller_from_plan(plan, Some(Box::new(bridge.clone())), Some(&service_events))?
+    };
+    let mut engine = HarnessEngine::new(
+        loop_manifest,
+        HarnessEngineOptions::new(plan.config.config.runtime.limits.clone()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: model.as_mut(),
+        dispatcher: &mut dispatcher,
+        approvals: approvals.as_mut(),
+        hooks: &mut hooks,
+        service_events: Some(&mut service_events),
+    };
+    let result = engine.execute_run_with_id(&mut session, run_id, input, &mut services)?;
+    let HarnessRunResult::Terminal(result) = result else {
+        bail!(
+            "machine surface cannot retain pending approval without an interactive host controller"
+        );
+    };
+    let mut terminal = *result;
+    if plan.config.config.trace.enabled {
+        terminal.report.trace_path = Some(output_paths.events_path.display().to_string());
+    }
+    terminal
+        .report
+        .write_pretty(&output_paths.report_path, &plan.config.config.trace.content)?;
+    session.emitter.flush()?;
+    Ok(terminal)
+}
+
+const AGENTPM_HARNESS_MACHINE_PROTOCOL: &str = "agentpm-harness-machine";
+const AGENTPM_HARNESS_MACHINE_VERSION: u8 = 1;
+const SDK_HOST_REQUEST_TIMEOUT_MS: u64 = 120_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MachineEnvelope {
+    protocol: String,
+    version: u8,
+    kind: MachineFrameKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    method: Option<String>,
+    #[serde(default)]
+    payload: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<MachineError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum MachineFrameKind {
+    Request,
+    Response,
+    Event,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MachineError {
+    code: String,
+    message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct HostServiceRegistration {
+    role: String,
+    registry_id: String,
+}
+
+#[derive(Clone)]
+struct MachineHostBridgeHandle {
+    inner: Arc<Mutex<MachineHostBridge>>,
+}
+
+struct MachineHostBridge {
+    writer: MachineProtocolWriter,
+    receiver: mpsc::Receiver<std::result::Result<MachineEnvelope, String>>,
+    pending: VecDeque<MachineEnvelope>,
+    registered_host_services: BTreeSet<(String, String)>,
+    host_service_capabilities: BTreeMap<(String, String), Value>,
+    host_service_lifecycle: Option<ServiceLifecycleEmitter>,
+    sdk_host_hooks: Vec<SdkHostHookRegistration>,
+    sdk_approval_controller: bool,
+    request_counter: u64,
+    active_run: Arc<AtomicBool>,
+    cancellation_requested: Arc<AtomicBool>,
+}
+
+impl MachineHostBridgeHandle {
+    fn new(
+        writer: MachineProtocolWriter,
+        receiver: mpsc::Receiver<std::result::Result<MachineEnvelope, String>>,
+        cancellation_requested: Arc<AtomicBool>,
+        active_run: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(MachineHostBridge {
+                writer,
+                receiver,
+                pending: VecDeque::new(),
+                registered_host_services: BTreeSet::new(),
+                host_service_capabilities: BTreeMap::new(),
+                host_service_lifecycle: None,
+                sdk_host_hooks: Vec::new(),
+                sdk_approval_controller: false,
+                request_counter: 0,
+                active_run,
+                cancellation_requested,
+            })),
+        }
+    }
+
+    fn recv_control_request(&self) -> Result<Option<MachineEnvelope>> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .recv_control_request()
+    }
+
+    fn register_host_service(&self, service: &HostServiceRegistration, capabilities: Value) {
+        let mut bridge = self.inner.lock().expect("machine bridge poisoned");
+        let key = (service.role.clone(), service.registry_id.clone());
+        bridge.registered_host_services.insert(key.clone());
+        bridge.host_service_capabilities.insert(key, capabilities);
+    }
+
+    fn set_host_service_lifecycle_emitter(&self, emitter: ServiceLifecycleEmitter) {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .host_service_lifecycle = Some(emitter);
+    }
+
+    fn register_sdk_host_hooks(&self, registrations: Vec<SdkHostHookRegistration>) {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .sdk_host_hooks
+            .extend(registrations);
+    }
+
+    fn register_sdk_approval_controller(&self) {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .sdk_approval_controller = true;
+    }
+
+    fn sdk_host_hooks(&self) -> Vec<SdkHostHookRegistration> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .sdk_host_hooks
+            .clone()
+    }
+
+    fn has_sdk_approval_controller(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .sdk_approval_controller
+    }
+
+    fn has_host_service(&self, service: &HostServiceRegistration) -> bool {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .registered_host_services
+            .contains(&(service.role.clone(), service.registry_id.clone()))
+    }
+
+    fn host_service_capabilities(&self, role: &str, registry_id: &str) -> Option<Value> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .host_service_capabilities
+            .get(&(role.to_string(), registry_id.to_string()))
+            .cloned()
+    }
+
+    fn set_active_run(&self, active_run: bool) {
+        let bridge = self.inner.lock().expect("machine bridge poisoned");
+        bridge.active_run.store(active_run, Ordering::SeqCst);
+        if active_run {
+            bridge.cancellation_requested.store(false, Ordering::SeqCst);
+        }
+    }
+
+    fn request_cancellation(&self) {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .cancellation_requested
+            .store(true, Ordering::SeqCst);
+    }
+
+    fn cancellation_token(&self) -> Arc<AtomicBool> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .cancellation_requested
+            .clone()
+    }
+
+    fn write_response(&self, id: Option<&str>, payload: Value) -> Result<()> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .writer
+            .write_response(id, payload)
+    }
+
+    fn write_event_payload(&self, id: Option<&str>, label: &str, payload: Value) -> Result<()> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .writer
+            .write_event_payload(id, label, payload)
+    }
+
+    fn write_error(
+        &self,
+        id: Option<&str>,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<()> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .writer
+            .write_error(id, code, message)
+    }
+
+    fn writer(&self) -> MachineProtocolWriter {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .writer
+            .clone()
+    }
+}
+
+impl HostServiceInvoker for MachineHostBridgeHandle {
+    fn invoke_host_service(
+        &mut self,
+        role: &str,
+        registry_id: &str,
+        method: &str,
+        payload: Value,
+        timeout_ms: u64,
+    ) -> Result<Value> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .invoke_host_service(role, registry_id, method, payload, timeout_ms)
+    }
+
+    fn host_service_capabilities(&self, role: &str, registry_id: &str) -> Option<Value> {
+        self.host_service_capabilities(role, registry_id)
+    }
+}
+
+impl MachineHostBridge {
+    fn recv_control_request(&mut self) -> Result<Option<MachineEnvelope>> {
+        loop {
+            let Some(frame) = self.recv_next_frame(None)? else {
+                return Ok(None);
+            };
+            let id = frame.id.clone();
+            if let Err(err) = validate_machine_request(&frame) {
+                self.writer
+                    .write_error(id.as_deref(), "protocol_error", err)?;
+                continue;
+            }
+            return Ok(Some(frame));
+        }
+    }
+
+    fn invoke_host_service(
+        &mut self,
+        role: &str,
+        registry_id: &str,
+        method: &str,
+        payload: Value,
+        timeout_ms: u64,
+    ) -> Result<Value> {
+        if !self
+            .registered_host_services
+            .contains(&(role.to_string(), registry_id.to_string()))
+        {
+            bail!("host service `{role}:{registry_id}` is not registered");
+        }
+        self.request_counter += 1;
+        let request_id = format!("host-{role}-{registry_id}-{}", self.request_counter);
+        self.writer.write_unredacted(MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Request,
+            id: Some(request_id.clone()),
+            method: Some("host_service".into()),
+            payload: json!({
+                "role": role,
+                "registry_id": registry_id,
+                "method": method,
+                "payload": payload,
+            }),
+            error: None,
+        })?;
+
+        let timeout = Duration::from_millis(timeout_ms);
+        let started = Instant::now();
+        loop {
+            if self.cancellation_requested.load(Ordering::SeqCst) {
+                bail!("run cancellation requested");
+            }
+            let remaining = match timeout.checked_sub(started.elapsed()) {
+                Some(remaining) => remaining,
+                None => {
+                    let message = format!(
+                        "host service request `{request_id}` timed out after {} ms",
+                        timeout.as_millis()
+                    );
+                    self.emit_host_service_failure(role, registry_id, message.clone());
+                    bail!(message);
+                }
+            };
+            let Some(frame) = self.recv_next_frame(Some(remaining))? else {
+                let message =
+                    format!("machine protocol stdin closed while waiting for `{request_id}`");
+                self.emit_host_service_failure(role, registry_id, message.clone());
+                bail!(message);
+            };
+            if let Err(err) = validate_machine_frame_base(&frame) {
+                self.writer
+                    .write_error(frame.id.as_deref(), "protocol_error", err)?;
+                continue;
+            }
+            if frame.id.as_deref() == Some(request_id.as_str()) {
+                return match frame.kind {
+                    MachineFrameKind::Response => Ok(frame.payload),
+                    MachineFrameKind::Error => {
+                        let error = frame.error.unwrap_or(MachineError {
+                            code: "host_service_error".into(),
+                            message: "host service returned an error frame without payload".into(),
+                        });
+                        let message = format!("{}: {}", error.code, error.message);
+                        self.emit_host_service_failure(role, registry_id, message.clone());
+                        Err(anyhow!(message))
+                    }
+                    other => {
+                        let message = format!(
+                            "host service response `{request_id}` used invalid frame kind `{other:?}`"
+                        );
+                        self.emit_host_service_failure(role, registry_id, message.clone());
+                        Err(anyhow!(message))
+                    }
+                };
+            }
+            if frame.kind == MachineFrameKind::Request && self.active_run.load(Ordering::SeqCst) {
+                self.handle_control_request_during_active_run(frame)?;
+            } else {
+                self.pending.push_back(frame);
+            }
+        }
+    }
+
+    fn emit_host_service_failure(&self, role: &str, registry_id: &str, message: impl Into<String>) {
+        let message = message.into();
+        if let Some(events) = &self.host_service_lifecycle {
+            events.emit(
+                crate::harness_observability::HarnessEventType::ServiceUnhealthy,
+                role,
+                registry_id,
+                "unhealthy",
+                format!("Host service request failed: {message}"),
+            );
+            events.emit(
+                crate::harness_observability::HarnessEventType::ServiceFailed,
+                role,
+                registry_id,
+                "failed",
+                format!("Host service request failed: {message}"),
+            );
+        }
+    }
+
+    fn handle_control_request_during_active_run(&mut self, frame: MachineEnvelope) -> Result<()> {
+        let id = frame.id.clone();
+        match frame.method.as_deref().unwrap_or_default() {
+            "cancel_run" => {
+                self.cancellation_requested.store(true, Ordering::SeqCst);
+                self.writer.write_response(
+                    id.as_deref(),
+                    json!({
+                        "accepted": true,
+                        "status": HarnessTerminalStatus::Cancelled,
+                    }),
+                )?;
+            }
+            "start_run" => {
+                self.writer.write_error(
+                    id.as_deref(),
+                    "session_busy",
+                    "a Harness Run is already active in this Session",
+                )?;
+            }
+            "preflight" => {
+                self.writer.write_error(
+                    id.as_deref(),
+                    "run_active",
+                    "preflight control is unavailable while a Run is active",
+                )?;
+            }
+            other => {
+                self.writer.write_error(
+                    id.as_deref(),
+                    "run_active",
+                    format!("machine request `{other}` is unavailable while a Run is active"),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn recv_next_frame(&mut self, timeout: Option<Duration>) -> Result<Option<MachineEnvelope>> {
+        if let Some(frame) = self.pending.pop_front() {
+            return Ok(Some(frame));
+        }
+        loop {
+            let received = match timeout {
+                Some(timeout) => match self.receiver.recv_timeout(timeout) {
+                    Ok(received) => received,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        bail!("timed out waiting for machine frame")
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+                },
+                None => match self.receiver.recv() {
+                    Ok(received) => received,
+                    Err(_) => return Ok(None),
+                },
+            };
+            match received {
+                Ok(frame) => return Ok(Some(frame)),
+                Err(message) => {
+                    self.writer.write_error(None, "malformed_json", message)?;
+                    if timeout.is_some() {
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct MachineProtocolWriter {
+    output: MachineProtocolOutput,
+    content: crate::harness_config::HarnessTraceContent,
+}
+
+#[derive(Clone)]
+enum MachineProtocolOutput {
+    Stdout(Arc<Mutex<std::io::Stdout>>),
+    #[cfg(test)]
+    Buffer(Arc<Mutex<Vec<u8>>>),
+}
+
+impl MachineProtocolWriter {
+    fn stdout(content: crate::harness_config::HarnessTraceContent) -> Self {
+        Self {
+            output: MachineProtocolOutput::Stdout(Arc::new(Mutex::new(std::io::stdout()))),
+            content,
+        }
+    }
+
+    #[cfg(test)]
+    fn buffer(content: crate::harness_config::HarnessTraceContent) -> (Self, Arc<Mutex<Vec<u8>>>) {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                output: MachineProtocolOutput::Buffer(Arc::clone(&buffer)),
+                content,
+            },
+            buffer,
+        )
+    }
+
+    fn write_response(&self, id: Option<&str>, payload: Value) -> Result<()> {
+        self.write(MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Response,
+            id: id.map(str::to_string),
+            method: None,
+            payload,
+            error: None,
+        })
+    }
+
+    fn write_event_payload(&self, id: Option<&str>, label: &str, payload: Value) -> Result<()> {
+        self.write(MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Event,
+            id: id.map(str::to_string),
+            method: Some(label.into()),
+            payload,
+            error: None,
+        })
+    }
+
+    fn write_error(
+        &self,
+        id: Option<&str>,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<()> {
+        self.write(MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Error,
+            id: id.map(str::to_string),
+            method: None,
+            payload: Value::Null,
+            error: Some(MachineError {
+                code: code.into(),
+                message: message.into(),
+            }),
+        })
+    }
+
+    fn write(&self, envelope: MachineEnvelope) -> Result<()> {
+        let envelope = self.frame_value(envelope, true)?;
+        self.write_value(envelope)
+    }
+
+    fn write_unredacted(&self, envelope: MachineEnvelope) -> Result<()> {
+        let envelope = self.frame_value(envelope, false)?;
+        self.write_value(envelope)
+    }
+
+    fn frame_value(&self, envelope: MachineEnvelope, redact: bool) -> Result<Value> {
+        let mut envelope = serde_json::to_value(envelope).context("serializing machine frame")?;
+        if redact {
+            apply_content_policy_to_value(&mut envelope, &self.content);
+        }
+        Ok(envelope)
+    }
+
+    fn write_value(&self, envelope: Value) -> Result<()> {
+        match &self.output {
+            MachineProtocolOutput::Stdout(stdout) => {
+                let mut stdout = stdout.lock().expect("machine stdout poisoned");
+                serde_json::to_writer(&mut *stdout, &envelope).context("writing machine frame")?;
+                stdout
+                    .write_all(b"\n")
+                    .context("writing machine frame newline")?;
+                stdout.flush().context("flushing machine stdout")
+            }
+            #[cfg(test)]
+            MachineProtocolOutput::Buffer(buffer) => {
+                let mut buffer = buffer.lock().expect("machine buffer poisoned");
+                serde_json::to_writer(&mut *buffer, &envelope).context("writing machine frame")?;
+                buffer
+                    .write_all(b"\n")
+                    .context("writing machine frame newline")
+            }
+        }
+    }
+}
+
+struct MachineEventSink {
+    writer: MachineProtocolWriter,
+}
+
+impl MachineEventSink {
+    fn new(writer: MachineProtocolWriter) -> Self {
+        Self { writer }
+    }
+}
+
+impl HarnessEventSink for MachineEventSink {
+    fn record(&mut self, event: &HarnessEventEnvelope) -> Result<()> {
+        let event = apply_content_policy(event, &self.writer.content)?;
+        self.writer.write(MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Event,
+            id: event.correlation_id.clone(),
+            method: Some("harness_event".into()),
+            payload: serde_json::to_value(event).context("serializing machine event")?,
+            error: None,
+        })
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+fn spawn_machine_stdin_reader(
+    writer: MachineProtocolWriter,
+    active_run: Arc<AtomicBool>,
+    cancellation_requested: Arc<AtomicBool>,
+) -> mpsc::Receiver<std::result::Result<MachineEnvelope, String>> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        for line in stdin.lock().lines() {
+            let line = match line {
+                Ok(line) => line,
+                Err(err) => {
+                    let _ = sender.send(Err(format!("reading machine protocol stdin: {err}")));
+                    break;
+                }
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let parsed = serde_json::from_str::<MachineEnvelope>(&line);
+            if let Ok(frame) = &parsed {
+                if validate_machine_request(frame).is_ok()
+                    && frame.method.as_deref() == Some("cancel_run")
+                {
+                    cancellation_requested.store(true, Ordering::SeqCst);
+                    let _ = writer.write_response(
+                        frame.id.as_deref(),
+                        json!({
+                            "status": HarnessTerminalStatus::Cancelled,
+                            "accepted": true,
+                        }),
+                    );
+                    continue;
+                }
+                if active_run.load(Ordering::SeqCst)
+                    && validate_machine_request(frame).is_ok()
+                    && frame.method.as_deref() == Some("start_run")
+                {
+                    let _ = writer.write_error(
+                        frame.id.as_deref(),
+                        "session_busy",
+                        "a Harness Run is already active in this Session",
+                    );
+                    continue;
+                }
+            }
+            let parsed = parsed.map_err(|err| format!("invalid JSON frame: {err}"));
+            if sender.send(parsed).is_err() {
+                break;
+            }
+        }
+    });
+    receiver
+}
+
+fn validate_machine_frame_base(frame: &MachineEnvelope) -> std::result::Result<(), String> {
+    if frame.protocol != AGENTPM_HARNESS_MACHINE_PROTOCOL {
+        return Err(format!(
+            "unsupported protocol `{}`; expected `{AGENTPM_HARNESS_MACHINE_PROTOCOL}`",
+            frame.protocol
+        ));
+    }
+    if frame.version != AGENTPM_HARNESS_MACHINE_VERSION {
+        return Err(format!(
+            "unsupported protocol version {}; expected {AGENTPM_HARNESS_MACHINE_VERSION}",
+            frame.version
+        ));
+    }
+    Ok(())
+}
+
+fn validate_machine_request(request: &MachineEnvelope) -> std::result::Result<(), String> {
+    validate_machine_frame_base(request)?;
+    if request.kind != MachineFrameKind::Request {
+        return Err("machine input frames must use kind `request`".into());
+    }
+    if request.method.is_none() {
+        return Err("machine request is missing method".into());
+    }
+    Ok(())
+}
+
+fn register_host_service(
+    plan: &ResolvedHarnessPlan,
+    bridge: &MachineHostBridgeHandle,
+    payload: &Value,
+) -> std::result::Result<HostServiceRegistration, String> {
+    let role = payload
+        .get("role")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "host service registration requires payload.role".to_string())?
+        .to_string();
+    let registry_id = payload
+        .get("registry_id")
+        .or_else(|| payload.get("id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            "host service registration requires payload.registry_id or payload.id".to_string()
+        })?
+        .to_string();
+    let service = HostServiceRegistration { role, registry_id };
+    let capabilities = payload
+        .get("capabilities")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    validate_host_service_readiness(&service, payload)?;
+    if !configured_host_services(plan).contains(&service) {
+        if service.role == "hook" {
+            let registrations = sdk_host_hook_registrations(&service.registry_id, payload)?;
+            if registrations.is_empty() {
+                return Err(
+                    "SDK hook registration requires payload.hooks with at least one Hook ID".into(),
+                );
+            }
+            bridge.register_host_service(&service, capabilities);
+            bridge.register_sdk_host_hooks(registrations);
+            return Ok(service);
+        }
+        if service.role == "approval" && service.registry_id == "controller" {
+            crate::harness_runtime::approval::approval_capabilities_from_initialization(
+                &capabilities,
+                "controller",
+            )
+            .map_err(|err| err.to_string())?;
+            bridge.register_host_service(&service, capabilities);
+            bridge.register_sdk_approval_controller();
+            return Ok(service);
+        }
+        return Err(format!(
+            "host service `{}` with registry ID `{}` is not configured",
+            service.role, service.registry_id
+        ));
+    }
+    validate_configured_host_service_registration(plan, &service, payload, &capabilities)?;
+    bridge.register_host_service(&service, capabilities);
+    Ok(service)
+}
+
+fn host_service_registration_response(service: &HostServiceRegistration) -> Value {
+    let (active, reason) = host_service_activation_status(service);
+    json!({
+        "registered": true,
+        "service": service,
+        "active": active,
+        "reason": reason,
+    })
+}
+
+fn host_service_activation_status(
+    service: &HostServiceRegistration,
+) -> (bool, Option<&'static str>) {
+    match service.role.as_str() {
+        "embedding" => (
+            false,
+            Some("EmbeddingProvider host dispatch is reserved until Milestone 12"),
+        ),
+        "knowledge" => (
+            false,
+            Some("KnowledgeRuntime host dispatch is reserved until Milestone 12"),
+        ),
+        "memory" => (
+            false,
+            Some("MemoryRuntime host dispatch is reserved until Milestone 14"),
+        ),
+        _ => (true, None),
+    }
+}
+
+fn validate_host_service_readiness(
+    service: &HostServiceRegistration,
+    payload: &Value,
+) -> std::result::Result<(), String> {
+    if payload
+        .get("ready")
+        .and_then(Value::as_bool)
+        .is_some_and(|ready| !ready)
+    {
+        return Err(format!(
+            "host service `{}` with registry ID `{}` registered but reported not ready",
+            service.role, service.registry_id
+        ));
+    }
+    Ok(())
+}
+
+fn validate_configured_host_service_registration(
+    plan: &ResolvedHarnessPlan,
+    service: &HostServiceRegistration,
+    payload: &Value,
+    capabilities: &Value,
+) -> std::result::Result<(), String> {
+    match service.role.as_str() {
+        "hook" => validate_configured_host_hook_registration(plan, service, payload, capabilities),
+        "approval" if service.registry_id == "controller" => {
+            crate::harness_runtime::approval::approval_capabilities_from_initialization(
+                capabilities,
+                "controller",
+            )
+            .map_err(|err| err.to_string())?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_configured_host_hook_registration(
+    plan: &ResolvedHarnessPlan,
+    service: &HostServiceRegistration,
+    payload: &Value,
+    capabilities: &Value,
+) -> std::result::Result<(), String> {
+    let expected_hooks = configured_host_hook_ids(plan, &service.registry_id);
+    if expected_hooks.is_empty() {
+        return Ok(());
+    }
+    let Some(advertised_hooks) = payload
+        .get("hooks")
+        .or_else(|| capabilities.get("hooks"))
+        .cloned()
+    else {
+        return Err(format!(
+            "host hook service `{}` must advertise payload.hooks or capabilities.hooks",
+            service.registry_id
+        ));
+    };
+    crate::harness_runtime::hook::validate_hook_service_initialization(
+        &json!({
+            "registry_id": service.registry_id.clone(),
+            "hooks": advertised_hooks,
+        }),
+        &service.registry_id,
+        &expected_hooks,
+    )
+    .map_err(|err| err.to_string())
+}
+
+fn configured_host_hook_ids(
+    plan: &ResolvedHarnessPlan,
+    implementation: &str,
+) -> Vec<HarnessHookId> {
+    let mut hook_ids = Vec::new();
+    for binding in plan
+        .config
+        .config
+        .hooks
+        .bindings
+        .iter()
+        .filter(|binding| binding.implementation == implementation)
+    {
+        if !hook_ids.contains(&binding.hook) {
+            hook_ids.push(binding.hook.clone());
+        }
+    }
+    hook_ids
+}
+
+fn sdk_host_hook_registrations(
+    registry_id: &str,
+    payload: &Value,
+) -> std::result::Result<Vec<SdkHostHookRegistration>, String> {
+    let hooks = payload
+        .get("hooks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "SDK hook registration requires payload.hooks".to_string())?;
+    let request_timeout_ms = payload
+        .get("request_timeout_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(SDK_HOST_REQUEST_TIMEOUT_MS);
+    let mut registrations = Vec::new();
+    for hook in hooks {
+        let Some(hook) = hook.as_str() else {
+            return Err("SDK hook registration payload.hooks entries must be strings".into());
+        };
+        let hook: HarnessHookId =
+            serde_json::from_value(Value::String(hook.to_string())).map_err(|err| {
+                format!("SDK hook registration contains unsupported Hook ID `{hook}`: {err}")
+            })?;
+        registrations.push(SdkHostHookRegistration {
+            registry_id: registry_id.to_string(),
+            hook,
+            request_timeout_ms,
+        });
+    }
+    Ok(registrations)
+}
+
+fn missing_required_host_services(
+    plan: &ResolvedHarnessPlan,
+    bridge: &MachineHostBridgeHandle,
+) -> Vec<HostServiceRegistration> {
+    required_host_services(plan)
+        .into_iter()
+        .filter(|service| !bridge.has_host_service(service))
+        .collect()
+}
+
+fn required_host_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
+    let mut services = Vec::new();
+    if let Some(model) = &plan.config.config.model
+        && matches!(
+            plan.config
+                .config
+                .providers
+                .models
+                .get(&model.provider)
+                .map(|entry| &entry.implementation),
+            Some(crate::harness_config::HarnessImplementation::Host { .. })
+        )
+    {
+        services.push(HostServiceRegistration {
+            role: "model".into(),
+            registry_id: model.provider.clone(),
+        });
+    }
+    services.extend(host_hook_services(plan));
+    if matches!(
+        plan.config
+            .config
+            .approvals
+            .controller
+            .as_ref()
+            .map(|controller| &controller.implementation),
+        Some(crate::harness_config::HarnessImplementation::Host { .. })
+    ) {
+        services.push(HostServiceRegistration {
+            role: "approval".into(),
+            registry_id: "controller".into(),
+        });
+    }
+    dedupe_host_services(services)
+}
+
+fn configured_host_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
+    let mut services = Vec::new();
+    services.extend(
+        plan.config
+            .config
+            .providers
+            .models
+            .iter()
+            .filter(|(_, entry)| {
+                matches!(
+                    entry.implementation,
+                    crate::harness_config::HarnessImplementation::Host { .. }
+                )
+            })
+            .map(|(id, _)| HostServiceRegistration {
+                role: "model".into(),
+                registry_id: id.clone(),
+            }),
+    );
+    services.extend(host_hook_services(plan));
+    services.extend(
+        plan.config
+            .config
+            .providers
+            .embeddings
+            .iter()
+            .filter(|(_, entry)| {
+                matches!(
+                    entry.implementation,
+                    crate::harness_config::HarnessImplementation::Host { .. }
+                )
+            })
+            .map(|(id, _)| HostServiceRegistration {
+                role: "embedding".into(),
+                registry_id: id.clone(),
+            }),
+    );
+    services.extend(
+        plan.config
+            .config
+            .knowledge
+            .runtimes
+            .iter()
+            .filter(|(_, entry)| {
+                matches!(
+                    entry.implementation,
+                    crate::harness_config::HarnessImplementation::Host { .. }
+                )
+            })
+            .map(|(id, _)| HostServiceRegistration {
+                role: "knowledge".into(),
+                registry_id: id.clone(),
+            }),
+    );
+    services.extend(
+        plan.config
+            .config
+            .memory
+            .runtimes
+            .iter()
+            .filter(|(_, entry)| {
+                matches!(
+                    entry.implementation,
+                    crate::harness_config::HarnessImplementation::Host { .. }
+                )
+            })
+            .map(|(id, _)| HostServiceRegistration {
+                role: "memory".into(),
+                registry_id: id.clone(),
+            }),
+    );
+    if matches!(
+        plan.config
+            .config
+            .approvals
+            .controller
+            .as_ref()
+            .map(|controller| &controller.implementation),
+        Some(crate::harness_config::HarnessImplementation::Host { .. })
+    ) {
+        services.push(HostServiceRegistration {
+            role: "approval".into(),
+            registry_id: "controller".into(),
+        });
+    }
+    dedupe_host_services(services)
+}
+
+fn host_hook_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
+    plan.config
+        .config
+        .hooks
+        .bindings
+        .iter()
+        .filter_map(|binding| {
+            let entry = plan
+                .config
+                .config
+                .hooks
+                .implementations
+                .get(&binding.implementation)?;
+            matches!(
+                entry.implementation,
+                crate::harness_config::HarnessImplementation::Host { .. }
+            )
+            .then(|| HostServiceRegistration {
+                role: "hook".into(),
+                registry_id: binding.implementation.clone(),
+            })
+        })
+        .collect()
+}
+
+fn dedupe_host_services(services: Vec<HostServiceRegistration>) -> Vec<HostServiceRegistration> {
+    let mut seen = BTreeSet::new();
+    services
+        .into_iter()
+        .filter(|service| seen.insert((service.role.clone(), service.registry_id.clone())))
+        .collect()
 }
 
 fn run_headless_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result<()> {
     let input = read_run_input(args.input.as_deref(), args.input_file.as_ref())?;
     let selection = model_selection(plan)?;
-    let mut model =
-        BuiltInModelRuntime::from_selection(selection).map_err(|err| anyhow!(err.message))?;
-    validate_model_capabilities(&model)?;
+    let mut service_events = ServiceLifecycleEvents::new();
+    let mut model = model_runtime_from_plan(plan, selection, None, Some(&service_events))?;
+    validate_model_capabilities(model.as_ref())?;
     let runtime = runtime_snapshot_from_plan(plan);
     let mut dispatcher = AgentPmActionDispatcher::from_runtime(&runtime)?;
-    let terminal = execute_headless_plan(
+    let mut hooks = ConfiguredHookRuntime::from_config(
+        &plan.workspace_root,
+        &plan.config.config.hooks.bindings,
+        &plan.config.config.hooks.implementations,
+        Some(service_events.emitter()),
+    )?;
+    let terminal = execute_headless_plan_with_hooks(
         plan,
         input,
         args.report.as_ref(),
-        &mut model,
+        model.as_mut(),
         &mut dispatcher,
+        &mut hooks,
+        Some(&mut service_events),
     )?;
     match terminal.status {
         crate::harness_observability::HarnessTerminalStatus::Ended
@@ -181,6 +1456,140 @@ fn run_headless_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Resul
         }
         status => bail!("{}", terminal_status_error_message(&terminal, status)?),
     }
+}
+
+fn model_runtime_from_plan(
+    plan: &ResolvedHarnessPlan,
+    selection: ModelProviderSelection,
+    host_invoker: Option<Box<dyn HostServiceInvoker>>,
+    service_events: Option<&ServiceLifecycleEvents>,
+) -> Result<Box<dyn ModelRuntime>> {
+    if let Some(entry) = plan.config.config.providers.models.get(&selection.provider) {
+        return match &entry.implementation {
+            crate::harness_config::HarnessImplementation::Process { .. } => {
+                let runtime = ProcessModelRuntime::start(
+                    selection,
+                    entry.implementation.clone(),
+                    plan.workspace_root.clone(),
+                    service_events.map(ServiceLifecycleEvents::emitter),
+                )
+                .map_err(|err| anyhow!(err.message))?;
+                Ok(Box::new(runtime))
+            }
+            crate::harness_config::HarnessImplementation::Host { request_timeout_ms } => {
+                let Some(invoker) = host_invoker else {
+                    bail!(
+                        "model provider `{}` uses a host implementation and requires `agentpm harness --machine`",
+                        selection.provider
+                    );
+                };
+                let capabilities = host_model_capabilities_from_registration(
+                    &invoker
+                        .host_service_capabilities("model", &selection.provider)
+                        .unwrap_or_else(|| json!({})),
+                    &selection.provider,
+                    &selection.model,
+                )?;
+                Ok(Box::new(HostModelRuntime {
+                    selection,
+                    invoker,
+                    capabilities,
+                    request_timeout_ms: *request_timeout_ms,
+                }))
+            }
+        };
+    }
+    BuiltInModelRuntime::from_selection(selection)
+        .map(|runtime| Box::new(runtime) as Box<dyn ModelRuntime>)
+        .map_err(|err| anyhow!(err.message))
+}
+
+struct HostModelRuntime {
+    selection: ModelProviderSelection,
+    invoker: Box<dyn HostServiceInvoker>,
+    capabilities: ModelCapabilityAdvertisement,
+    request_timeout_ms: u64,
+}
+
+impl ModelRuntime for HostModelRuntime {
+    fn capabilities(&self) -> ModelCapabilityAdvertisement {
+        self.capabilities.clone()
+    }
+
+    fn generate(
+        &mut self,
+        request: ModelRequest,
+    ) -> std::result::Result<ModelTurn, ModelRuntimeFailure> {
+        let selection = request
+            .model
+            .clone()
+            .unwrap_or_else(|| self.selection.clone());
+        let payload = self
+            .invoker
+            .invoke_host_service(
+                "model",
+                &self.selection.provider,
+                "generate",
+                json!({
+                    "selection": selection,
+                    "request": request,
+                }),
+                self.request_timeout_ms,
+            )
+            .map_err(|err| ModelRuntimeFailure::new(err.to_string()))?;
+        serde_json::from_value(payload)
+            .map_err(|err| ModelRuntimeFailure::new(format!("invalid host model response: {err}")))
+    }
+}
+
+#[derive(Default, Deserialize)]
+struct HostModelCapabilityAdvertisement {
+    provider: Option<String>,
+    model: Option<String>,
+    semantic_actions: Option<bool>,
+    structured_output: Option<bool>,
+    multimodal_input: Option<bool>,
+    context_window_tokens: Option<u64>,
+    usage_reporting: Option<bool>,
+}
+
+fn host_model_capabilities_from_registration(
+    capabilities: &Value,
+    expected_provider: &str,
+    expected_model: &str,
+) -> Result<ModelCapabilityAdvertisement> {
+    if capabilities.is_null() {
+        return Ok(ModelCapabilityAdvertisement::default());
+    }
+    let partial: HostModelCapabilityAdvertisement = serde_json::from_value(capabilities.clone())
+        .map_err(|err| anyhow!("invalid host model capabilities: {err}"))?;
+    if let Some(provider) = partial.provider
+        && provider != expected_provider
+    {
+        bail!("host model provider advertised `{provider}`, expected `{expected_provider}`");
+    }
+    if let Some(model) = partial.model
+        && model != expected_model
+    {
+        bail!("host model advertised model `{model}`, expected `{expected_model}`");
+    }
+    let mut advertisement = ModelCapabilityAdvertisement::default();
+    if let Some(semantic_actions) = partial.semantic_actions {
+        advertisement.semantic_actions = semantic_actions;
+    }
+    if let Some(structured_output) = partial.structured_output {
+        advertisement.structured_output = structured_output;
+    }
+    if let Some(multimodal_input) = partial.multimodal_input {
+        advertisement.multimodal_input = multimodal_input;
+    }
+    if let Some(context_window_tokens) = partial.context_window_tokens {
+        advertisement.context_window_tokens = Some(context_window_tokens);
+    }
+    if let Some(usage_reporting) = partial.usage_reporting {
+        advertisement.usage_reporting = usage_reporting;
+    }
+    Ok(advertisement)
 }
 
 fn validate_model_capabilities(model: &dyn ModelRuntime) -> Result<()> {
@@ -194,6 +1603,46 @@ fn validate_model_capabilities(model: &dyn ModelRuntime) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn approval_controller_from_plan(
+    plan: &ResolvedHarnessPlan,
+    host_invoker: Option<Box<dyn HostServiceInvoker>>,
+    service_events: Option<&ServiceLifecycleEvents>,
+) -> Result<Box<dyn ApprovalController>> {
+    let Some(controller) = &plan.config.config.approvals.controller else {
+        return Ok(Box::new(HeadlessApprovalController));
+    };
+    match &controller.implementation {
+        crate::harness_config::HarnessImplementation::Process { .. } => {
+            let Some(controller) = ConfiguredApprovalController::process(
+                &plan.workspace_root,
+                controller,
+                plan.config.config.approvals.timeout_ms,
+                service_events.map(ServiceLifecycleEvents::emitter),
+            )?
+            else {
+                unreachable!("process approval controller returned no process runtime");
+            };
+            Ok(Box::new(controller))
+        }
+        crate::harness_config::HarnessImplementation::Host { .. } => {
+            let Some(invoker) = host_invoker else {
+                bail!(
+                    "approval controller uses a host implementation and requires `agentpm harness --machine`"
+                );
+            };
+            let Some(controller) = ConfiguredApprovalController::host(
+                controller,
+                plan.config.config.approvals.timeout_ms,
+                invoker,
+            )?
+            else {
+                unreachable!("host approval controller returned no host runtime");
+            };
+            Ok(Box::new(controller))
+        }
+    }
 }
 
 fn print_terminal_output(terminal: &RuntimeTerminalResult) -> Result<()> {
@@ -254,6 +1703,7 @@ fn model_selection(plan: &ResolvedHarnessPlan) -> Result<ModelProviderSelection>
     })
 }
 
+#[cfg(test)]
 fn execute_headless_plan(
     plan: &ResolvedHarnessPlan,
     input: String,
@@ -261,24 +1711,43 @@ fn execute_headless_plan(
     model: &mut dyn ModelRuntime,
     dispatcher: &mut dyn ActionDispatcher,
 ) -> Result<RuntimeTerminalResult> {
-    let mut approvals = HeadlessApprovalController;
-    execute_headless_plan_with_approvals(
+    let mut hooks = crate::harness_runtime::NoopHookRuntime;
+    execute_headless_plan_with_hooks(
         plan,
         input,
         report_override,
         model,
         dispatcher,
-        &mut approvals,
+        &mut hooks,
+        None,
     )
 }
 
-fn execute_headless_plan_with_approvals(
+fn execute_headless_plan_with_hooks(
     plan: &ResolvedHarnessPlan,
     input: String,
     report_override: Option<&PathBuf>,
     model: &mut dyn ModelRuntime,
     dispatcher: &mut dyn ActionDispatcher,
-    approvals: &mut dyn ApprovalController,
+    hooks: &mut dyn HookRuntime,
+    service_events: Option<&mut ServiceLifecycleEvents>,
+) -> Result<RuntimeTerminalResult> {
+    let mut approvals = approval_controller_from_plan(plan, None, None)?;
+    let mut services = HarnessRuntimeServices {
+        model,
+        dispatcher,
+        approvals: approvals.as_mut(),
+        hooks,
+        service_events,
+    };
+    execute_headless_plan_with_services(plan, input, report_override, &mut services)
+}
+
+fn execute_headless_plan_with_services(
+    plan: &ResolvedHarnessPlan,
+    input: String,
+    report_override: Option<&PathBuf>,
+    services: &mut HarnessRuntimeServices<'_>,
 ) -> Result<RuntimeTerminalResult> {
     let loop_manifest = load_plan_loop(plan)?;
     let mut session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(plan));
@@ -298,8 +1767,7 @@ fn execute_headless_plan_with_approvals(
         loop_manifest,
         HarnessEngineOptions::new(plan.config.config.runtime.limits.clone()),
     );
-    let result =
-        engine.execute_run_with_id(&mut session, run_id, input, model, dispatcher, approvals)?;
+    let result = engine.execute_run_with_id(&mut session, run_id, input, services)?;
     let HarnessRunResult::Terminal(result) = result else {
         bail!("Harness --headless cannot wait for interactive approval");
     };
@@ -322,6 +1790,40 @@ impl ApprovalController for HeadlessApprovalController {
         _checkpoint: &crate::manifest::LoopCheckpoint,
     ) -> crate::harness_runtime::ApprovalDecision {
         crate::harness_runtime::ApprovalDecision::Pending
+    }
+}
+
+struct SdkHostApprovalController {
+    invoker: Box<dyn HostServiceInvoker>,
+    request_timeout_ms: u64,
+}
+
+impl ApprovalController for SdkHostApprovalController {
+    fn request_approval(
+        &mut self,
+        checkpoint: &crate::manifest::LoopCheckpoint,
+    ) -> crate::harness_runtime::ApprovalDecision {
+        match self.invoker.invoke_host_service(
+            "approval",
+            "controller",
+            "request_approval",
+            json!({ "checkpoint": checkpoint }),
+            self.request_timeout_ms,
+        ) {
+            Ok(value) => match value
+                .get("decision")
+                .and_then(Value::as_str)
+                .unwrap_or("pending")
+            {
+                "approve" | "approved" => crate::harness_runtime::ApprovalDecision::Approve,
+                "deny" | "denied" => crate::harness_runtime::ApprovalDecision::Deny,
+                "pending" => crate::harness_runtime::ApprovalDecision::Pending,
+                other => crate::harness_runtime::ApprovalDecision::Failure(format!(
+                    "unsupported approval decision `{other}`"
+                )),
+            },
+            Err(err) => crate::harness_runtime::ApprovalDecision::Failure(err.to_string()),
+        }
     }
 }
 
@@ -535,8 +2037,8 @@ enum PreflightOutputStream {
 impl PreflightOutputStream {
     fn for_surface(surface: HarnessExecutionSurface) -> Self {
         match surface {
-            HarnessExecutionSurface::Headless => Self::Stderr,
-            HarnessExecutionSurface::Machine | HarnessExecutionSurface::Tui => Self::Stdout,
+            HarnessExecutionSurface::Headless | HarnessExecutionSurface::Machine => Self::Stderr,
+            HarnessExecutionSurface::Tui => Self::Stdout,
         }
     }
 
@@ -670,8 +2172,9 @@ fn capability_counts(plan: &ResolvedHarnessPlan) -> BTreeMap<&'static str, usize
 mod tests {
     use super::*;
     use crate::harness_config::{
-        HarnessConfig, HarnessConfigSource, HarnessTraceConfig, HarnessTraceContent,
-        HarnessTraceLevel, ResolvedHarnessConfig,
+        HarnessApprovalController, HarnessConfig, HarnessConfigSource, HarnessHookBinding,
+        HarnessHookFailurePolicy, HarnessHookId, HarnessImplementation, HarnessImplementationEntry,
+        HarnessTraceConfig, HarnessTraceContent, HarnessTraceLevel, ResolvedHarnessConfig,
     };
     use crate::harness_observability::{
         HarnessTerminalStatus, ReportPackageIdentity, RunReport, RunUsage,
@@ -728,7 +2231,7 @@ mod tests {
     }
 
     #[test]
-    fn headless_preflight_uses_stderr_and_rejects_json_flag() {
+    fn headless_and_machine_preflight_avoid_stdout_reserved_for_payloads() {
         assert_eq!(
             PreflightOutputStream::for_surface(HarnessExecutionSurface::Headless),
             PreflightOutputStream::Stderr
@@ -739,7 +2242,7 @@ mod tests {
         );
         assert_eq!(
             PreflightOutputStream::for_surface(HarnessExecutionSurface::Machine),
-            PreflightOutputStream::Stdout
+            PreflightOutputStream::Stderr
         );
         let args = HarnessArgs {
             agent: None,
@@ -755,6 +2258,581 @@ mod tests {
         };
         let err = validate_surface_flags(HarnessExecutionSurface::Headless, &args).unwrap_err();
         assert!(err.to_string().contains("--json cannot be combined"));
+    }
+
+    #[test]
+    fn machine_protocol_rejects_wrong_version_and_non_request_input() {
+        let mut request = MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Request,
+            id: Some("req-1".into()),
+            method: Some("initialize".into()),
+            payload: json!({}),
+            error: None,
+        };
+        assert!(validate_machine_request(&request).is_ok());
+        request.version = 2;
+        assert!(
+            validate_machine_request(&request)
+                .unwrap_err()
+                .contains("unsupported protocol version")
+        );
+        request.version = AGENTPM_HARNESS_MACHINE_VERSION;
+        request.kind = MachineFrameKind::Event;
+        assert!(
+            validate_machine_request(&request)
+                .unwrap_err()
+                .contains("kind `request`")
+        );
+    }
+
+    #[test]
+    fn machine_json_flag_is_rejected_because_stdout_is_protocol_only() {
+        let args = HarnessArgs {
+            agent: None,
+            config: None,
+            state_dir: None,
+            scopes: Vec::new(),
+            machine: true,
+            headless: false,
+            json: true,
+            input: None,
+            input_file: None,
+            report: None,
+        };
+        let err = validate_surface_flags(HarnessExecutionSurface::Machine, &args).unwrap_err();
+        assert!(err.to_string().contains("protocol frames"));
+    }
+
+    #[test]
+    fn host_service_requirements_include_selected_model_hooks_and_approval() {
+        let root = temp_dir("host-service-requirements");
+        let mut plan = minimal_plan(&root);
+        plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+            provider: "host-model".into(),
+            model: "model-1".into(),
+            options: json!({}),
+        });
+        plan.config.config.providers.models.insert(
+            "host-model".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.hooks.implementations.insert(
+            "host-hooks".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.hooks.bindings.push(HarnessHookBinding {
+            hook: HarnessHookId::BeforeToolCall,
+            implementation: "host-hooks".into(),
+            failure_policy: HarnessHookFailurePolicy::Closed,
+        });
+        plan.config.config.approvals.controller = Some(HarnessApprovalController {
+            implementation: HarnessImplementation::Host {
+                request_timeout_ms: 1_000,
+            },
+        });
+
+        let required = required_host_services(&plan);
+        assert!(required.contains(&host_service("model", "host-model")));
+        assert!(required.contains(&host_service("hook", "host-hooks")));
+        assert!(required.contains(&host_service("approval", "controller")));
+    }
+
+    #[test]
+    fn machine_registration_accepts_unconfigured_sdk_hooks_and_approval() {
+        let root = temp_dir("sdk-host-service-registration");
+        let plan = minimal_plan(&root);
+        let (bridge, _, _) = buffered_machine_bridge();
+
+        let hook_service = register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "hook",
+                "registry_id": "sdk-hooks",
+                "hooks": ["before_tool_call", "before_model_request"]
+            }),
+        )
+        .unwrap();
+        let approval_service = register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "approval",
+                "registry_id": "controller"
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(hook_service, host_service("hook", "sdk-hooks"));
+        assert_eq!(approval_service, host_service("approval", "controller"));
+        assert!(bridge.has_host_service(&hook_service));
+        assert!(bridge.has_host_service(&approval_service));
+        assert!(bridge.has_sdk_approval_controller());
+        let hooks = bridge.sdk_host_hooks();
+        assert_eq!(hooks.len(), 2);
+        assert!(
+            hooks.iter().any(|hook| hook.registry_id == "sdk-hooks"
+                && hook.hook == HarnessHookId::BeforeToolCall)
+        );
+        assert!(hooks.iter().any(|hook| hook.registry_id == "sdk-hooks"
+            && hook.hook == HarnessHookId::BeforeModelRequest));
+    }
+
+    #[test]
+    fn machine_registration_rejects_unconfigured_host_provider() {
+        let root = temp_dir("unconfigured-host-provider-registration");
+        let plan = minimal_plan(&root);
+        let (bridge, _, _) = buffered_machine_bridge();
+
+        let err = register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "model",
+                "registry_id": "sdk-model"
+            }),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("is not configured"));
+    }
+
+    #[test]
+    fn host_registration_response_marks_future_runtime_roles_inactive() {
+        let embedding = host_service_registration_response(&host_service("embedding", "embedder"));
+        assert_eq!(embedding["registered"], json!(true));
+        assert_eq!(embedding["active"], json!(false));
+        assert!(
+            embedding["reason"]
+                .as_str()
+                .unwrap()
+                .contains("Milestone 12")
+        );
+
+        let knowledge = host_service_registration_response(&host_service("knowledge", "kb"));
+        assert_eq!(knowledge["active"], json!(false));
+        assert!(
+            knowledge["reason"]
+                .as_str()
+                .unwrap()
+                .contains("Milestone 12")
+        );
+
+        let memory = host_service_registration_response(&host_service("memory", "store"));
+        assert_eq!(memory["active"], json!(false));
+        assert!(memory["reason"].as_str().unwrap().contains("Milestone 14"));
+
+        let model = host_service_registration_response(&host_service("model", "host-model"));
+        assert_eq!(model["active"], json!(true));
+        assert!(model["reason"].is_null());
+    }
+
+    #[test]
+    fn host_model_runtime_uses_machine_host_service_contract() {
+        let selection = ModelProviderSelection {
+            provider: "host-model".into(),
+            model: "model-1".into(),
+            options: json!({}),
+        };
+        let expected_turn = ModelTurn {
+            assistant_content: Some("from host".into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        };
+        let mut runtime = HostModelRuntime {
+            selection: selection.clone(),
+            invoker: Box::new(FakeHostInvoker {
+                response: serde_json::to_value(&expected_turn).unwrap(),
+                capabilities: None,
+            }),
+            capabilities: host_model_capabilities_from_registration(
+                &host_model_capabilities(),
+                "host-model",
+                "model-1",
+            )
+            .unwrap(),
+            request_timeout_ms: 1_000,
+        };
+
+        let turn = runtime.generate(empty_model_request(selection)).unwrap();
+        assert_eq!(turn, expected_turn);
+    }
+
+    #[test]
+    fn host_model_runtime_uses_registered_capability_advertisement() {
+        let root = temp_dir("host-model-capability-advertisement");
+        let mut plan = minimal_plan(&root);
+        plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+            provider: "host-model".into(),
+            model: "model-1".into(),
+            options: json!({}),
+        });
+        plan.config.config.providers.models.insert(
+            "host-model".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "model",
+                "registry_id": "host-model",
+                "capabilities": {
+                    "provider": "host-model",
+                    "model": "model-1",
+                    "semantic_actions": false,
+                    "structured_output": true,
+                    "multimodal_input": false,
+                    "usage_reporting": true
+                }
+            }),
+        )
+        .unwrap();
+
+        let runtime = model_runtime_from_plan(
+            &plan,
+            ModelProviderSelection {
+                provider: "host-model".into(),
+                model: "model-1".into(),
+                options: json!({}),
+            },
+            Some(Box::new(bridge)),
+            None,
+        )
+        .unwrap();
+        let err = validate_model_capabilities(runtime.as_ref()).unwrap_err();
+        assert!(err.to_string().contains("semantic action support"));
+    }
+
+    #[test]
+    fn host_model_capabilities_reject_mismatched_model_identity() {
+        let err = host_model_capabilities_from_registration(
+            &json!({
+                "provider": "host-model",
+                "model": "other-model",
+                "semantic_actions": true,
+                "structured_output": true,
+                "multimodal_input": false,
+                "usage_reporting": true
+            }),
+            "host-model",
+            "model-1",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("expected `model-1`"));
+    }
+
+    #[test]
+    fn host_service_registration_rejects_not_ready() {
+        let root = temp_dir("host-service-not-ready");
+        let plan = minimal_plan(&root);
+        let (bridge, _sender, _output) = buffered_machine_bridge();
+
+        let err = register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "approval",
+                "registry_id": "controller",
+                "ready": false
+            }),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("reported not ready"));
+    }
+
+    #[test]
+    fn configured_host_hook_registration_validates_advertised_hooks() {
+        let root = temp_dir("configured-host-hook-registration");
+        let mut plan = minimal_plan(&root);
+        plan.config.config.hooks.implementations.insert(
+            "host-hooks".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.hooks.bindings.push(HarnessHookBinding {
+            hook: HarnessHookId::BeforeToolCall,
+            implementation: "host-hooks".into(),
+            failure_policy: HarnessHookFailurePolicy::Closed,
+        });
+        let (bridge, _sender, _output) = buffered_machine_bridge();
+
+        let err = register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "hook",
+                "registry_id": "host-hooks",
+                "hooks": ["before_model_request"]
+            }),
+        )
+        .unwrap_err();
+        assert!(err.contains("does not advertise configured hook `before_tool_call`"));
+
+        register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "hook",
+                "registry_id": "host-hooks",
+                "capabilities": {
+                    "hooks": ["before_tool_call"]
+                }
+            }),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn configured_host_approval_rejects_missing_request_capability() {
+        let controller = HarnessApprovalController {
+            implementation: HarnessImplementation::Host {
+                request_timeout_ms: 1_000,
+            },
+        };
+
+        let err = match ConfiguredApprovalController::host(
+            &controller,
+            None,
+            Box::new(FakeHostInvoker {
+                response: json!({ "decision": "approve" }),
+                capabilities: Some(json!({
+                    "approval": false
+                })),
+            }),
+        ) {
+            Ok(_) => panic!("host approval controller should reject missing request capability"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("does not advertise request_approval support")
+        );
+    }
+
+    #[test]
+    fn host_service_request_frames_bypass_trace_content_redaction() {
+        let writer = MachineProtocolWriter::stdout(HarnessTraceContent::Redacted);
+        let host_request = MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Request,
+            id: Some("host-hook-1".into()),
+            method: Some("host_service".into()),
+            payload: json!({
+                "role": "hook",
+                "registry_id": "host-hooks",
+                "method": "before_tool_call",
+                "payload": {
+                    "hook": "before_tool_call",
+                    "input": {
+                        "phase_id": "classify",
+                        "tool": "@zack/search",
+                        "arguments": {
+                            "query": "visible to host implementation"
+                        }
+                    }
+                }
+            }),
+            error: None,
+        };
+
+        let redacted = writer.frame_value(host_request.clone(), true).unwrap();
+        assert_eq!(redacted["payload"]["payload"]["input"], json!("[redacted]"));
+
+        let unredacted = writer.frame_value(host_request, false).unwrap();
+        assert_eq!(
+            unredacted["payload"]["payload"]["input"]["arguments"]["query"],
+            json!("visible to host implementation")
+        );
+    }
+
+    #[test]
+    fn machine_bridge_rejects_start_run_while_active_without_blocking_host_service_response() {
+        let (bridge, sender, output) = buffered_machine_bridge();
+        bridge.register_host_service(
+            &host_service("model", "host-model"),
+            host_model_capabilities(),
+        );
+        bridge.set_active_run(true);
+        let mut bridge_for_thread = bridge.clone();
+        let waiter = std::thread::spawn(move || {
+            bridge_for_thread.invoke_host_service(
+                "model",
+                "host-model",
+                "generate",
+                json!({ "input": "visible" }),
+                1_000,
+            )
+        });
+
+        sender
+            .send(Ok(machine_request(
+                "start-while-active",
+                "start_run",
+                json!({ "input": "second run" }),
+            )))
+            .unwrap();
+        sender
+            .send(Ok(machine_response(
+                "host-model-host-model-1",
+                json!({ "ok": true }),
+            )))
+            .unwrap();
+
+        assert_eq!(waiter.join().unwrap().unwrap(), json!({ "ok": true }));
+        let frames = machine_frames_from_buffer(&output);
+        assert!(frames.iter().any(|frame| {
+            frame["id"] == "start-while-active"
+                && frame["kind"] == "error"
+                && frame["error"]["code"] == "session_busy"
+        }));
+    }
+
+    #[test]
+    fn machine_bridge_cancel_run_interrupts_active_host_service_wait() {
+        let (bridge, sender, output) = buffered_machine_bridge();
+        bridge.register_host_service(
+            &host_service("model", "host-model"),
+            host_model_capabilities(),
+        );
+        bridge.set_active_run(true);
+        let mut bridge_for_thread = bridge.clone();
+        let waiter = std::thread::spawn(move || {
+            bridge_for_thread.invoke_host_service(
+                "model",
+                "host-model",
+                "generate",
+                json!({ "input": "visible" }),
+                1_000,
+            )
+        });
+
+        sender
+            .send(Ok(machine_request("cancel-1", "cancel_run", json!({}))))
+            .unwrap();
+
+        let err = waiter.join().unwrap().unwrap_err();
+        assert!(err.to_string().contains("run cancellation requested"));
+        assert!(bridge.cancellation_token().load(Ordering::SeqCst));
+        let frames = machine_frames_from_buffer(&output);
+        assert!(frames.iter().any(|frame| {
+            frame["id"] == "cancel-1"
+                && frame["kind"] == "response"
+                && frame["payload"]["accepted"] == true
+        }));
+    }
+
+    #[test]
+    fn machine_bridge_emits_host_service_failure_events() {
+        let (bridge, sender, _output) = buffered_machine_bridge();
+        bridge.register_host_service(
+            &host_service("model", "host-model"),
+            host_model_capabilities(),
+        );
+        let mut service_events = ServiceLifecycleEvents::new();
+        bridge.set_host_service_lifecycle_emitter(service_events.emitter());
+        let mut bridge_for_thread = bridge.clone();
+        let waiter = std::thread::spawn(move || {
+            bridge_for_thread.invoke_host_service(
+                "model",
+                "host-model",
+                "generate",
+                json!({ "input": "visible" }),
+                1_000,
+            )
+        });
+
+        sender
+            .send(Ok(machine_error(
+                "host-model-host-model-1",
+                "host_failure",
+                "host model failed",
+            )))
+            .unwrap();
+
+        let err = waiter.join().unwrap().unwrap_err();
+        assert!(err.to_string().contains("host model failed"));
+        let events = service_events.drain();
+        assert!(events.iter().any(|event| {
+            event.event_type == crate::harness_observability::HarnessEventType::ServiceUnhealthy
+                && event.service == "model"
+                && event.registry_id == "host-model"
+        }));
+        assert!(events.iter().any(|event| {
+            event.event_type == crate::harness_observability::HarnessEventType::ServiceFailed
+                && event.service == "model"
+                && event.registry_id == "host-model"
+        }));
+    }
+
+    #[test]
+    fn machine_bridge_accepts_shutdown_control_request() {
+        let (bridge, sender, output) = buffered_machine_bridge();
+        sender
+            .send(Ok(machine_request("shutdown-1", "shutdown", json!({}))))
+            .unwrap();
+
+        let request = bridge.recv_control_request().unwrap().unwrap();
+        assert_eq!(request.method.as_deref(), Some("shutdown"));
+        bridge
+            .write_response(request.id.as_deref(), json!({ "shutdown": true }))
+            .unwrap();
+
+        let frames = machine_frames_from_buffer(&output);
+        assert!(frames.iter().any(|frame| {
+            frame["id"] == "shutdown-1"
+                && frame["kind"] == "response"
+                && frame["payload"]["shutdown"] == true
+        }));
+    }
+
+    #[test]
+    fn host_approval_controller_decodes_machine_host_decision() {
+        let controller = HarnessApprovalController {
+            implementation: HarnessImplementation::Host {
+                request_timeout_ms: 1_000,
+            },
+        };
+        let mut runtime = ConfiguredApprovalController::host(
+            &controller,
+            None,
+            Box::new(FakeHostInvoker {
+                response: json!({ "decision": "deny" }),
+                capabilities: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+        let decision = runtime.request_approval(&crate::manifest::LoopCheckpoint {
+            id: "approve-review".into(),
+            r#type: "approval".into(),
+            before_phase: "review".into(),
+            on_reject: "$handoff".into(),
+        });
+        assert_eq!(decision, crate::harness_runtime::ApprovalDecision::Deny);
     }
 
     #[test]
@@ -1186,6 +3264,149 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    }
+
+    fn host_service(role: &str, registry_id: &str) -> HostServiceRegistration {
+        HostServiceRegistration {
+            role: role.into(),
+            registry_id: registry_id.into(),
+        }
+    }
+
+    fn host_model_capabilities() -> Value {
+        json!({
+            "provider": "host-model",
+            "model": "model-1",
+            "semantic_actions": true,
+            "structured_output": true,
+            "multimodal_input": false,
+            "usage_reporting": true
+        })
+    }
+
+    type MachineBridgeFixture = (
+        MachineHostBridgeHandle,
+        mpsc::Sender<std::result::Result<MachineEnvelope, String>>,
+        Arc<Mutex<Vec<u8>>>,
+    );
+
+    fn buffered_machine_bridge() -> MachineBridgeFixture {
+        let (writer, output) = MachineProtocolWriter::buffer(HarnessTraceContent::Full);
+        let (sender, receiver) = mpsc::channel();
+        let cancellation_requested = Arc::new(AtomicBool::new(false));
+        let active_run = Arc::new(AtomicBool::new(false));
+        (
+            MachineHostBridgeHandle::new(writer, receiver, cancellation_requested, active_run),
+            sender,
+            output,
+        )
+    }
+
+    fn machine_request(id: &str, method: &str, payload: Value) -> MachineEnvelope {
+        MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Request,
+            id: Some(id.into()),
+            method: Some(method.into()),
+            payload,
+            error: None,
+        }
+    }
+
+    fn machine_response(id: &str, payload: Value) -> MachineEnvelope {
+        MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Response,
+            id: Some(id.into()),
+            method: None,
+            payload,
+            error: None,
+        }
+    }
+
+    fn machine_error(id: &str, code: &str, message: &str) -> MachineEnvelope {
+        MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Error,
+            id: Some(id.into()),
+            method: None,
+            payload: Value::Null,
+            error: Some(MachineError {
+                code: code.into(),
+                message: message.into(),
+            }),
+        }
+    }
+
+    fn machine_frames_from_buffer(output: &Arc<Mutex<Vec<u8>>>) -> Vec<Value> {
+        let output = output.lock().unwrap();
+        String::from_utf8_lossy(&output)
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    fn empty_model_request(selection: ModelProviderSelection) -> ModelRequest {
+        ModelRequest {
+            runtime: RuntimeSnapshot::empty("session-1".into()),
+            model: Some(selection),
+            prompt: crate::harness_runtime::model::LogicalPrompt {
+                sections: Vec::new(),
+                action_aliases: Vec::new(),
+                completion: crate::harness_runtime::model::CompletionContract {
+                    phase_id: "respond".into(),
+                    explicit_outcomes: Vec::new(),
+                    implicit_complete: true,
+                },
+                diagnostics: Vec::new(),
+            },
+            run_id: "run-1".into(),
+            phase_execution_id: "phase-exec-1".into(),
+            phase_id: "respond".into(),
+            phase_objective: "Respond.".into(),
+            run_input: "input".into(),
+            prior_phase_results: Vec::new(),
+            transcript: Vec::new(),
+            effective_phase: crate::harness_engine::EffectivePhase {
+                phase_id: "respond".into(),
+                tools_allowed: Some(false),
+                knowledge_allowed: None,
+                memory_read_allowed: None,
+                memory_write_allowed: None,
+                authored_profile_candidates: Vec::new(),
+                active_profiles: Vec::new(),
+                active_tools: Vec::new(),
+                active_skills: Vec::new(),
+                capability_catalog: Vec::new(),
+                suppressed_capabilities: Vec::new(),
+            },
+            repair_feedback: None,
+        }
+    }
+
+    struct FakeHostInvoker {
+        response: Value,
+        capabilities: Option<Value>,
+    }
+
+    impl HostServiceInvoker for FakeHostInvoker {
+        fn invoke_host_service(
+            &mut self,
+            _role: &str,
+            _registry_id: &str,
+            _method: &str,
+            _payload: Value,
+            _timeout_ms: u64,
+        ) -> Result<Value> {
+            Ok(self.response.clone())
+        }
+
+        fn host_service_capabilities(&self, _role: &str, _registry_id: &str) -> Option<Value> {
+            self.capabilities.clone()
+        }
     }
 
     struct UnsupportedModelRuntime {

@@ -10,6 +10,8 @@ use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 
+pub const CONSUMER_RUN_CONTEXT_SECTION_TITLE: &str = "CONSUMER / RUN CONTEXT";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptEntryKind {
@@ -362,7 +364,7 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
             },
             PromptSection {
                 number: 3,
-                title: "CONSUMER / RUN CONTEXT".into(),
+                title: CONSUMER_RUN_CONTEXT_SECTION_TITLE.into(),
                 content: context,
             },
             PromptSection {
