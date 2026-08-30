@@ -15,6 +15,7 @@ use crate::manifest::{
 };
 use crate::prelude::*;
 use crate::{
+    harness_config::HarnessHookId,
     harness_engine::{
         HarnessEngine, HarnessEngineOptions, HarnessRunResult, HarnessRuntimeServices,
         HarnessSession, RuntimeTerminalResult,
@@ -24,6 +25,7 @@ use crate::{
         RunOutputPaths, allocate_harness_run_id, apply_content_policy,
         apply_content_policy_to_value,
     },
+    harness_runtime::SdkHostHookRegistration,
 };
 use anyhow::{anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -342,6 +344,7 @@ fn execute_machine_run(
         Some(service_events.emitter()),
     )?
     .with_host_invoker(Box::new(bridge.clone()));
+    hooks.add_sdk_host_registrations(bridge.sdk_host_hooks());
     let loop_manifest = load_plan_loop(plan)?;
     let mut session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(plan));
     session
@@ -355,8 +358,19 @@ fn execute_machine_run(
             plan.config.config.trace.clone(),
         )?));
     }
-    let mut approvals =
-        approval_controller_from_plan(plan, Some(Box::new(bridge.clone())), Some(&service_events))?;
+    let mut approvals = if bridge.has_sdk_approval_controller() {
+        Box::new(SdkHostApprovalController {
+            invoker: Box::new(bridge.clone()),
+            request_timeout_ms: plan
+                .config
+                .config
+                .approvals
+                .timeout_ms
+                .unwrap_or(SDK_HOST_REQUEST_TIMEOUT_MS),
+        }) as Box<dyn ApprovalController>
+    } else {
+        approval_controller_from_plan(plan, Some(Box::new(bridge.clone())), Some(&service_events))?
+    };
     let mut engine = HarnessEngine::new(
         loop_manifest,
         HarnessEngineOptions::new(plan.config.config.runtime.limits.clone()),
@@ -387,6 +401,7 @@ fn execute_machine_run(
 
 const AGENTPM_HARNESS_MACHINE_PROTOCOL: &str = "agentpm-harness-machine";
 const AGENTPM_HARNESS_MACHINE_VERSION: u8 = 1;
+const SDK_HOST_REQUEST_TIMEOUT_MS: u64 = 120_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MachineEnvelope {
@@ -434,6 +449,8 @@ struct MachineHostBridge {
     receiver: mpsc::Receiver<std::result::Result<MachineEnvelope, String>>,
     pending: VecDeque<MachineEnvelope>,
     registered_host_services: BTreeSet<(String, String)>,
+    sdk_host_hooks: Vec<SdkHostHookRegistration>,
+    sdk_approval_controller: bool,
     request_counter: u64,
     active_run: Arc<AtomicBool>,
     cancellation_requested: Arc<AtomicBool>,
@@ -452,6 +469,8 @@ impl MachineHostBridgeHandle {
                 receiver,
                 pending: VecDeque::new(),
                 registered_host_services: BTreeSet::new(),
+                sdk_host_hooks: Vec::new(),
+                sdk_approval_controller: false,
                 request_counter: 0,
                 active_run,
                 cancellation_requested,
@@ -472,6 +491,36 @@ impl MachineHostBridgeHandle {
             .expect("machine bridge poisoned")
             .registered_host_services
             .insert((service.role.clone(), service.registry_id.clone()));
+    }
+
+    fn register_sdk_host_hooks(&self, registrations: Vec<SdkHostHookRegistration>) {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .sdk_host_hooks
+            .extend(registrations);
+    }
+
+    fn register_sdk_approval_controller(&self) {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .sdk_approval_controller = true;
+    }
+
+    fn sdk_host_hooks(&self) -> Vec<SdkHostHookRegistration> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .sdk_host_hooks
+            .clone()
+    }
+
+    fn has_sdk_approval_controller(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .sdk_approval_controller
     }
 
     fn has_host_service(&self, service: &HostServiceRegistration) -> bool {
@@ -967,6 +1016,22 @@ fn register_host_service(
         .to_string();
     let service = HostServiceRegistration { role, registry_id };
     if !configured_host_services(plan).contains(&service) {
+        if service.role == "hook" {
+            let registrations = sdk_host_hook_registrations(&service.registry_id, payload)?;
+            if registrations.is_empty() {
+                return Err(
+                    "SDK hook registration requires payload.hooks with at least one Hook ID".into(),
+                );
+            }
+            bridge.register_host_service(&service);
+            bridge.register_sdk_host_hooks(registrations);
+            return Ok(service);
+        }
+        if service.role == "approval" && service.registry_id == "controller" {
+            bridge.register_host_service(&service);
+            bridge.register_sdk_approval_controller();
+            return Ok(service);
+        }
         return Err(format!(
             "host service `{}` with registry ID `{}` is not configured",
             service.role, service.registry_id
@@ -974,6 +1039,36 @@ fn register_host_service(
     }
     bridge.register_host_service(&service);
     Ok(service)
+}
+
+fn sdk_host_hook_registrations(
+    registry_id: &str,
+    payload: &Value,
+) -> std::result::Result<Vec<SdkHostHookRegistration>, String> {
+    let hooks = payload
+        .get("hooks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "SDK hook registration requires payload.hooks".to_string())?;
+    let request_timeout_ms = payload
+        .get("request_timeout_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(SDK_HOST_REQUEST_TIMEOUT_MS);
+    let mut registrations = Vec::new();
+    for hook in hooks {
+        let Some(hook) = hook.as_str() else {
+            return Err("SDK hook registration payload.hooks entries must be strings".into());
+        };
+        let hook: HarnessHookId =
+            serde_json::from_value(Value::String(hook.to_string())).map_err(|err| {
+                format!("SDK hook registration contains unsupported Hook ID `{hook}`: {err}")
+            })?;
+        registrations.push(SdkHostHookRegistration {
+            registry_id: registry_id.to_string(),
+            hook,
+            request_timeout_ms,
+        });
+    }
+    Ok(registrations)
 }
 
 fn missing_required_host_services(
@@ -1448,6 +1543,40 @@ impl ApprovalController for HeadlessApprovalController {
         _checkpoint: &crate::manifest::LoopCheckpoint,
     ) -> crate::harness_runtime::ApprovalDecision {
         crate::harness_runtime::ApprovalDecision::Pending
+    }
+}
+
+struct SdkHostApprovalController {
+    invoker: Box<dyn HostServiceInvoker>,
+    request_timeout_ms: u64,
+}
+
+impl ApprovalController for SdkHostApprovalController {
+    fn request_approval(
+        &mut self,
+        checkpoint: &crate::manifest::LoopCheckpoint,
+    ) -> crate::harness_runtime::ApprovalDecision {
+        match self.invoker.invoke_host_service(
+            "approval",
+            "controller",
+            "request_approval",
+            json!({ "checkpoint": checkpoint }),
+            self.request_timeout_ms,
+        ) {
+            Ok(value) => match value
+                .get("decision")
+                .and_then(Value::as_str)
+                .unwrap_or("pending")
+            {
+                "approve" | "approved" => crate::harness_runtime::ApprovalDecision::Approve,
+                "deny" | "denied" => crate::harness_runtime::ApprovalDecision::Deny,
+                "pending" => crate::harness_runtime::ApprovalDecision::Pending,
+                other => crate::harness_runtime::ApprovalDecision::Failure(format!(
+                    "unsupported approval decision `{other}`"
+                )),
+            },
+            Err(err) => crate::harness_runtime::ApprovalDecision::Failure(err.to_string()),
+        }
     }
 }
 
@@ -1969,6 +2098,66 @@ mod tests {
         assert!(required.contains(&host_service("model", "host-model")));
         assert!(required.contains(&host_service("hook", "host-hooks")));
         assert!(required.contains(&host_service("approval", "controller")));
+    }
+
+    #[test]
+    fn machine_registration_accepts_unconfigured_sdk_hooks_and_approval() {
+        let root = temp_dir("sdk-host-service-registration");
+        let plan = minimal_plan(&root);
+        let (bridge, _, _) = buffered_machine_bridge();
+
+        let hook_service = register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "hook",
+                "registry_id": "sdk-hooks",
+                "hooks": ["before_tool_call", "before_model_request"]
+            }),
+        )
+        .unwrap();
+        let approval_service = register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "approval",
+                "registry_id": "controller"
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(hook_service, host_service("hook", "sdk-hooks"));
+        assert_eq!(approval_service, host_service("approval", "controller"));
+        assert!(bridge.has_host_service(&hook_service));
+        assert!(bridge.has_host_service(&approval_service));
+        assert!(bridge.has_sdk_approval_controller());
+        let hooks = bridge.sdk_host_hooks();
+        assert_eq!(hooks.len(), 2);
+        assert!(
+            hooks.iter().any(|hook| hook.registry_id == "sdk-hooks"
+                && hook.hook == HarnessHookId::BeforeToolCall)
+        );
+        assert!(hooks.iter().any(|hook| hook.registry_id == "sdk-hooks"
+            && hook.hook == HarnessHookId::BeforeModelRequest));
+    }
+
+    #[test]
+    fn machine_registration_rejects_unconfigured_host_provider() {
+        let root = temp_dir("unconfigured-host-provider-registration");
+        let plan = minimal_plan(&root);
+        let (bridge, _, _) = buffered_machine_bridge();
+
+        let err = register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "model",
+                "registry_id": "sdk-model"
+            }),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("is not configured"));
     }
 
     #[test]

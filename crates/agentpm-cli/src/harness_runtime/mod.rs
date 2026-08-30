@@ -10,7 +10,10 @@ pub(crate) mod tool;
 
 pub use action::{ActionDispatchResult, ActionDispatcher, SemanticAction};
 pub use approval::{ApprovalController, ApprovalDecision, ConfiguredApprovalController};
-pub use hook::{BeforeToolCallHook, ConfiguredHookRuntime, HookRuntime, NoopHookRuntime};
+pub use hook::{
+    BeforeToolCallHook, ConfiguredHookRuntime, HookRuntime, NoopHookRuntime,
+    SdkHostHookRegistration,
+};
 pub use model::{
     CapabilityDescriptor, ConsumerContextSnapshot, ModelCapabilityAdvertisement,
     ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure, ModelTurn,

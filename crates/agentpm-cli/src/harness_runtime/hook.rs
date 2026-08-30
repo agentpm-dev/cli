@@ -183,6 +183,13 @@ pub struct ConfiguredHookRuntime {
     nonfatal_failures: Vec<HookRuntimeFailure>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SdkHostHookRegistration {
+    pub registry_id: String,
+    pub hook: HarnessHookId,
+    pub request_timeout_ms: u64,
+}
+
 enum HookImplementationRuntime {
     Process(Box<ProcessServiceClient>),
     Host { request_timeout_ms: u64 },
@@ -246,6 +253,24 @@ impl ConfiguredHookRuntime {
     pub fn with_host_invoker(mut self, host_invoker: Box<dyn HostServiceInvoker>) -> Self {
         self.host_invoker = Some(host_invoker);
         self
+    }
+
+    pub fn add_sdk_host_registrations(
+        &mut self,
+        registrations: impl IntoIterator<Item = SdkHostHookRegistration>,
+    ) {
+        for registration in registrations {
+            self.implementations
+                .entry(registration.registry_id.clone())
+                .or_insert(HookImplementationRuntime::Host {
+                    request_timeout_ms: registration.request_timeout_ms,
+                });
+            self.bindings.push(HarnessHookBinding {
+                hook: registration.hook,
+                implementation: registration.registry_id,
+                failure_policy: HarnessHookFailurePolicy::Closed,
+            });
+        }
     }
 
     fn invoke_binding<T, U>(
