@@ -474,7 +474,7 @@ fn configured_hook_ids_for_implementation(
     hook_ids
 }
 
-fn validate_hook_service_initialization(
+pub(crate) fn validate_hook_service_initialization(
     initialization_result: &Value,
     expected_registry_id: &str,
     expected_hooks: &[HarnessHookId],

@@ -94,17 +94,23 @@ impl ConfiguredApprovalController {
         controller: &HarnessApprovalController,
         timeout_ms: Option<u64>,
         invoker: Box<dyn HostServiceInvoker>,
-    ) -> Option<Self> {
+    ) -> Result<Option<Self>> {
         let HarnessImplementation::Host { request_timeout_ms } = &controller.implementation else {
-            return None;
+            return Ok(None);
         };
-        Some(Self {
+        let capabilities = approval_capabilities_from_initialization(
+            &invoker
+                .host_service_capabilities("approval", "controller")
+                .unwrap_or_else(|| serde_json::json!({})),
+            "controller",
+        )?;
+        Ok(Some(Self {
             runtime: ApprovalRuntime::Host {
                 invoker,
                 request_timeout_ms: timeout_ms.unwrap_or(*request_timeout_ms),
             },
-            capabilities: ApprovalCapabilityAdvertisement::default(),
-        })
+            capabilities,
+        }))
     }
 
     pub fn capabilities(&self) -> ApprovalCapabilityAdvertisement {
@@ -159,7 +165,7 @@ struct PartialApprovalCapabilityAdvertisement {
     cancellation: Option<bool>,
 }
 
-fn approval_capabilities_from_initialization(
+pub(crate) fn approval_capabilities_from_initialization(
     initialization_result: &serde_json::Value,
     expected_registry_id: &str,
 ) -> Result<ApprovalCapabilityAdvertisement> {

@@ -22,5 +22,5 @@ pub use model::{
     ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind, assemble_logical_prompt,
 };
 pub use provider::{BuiltInModelRuntime, ProcessModelRuntime};
-pub use service::{HostServiceInvoker, ServiceLifecycleEvents};
+pub use service::{HostServiceInvoker, ServiceLifecycleEmitter, ServiceLifecycleEvents};
 pub use tool::AgentPmActionDispatcher;

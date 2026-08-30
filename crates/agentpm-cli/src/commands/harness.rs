@@ -7,8 +7,8 @@ use crate::harness_runtime::{
     ConfiguredApprovalController, ConfiguredHookRuntime, ConsumerContextSnapshot, HookRuntime,
     HostServiceInvoker, ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest,
     ModelRuntime, ModelRuntimeFailure, ModelTurn, PackageSnapshot, ProcessModelRuntime,
-    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceLifecycleEvents, ServiceReadinessSnapshot,
-    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceLifecycleEmitter, ServiceLifecycleEvents,
+    ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::manifest::{
     load_manifest_value, parse_loop_manifest, parse_skill_manifest, parse_tool_manifest,
@@ -223,7 +223,7 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
                 match register_host_service(plan, &bridge, &request.payload) {
                     Ok(service) => bridge.write_response(
                         id.as_deref(),
-                        json!({ "registered": true, "service": service }),
+                        host_service_registration_response(&service),
                     )?,
                     Err(err) => {
                         bridge.write_error(id.as_deref(), "host_registration_failed", err)?
@@ -327,6 +327,7 @@ fn execute_machine_run(
 ) -> Result<RuntimeTerminalResult> {
     let selection = model_selection(plan)?;
     let mut service_events = ServiceLifecycleEvents::new();
+    bridge.set_host_service_lifecycle_emitter(service_events.emitter());
     let mut model = model_runtime_from_plan(
         plan,
         selection,
@@ -449,6 +450,8 @@ struct MachineHostBridge {
     receiver: mpsc::Receiver<std::result::Result<MachineEnvelope, String>>,
     pending: VecDeque<MachineEnvelope>,
     registered_host_services: BTreeSet<(String, String)>,
+    host_service_capabilities: BTreeMap<(String, String), Value>,
+    host_service_lifecycle: Option<ServiceLifecycleEmitter>,
     sdk_host_hooks: Vec<SdkHostHookRegistration>,
     sdk_approval_controller: bool,
     request_counter: u64,
@@ -469,6 +472,8 @@ impl MachineHostBridgeHandle {
                 receiver,
                 pending: VecDeque::new(),
                 registered_host_services: BTreeSet::new(),
+                host_service_capabilities: BTreeMap::new(),
+                host_service_lifecycle: None,
                 sdk_host_hooks: Vec::new(),
                 sdk_approval_controller: false,
                 request_counter: 0,
@@ -485,12 +490,18 @@ impl MachineHostBridgeHandle {
             .recv_control_request()
     }
 
-    fn register_host_service(&self, service: &HostServiceRegistration) {
+    fn register_host_service(&self, service: &HostServiceRegistration, capabilities: Value) {
+        let mut bridge = self.inner.lock().expect("machine bridge poisoned");
+        let key = (service.role.clone(), service.registry_id.clone());
+        bridge.registered_host_services.insert(key.clone());
+        bridge.host_service_capabilities.insert(key, capabilities);
+    }
+
+    fn set_host_service_lifecycle_emitter(&self, emitter: ServiceLifecycleEmitter) {
         self.inner
             .lock()
             .expect("machine bridge poisoned")
-            .registered_host_services
-            .insert((service.role.clone(), service.registry_id.clone()));
+            .host_service_lifecycle = Some(emitter);
     }
 
     fn register_sdk_host_hooks(&self, registrations: Vec<SdkHostHookRegistration>) {
@@ -529,6 +540,15 @@ impl MachineHostBridgeHandle {
             .expect("machine bridge poisoned")
             .registered_host_services
             .contains(&(service.role.clone(), service.registry_id.clone()))
+    }
+
+    fn host_service_capabilities(&self, role: &str, registry_id: &str) -> Option<Value> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .host_service_capabilities
+            .get(&(role.to_string(), registry_id.to_string()))
+            .cloned()
     }
 
     fn set_active_run(&self, active_run: bool) {
@@ -607,6 +627,10 @@ impl HostServiceInvoker for MachineHostBridgeHandle {
             .expect("machine bridge poisoned")
             .invoke_host_service(role, registry_id, method, payload, timeout_ms)
     }
+
+    fn host_service_capabilities(&self, role: &str, registry_id: &str) -> Option<Value> {
+        self.host_service_capabilities(role, registry_id)
+    }
 }
 
 impl MachineHostBridge {
@@ -662,14 +686,22 @@ impl MachineHostBridge {
             if self.cancellation_requested.load(Ordering::SeqCst) {
                 bail!("run cancellation requested");
             }
-            let remaining = timeout.checked_sub(started.elapsed()).ok_or_else(|| {
-                anyhow!(
-                    "host service request `{request_id}` timed out after {} ms",
-                    timeout.as_millis()
-                )
-            })?;
+            let remaining = match timeout.checked_sub(started.elapsed()) {
+                Some(remaining) => remaining,
+                None => {
+                    let message = format!(
+                        "host service request `{request_id}` timed out after {} ms",
+                        timeout.as_millis()
+                    );
+                    self.emit_host_service_failure(role, registry_id, message.clone());
+                    bail!(message);
+                }
+            };
             let Some(frame) = self.recv_next_frame(Some(remaining))? else {
-                bail!("machine protocol stdin closed while waiting for `{request_id}`");
+                let message =
+                    format!("machine protocol stdin closed while waiting for `{request_id}`");
+                self.emit_host_service_failure(role, registry_id, message.clone());
+                bail!(message);
             };
             if let Err(err) = validate_machine_frame_base(&frame) {
                 self.writer
@@ -684,11 +716,17 @@ impl MachineHostBridge {
                             code: "host_service_error".into(),
                             message: "host service returned an error frame without payload".into(),
                         });
-                        Err(anyhow!("{}: {}", error.code, error.message))
+                        let message = format!("{}: {}", error.code, error.message);
+                        self.emit_host_service_failure(role, registry_id, message.clone());
+                        Err(anyhow!(message))
                     }
-                    other => Err(anyhow!(
-                        "host service response `{request_id}` used invalid frame kind `{other:?}`"
-                    )),
+                    other => {
+                        let message = format!(
+                            "host service response `{request_id}` used invalid frame kind `{other:?}`"
+                        );
+                        self.emit_host_service_failure(role, registry_id, message.clone());
+                        Err(anyhow!(message))
+                    }
                 };
             }
             if frame.kind == MachineFrameKind::Request && self.active_run.load(Ordering::SeqCst) {
@@ -696,6 +734,26 @@ impl MachineHostBridge {
             } else {
                 self.pending.push_back(frame);
             }
+        }
+    }
+
+    fn emit_host_service_failure(&self, role: &str, registry_id: &str, message: impl Into<String>) {
+        let message = message.into();
+        if let Some(events) = &self.host_service_lifecycle {
+            events.emit(
+                crate::harness_observability::HarnessEventType::ServiceUnhealthy,
+                role,
+                registry_id,
+                "unhealthy",
+                format!("Host service request failed: {message}"),
+            );
+            events.emit(
+                crate::harness_observability::HarnessEventType::ServiceFailed,
+                role,
+                registry_id,
+                "failed",
+                format!("Host service request failed: {message}"),
+            );
         }
     }
 
@@ -1015,6 +1073,11 @@ fn register_host_service(
         })?
         .to_string();
     let service = HostServiceRegistration { role, registry_id };
+    let capabilities = payload
+        .get("capabilities")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    validate_host_service_readiness(&service, payload)?;
     if !configured_host_services(plan).contains(&service) {
         if service.role == "hook" {
             let registrations = sdk_host_hook_registrations(&service.registry_id, payload)?;
@@ -1023,12 +1086,17 @@ fn register_host_service(
                     "SDK hook registration requires payload.hooks with at least one Hook ID".into(),
                 );
             }
-            bridge.register_host_service(&service);
+            bridge.register_host_service(&service, capabilities);
             bridge.register_sdk_host_hooks(registrations);
             return Ok(service);
         }
         if service.role == "approval" && service.registry_id == "controller" {
-            bridge.register_host_service(&service);
+            crate::harness_runtime::approval::approval_capabilities_from_initialization(
+                &capabilities,
+                "controller",
+            )
+            .map_err(|err| err.to_string())?;
+            bridge.register_host_service(&service, capabilities);
             bridge.register_sdk_approval_controller();
             return Ok(service);
         }
@@ -1037,8 +1105,127 @@ fn register_host_service(
             service.role, service.registry_id
         ));
     }
-    bridge.register_host_service(&service);
+    validate_configured_host_service_registration(plan, &service, payload, &capabilities)?;
+    bridge.register_host_service(&service, capabilities);
     Ok(service)
+}
+
+fn host_service_registration_response(service: &HostServiceRegistration) -> Value {
+    let (active, reason) = host_service_activation_status(service);
+    json!({
+        "registered": true,
+        "service": service,
+        "active": active,
+        "reason": reason,
+    })
+}
+
+fn host_service_activation_status(
+    service: &HostServiceRegistration,
+) -> (bool, Option<&'static str>) {
+    match service.role.as_str() {
+        "embedding" => (
+            false,
+            Some("EmbeddingProvider host dispatch is reserved until Milestone 12"),
+        ),
+        "knowledge" => (
+            false,
+            Some("KnowledgeRuntime host dispatch is reserved until Milestone 12"),
+        ),
+        "memory" => (
+            false,
+            Some("MemoryRuntime host dispatch is reserved until Milestone 14"),
+        ),
+        _ => (true, None),
+    }
+}
+
+fn validate_host_service_readiness(
+    service: &HostServiceRegistration,
+    payload: &Value,
+) -> std::result::Result<(), String> {
+    if payload
+        .get("ready")
+        .and_then(Value::as_bool)
+        .is_some_and(|ready| !ready)
+    {
+        return Err(format!(
+            "host service `{}` with registry ID `{}` registered but reported not ready",
+            service.role, service.registry_id
+        ));
+    }
+    Ok(())
+}
+
+fn validate_configured_host_service_registration(
+    plan: &ResolvedHarnessPlan,
+    service: &HostServiceRegistration,
+    payload: &Value,
+    capabilities: &Value,
+) -> std::result::Result<(), String> {
+    match service.role.as_str() {
+        "hook" => validate_configured_host_hook_registration(plan, service, payload, capabilities),
+        "approval" if service.registry_id == "controller" => {
+            crate::harness_runtime::approval::approval_capabilities_from_initialization(
+                capabilities,
+                "controller",
+            )
+            .map_err(|err| err.to_string())?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_configured_host_hook_registration(
+    plan: &ResolvedHarnessPlan,
+    service: &HostServiceRegistration,
+    payload: &Value,
+    capabilities: &Value,
+) -> std::result::Result<(), String> {
+    let expected_hooks = configured_host_hook_ids(plan, &service.registry_id);
+    if expected_hooks.is_empty() {
+        return Ok(());
+    }
+    let Some(advertised_hooks) = payload
+        .get("hooks")
+        .or_else(|| capabilities.get("hooks"))
+        .cloned()
+    else {
+        return Err(format!(
+            "host hook service `{}` must advertise payload.hooks or capabilities.hooks",
+            service.registry_id
+        ));
+    };
+    crate::harness_runtime::hook::validate_hook_service_initialization(
+        &json!({
+            "registry_id": service.registry_id.clone(),
+            "hooks": advertised_hooks,
+        }),
+        &service.registry_id,
+        &expected_hooks,
+    )
+    .map_err(|err| err.to_string())
+}
+
+fn configured_host_hook_ids(
+    plan: &ResolvedHarnessPlan,
+    implementation: &str,
+) -> Vec<HarnessHookId> {
+    let mut hook_ids = Vec::new();
+    for binding in plan
+        .config
+        .config
+        .hooks
+        .bindings
+        .iter()
+        .filter(|binding| binding.implementation == implementation)
+    {
+        if !hook_ids.contains(&binding.hook) {
+            hook_ids.push(binding.hook.clone());
+        }
+    }
+    hook_ids
 }
 
 fn sdk_host_hook_registrations(
@@ -1296,9 +1483,17 @@ fn model_runtime_from_plan(
                         selection.provider
                     );
                 };
+                let capabilities = host_model_capabilities_from_registration(
+                    &invoker
+                        .host_service_capabilities("model", &selection.provider)
+                        .unwrap_or_else(|| json!({})),
+                    &selection.provider,
+                    &selection.model,
+                )?;
                 Ok(Box::new(HostModelRuntime {
                     selection,
                     invoker,
+                    capabilities,
                     request_timeout_ms: *request_timeout_ms,
                 }))
             }
@@ -1312,12 +1507,13 @@ fn model_runtime_from_plan(
 struct HostModelRuntime {
     selection: ModelProviderSelection,
     invoker: Box<dyn HostServiceInvoker>,
+    capabilities: ModelCapabilityAdvertisement,
     request_timeout_ms: u64,
 }
 
 impl ModelRuntime for HostModelRuntime {
     fn capabilities(&self) -> ModelCapabilityAdvertisement {
-        ModelCapabilityAdvertisement::default()
+        self.capabilities.clone()
     }
 
     fn generate(
@@ -1344,6 +1540,56 @@ impl ModelRuntime for HostModelRuntime {
         serde_json::from_value(payload)
             .map_err(|err| ModelRuntimeFailure::new(format!("invalid host model response: {err}")))
     }
+}
+
+#[derive(Default, Deserialize)]
+struct HostModelCapabilityAdvertisement {
+    provider: Option<String>,
+    model: Option<String>,
+    semantic_actions: Option<bool>,
+    structured_output: Option<bool>,
+    multimodal_input: Option<bool>,
+    context_window_tokens: Option<u64>,
+    usage_reporting: Option<bool>,
+}
+
+fn host_model_capabilities_from_registration(
+    capabilities: &Value,
+    expected_provider: &str,
+    expected_model: &str,
+) -> Result<ModelCapabilityAdvertisement> {
+    if capabilities.is_null() {
+        return Ok(ModelCapabilityAdvertisement::default());
+    }
+    let partial: HostModelCapabilityAdvertisement = serde_json::from_value(capabilities.clone())
+        .map_err(|err| anyhow!("invalid host model capabilities: {err}"))?;
+    if let Some(provider) = partial.provider
+        && provider != expected_provider
+    {
+        bail!("host model provider advertised `{provider}`, expected `{expected_provider}`");
+    }
+    if let Some(model) = partial.model
+        && model != expected_model
+    {
+        bail!("host model advertised model `{model}`, expected `{expected_model}`");
+    }
+    let mut advertisement = ModelCapabilityAdvertisement::default();
+    if let Some(semantic_actions) = partial.semantic_actions {
+        advertisement.semantic_actions = semantic_actions;
+    }
+    if let Some(structured_output) = partial.structured_output {
+        advertisement.structured_output = structured_output;
+    }
+    if let Some(multimodal_input) = partial.multimodal_input {
+        advertisement.multimodal_input = multimodal_input;
+    }
+    if let Some(context_window_tokens) = partial.context_window_tokens {
+        advertisement.context_window_tokens = Some(context_window_tokens);
+    }
+    if let Some(usage_reporting) = partial.usage_reporting {
+        advertisement.usage_reporting = usage_reporting;
+    }
+    Ok(advertisement)
 }
 
 fn validate_model_capabilities(model: &dyn ModelRuntime) -> Result<()> {
@@ -1390,7 +1636,8 @@ fn approval_controller_from_plan(
                 controller,
                 plan.config.config.approvals.timeout_ms,
                 invoker,
-            ) else {
+            )?
+            else {
                 unreachable!("host approval controller returned no host runtime");
             };
             Ok(Box::new(controller))
@@ -2161,6 +2408,36 @@ mod tests {
     }
 
     #[test]
+    fn host_registration_response_marks_future_runtime_roles_inactive() {
+        let embedding = host_service_registration_response(&host_service("embedding", "embedder"));
+        assert_eq!(embedding["registered"], json!(true));
+        assert_eq!(embedding["active"], json!(false));
+        assert!(
+            embedding["reason"]
+                .as_str()
+                .unwrap()
+                .contains("Milestone 12")
+        );
+
+        let knowledge = host_service_registration_response(&host_service("knowledge", "kb"));
+        assert_eq!(knowledge["active"], json!(false));
+        assert!(
+            knowledge["reason"]
+                .as_str()
+                .unwrap()
+                .contains("Milestone 12")
+        );
+
+        let memory = host_service_registration_response(&host_service("memory", "store"));
+        assert_eq!(memory["active"], json!(false));
+        assert!(memory["reason"].as_str().unwrap().contains("Milestone 14"));
+
+        let model = host_service_registration_response(&host_service("model", "host-model"));
+        assert_eq!(model["active"], json!(true));
+        assert!(model["reason"].is_null());
+    }
+
+    #[test]
     fn host_model_runtime_uses_machine_host_service_contract() {
         let selection = ModelProviderSelection {
             provider: "host-model".into(),
@@ -2178,12 +2455,181 @@ mod tests {
             selection: selection.clone(),
             invoker: Box::new(FakeHostInvoker {
                 response: serde_json::to_value(&expected_turn).unwrap(),
+                capabilities: None,
             }),
+            capabilities: host_model_capabilities_from_registration(
+                &host_model_capabilities(),
+                "host-model",
+                "model-1",
+            )
+            .unwrap(),
             request_timeout_ms: 1_000,
         };
 
         let turn = runtime.generate(empty_model_request(selection)).unwrap();
         assert_eq!(turn, expected_turn);
+    }
+
+    #[test]
+    fn host_model_runtime_uses_registered_capability_advertisement() {
+        let root = temp_dir("host-model-capability-advertisement");
+        let mut plan = minimal_plan(&root);
+        plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+            provider: "host-model".into(),
+            model: "model-1".into(),
+            options: json!({}),
+        });
+        plan.config.config.providers.models.insert(
+            "host-model".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "model",
+                "registry_id": "host-model",
+                "capabilities": {
+                    "provider": "host-model",
+                    "model": "model-1",
+                    "semantic_actions": false,
+                    "structured_output": true,
+                    "multimodal_input": false,
+                    "usage_reporting": true
+                }
+            }),
+        )
+        .unwrap();
+
+        let runtime = model_runtime_from_plan(
+            &plan,
+            ModelProviderSelection {
+                provider: "host-model".into(),
+                model: "model-1".into(),
+                options: json!({}),
+            },
+            Some(Box::new(bridge)),
+            None,
+        )
+        .unwrap();
+        let err = validate_model_capabilities(runtime.as_ref()).unwrap_err();
+        assert!(err.to_string().contains("semantic action support"));
+    }
+
+    #[test]
+    fn host_model_capabilities_reject_mismatched_model_identity() {
+        let err = host_model_capabilities_from_registration(
+            &json!({
+                "provider": "host-model",
+                "model": "other-model",
+                "semantic_actions": true,
+                "structured_output": true,
+                "multimodal_input": false,
+                "usage_reporting": true
+            }),
+            "host-model",
+            "model-1",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("expected `model-1`"));
+    }
+
+    #[test]
+    fn host_service_registration_rejects_not_ready() {
+        let root = temp_dir("host-service-not-ready");
+        let plan = minimal_plan(&root);
+        let (bridge, _sender, _output) = buffered_machine_bridge();
+
+        let err = register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "approval",
+                "registry_id": "controller",
+                "ready": false
+            }),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("reported not ready"));
+    }
+
+    #[test]
+    fn configured_host_hook_registration_validates_advertised_hooks() {
+        let root = temp_dir("configured-host-hook-registration");
+        let mut plan = minimal_plan(&root);
+        plan.config.config.hooks.implementations.insert(
+            "host-hooks".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.hooks.bindings.push(HarnessHookBinding {
+            hook: HarnessHookId::BeforeToolCall,
+            implementation: "host-hooks".into(),
+            failure_policy: HarnessHookFailurePolicy::Closed,
+        });
+        let (bridge, _sender, _output) = buffered_machine_bridge();
+
+        let err = register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "hook",
+                "registry_id": "host-hooks",
+                "hooks": ["before_model_request"]
+            }),
+        )
+        .unwrap_err();
+        assert!(err.contains("does not advertise configured hook `before_tool_call`"));
+
+        register_host_service(
+            &plan,
+            &bridge,
+            &json!({
+                "role": "hook",
+                "registry_id": "host-hooks",
+                "capabilities": {
+                    "hooks": ["before_tool_call"]
+                }
+            }),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn configured_host_approval_rejects_missing_request_capability() {
+        let controller = HarnessApprovalController {
+            implementation: HarnessImplementation::Host {
+                request_timeout_ms: 1_000,
+            },
+        };
+
+        let err = match ConfiguredApprovalController::host(
+            &controller,
+            None,
+            Box::new(FakeHostInvoker {
+                response: json!({ "decision": "approve" }),
+                capabilities: Some(json!({
+                    "approval": false
+                })),
+            }),
+        ) {
+            Ok(_) => panic!("host approval controller should reject missing request capability"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("does not advertise request_approval support")
+        );
     }
 
     #[test]
@@ -2226,7 +2672,10 @@ mod tests {
     #[test]
     fn machine_bridge_rejects_start_run_while_active_without_blocking_host_service_response() {
         let (bridge, sender, output) = buffered_machine_bridge();
-        bridge.register_host_service(&host_service("model", "host-model"));
+        bridge.register_host_service(
+            &host_service("model", "host-model"),
+            host_model_capabilities(),
+        );
         bridge.set_active_run(true);
         let mut bridge_for_thread = bridge.clone();
         let waiter = std::thread::spawn(move || {
@@ -2265,7 +2714,10 @@ mod tests {
     #[test]
     fn machine_bridge_cancel_run_interrupts_active_host_service_wait() {
         let (bridge, sender, output) = buffered_machine_bridge();
-        bridge.register_host_service(&host_service("model", "host-model"));
+        bridge.register_host_service(
+            &host_service("model", "host-model"),
+            host_model_capabilities(),
+        );
         bridge.set_active_run(true);
         let mut bridge_for_thread = bridge.clone();
         let waiter = std::thread::spawn(move || {
@@ -2290,6 +2742,49 @@ mod tests {
             frame["id"] == "cancel-1"
                 && frame["kind"] == "response"
                 && frame["payload"]["accepted"] == true
+        }));
+    }
+
+    #[test]
+    fn machine_bridge_emits_host_service_failure_events() {
+        let (bridge, sender, _output) = buffered_machine_bridge();
+        bridge.register_host_service(
+            &host_service("model", "host-model"),
+            host_model_capabilities(),
+        );
+        let mut service_events = ServiceLifecycleEvents::new();
+        bridge.set_host_service_lifecycle_emitter(service_events.emitter());
+        let mut bridge_for_thread = bridge.clone();
+        let waiter = std::thread::spawn(move || {
+            bridge_for_thread.invoke_host_service(
+                "model",
+                "host-model",
+                "generate",
+                json!({ "input": "visible" }),
+                1_000,
+            )
+        });
+
+        sender
+            .send(Ok(machine_error(
+                "host-model-host-model-1",
+                "host_failure",
+                "host model failed",
+            )))
+            .unwrap();
+
+        let err = waiter.join().unwrap().unwrap_err();
+        assert!(err.to_string().contains("host model failed"));
+        let events = service_events.drain();
+        assert!(events.iter().any(|event| {
+            event.event_type == crate::harness_observability::HarnessEventType::ServiceUnhealthy
+                && event.service == "model"
+                && event.registry_id == "host-model"
+        }));
+        assert!(events.iter().any(|event| {
+            event.event_type == crate::harness_observability::HarnessEventType::ServiceFailed
+                && event.service == "model"
+                && event.registry_id == "host-model"
         }));
     }
 
@@ -2326,8 +2821,10 @@ mod tests {
             None,
             Box::new(FakeHostInvoker {
                 response: json!({ "decision": "deny" }),
+                capabilities: None,
             }),
         )
+        .unwrap()
         .unwrap();
         let decision = runtime.request_approval(&crate::manifest::LoopCheckpoint {
             id: "approve-review".into(),
@@ -2776,6 +3273,17 @@ mod tests {
         }
     }
 
+    fn host_model_capabilities() -> Value {
+        json!({
+            "provider": "host-model",
+            "model": "model-1",
+            "semantic_actions": true,
+            "structured_output": true,
+            "multimodal_input": false,
+            "usage_reporting": true
+        })
+    }
+
     type MachineBridgeFixture = (
         MachineHostBridgeHandle,
         mpsc::Sender<std::result::Result<MachineEnvelope, String>>,
@@ -2815,6 +3323,21 @@ mod tests {
             method: None,
             payload,
             error: None,
+        }
+    }
+
+    fn machine_error(id: &str, code: &str, message: &str) -> MachineEnvelope {
+        MachineEnvelope {
+            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
+            version: AGENTPM_HARNESS_MACHINE_VERSION,
+            kind: MachineFrameKind::Error,
+            id: Some(id.into()),
+            method: None,
+            payload: Value::Null,
+            error: Some(MachineError {
+                code: code.into(),
+                message: message.into(),
+            }),
         }
     }
 
@@ -2866,6 +3389,7 @@ mod tests {
 
     struct FakeHostInvoker {
         response: Value,
+        capabilities: Option<Value>,
     }
 
     impl HostServiceInvoker for FakeHostInvoker {
@@ -2878,6 +3402,10 @@ mod tests {
             _timeout_ms: u64,
         ) -> Result<Value> {
             Ok(self.response.clone())
+        }
+
+        fn host_service_capabilities(&self, _role: &str, _registry_id: &str) -> Option<Value> {
+            self.capabilities.clone()
         }
     }
 

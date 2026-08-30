@@ -78,6 +78,10 @@ pub trait HostServiceInvoker {
         payload: Value,
         timeout_ms: u64,
     ) -> Result<Value>;
+
+    fn host_service_capabilities(&self, _role: &str, _registry_id: &str) -> Option<Value> {
+        None
+    }
 }
 
 struct RunningProcess {
@@ -130,7 +134,7 @@ pub struct ServiceLifecycleEmitter {
 }
 
 impl ServiceLifecycleEmitter {
-    fn emit(
+    pub(crate) fn emit(
         &self,
         event_type: HarnessEventType,
         service: &str,
