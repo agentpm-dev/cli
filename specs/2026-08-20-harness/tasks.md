@@ -595,6 +595,7 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 - [ ] Add/strengthen a machine-readable public Knowledge query surface if required so Harness consumes structured results/errors without parsing human output.
 
 - [ ] Activate configured EmbeddingProvider process/host implementations through the Milestone 9 protocol with request tuple `provider/model/dimensions/normalized/text` and finite vector response.
+- [ ] Update Node/Python SDK host-provider registration behavior so configured KnowledgeRuntime and EmbeddingProvider host services become active in Milestone 12, dispatch real requests, expose registration status, and still do not implement Harness orchestration.
 - [ ] Require live EmbeddingProvider advertisement of compatible embedding-space tuples/patterns and validate the requested installed Knowledge embedding metadata against that advertisement.
 - [ ] Apply the same readiness/capability enforcement to process and host EmbeddingProvider implementations: reject `ready:false`, provider/model/dimensions/normalization mismatches, malformed capability payloads, and unsupported requested embedding spaces before exposing or invoking the provider.
 - [ ] Emit equivalent service health diagnostics/events for process and host EmbeddingProvider failures/timeouts; host transport errors must not disappear behind generic model/action failures.
@@ -609,9 +610,14 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 
 - [ ] Make `before_knowledge_request` and `after_knowledge_retrieval` Hook points live through HookRuntime; Hooks remain confined to the already-authorized package/mode/options and result identities, and all changes are revalidated.
 - [ ] When activating Knowledge/Memory Hook seams in Milestones 12/14/15, drain and emit queued nonfatal Hook failures before every terminal rejection/failure exit, including engine-side patch-validation failures.
+- [ ] Apply Milestone 9 service-call mechanics to KnowledgeRuntime and EmbeddingProvider requests: correlation IDs, configured timeouts, cancellation propagation where meaningful, duration events, and typed service errors.
+- [ ] Account for Knowledge retrievals and EmbeddingProvider requests in RunUsage, SessionUsage, events, and RunReport summaries without fabricating token or cost values.
+- [ ] Ensure local KnowledgeRuntime reads installed package artifacts from `.agentpm` without mutating them; any runtime cache/temp state belongs under the resolved Harness state directory.
+- [ ] Verify KnowledgeRuntime and EmbeddingProvider credentials, headers, env values, backend URLs, and provider diagnostics are redacted from events, reports, traces, and machine payloads according to trace policy.
 - [ ] Preserve failure semantics: malformed/unauthorized model request -> bounded structured repair; valid backend/runtime failure -> structured Knowledge failure returned to the phase, not Loop Tool failure; repeated inability to complete may eventually become phase failure.
 - [ ] Emit Knowledge surface/readiness/request/retrieval/citation/failure events with content governed by trace policy.
 
+- [ ] Add protocol/golden JSON fixtures for KnowledgeRuntime request/result, EmbeddingProvider request/result, Knowledge Hook inputs/results, and representative typed failures.
 - [ ] Add tests for context progressive loading, undeclared-document rejection, local vector query, embedding fallback/capability mismatch, incompatible vectors, explicit custom runtime attestation/mismatch/no-fallback, unavailable suppression, distinct-package surfaces, Loop access, Hook shaping/reranking, citations, and backend failure returned to the phase.
 
 ## Milestone 13: Pinecone and pgvector Knowledge Reference Providers + SDK Helpers
