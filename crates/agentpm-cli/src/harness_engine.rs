@@ -2901,6 +2901,9 @@ fn action_result_trace_fields(
 }
 
 fn should_retry_tool_failure(result: &ActionDispatchResult) -> bool {
+    if result.terminal_status.is_some() {
+        return false;
+    }
     result
         .failure_category
         .map(|category| category.is_retryable_tool_failure())
@@ -5726,6 +5729,26 @@ mod tests {
         };
         assert_eq!(result.status, HarnessTerminalStatus::Failed);
         assert_eq!(result.report.retry_count, 0);
+        assert_eq!(dispatcher.dispatched.len(), 1);
+    }
+
+    #[test]
+    fn terminal_tool_failure_status_does_not_retry() {
+        let (result, dispatcher) = run_tool_failure_policy(
+            LoopToolFailurePolicy {
+                action: LoopToolFailureAction::Retry,
+                max_retries: Some(2),
+                on_exhausted: Some(LoopToolFailureExhaustedAction::FailPhase),
+            },
+            vec![ActionDispatchResult::terminal_failure(
+                HarnessTerminalStatus::Cancelled,
+                "ToolRuntime cancelled agentpm run for `@zack/search`",
+            )],
+        );
+
+        assert_eq!(result.status, HarnessTerminalStatus::Cancelled);
+        assert_eq!(result.report.retry_count, 0);
+        assert_eq!(result.report.usage.tool_retries, 0);
         assert_eq!(dispatcher.dispatched.len(), 1);
     }
 
