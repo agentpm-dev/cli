@@ -1,0 +1,32 @@
+{
+  "ok": true,
+  "package": "@zack/docs",
+  "version": "1.2.3",
+  "mode": "vector_query",
+  "query": "How does Harness route Knowledge?",
+  "results": [
+    {
+      "rank": 1,
+      "score": 0.93125,
+      "chunk_id": "chunk_001",
+      "source_id": "source_guide",
+      "source_title": "Harness Guide",
+      "source_uri": "agentpm://knowledge/@zack/docs/1.2.3/guide",
+      "text": "Harness routes Knowledge through KnowledgeRuntime.",
+      "chunk_metadata": {
+        "section": "runtime"
+      },
+      "source_metadata": {
+        "title": "Harness Guide"
+      }
+    }
+  ],
+  "citations": [
+    {
+      "chunk_id": "chunk_001",
+      "source_id": "source_guide",
+      "title": "Harness Guide",
+      "uri": "agentpm://knowledge/@zack/docs/1.2.3/guide"
+    }
+  ]
+}

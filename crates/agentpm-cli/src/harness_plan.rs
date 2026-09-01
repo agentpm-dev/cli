@@ -30,11 +30,12 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HarnessExecutionSurface {
     Headless,
     Machine,
+    #[default]
     Tui,
 }
 
@@ -150,12 +151,6 @@ pub struct HarnessBootstrapOptions {
     pub state_dir_override: Option<PathBuf>,
     pub runtime_scopes: BTreeMap<String, String>,
     pub surface: HarnessExecutionSurface,
-}
-
-impl Default for HarnessExecutionSurface {
-    fn default() -> Self {
-        Self::Tui
-    }
 }
 
 #[derive(Debug)]
@@ -1973,6 +1968,26 @@ fn validate_provider_readiness(
             diagnostics,
         );
     }
+    for (id, entry) in &config.config.providers.embeddings {
+        implementation_capability(
+            id,
+            "embedding_provider",
+            &entry.implementation,
+            surface,
+            capabilities,
+            diagnostics,
+        );
+    }
+    for (id, entry) in &config.config.knowledge.runtimes {
+        implementation_capability(
+            id,
+            "knowledge_runtime",
+            &entry.implementation,
+            surface,
+            capabilities,
+            diagnostics,
+        );
+    }
     if let Some(controller) = &config.config.approvals.controller {
         implementation_capability(
             "approval_controller",
@@ -3593,6 +3608,11 @@ mod tests {
         let codes = codes(&plan);
         assert!(codes.contains("irrelevant_knowledge_runtime_mapping"));
         assert!(codes.contains("host_implementation_unavailable"));
+        assert!(plan.capabilities.iter().any(|capability| {
+            capability.kind == "knowledge_runtime"
+                && capability.identity == "remote-knowledge"
+                && capability.state == CapabilityState::Unavailable
+        }));
     }
 
     #[test]

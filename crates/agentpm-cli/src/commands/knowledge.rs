@@ -153,7 +153,7 @@ struct LocalIndexMetadata {
 }
 
 #[derive(Debug, Clone)]
-struct ResolvedLocalIndexMetadata {
+pub(crate) struct ResolvedLocalIndexMetadata {
     declared_index_path: String,
     metadata_path: PathBuf,
     metadata: LocalIndexMetadata,
@@ -171,6 +171,24 @@ struct QueryVectorInput {
     provider: Option<String>,
     model: Option<String>,
     dimensions: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LocalKnowledgeVectorReadiness {
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) dimensions: u64,
+    pub(crate) metric: String,
+    pub(crate) normalized: bool,
+    pub(crate) embedding_id: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LocalKnowledgeQueryOptions {
+    pub(crate) top_k: Option<usize>,
+    pub(crate) score_threshold: Option<f64>,
+    pub(crate) include_text: bool,
+    pub(crate) include_metadata: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -388,6 +406,136 @@ pub(crate) fn execute_knowledge_build_with_manifest(
     };
 
     Ok((manifest, summary))
+}
+
+pub(crate) fn local_vector_readiness(package_root: &Path) -> Result<LocalKnowledgeVectorReadiness> {
+    let manifest_path = package_root.join("agent.json");
+    let (manifest, summary) =
+        execute_knowledge_build_with_manifest(&manifest_path, KnowledgeBuildMode::Check)?;
+    if manifest.knowledge.mode != "vector" {
+        bail!(
+            "Knowledge package `{}` is mode=\"{}\", not vector",
+            manifest.name,
+            manifest.knowledge.mode
+        );
+    }
+    let manifest_mismatches = manifest_summary_mismatches(&manifest, &summary);
+    if !manifest_mismatches.is_empty() {
+        bail!(
+            "Knowledge manifest build metadata is stale for {}:\n- {}",
+            manifest_path.display(),
+            manifest_mismatches.join("\n- ")
+        );
+    }
+    let vector_result = summary_vector_result(&summary)?;
+    let local_index = require_fresh_local_index(load_local_index_validation(
+        package_root,
+        &manifest,
+        vector_result,
+    )?)?;
+    let embedding = manifest
+        .knowledge
+        .embedding
+        .as_ref()
+        .ok_or_else(|| anyhow!("vector-mode Knowledge requires knowledge.embedding"))?;
+    if local_index.metadata.metric != "cosine" || !local_index.metadata.normalized {
+        bail!("only metric=\"cosine\" with normalized=true is supported for local exact search");
+    }
+    Ok(LocalKnowledgeVectorReadiness {
+        provider: embedding.provider.clone(),
+        model: embedding.model.clone(),
+        dimensions: embedding.dimensions,
+        metric: embedding.metric.clone(),
+        normalized: embedding.normalized,
+        embedding_id: embedding.id.clone(),
+    })
+}
+
+pub(crate) fn query_local_vector_knowledge(
+    package_root: &Path,
+    query_vector: Vec<f32>,
+    options: LocalKnowledgeQueryOptions,
+) -> Result<Value> {
+    let manifest_path = package_root.join("agent.json");
+    let (manifest, summary) =
+        execute_knowledge_build_with_manifest(&manifest_path, KnowledgeBuildMode::Check)?;
+    let manifest_mismatches = manifest_summary_mismatches(&manifest, &summary);
+    if !manifest_mismatches.is_empty() {
+        bail!(
+            "Knowledge manifest build metadata is stale for {}:\n- {}",
+            manifest_path.display(),
+            manifest_mismatches.join("\n- ")
+        );
+    }
+    let vector_result = summary_vector_result(&summary)?;
+    let local_index = require_fresh_local_index(load_local_index_validation(
+        package_root,
+        &manifest,
+        vector_result,
+    )?)?;
+    let input = QueryVectorInput {
+        values: query_vector,
+        provider: manifest
+            .knowledge
+            .embedding
+            .as_ref()
+            .map(|embedding| embedding.provider.clone()),
+        model: manifest
+            .knowledge
+            .embedding
+            .as_ref()
+            .map(|embedding| embedding.model.clone()),
+        dimensions: manifest
+            .knowledge
+            .embedding
+            .as_ref()
+            .map(|embedding| embedding.dimensions),
+    };
+    validate_query_vector_input(&input, &manifest)?;
+    let top_k = options
+        .top_k
+        .or_else(|| {
+            manifest
+                .knowledge
+                .retrieval
+                .as_ref()
+                .and_then(|retrieval| retrieval.default_top_k.map(|value| value as usize))
+        })
+        .unwrap_or(5);
+    if top_k == 0 {
+        bail!("top_k must be greater than 0");
+    }
+    let score_threshold = options.score_threshold.or_else(|| {
+        manifest
+            .knowledge
+            .retrieval
+            .as_ref()
+            .and_then(|retrieval| retrieval.default_score_threshold)
+    });
+    let rows = execute_exact_vector_query(
+        package_root,
+        &manifest,
+        &local_index.metadata,
+        &input.values,
+        QueryExecutionOptions {
+            top_k,
+            score_threshold,
+            include_text: options.include_text,
+            include_metadata: options.include_metadata,
+        },
+    )?;
+    Ok(build_query_json(
+        &ResolvedKnowledgeTarget {
+            manifest_path,
+            package_root: package_root.to_path_buf(),
+            display_target: format!("{}@{}", manifest.name, manifest.version),
+        },
+        &manifest,
+        &local_index.metadata,
+        &rows,
+        options.include_text,
+        options.include_metadata,
+    ))
 }
 
 fn print_build_summary(summary: &KnowledgeBuildSummary) {
@@ -1022,6 +1170,23 @@ fn validate_query_vector_input(
             embedding.dimensions
         );
     }
+    if input.values.iter().any(|value| !value.is_finite()) {
+        bail!("query vector contains non-finite values");
+    }
+    if embedding.normalized {
+        let norm = input
+            .values
+            .iter()
+            .map(|value| (*value as f64) * (*value as f64))
+            .sum::<f64>()
+            .sqrt();
+        if (norm - 1.0).abs() > 0.01 {
+            bail!(
+                "query vector norm {:.6} is incompatible with normalized=true embedding space",
+                norm
+            );
+        }
+    }
     if let Some(dimensions) = input.dimensions
         && dimensions != embedding.dimensions
     {
@@ -1443,7 +1608,9 @@ fn score_vector_rows(
 
 fn row_score_dot_product(row_bytes: &[u8], query_vector: &[f32]) -> f64 {
     row_bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .zip(query_vector)
         .map(|(chunk, query)| {
             let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);

@@ -241,9 +241,9 @@ impl ActionDispatcher for AgentPmActionDispatcher {
             SemanticAction::ExternalMcpTool { .. } => {
                 ActionDispatchResult::failure("External MCP Tool runtime is not available yet")
             }
-            SemanticAction::KnowledgeRequest { .. } => {
-                ActionDispatchResult::failure("Knowledge runtime is not available yet")
-            }
+            SemanticAction::KnowledgeRequest { .. } => ActionDispatchResult::failure(
+                "Knowledge actions are handled by the Harness KnowledgeRuntime",
+            ),
             SemanticAction::MemoryRead { .. } | SemanticAction::MemoryWrite { .. } => {
                 ActionDispatchResult::failure("Memory runtime is not available yet")
             }

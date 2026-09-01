@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use crate::harness_observability::HarnessTerminalStatus;
+use super::knowledge::KnowledgeRequestMode;
+use crate::harness_observability::{HarnessTerminalStatus, RunUsage};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, VecDeque};
@@ -38,7 +39,18 @@ pub enum SemanticAction {
     },
     KnowledgeRequest {
         package: String,
-        query: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mode: Option<KnowledgeRequestMode>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        document: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        top_k: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        score_threshold: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        return_citations: Option<bool>,
     },
     MemoryRead {
         package: String,
@@ -137,6 +149,8 @@ pub struct ActionDispatchResult {
     pub failure_category: Option<ActionFailureCategory>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_status: Option<HarnessTerminalStatus>,
+    #[serde(default, skip_serializing_if = "is_default_usage")]
+    pub usage: RunUsage,
 }
 
 impl ActionDispatchResult {
@@ -147,6 +161,7 @@ impl ActionDispatchResult {
             error: None,
             failure_category: None,
             terminal_status: None,
+            usage: RunUsage::default(),
         }
     }
 
@@ -157,6 +172,7 @@ impl ActionDispatchResult {
             error: Some(message.into()),
             failure_category: None,
             terminal_status: None,
+            usage: RunUsage::default(),
         }
     }
 
@@ -170,6 +186,7 @@ impl ActionDispatchResult {
             error: Some(message.into()),
             failure_category: Some(category),
             terminal_status: None,
+            usage: RunUsage::default(),
         }
     }
 
@@ -180,8 +197,18 @@ impl ActionDispatchResult {
             error: Some(message.into()),
             failure_category: None,
             terminal_status: Some(status),
+            usage: RunUsage::default(),
         }
     }
+
+    pub fn with_usage(mut self, usage: RunUsage) -> Self {
+        self.usage = usage;
+        self
+    }
+}
+
+fn is_default_usage(usage: &RunUsage) -> bool {
+    usage == &RunUsage::default()
 }
 
 pub trait ActionDispatcher {

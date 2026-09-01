@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 
 use super::action::SemanticAction;
+use super::knowledge::{
+    KnowledgeCitation, KnowledgeRetrievalResult, KnowledgeRuntimeRequest, KnowledgeRuntimeResult,
+    knowledge_request_from_action,
+};
 use super::model::{
     CONSUMER_RUN_CONTEXT_SECTION_TITLE, CompletionContract, ModelProviderSelection, ModelRequest,
     PromptSection,
@@ -102,6 +106,113 @@ pub struct BeforeToolCallDecision {
     pub arguments: Option<Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BeforeKnowledgeRequestHook {
+    pub phase_id: String,
+    pub request: KnowledgeRuntimeRequest,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BeforeKnowledgeRequestDecision {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score_threshold: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub return_citations: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AfterKnowledgeRetrievalHook {
+    pub phase_id: String,
+    pub result: KnowledgeRuntimeResult,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AfterKnowledgeRetrievalDecision {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub results: Option<Vec<AfterKnowledgeRetrievalResultPatch>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AfterKnowledgeRetrievalResultPatch {
+    pub chunk_id: String,
+    pub source_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BeforeMemoryReadHook {
+    pub phase_id: String,
+    pub package: String,
+    pub space: String,
+    pub scope: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BeforeMemoryReadDecision {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BeforeMemoryWriteHook {
+    pub phase_id: String,
+    pub package: String,
+    pub space: String,
+    pub record_type: String,
+    pub scope: Value,
+    pub content: Value,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BeforeMemoryWriteDecision {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BeforeMemoryOperationHook {
+    pub phase_id: String,
+    pub package: String,
+    pub operation: String,
+    pub scope: Value,
+    pub source_summary: Value,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BeforeMemoryOperationDecision {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_guidance: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookRuntimeFailure {
     pub hook: HarnessHookId,
@@ -165,6 +276,41 @@ pub trait HookRuntime {
         _hook: BeforeToolCallHook,
     ) -> Result<BeforeToolCallDecision, HookRuntimeFailure> {
         Ok(BeforeToolCallDecision::default())
+    }
+
+    fn before_knowledge_request(
+        &mut self,
+        _hook: BeforeKnowledgeRequestHook,
+    ) -> Result<BeforeKnowledgeRequestDecision, HookRuntimeFailure> {
+        Ok(BeforeKnowledgeRequestDecision::default())
+    }
+
+    fn after_knowledge_retrieval(
+        &mut self,
+        _hook: AfterKnowledgeRetrievalHook,
+    ) -> Result<AfterKnowledgeRetrievalDecision, HookRuntimeFailure> {
+        Ok(AfterKnowledgeRetrievalDecision::default())
+    }
+
+    fn before_memory_read(
+        &mut self,
+        _hook: BeforeMemoryReadHook,
+    ) -> Result<BeforeMemoryReadDecision, HookRuntimeFailure> {
+        Ok(BeforeMemoryReadDecision::default())
+    }
+
+    fn before_memory_write(
+        &mut self,
+        _hook: BeforeMemoryWriteHook,
+    ) -> Result<BeforeMemoryWriteDecision, HookRuntimeFailure> {
+        Ok(BeforeMemoryWriteDecision::default())
+    }
+
+    fn before_memory_operation(
+        &mut self,
+        _hook: BeforeMemoryOperationHook,
+    ) -> Result<BeforeMemoryOperationDecision, HookRuntimeFailure> {
+        Ok(BeforeMemoryOperationDecision::default())
     }
 
     fn drain_nonfatal_failures(&mut self) -> Vec<HookRuntimeFailure> {
@@ -453,6 +599,195 @@ impl HookRuntime for ConfiguredHookRuntime {
         })
     }
 
+    fn before_knowledge_request(
+        &mut self,
+        mut hook: BeforeKnowledgeRequestHook,
+    ) -> Result<BeforeKnowledgeRequestDecision, HookRuntimeFailure> {
+        let mut combined = BeforeKnowledgeRequestDecision::default();
+        for binding in self
+            .bindings
+            .iter()
+            .filter(|binding| binding.hook == HarnessHookId::BeforeKnowledgeRequest)
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            let Some(decision) =
+                self.invoke_binding(HarnessHookId::BeforeKnowledgeRequest, &binding, &hook)?
+            else {
+                continue;
+            };
+            let decision: BeforeKnowledgeRequestDecision = decision;
+            if let Err(err) = apply_before_knowledge_request_decision_to_hook(&mut hook, &decision)
+            {
+                self.handle_binding_failure(
+                    &binding,
+                    HookRuntimeFailure::new(HarnessHookId::BeforeKnowledgeRequest, err),
+                )?;
+                continue;
+            }
+            if decision.document.is_some() {
+                combined.document = decision.document;
+            }
+            if decision.query.is_some() {
+                combined.query = decision.query;
+            }
+            if decision.top_k.is_some() {
+                combined.top_k = decision.top_k;
+            }
+            if decision.score_threshold.is_some() {
+                combined.score_threshold = decision.score_threshold;
+            }
+            if decision.return_citations.is_some() {
+                combined.return_citations = decision.return_citations;
+            }
+        }
+        Ok(combined)
+    }
+
+    fn after_knowledge_retrieval(
+        &mut self,
+        mut hook: AfterKnowledgeRetrievalHook,
+    ) -> Result<AfterKnowledgeRetrievalDecision, HookRuntimeFailure> {
+        let original = hook.result.clone();
+        let mut patched = false;
+        for binding in self
+            .bindings
+            .iter()
+            .filter(|binding| binding.hook == HarnessHookId::AfterKnowledgeRetrieval)
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            let Some(decision) =
+                self.invoke_binding(HarnessHookId::AfterKnowledgeRetrieval, &binding, &hook)?
+            else {
+                continue;
+            };
+            let decision: AfterKnowledgeRetrievalDecision = decision;
+            let decision_patched = decision.content.is_some() || decision.results.is_some();
+            if decision_patched {
+                match apply_after_knowledge_retrieval_decision(&hook.result, decision) {
+                    Ok(result) => {
+                        hook.result = result;
+                        patched = true;
+                    }
+                    Err(err) => {
+                        self.handle_binding_failure(
+                            &binding,
+                            HookRuntimeFailure::new(HarnessHookId::AfterKnowledgeRetrieval, err),
+                        )?;
+                        continue;
+                    }
+                }
+            }
+        }
+        Ok(after_knowledge_retrieval_decision_from_results(
+            &original,
+            &hook.result,
+            patched,
+        ))
+    }
+
+    fn before_memory_read(
+        &mut self,
+        mut hook: BeforeMemoryReadHook,
+    ) -> Result<BeforeMemoryReadDecision, HookRuntimeFailure> {
+        let mut combined = BeforeMemoryReadDecision::default();
+        for binding in self
+            .bindings
+            .iter()
+            .filter(|binding| binding.hook == HarnessHookId::BeforeMemoryRead)
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            let Some(decision) =
+                self.invoke_binding(HarnessHookId::BeforeMemoryRead, &binding, &hook)?
+            else {
+                continue;
+            };
+            let decision: BeforeMemoryReadDecision = decision;
+            if let Some(limit) = decision.limit {
+                if limit == 0 {
+                    self.handle_binding_failure(
+                        &binding,
+                        HookRuntimeFailure::new(
+                            HarnessHookId::BeforeMemoryRead,
+                            "before_memory_read limit must be greater than 0",
+                        ),
+                    )?;
+                    continue;
+                }
+                hook.limit = Some(limit);
+                combined.limit = Some(limit);
+            }
+            if decision.query.is_some() {
+                hook.query = decision.query.clone();
+                combined.query = decision.query;
+            }
+            if decision.filter.is_some() {
+                hook.filter = decision.filter.clone();
+                combined.filter = decision.filter;
+            }
+            if decision.mode.is_some() {
+                hook.mode = decision.mode.clone();
+                combined.mode = decision.mode;
+            }
+        }
+        Ok(combined)
+    }
+
+    fn before_memory_write(
+        &mut self,
+        mut hook: BeforeMemoryWriteHook,
+    ) -> Result<BeforeMemoryWriteDecision, HookRuntimeFailure> {
+        let mut combined = BeforeMemoryWriteDecision::default();
+        for binding in self
+            .bindings
+            .iter()
+            .filter(|binding| binding.hook == HarnessHookId::BeforeMemoryWrite)
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            let Some(decision) =
+                self.invoke_binding(HarnessHookId::BeforeMemoryWrite, &binding, &hook)?
+            else {
+                continue;
+            };
+            let decision: BeforeMemoryWriteDecision = decision;
+            if let Some(content) = decision.content {
+                hook.content = content.clone();
+                combined.content = Some(content);
+            }
+        }
+        Ok(combined)
+    }
+
+    fn before_memory_operation(
+        &mut self,
+        mut hook: BeforeMemoryOperationHook,
+    ) -> Result<BeforeMemoryOperationDecision, HookRuntimeFailure> {
+        let mut combined = BeforeMemoryOperationDecision::default();
+        for binding in self
+            .bindings
+            .iter()
+            .filter(|binding| binding.hook == HarnessHookId::BeforeMemoryOperation)
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            let Some(decision) =
+                self.invoke_binding(HarnessHookId::BeforeMemoryOperation, &binding, &hook)?
+            else {
+                continue;
+            };
+            let decision: BeforeMemoryOperationDecision = decision;
+            if let Some(model_guidance) = decision.model_guidance {
+                hook.source_summary =
+                    merge_memory_operation_guidance(hook.source_summary, model_guidance.clone());
+                combined.model_guidance = Some(model_guidance);
+            }
+        }
+        Ok(combined)
+    }
+
     fn drain_nonfatal_failures(&mut self) -> Vec<HookRuntimeFailure> {
         std::mem::take(&mut self.nonfatal_failures)
     }
@@ -727,6 +1062,194 @@ pub fn apply_before_model_request_decision(
         merge_before_model_request_provider_options(request, decision.provider_options)?;
     }
     Ok(())
+}
+
+pub fn before_knowledge_request_hook_from_action(
+    phase_id: &str,
+    action: &SemanticAction,
+    effective_phase: &EffectivePhase,
+) -> Result<BeforeKnowledgeRequestHook, String> {
+    let package_name = action.identity();
+    let package = effective_phase
+        .active_knowledge
+        .iter()
+        .find(|candidate| candidate.name == package_name)
+        .ok_or_else(|| format!("Knowledge package `{package_name}` is not active in this phase"))?;
+    Ok(BeforeKnowledgeRequestHook {
+        phase_id: phase_id.to_string(),
+        request: knowledge_request_from_action(action, package)?,
+    })
+}
+
+pub fn apply_before_knowledge_request_decision(
+    action: &SemanticAction,
+    decision: BeforeKnowledgeRequestDecision,
+) -> Result<SemanticAction, String> {
+    let SemanticAction::KnowledgeRequest {
+        package,
+        mode,
+        document,
+        query,
+        top_k,
+        score_threshold,
+        return_citations,
+    } = action
+    else {
+        return Err("before_knowledge_request can only patch Knowledge requests".into());
+    };
+    Ok(SemanticAction::KnowledgeRequest {
+        package: package.clone(),
+        mode: mode.clone(),
+        document: decision.document.or_else(|| document.clone()),
+        query: decision.query.or_else(|| query.clone()),
+        top_k: decision.top_k.or(*top_k),
+        score_threshold: decision.score_threshold.or(*score_threshold),
+        return_citations: decision.return_citations.or(*return_citations),
+    })
+}
+
+pub fn after_knowledge_retrieval_hook_from_result(
+    phase_id: &str,
+    result: KnowledgeRuntimeResult,
+) -> AfterKnowledgeRetrievalHook {
+    AfterKnowledgeRetrievalHook {
+        phase_id: phase_id.to_string(),
+        result,
+    }
+}
+
+pub fn apply_after_knowledge_retrieval_decision(
+    result: &KnowledgeRuntimeResult,
+    decision: AfterKnowledgeRetrievalDecision,
+) -> Result<KnowledgeRuntimeResult, String> {
+    let mut patched = result.clone();
+    if let Some(content) = decision.content {
+        if patched.content.is_none() {
+            return Err(
+                "after_knowledge_retrieval cannot introduce top-level content where none was returned"
+                    .into(),
+            );
+        }
+        patched.content = Some(content);
+    }
+    if let Some(results) = decision.results {
+        patched.results = apply_after_knowledge_retrieval_result_patches(result, results)?;
+        patched.citations = filter_after_knowledge_citations(&result.citations, &patched.results);
+    }
+    Ok(patched)
+}
+
+fn after_knowledge_retrieval_decision_from_results(
+    original: &KnowledgeRuntimeResult,
+    patched: &KnowledgeRuntimeResult,
+    has_patch: bool,
+) -> AfterKnowledgeRetrievalDecision {
+    if !has_patch {
+        return AfterKnowledgeRetrievalDecision::default();
+    }
+    AfterKnowledgeRetrievalDecision {
+        content: (patched.content != original.content)
+            .then(|| patched.content.clone())
+            .flatten(),
+        results: (patched.results != original.results).then(|| {
+            patched
+                .results
+                .iter()
+                .map(|result| AfterKnowledgeRetrievalResultPatch {
+                    chunk_id: result.chunk_id.clone(),
+                    source_id: result.source_id.clone(),
+                    text: result.text.clone(),
+                })
+                .collect()
+        }),
+    }
+}
+
+fn apply_after_knowledge_retrieval_result_patches(
+    original: &KnowledgeRuntimeResult,
+    patches: Vec<AfterKnowledgeRetrievalResultPatch>,
+) -> Result<Vec<KnowledgeRetrievalResult>, String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut reordered = Vec::new();
+    for patch in patches {
+        let identity = (patch.chunk_id.clone(), patch.source_id.clone());
+        if !seen.insert(identity.clone()) {
+            return Err(format!(
+                "after_knowledge_retrieval duplicated result `{}/{}`",
+                patch.source_id, patch.chunk_id
+            ));
+        }
+        let Some(original_result) = original.results.iter().find(|result| {
+            result.chunk_id == patch.chunk_id && result.source_id == patch.source_id
+        }) else {
+            return Err(format!(
+                "after_knowledge_retrieval introduced result `{}/{}`",
+                patch.source_id, patch.chunk_id
+            ));
+        };
+        let mut next = original_result.clone();
+        next.rank = reordered.len() + 1;
+        if patch.text.is_some() {
+            next.text = patch.text;
+        }
+        reordered.push(next);
+    }
+    Ok(reordered)
+}
+
+fn filter_after_knowledge_citations(
+    original: &[KnowledgeCitation],
+    results: &[KnowledgeRetrievalResult],
+) -> Vec<KnowledgeCitation> {
+    results
+        .iter()
+        .filter_map(|result| {
+            original
+                .iter()
+                .find(|citation| {
+                    citation.chunk_id == result.chunk_id && citation.source_id == result.source_id
+                })
+                .cloned()
+        })
+        .collect()
+}
+
+fn apply_before_knowledge_request_decision_to_hook(
+    hook: &mut BeforeKnowledgeRequestHook,
+    decision: &BeforeKnowledgeRequestDecision,
+) -> Result<(), String> {
+    if let Some(document) = &decision.document {
+        hook.request.document = Some(document.clone());
+    }
+    if let Some(query) = &decision.query {
+        hook.request.query = Some(query.clone());
+    }
+    if let Some(top_k) = decision.top_k {
+        if top_k == 0 {
+            return Err("before_knowledge_request top_k must be greater than 0".into());
+        }
+        hook.request.top_k = Some(top_k);
+    }
+    if let Some(score_threshold) = decision.score_threshold {
+        hook.request.score_threshold = Some(score_threshold);
+    }
+    if let Some(return_citations) = decision.return_citations {
+        hook.request.return_citations = Some(return_citations);
+    }
+    Ok(())
+}
+
+fn merge_memory_operation_guidance(mut source_summary: Value, guidance: String) -> Value {
+    match source_summary.as_object_mut() {
+        Some(object) => {
+            object.insert("model_guidance".into(), Value::String(guidance));
+            source_summary
+        }
+        None => json!({
+            "summary": source_summary,
+            "model_guidance": guidance,
+        }),
+    }
 }
 
 fn apply_before_model_request_decision_to_hook(
@@ -1368,6 +1891,7 @@ for line in sys.stdin:
             active_profiles: Vec::new(),
             active_tools: vec![tool("@zack/a")],
             active_skills: Vec::new(),
+            active_knowledge: Vec::new(),
             capability_catalog: vec![
                 descriptor("phase_completion", "classify/completion"),
                 descriptor("agentpm_tool", "@zack/a"),
@@ -1404,6 +1928,123 @@ for line in sys.stdin:
     fn before_tool_call_rejects_unknown_patch_fields() {
         let err = serde_json::from_value::<BeforeToolCallDecision>(json!({
             "tool": "@zack/other",
+        }))
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn after_knowledge_retrieval_rejects_legacy_whole_result_patch() {
+        let err = serde_json::from_value::<AfterKnowledgeRetrievalDecision>(json!({
+            "result": {
+                "ok": true,
+                "package": "@zack/docs",
+                "version": "0.1.0",
+                "mode": "vector_query"
+            }
+        }))
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn after_knowledge_retrieval_can_filter_reorder_and_transform_text_only() {
+        let result = sample_knowledge_result();
+        let patched = apply_after_knowledge_retrieval_decision(
+            &result,
+            AfterKnowledgeRetrievalDecision {
+                content: None,
+                results: Some(vec![
+                    AfterKnowledgeRetrievalResultPatch {
+                        chunk_id: "chunk_2".into(),
+                        source_id: "src_2".into(),
+                        text: Some("Second result rewritten for the model.".into()),
+                    },
+                    AfterKnowledgeRetrievalResultPatch {
+                        chunk_id: "chunk_1".into(),
+                        source_id: "src_1".into(),
+                        text: None,
+                    },
+                ]),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(patched.package, result.package);
+        assert_eq!(patched.version, result.version);
+        assert_eq!(patched.mode, result.mode);
+        assert_eq!(patched.results.len(), 2);
+        assert_eq!(patched.results[0].rank, 1);
+        assert_eq!(patched.results[0].chunk_id, "chunk_2");
+        assert_eq!(patched.results[0].source_id, "src_2");
+        assert_eq!(patched.results[0].score, 0.7);
+        assert_eq!(
+            patched.results[0].text.as_deref(),
+            Some("Second result rewritten for the model.")
+        );
+        assert_eq!(patched.results[0].source_uri.as_deref(), Some("file://two"));
+        assert_eq!(patched.results[1].rank, 2);
+        assert_eq!(patched.results[1].chunk_id, "chunk_1");
+        assert_eq!(patched.citations.len(), 2);
+        assert_eq!(patched.citations[0].chunk_id, "chunk_2");
+        assert_eq!(patched.citations[1].chunk_id, "chunk_1");
+    }
+
+    #[test]
+    fn after_knowledge_retrieval_rejects_unrelated_or_duplicate_results() {
+        let result = sample_knowledge_result();
+        let err = apply_after_knowledge_retrieval_decision(
+            &result,
+            AfterKnowledgeRetrievalDecision {
+                content: None,
+                results: Some(vec![AfterKnowledgeRetrievalResultPatch {
+                    chunk_id: "chunk_other".into(),
+                    source_id: "src_1".into(),
+                    text: None,
+                }]),
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("introduced result `src_1/chunk_other`"));
+
+        let err = apply_after_knowledge_retrieval_decision(
+            &result,
+            AfterKnowledgeRetrievalDecision {
+                content: None,
+                results: Some(vec![
+                    AfterKnowledgeRetrievalResultPatch {
+                        chunk_id: "chunk_1".into(),
+                        source_id: "src_1".into(),
+                        text: None,
+                    },
+                    AfterKnowledgeRetrievalResultPatch {
+                        chunk_id: "chunk_1".into(),
+                        source_id: "src_1".into(),
+                        text: Some("duplicate".into()),
+                    },
+                ]),
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("duplicated result `src_1/chunk_1`"));
+    }
+
+    #[test]
+    fn memory_hook_decisions_are_closed_to_authority_fields() {
+        let err = serde_json::from_value::<BeforeMemoryReadDecision>(json!({
+            "package": "@zack/other"
+        }))
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+
+        let err = serde_json::from_value::<BeforeMemoryWriteDecision>(json!({
+            "scope": {"tenant": "other"}
+        }))
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+
+        let err = serde_json::from_value::<BeforeMemoryOperationDecision>(json!({
+            "operation": "other"
         }))
         .unwrap_err();
         assert!(err.to_string().contains("unknown field"));
@@ -1472,6 +2113,7 @@ for line in sys.stdin:
             active_profiles: Vec::new(),
             active_tools: vec![tool("@zack/a"), tool("@zack/b")],
             active_skills: Vec::new(),
+            active_knowledge: Vec::new(),
             capability_catalog: vec![
                 descriptor("phase_completion", "classify/completion"),
                 descriptor("agentpm_tool", "@zack/a"),
@@ -1502,6 +2144,7 @@ for line in sys.stdin:
             active_profiles: Vec::new(),
             active_tools: vec![tool("@zack/a")],
             active_skills: Vec::new(),
+            active_knowledge: Vec::new(),
             capability_catalog: vec![descriptor("agentpm_tool", "@zack/a")],
             suppressed_capabilities: Vec::new(),
         };
@@ -1548,6 +2191,57 @@ for line in sys.stdin:
         }
     }
 
+    fn sample_knowledge_result() -> KnowledgeRuntimeResult {
+        KnowledgeRuntimeResult {
+            ok: true,
+            package: "@zack/docs".into(),
+            version: "0.1.0".into(),
+            mode: super::super::knowledge::KnowledgeRequestMode::VectorQuery,
+            document: None,
+            query: Some("question".into()),
+            content: None,
+            results: vec![
+                KnowledgeRetrievalResult {
+                    rank: 1,
+                    score: 0.9,
+                    chunk_id: "chunk_1".into(),
+                    source_id: "src_1".into(),
+                    source_title: Some("One".into()),
+                    source_uri: Some("file://one".into()),
+                    text: Some("First result.".into()),
+                    chunk_metadata: Some(json!({"page": 1})),
+                    source_metadata: Some(json!({"kind": "doc"})),
+                },
+                KnowledgeRetrievalResult {
+                    rank: 2,
+                    score: 0.7,
+                    chunk_id: "chunk_2".into(),
+                    source_id: "src_2".into(),
+                    source_title: Some("Two".into()),
+                    source_uri: Some("file://two".into()),
+                    text: Some("Second result.".into()),
+                    chunk_metadata: Some(json!({"page": 2})),
+                    source_metadata: Some(json!({"kind": "doc"})),
+                },
+            ],
+            citations: vec![
+                KnowledgeCitation {
+                    chunk_id: "chunk_1".into(),
+                    source_id: "src_1".into(),
+                    title: Some("One".into()),
+                    uri: Some("file://one".into()),
+                },
+                KnowledgeCitation {
+                    chunk_id: "chunk_2".into(),
+                    source_id: "src_2".into(),
+                    title: Some("Two".into()),
+                    uri: Some("file://two".into()),
+                },
+            ],
+            error: None,
+        }
+    }
+
     fn minimal_model_request() -> ModelRequest {
         let selection = ModelProviderSelection {
             provider: "test-provider".into(),
@@ -1571,6 +2265,7 @@ for line in sys.stdin:
                 profile_bindings: Default::default(),
                 tools: Vec::new(),
                 skills: Vec::new(),
+                knowledge: Vec::new(),
                 capability_candidates: Vec::new(),
                 model: Some(selection.clone()),
             },
@@ -1613,6 +2308,7 @@ for line in sys.stdin:
                 active_profiles: Vec::new(),
                 active_tools: Vec::new(),
                 active_skills: Vec::new(),
+                active_knowledge: Vec::new(),
                 capability_catalog: Vec::new(),
                 suppressed_capabilities: Vec::new(),
             },

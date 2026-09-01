@@ -82,6 +82,10 @@ pub trait HostServiceInvoker {
     fn host_service_capabilities(&self, _role: &str, _registry_id: &str) -> Option<Value> {
         None
     }
+
+    fn emits_lifecycle_events(&self) -> bool {
+        false
+    }
 }
 
 struct RunningProcess {

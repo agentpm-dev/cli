@@ -1,0 +1,7 @@
+{
+  "provider": "bring-your-own",
+  "model": "docs-embedding-v1",
+  "dimensions": 3,
+  "normalized": true,
+  "text": "How does Harness route Knowledge?"
+}

@@ -4,14 +4,18 @@ use crate::harness_plan::{
 };
 use crate::harness_runtime::{
     ActionDispatcher, AgentPmActionDispatcher, ApprovalController, BuiltInModelRuntime,
-    ConfiguredApprovalController, ConfiguredHookRuntime, ConsumerContextSnapshot, HookRuntime,
-    HostServiceInvoker, ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest,
-    ModelRuntime, ModelRuntimeFailure, ModelTurn, PackageSnapshot, ProcessModelRuntime,
-    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceLifecycleEmitter, ServiceLifecycleEvents,
-    ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    CompositeKnowledgeRuntime, ConfiguredApprovalController, ConfiguredHookRuntime,
+    ConsumerContextSnapshot, CustomKnowledgeRuntime, HookRuntime, HostServiceInvoker,
+    KnowledgeEmbeddingSnapshot, KnowledgeRuntime, KnowledgeRuntimeSnapshot, LocalKnowledgeRuntime,
+    ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
+    ModelRuntimeFailure, ModelTurn, PackageSnapshot, ProcessModelRuntime, RoutingEmbeddingProvider,
+    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceEmbeddingProvider, ServiceLifecycleEmitter,
+    ServiceLifecycleEvents, ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot,
+    ToolRuntimeSnapshot,
 };
 use crate::manifest::{
-    load_manifest_value, parse_loop_manifest, parse_skill_manifest, parse_tool_manifest,
+    load_manifest_value, parse_knowledge_manifest, parse_loop_manifest, parse_skill_manifest,
+    parse_tool_manifest,
 };
 use crate::prelude::*;
 use crate::{
@@ -30,7 +34,7 @@ use crate::{
 use anyhow::{anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
 use std::sync::{
@@ -335,9 +339,23 @@ fn execute_machine_run(
         Some(&service_events),
     )?;
     validate_model_capabilities(model.as_ref())?;
-    let runtime = runtime_snapshot_from_plan(plan);
+    let mut runtime = runtime_snapshot_from_plan(plan);
+    let custom_knowledge = activate_custom_knowledge_runtime_for_plan(
+        plan,
+        &runtime,
+        Some(bridge.clone()),
+        Some(&service_events),
+    );
+    apply_custom_knowledge_activation_to_runtime(&mut runtime, &custom_knowledge);
     let mut dispatcher = AgentPmActionDispatcher::from_runtime(&runtime)?
         .with_cancellation_token(bridge.cancellation_token());
+    let mut knowledge = knowledge_runtime_for_machine_plan(
+        plan,
+        &runtime,
+        custom_knowledge.runtime,
+        bridge,
+        Some(&service_events),
+    );
     let mut hooks = ConfiguredHookRuntime::from_config(
         &plan.workspace_root,
         &plan.config.config.hooks.bindings,
@@ -347,7 +365,7 @@ fn execute_machine_run(
     .with_host_invoker(Box::new(bridge.clone()));
     hooks.add_sdk_host_registrations(bridge.sdk_host_hooks());
     let loop_manifest = load_plan_loop(plan)?;
-    let mut session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(plan));
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
     session
         .emitter
         .add_sink(Box::new(MachineEventSink::new(bridge.writer())));
@@ -379,6 +397,7 @@ fn execute_machine_run(
     let mut services = HarnessRuntimeServices {
         model: model.as_mut(),
         dispatcher: &mut dispatcher,
+        knowledge: knowledge.as_mut(),
         approvals: approvals.as_mut(),
         hooks: &mut hooks,
         service_events: Some(&mut service_events),
@@ -630,6 +649,10 @@ impl HostServiceInvoker for MachineHostBridgeHandle {
 
     fn host_service_capabilities(&self, role: &str, registry_id: &str) -> Option<Value> {
         self.host_service_capabilities(role, registry_id)
+    }
+
+    fn emits_lifecycle_events(&self) -> bool {
+        true
     }
 }
 
@@ -1124,14 +1147,7 @@ fn host_service_activation_status(
     service: &HostServiceRegistration,
 ) -> (bool, Option<&'static str>) {
     match service.role.as_str() {
-        "embedding" => (
-            false,
-            Some("EmbeddingProvider host dispatch is reserved until Milestone 12"),
-        ),
-        "knowledge" => (
-            false,
-            Some("KnowledgeRuntime host dispatch is reserved until Milestone 12"),
-        ),
+        "embedding" | "knowledge" => (true, None),
         "memory" => (
             false,
             Some("MemoryRuntime host dispatch is reserved until Milestone 14"),
@@ -1165,6 +1181,24 @@ fn validate_configured_host_service_registration(
 ) -> std::result::Result<(), String> {
     match service.role.as_str() {
         "hook" => validate_configured_host_hook_registration(plan, service, payload, capabilities),
+        "embedding" => crate::harness_runtime::knowledge::validate_embedding_provider_capabilities(
+            capabilities,
+            &service.registry_id,
+        )
+        .map_err(|err| err.to_string()),
+        "knowledge" => {
+            let routes = custom_knowledge_routes(plan);
+            let mapped_packages = knowledge_snapshots_from_plan(plan)
+                .into_iter()
+                .filter(|package| routes.get(&package.name) == Some(&service.registry_id))
+                .collect::<Vec<_>>();
+            crate::harness_runtime::knowledge::validate_knowledge_runtime_capabilities(
+                capabilities,
+                &service.registry_id,
+                &mapped_packages,
+            )
+            .map_err(|err| err.to_string())
+        }
         "approval" if service.registry_id == "controller" => {
             crate::harness_runtime::approval::approval_capabilities_from_initialization(
                 capabilities,
@@ -1301,7 +1335,59 @@ fn required_host_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistra
             registry_id: "controller".into(),
         });
     }
+    services.extend(required_host_embedding_services(plan));
+    services.extend(required_host_knowledge_services(plan));
     dedupe_host_services(services)
+}
+
+fn required_host_embedding_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
+    plan.config
+        .config
+        .knowledge
+        .embedding_matches
+        .iter()
+        .filter_map(|item| {
+            let entry = plan
+                .config
+                .config
+                .providers
+                .embeddings
+                .get(&item.embedding_provider)?;
+            matches!(
+                entry.implementation,
+                crate::harness_config::HarnessImplementation::Host { .. }
+            )
+            .then(|| HostServiceRegistration {
+                role: "embedding".into(),
+                registry_id: item.embedding_provider.clone(),
+            })
+        })
+        .collect()
+}
+
+fn required_host_knowledge_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
+    plan.config
+        .config
+        .knowledge
+        .packages
+        .values()
+        .filter_map(|mapping| {
+            let entry = plan
+                .config
+                .config
+                .knowledge
+                .runtimes
+                .get(&mapping.runtime)?;
+            matches!(
+                entry.implementation,
+                crate::harness_config::HarnessImplementation::Host { .. }
+            )
+            .then(|| HostServiceRegistration {
+                role: "knowledge".into(),
+                registry_id: mapping.runtime.clone(),
+            })
+        })
+        .collect()
 }
 
 fn configured_host_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
@@ -1733,24 +1819,41 @@ fn execute_headless_plan_with_hooks(
     service_events: Option<&mut ServiceLifecycleEvents>,
 ) -> Result<RuntimeTerminalResult> {
     let mut approvals = approval_controller_from_plan(plan, None, None)?;
+    let mut runtime = runtime_snapshot_from_plan(plan);
+    let custom_knowledge = {
+        let service_events_ref = service_events.as_deref();
+        activate_custom_knowledge_runtime_for_plan(plan, &runtime, None, service_events_ref)
+    };
+    apply_custom_knowledge_activation_to_runtime(&mut runtime, &custom_knowledge);
+    let mut knowledge = {
+        let service_events_ref = service_events.as_deref();
+        knowledge_runtime_for_headless_plan(
+            plan,
+            &runtime,
+            custom_knowledge.runtime,
+            service_events_ref,
+        )
+    };
     let mut services = HarnessRuntimeServices {
         model,
         dispatcher,
+        knowledge: knowledge.as_mut(),
         approvals: approvals.as_mut(),
         hooks,
         service_events,
     };
-    execute_headless_plan_with_services(plan, input, report_override, &mut services)
+    execute_headless_plan_with_services(plan, input, report_override, runtime, &mut services)
 }
 
 fn execute_headless_plan_with_services(
     plan: &ResolvedHarnessPlan,
     input: String,
     report_override: Option<&PathBuf>,
+    runtime: RuntimeSnapshot,
     services: &mut HarnessRuntimeServices<'_>,
 ) -> Result<RuntimeTerminalResult> {
     let loop_manifest = load_plan_loop(plan)?;
-    let mut session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(plan));
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
     let run_id = allocate_harness_run_id();
     let output_paths = RunOutputPaths::resolve(
         &plan.state_dir,
@@ -1780,6 +1883,281 @@ fn execute_headless_plan_with_services(
         .report
         .write_pretty(&output_paths.report_path, &plan.config.config.trace.content)?;
     Ok(terminal)
+}
+
+fn knowledge_runtime_for_headless_plan(
+    plan: &ResolvedHarnessPlan,
+    runtime: &RuntimeSnapshot,
+    custom: Option<CustomKnowledgeRuntime>,
+    service_events: Option<&ServiceLifecycleEvents>,
+) -> Box<dyn KnowledgeRuntime> {
+    let embedding_provider = embedding_provider_for_plan(plan, None, service_events);
+    let local = LocalKnowledgeRuntime::from_runtime(runtime, embedding_provider);
+    Box::new(CompositeKnowledgeRuntime::new(
+        local,
+        custom,
+        custom_knowledge_routes(plan),
+    ))
+}
+
+fn knowledge_runtime_for_machine_plan(
+    plan: &ResolvedHarnessPlan,
+    runtime: &RuntimeSnapshot,
+    custom: Option<CustomKnowledgeRuntime>,
+    bridge: &MachineHostBridgeHandle,
+    service_events: Option<&ServiceLifecycleEvents>,
+) -> Box<dyn KnowledgeRuntime> {
+    let embedding_provider =
+        embedding_provider_for_plan(plan, Some(bridge.clone()), service_events);
+    let local = LocalKnowledgeRuntime::from_runtime(runtime, embedding_provider);
+    Box::new(CompositeKnowledgeRuntime::new(
+        local,
+        custom,
+        custom_knowledge_routes(plan),
+    ))
+}
+
+struct CustomKnowledgeRuntimeActivation {
+    runtime: Option<CustomKnowledgeRuntime>,
+    unavailable_packages: BTreeMap<String, String>,
+}
+
+fn activate_custom_knowledge_runtime_for_plan(
+    plan: &ResolvedHarnessPlan,
+    runtime: &RuntimeSnapshot,
+    host_bridge: Option<MachineHostBridgeHandle>,
+    service_events: Option<&ServiceLifecycleEvents>,
+) -> CustomKnowledgeRuntimeActivation {
+    let routes = custom_knowledge_routes(plan);
+    if routes.is_empty() {
+        return CustomKnowledgeRuntimeActivation {
+            runtime: None,
+            unavailable_packages: BTreeMap::new(),
+        };
+    }
+    let mapped_available_packages = runtime
+        .knowledge
+        .iter()
+        .filter(|package| routes.contains_key(&package.name) && package.state == "available")
+        .cloned()
+        .collect::<Vec<_>>();
+    if mapped_available_packages.is_empty() {
+        return CustomKnowledgeRuntimeActivation {
+            runtime: None,
+            unavailable_packages: BTreeMap::new(),
+        };
+    }
+    let mut active_packages = Vec::new();
+    let mut unavailable_packages = BTreeMap::new();
+    let mut runtimes = HashMap::new();
+    for runtime_id in routes.values().cloned().collect::<BTreeSet<_>>() {
+        let mapped_packages = mapped_available_packages
+            .iter()
+            .filter(|package| routes.get(&package.name) == Some(&runtime_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if mapped_packages.is_empty() {
+            continue;
+        }
+        let Some(entry) = plan.config.config.knowledge.runtimes.get(&runtime_id) else {
+            mark_custom_knowledge_runtime_unavailable(
+                &mut unavailable_packages,
+                &mapped_packages,
+                format!("knowledge.packages references undefined KnowledgeRuntime `{runtime_id}`"),
+            );
+            continue;
+        };
+        let activation = match &entry.implementation {
+            crate::harness_config::HarnessImplementation::Process { .. } => {
+                let mut initialize_payload = serde_json::Map::new();
+                initialize_payload.insert("packages".into(), json!(&mapped_packages));
+                crate::harness_runtime::knowledge::ServiceRuntime::process(
+                    "knowledge",
+                    &runtime_id,
+                    entry,
+                    &plan.workspace_root,
+                    initialize_payload,
+                    service_events.map(ServiceLifecycleEvents::emitter),
+                )
+                .map(|service_runtime| {
+                    let capabilities = service_runtime
+                        .initialization_result()
+                        .cloned()
+                        .unwrap_or_else(|| json!({}));
+                    (service_runtime, capabilities)
+                })
+                .map_err(|err| {
+                    anyhow!("configured KnowledgeRuntime `{runtime_id}` could not start: {err}")
+                })
+            }
+            crate::harness_config::HarnessImplementation::Host { request_timeout_ms } => {
+                let bridge = host_bridge.clone().ok_or_else(|| {
+                    anyhow!(
+                        "configured KnowledgeRuntime `{runtime_id}` requires a machine host service"
+                    )
+                });
+                bridge.and_then(|bridge| {
+                    let capabilities = bridge
+                        .host_service_capabilities("knowledge", &runtime_id)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "configured KnowledgeRuntime `{runtime_id}` host service is not registered"
+                            )
+                        })?;
+                    Ok((
+                        crate::harness_runtime::knowledge::ServiceRuntime::host(
+                            Box::new(bridge),
+                            *request_timeout_ms,
+                        ),
+                        capabilities,
+                    ))
+                })
+            }
+        };
+        let (service_runtime, capabilities) = match activation {
+            Ok(activation) => activation,
+            Err(err) => {
+                mark_custom_knowledge_runtime_unavailable(
+                    &mut unavailable_packages,
+                    &mapped_packages,
+                    err.to_string(),
+                );
+                continue;
+            }
+        };
+        let mut runtime_active_packages = Vec::new();
+        for package in mapped_packages {
+            match crate::harness_runtime::knowledge::validate_knowledge_runtime_capabilities(
+                &capabilities,
+                &runtime_id,
+                std::slice::from_ref(&package),
+            ) {
+                Ok(()) => runtime_active_packages.push(package),
+                Err(err) => {
+                    unavailable_packages.insert(
+                        package.name.clone(),
+                        format!(
+                            "configured KnowledgeRuntime `{runtime_id}` could not realize {}@{}: {err}",
+                            package.name, package.version
+                        ),
+                    );
+                }
+            }
+        }
+        if runtime_active_packages.is_empty() {
+            continue;
+        }
+        active_packages.extend(runtime_active_packages);
+        runtimes.insert(runtime_id, service_runtime);
+    }
+    let runtime = (!active_packages.is_empty())
+        .then(|| CustomKnowledgeRuntime::new(active_packages, runtimes, routes));
+    CustomKnowledgeRuntimeActivation {
+        runtime,
+        unavailable_packages,
+    }
+}
+
+fn mark_custom_knowledge_runtime_unavailable(
+    unavailable_packages: &mut BTreeMap<String, String>,
+    packages: &[KnowledgeRuntimeSnapshot],
+    reason: String,
+) {
+    for package in packages {
+        unavailable_packages.insert(package.name.clone(), reason.clone());
+    }
+}
+
+fn apply_custom_knowledge_activation_to_runtime(
+    runtime: &mut RuntimeSnapshot,
+    activation: &CustomKnowledgeRuntimeActivation,
+) {
+    for package in &mut runtime.knowledge {
+        if let Some(reason) = activation.unavailable_packages.get(&package.name) {
+            package.state = "unavailable".into();
+            package.readiness_reason = Some(reason.clone());
+        }
+    }
+}
+
+fn custom_knowledge_routes(plan: &ResolvedHarnessPlan) -> BTreeMap<String, String> {
+    plan.config
+        .config
+        .knowledge
+        .packages
+        .iter()
+        .map(|(package, mapping)| (package.clone(), mapping.runtime.clone()))
+        .collect()
+}
+
+fn embedding_provider_for_plan(
+    plan: &ResolvedHarnessPlan,
+    host_bridge: Option<MachineHostBridgeHandle>,
+    service_events: Option<&ServiceLifecycleEvents>,
+) -> Option<Box<dyn crate::harness_runtime::EmbeddingProvider>> {
+    let mut providers: BTreeMap<String, Box<dyn crate::harness_runtime::EmbeddingProvider>> =
+        BTreeMap::new();
+    let mut routes = BTreeMap::new();
+    for item in &plan.config.config.knowledge.embedding_matches {
+        let Some(entry) = plan
+            .config
+            .config
+            .providers
+            .embeddings
+            .get(&item.embedding_provider)
+        else {
+            continue;
+        };
+        routes.insert(
+            format!(
+                "{}\n{}\n{}\n{}",
+                item.r#match.provider,
+                item.r#match.model,
+                item.r#match.dimensions,
+                item.r#match.normalized
+            ),
+            item.embedding_provider.clone(),
+        );
+        if providers.contains_key(&item.embedding_provider) {
+            continue;
+        }
+        let provider: Result<Box<dyn crate::harness_runtime::EmbeddingProvider>> =
+            match &entry.implementation {
+                crate::harness_config::HarnessImplementation::Process { .. } => {
+                    ServiceEmbeddingProvider::process(
+                        &plan.workspace_root,
+                        &item.embedding_provider,
+                        entry,
+                        service_events.map(ServiceLifecycleEvents::emitter),
+                    )
+                    .map(|provider| {
+                        Box::new(provider) as Box<dyn crate::harness_runtime::EmbeddingProvider>
+                    })
+                }
+                crate::harness_config::HarnessImplementation::Host { .. } => {
+                    let Some(bridge) = host_bridge.clone() else {
+                        continue;
+                    };
+                    ServiceEmbeddingProvider::host(
+                        &item.embedding_provider,
+                        entry,
+                        Box::new(bridge),
+                        service_events.map(ServiceLifecycleEvents::emitter),
+                    )
+                    .map(|provider| {
+                        Box::new(provider) as Box<dyn crate::harness_runtime::EmbeddingProvider>
+                    })
+                }
+            };
+        if let Ok(provider) = provider {
+            providers.insert(item.embedding_provider.clone(), provider);
+        }
+    }
+    if providers.is_empty() {
+        None
+    } else {
+        Some(Box::new(RoutingEmbeddingProvider::new(routes, providers)))
+    }
 }
 
 struct HeadlessApprovalController;
@@ -1885,6 +2263,7 @@ fn runtime_snapshot_from_plan(plan: &ResolvedHarnessPlan) -> RuntimeSnapshot {
         profile_bindings: plan.profile_bindings.clone(),
         tools: tool_snapshots_from_plan(plan),
         skills: skill_snapshots_from_plan(plan),
+        knowledge: knowledge_snapshots_from_plan(plan),
         capability_candidates: plan
             .capabilities
             .iter()
@@ -1997,6 +2376,212 @@ fn skill_snapshots_from_plan(plan: &ResolvedHarnessPlan) -> Vec<SkillRuntimeSnap
             })
         })
         .collect()
+}
+
+fn knowledge_snapshots_from_plan(plan: &ResolvedHarnessPlan) -> Vec<KnowledgeRuntimeSnapshot> {
+    let bound_knowledge = plan
+        .capabilities
+        .iter()
+        .filter(|capability| capability.kind == "knowledge")
+        .map(|capability| {
+            (
+                capability.identity.clone(),
+                (
+                    capability_state_label(capability.state).to_string(),
+                    capability.source.clone(),
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    plan.package_graph
+        .values()
+        .filter(|package| package.kind == PackageKind::Knowledge)
+        .filter_map(|package| {
+            let (candidate_state, source) = bound_knowledge.get(&package.name)?;
+            let path = package.root.join("agent.json");
+            let manifest = load_manifest_value(&path)
+                .and_then(|(value, _)| parse_knowledge_manifest(&value))
+                .ok()?;
+            let (runtime, state, readiness_reason) =
+                knowledge_runtime_readiness(plan, package, &manifest, candidate_state);
+            Some(
+                crate::harness_runtime::knowledge::knowledge_snapshot_from_manifest(
+                    &package.root,
+                    &manifest,
+                    source.clone(),
+                    runtime,
+                    state,
+                    readiness_reason,
+                ),
+            )
+        })
+        .collect()
+}
+
+fn knowledge_runtime_readiness(
+    plan: &ResolvedHarnessPlan,
+    package: &ResolvedPackageInfo,
+    manifest: &crate::manifest::KnowledgeManifest,
+    candidate_state: &str,
+) -> (String, String, Option<String>) {
+    if candidate_state != "available" {
+        return (
+            "none".into(),
+            candidate_state.to_string(),
+            Some(format!(
+                "Knowledge binding readiness state is {candidate_state}"
+            )),
+        );
+    }
+    if let Some(mapping) = plan.config.config.knowledge.packages.get(&package.name) {
+        return configured_knowledge_runtime_readiness(plan, &mapping.runtime);
+    }
+    match manifest.knowledge.mode.as_str() {
+        "context" => {
+            match crate::commands::knowledge::build_context_mode(&package.root, manifest) {
+                Ok(result) => {
+                    let mut mismatches = Vec::new();
+                    match manifest.knowledge.context.as_ref() {
+                        Some(context) => {
+                            if context.document_count != Some(result.document_count) {
+                                mismatches.push("knowledge.context.document_count");
+                            }
+                            if context.total_bytes != Some(result.total_bytes) {
+                                mismatches.push("knowledge.context.total_bytes");
+                            }
+                            if context.content_hash.as_deref() != Some(result.content_hash.as_str())
+                            {
+                                mismatches.push("knowledge.context.content_hash");
+                            }
+                        }
+                        None => mismatches.push("knowledge.context"),
+                    }
+                    if mismatches.is_empty() {
+                        ("local".into(), "available".into(), None)
+                    } else {
+                        (
+                            "local".into(),
+                            "unavailable".into(),
+                            Some(format!(
+                                "context Knowledge metadata is stale or malformed: {}",
+                                mismatches.join(", ")
+                            )),
+                        )
+                    }
+                }
+                Err(err) => ("local".into(), "unavailable".into(), Some(err.to_string())),
+            }
+        }
+        "vector" => match crate::commands::knowledge::local_vector_readiness(&package.root) {
+            Ok(readiness) => {
+                let space = KnowledgeEmbeddingSnapshot {
+                    id: readiness.embedding_id,
+                    provider: readiness.provider,
+                    model: readiness.model,
+                    dimensions: readiness.dimensions,
+                    metric: readiness.metric,
+                    normalized: readiness.normalized,
+                };
+                match compatible_embedding_provider_id(plan, &space) {
+                    Some(provider_id)
+                        if configured_embedding_provider_is_realizable(plan, &provider_id) =>
+                    {
+                        ("local".into(), "available".into(), None)
+                    }
+                    Some(provider_id) => (
+                        "local".into(),
+                        "unavailable".into(),
+                        Some(format!(
+                            "installed vector artifacts are coherent but EmbeddingProvider `{provider_id}` is unavailable for the current execution surface"
+                        )),
+                    ),
+                    None => (
+                        "local".into(),
+                        "unavailable".into(),
+                        Some(format!(
+                            "installed vector artifacts are coherent but no compatible EmbeddingProvider is configured for {}/{}/dimensions={}/normalized={}",
+                            space.provider, space.model, space.dimensions, space.normalized
+                        )),
+                    ),
+                }
+            }
+            Err(err) => (
+                "local".into(),
+                "unavailable".into(),
+                Some(format!("installed vector artifact integrity failed: {err}")),
+            ),
+        },
+        other => (
+            "none".into(),
+            "unavailable".into(),
+            Some(format!("unsupported Knowledge mode `{other}`")),
+        ),
+    }
+}
+
+fn configured_knowledge_runtime_readiness(
+    plan: &ResolvedHarnessPlan,
+    runtime_id: &str,
+) -> (String, String, Option<String>) {
+    let Some(_entry) = plan.config.config.knowledge.runtimes.get(runtime_id) else {
+        return (
+            runtime_id.to_string(),
+            "unavailable".into(),
+            Some(format!(
+                "knowledge.packages references undefined KnowledgeRuntime `{runtime_id}`"
+            )),
+        );
+    };
+    match configured_runtime_candidate_state(plan, "knowledge_runtime", runtime_id) {
+        Some(
+            CapabilityState::Unavailable
+            | CapabilityState::Suppressed
+            | CapabilityState::NotConfigured,
+        ) => (
+            runtime_id.to_string(),
+            "unavailable".into(),
+            Some(format!(
+                "configured KnowledgeRuntime `{runtime_id}` is unavailable for the current execution surface"
+            )),
+        ),
+        Some(CapabilityState::Available | CapabilityState::Pending) | None => {
+            (runtime_id.to_string(), "available".into(), None)
+        }
+    }
+}
+
+fn configured_embedding_provider_is_realizable(
+    plan: &ResolvedHarnessPlan,
+    provider_id: &str,
+) -> bool {
+    matches!(
+        configured_runtime_candidate_state(plan, "embedding_provider", provider_id),
+        Some(CapabilityState::Available | CapabilityState::Pending) | None
+    )
+}
+
+fn configured_runtime_candidate_state(
+    plan: &ResolvedHarnessPlan,
+    kind: &str,
+    identity: &str,
+) -> Option<CapabilityState> {
+    plan.capabilities
+        .iter()
+        .find(|capability| capability.kind == kind && capability.identity == identity)
+        .map(|capability| capability.state)
+}
+
+fn compatible_embedding_provider_id(
+    plan: &ResolvedHarnessPlan,
+    space: &KnowledgeEmbeddingSnapshot,
+) -> Option<String> {
+    plan.config
+        .config
+        .knowledge
+        .embedding_matches
+        .iter()
+        .find(|item| crate::harness_runtime::knowledge::embedding_key_matches(space, &item.r#match))
+        .map(|item| item.embedding_provider.clone())
 }
 
 fn capability_state_label(state: CapabilityState) -> &'static str {
@@ -2174,7 +2759,8 @@ mod tests {
     use crate::harness_config::{
         HarnessApprovalController, HarnessConfig, HarnessConfigSource, HarnessHookBinding,
         HarnessHookFailurePolicy, HarnessHookId, HarnessImplementation, HarnessImplementationEntry,
-        HarnessTraceConfig, HarnessTraceContent, HarnessTraceLevel, ResolvedHarnessConfig,
+        HarnessRuntimeMapping, HarnessTraceConfig, HarnessTraceContent, HarnessTraceLevel,
+        ResolvedHarnessConfig,
     };
     use crate::harness_observability::{
         HarnessTerminalStatus, ReportPackageIdentity, RunReport, RunUsage,
@@ -2348,6 +2934,311 @@ mod tests {
     }
 
     #[test]
+    fn mapped_knowledge_runtime_readiness_requires_realizable_runtime() {
+        let root = temp_dir("mapped-knowledge-runtime-readiness");
+        let knowledge_root = root.join(".agentpm/knowledge/@zack/guide/0.1.0");
+        write_json(
+            &knowledge_root.join("agent.json"),
+            json!({
+                "kind": "knowledge",
+                "name": "@zack/guide",
+                "version": "0.1.0",
+                "description": "Guide.",
+                "knowledge": {
+                    "mode": "context",
+                    "content_type": "text/markdown",
+                    "documents": [
+                        { "path": "knowledge/docs/guide.md", "content_type": "text/markdown" }
+                    ]
+                }
+            }),
+        );
+        let mut plan = minimal_plan(&root);
+        plan.package_graph.insert(
+            "knowledge:@zack/guide@0.1.0".into(),
+            ResolvedPackageInfo {
+                key: "knowledge:@zack/guide@0.1.0".into(),
+                kind: PackageKind::Knowledge,
+                name: "@zack/guide".into(),
+                version: "0.1.0".into(),
+                root: knowledge_root,
+            },
+        );
+        plan.capabilities
+            .push(crate::harness_plan::StaticCapabilityCandidate {
+                kind: "knowledge".into(),
+                identity: "@zack/guide".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: CapabilityState::Available,
+            });
+        plan.capabilities
+            .push(crate::harness_plan::StaticCapabilityCandidate {
+                kind: "knowledge_runtime".into(),
+                identity: "remote-knowledge".into(),
+                scope: "session".into(),
+                source: "harness_config".into(),
+                state: CapabilityState::Unavailable,
+            });
+        plan.config.config.knowledge.runtimes.insert(
+            "remote-knowledge".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.knowledge.packages.insert(
+            "@zack/guide".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-knowledge".into(),
+            },
+        );
+
+        let runtime = runtime_snapshot_from_plan(&plan);
+        assert_eq!(runtime.knowledge.len(), 1);
+        assert_eq!(runtime.knowledge[0].runtime, "remote-knowledge");
+        assert_eq!(runtime.knowledge[0].state, "unavailable");
+        assert!(
+            runtime.knowledge[0]
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("configured KnowledgeRuntime `remote-knowledge` is unavailable")
+        );
+    }
+
+    #[test]
+    fn custom_knowledge_activation_failure_suppresses_mapped_package() {
+        let root = temp_dir("custom-knowledge-activation-failure");
+        let knowledge_root = root.join(".agentpm/knowledge/@zack/guide/0.1.0");
+        write_json(
+            &knowledge_root.join("agent.json"),
+            json!({
+                "kind": "knowledge",
+                "name": "@zack/guide",
+                "version": "0.1.0",
+                "description": "Guide.",
+                "knowledge": {
+                    "mode": "context",
+                    "content_type": "text/markdown",
+                    "documents": [
+                        { "path": "knowledge/docs/guide.md", "content_type": "text/markdown" }
+                    ]
+                }
+            }),
+        );
+        let mut plan = minimal_plan(&root);
+        plan.package_graph.insert(
+            "knowledge:@zack/guide@0.1.0".into(),
+            ResolvedPackageInfo {
+                key: "knowledge:@zack/guide@0.1.0".into(),
+                kind: PackageKind::Knowledge,
+                name: "@zack/guide".into(),
+                version: "0.1.0".into(),
+                root: knowledge_root,
+            },
+        );
+        plan.capabilities
+            .push(crate::harness_plan::StaticCapabilityCandidate {
+                kind: "knowledge".into(),
+                identity: "@zack/guide".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: CapabilityState::Available,
+            });
+        plan.capabilities
+            .push(crate::harness_plan::StaticCapabilityCandidate {
+                kind: "knowledge_runtime".into(),
+                identity: "remote-knowledge".into(),
+                scope: "session".into(),
+                source: "harness_config".into(),
+                state: CapabilityState::Available,
+            });
+        plan.config.config.knowledge.runtimes.insert(
+            "remote-knowledge".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Process {
+                    command: "__agentpm_missing_knowledge_runtime__".into(),
+                    args: Vec::new(),
+                    cwd: None,
+                    env: Vec::new(),
+                    startup_timeout_ms: 100,
+                    request_timeout_ms: 100,
+                    restart: Default::default(),
+                },
+            },
+        );
+        plan.config.config.knowledge.packages.insert(
+            "@zack/guide".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-knowledge".into(),
+            },
+        );
+
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        assert_eq!(runtime.knowledge.len(), 1);
+        assert_eq!(runtime.knowledge[0].state, "available");
+
+        let activation = activate_custom_knowledge_runtime_for_plan(&plan, &runtime, None, None);
+        assert!(activation.runtime.is_none());
+        apply_custom_knowledge_activation_to_runtime(&mut runtime, &activation);
+
+        assert_eq!(runtime.knowledge[0].runtime, "remote-knowledge");
+        assert_eq!(runtime.knowledge[0].state, "unavailable");
+        assert!(
+            runtime.knowledge[0]
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("configured KnowledgeRuntime `remote-knowledge` could not start")
+        );
+    }
+
+    #[test]
+    fn custom_knowledge_activation_isolates_unhealthy_runtime() {
+        let root = temp_dir("custom-knowledge-activation-isolates-runtime");
+        let healthy_root = root.join(".agentpm/knowledge/@zack/healthy/0.1.0");
+        let unhealthy_root = root.join(".agentpm/knowledge/@zack/unhealthy/0.1.0");
+        for (package_root, name, description) in [
+            (&healthy_root, "@zack/healthy", "Healthy guide."),
+            (&unhealthy_root, "@zack/unhealthy", "Unhealthy guide."),
+        ] {
+            write_json(
+                &package_root.join("agent.json"),
+                json!({
+                    "kind": "knowledge",
+                    "name": name,
+                    "version": "0.1.0",
+                    "description": description,
+                    "knowledge": {
+                        "mode": "context",
+                        "content_type": "text/markdown",
+                        "documents": [
+                            { "path": "knowledge/docs/guide.md", "content_type": "text/markdown" }
+                        ]
+                    }
+                }),
+            );
+        }
+        let mut plan = minimal_plan(&root);
+        for (name, package_root) in [
+            ("@zack/healthy", healthy_root),
+            ("@zack/unhealthy", unhealthy_root),
+        ] {
+            plan.package_graph.insert(
+                format!("knowledge:{name}@0.1.0"),
+                ResolvedPackageInfo {
+                    key: format!("knowledge:{name}@0.1.0"),
+                    kind: PackageKind::Knowledge,
+                    name: name.into(),
+                    version: "0.1.0".into(),
+                    root: package_root,
+                },
+            );
+            plan.capabilities
+                .push(crate::harness_plan::StaticCapabilityCandidate {
+                    kind: "knowledge".into(),
+                    identity: name.into(),
+                    scope: "global".into(),
+                    source: "agent_binding".into(),
+                    state: CapabilityState::Available,
+                });
+        }
+        for runtime_id in ["healthy-knowledge", "unhealthy-knowledge"] {
+            plan.capabilities
+                .push(crate::harness_plan::StaticCapabilityCandidate {
+                    kind: "knowledge_runtime".into(),
+                    identity: runtime_id.into(),
+                    scope: "session".into(),
+                    source: "harness_config".into(),
+                    state: CapabilityState::Available,
+                });
+        }
+        plan.config.config.knowledge.runtimes.insert(
+            "healthy-knowledge".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.knowledge.runtimes.insert(
+            "unhealthy-knowledge".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Process {
+                    command: "__agentpm_missing_knowledge_runtime__".into(),
+                    args: Vec::new(),
+                    cwd: None,
+                    env: Vec::new(),
+                    startup_timeout_ms: 100,
+                    request_timeout_ms: 100,
+                    restart: Default::default(),
+                },
+            },
+        );
+        plan.config.config.knowledge.packages.insert(
+            "@zack/healthy".into(),
+            HarnessRuntimeMapping {
+                runtime: "healthy-knowledge".into(),
+            },
+        );
+        plan.config.config.knowledge.packages.insert(
+            "@zack/unhealthy".into(),
+            HarnessRuntimeMapping {
+                runtime: "unhealthy-knowledge".into(),
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        bridge.register_host_service(
+            &host_service("knowledge", "healthy-knowledge"),
+            json!({
+                "ready": true,
+                "registry_id": "healthy-knowledge",
+                "modes": ["context_document"],
+                "features": [],
+                "packages": [
+                    {
+                        "package": "@zack/healthy",
+                        "version": "0.1.0",
+                        "ready": true
+                    }
+                ]
+            }),
+        );
+
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        let activation =
+            activate_custom_knowledge_runtime_for_plan(&plan, &runtime, Some(bridge), None);
+        assert!(activation.runtime.is_some());
+        apply_custom_knowledge_activation_to_runtime(&mut runtime, &activation);
+
+        let healthy = runtime
+            .knowledge
+            .iter()
+            .find(|package| package.name == "@zack/healthy")
+            .unwrap();
+        assert_eq!(healthy.runtime, "healthy-knowledge");
+        assert_eq!(healthy.state, "available");
+        assert!(healthy.readiness_reason.is_none());
+
+        let unhealthy = runtime
+            .knowledge
+            .iter()
+            .find(|package| package.name == "@zack/unhealthy")
+            .unwrap();
+        assert_eq!(unhealthy.runtime, "unhealthy-knowledge");
+        assert_eq!(unhealthy.state, "unavailable");
+        assert!(
+            unhealthy
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("configured KnowledgeRuntime `unhealthy-knowledge` could not start")
+        );
+    }
+
+    #[test]
     fn machine_registration_accepts_unconfigured_sdk_hooks_and_approval() {
         let root = temp_dir("sdk-host-service-registration");
         let plan = minimal_plan(&root);
@@ -2408,25 +3299,15 @@ mod tests {
     }
 
     #[test]
-    fn host_registration_response_marks_future_runtime_roles_inactive() {
+    fn host_registration_response_marks_milestone_twelve_roles_active() {
         let embedding = host_service_registration_response(&host_service("embedding", "embedder"));
         assert_eq!(embedding["registered"], json!(true));
-        assert_eq!(embedding["active"], json!(false));
-        assert!(
-            embedding["reason"]
-                .as_str()
-                .unwrap()
-                .contains("Milestone 12")
-        );
+        assert_eq!(embedding["active"], json!(true));
+        assert!(embedding["reason"].is_null());
 
         let knowledge = host_service_registration_response(&host_service("knowledge", "kb"));
-        assert_eq!(knowledge["active"], json!(false));
-        assert!(
-            knowledge["reason"]
-                .as_str()
-                .unwrap()
-                .contains("Milestone 12")
-        );
+        assert_eq!(knowledge["active"], json!(true));
+        assert!(knowledge["reason"].is_null());
 
         let memory = host_service_registration_response(&host_service("memory", "store"));
         assert_eq!(memory["active"], json!(false));
@@ -3380,6 +4261,7 @@ mod tests {
                 active_profiles: Vec::new(),
                 active_tools: Vec::new(),
                 active_skills: Vec::new(),
+                active_knowledge: Vec::new(),
                 capability_catalog: Vec::new(),
                 suppressed_capabilities: Vec::new(),
             },

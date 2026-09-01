@@ -339,9 +339,20 @@ fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRe
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "query": { "type": "string", "minLength": 1 }
+                "mode": {
+                    "type": "string",
+                    "enum": ["context_document", "vector_query"]
+                },
+                "document": { "type": "string", "minLength": 1 },
+                "query": { "type": "string", "minLength": 1 },
+                "top_k": { "type": "integer", "minimum": 1 },
+                "score_threshold": { "type": "number" },
+                "return_citations": { "type": "boolean" }
             },
-            "required": ["query"]
+            "anyOf": [
+                { "required": ["document"] },
+                { "required": ["query"] }
+            ]
         }),
         "memory_read" => json!({
             "type": "object",
@@ -583,7 +594,21 @@ fn semantic_action_from_json(value: &Value) -> Result<SemanticAction, ModelRunti
         }),
         "knowledge_request" => Ok(SemanticAction::KnowledgeRequest {
             package: required_string(value, "package")?,
-            query: required_string(value, "query")?,
+            mode: parse_optional_knowledge_mode(value.get("mode"))?,
+            document: value
+                .get("document")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            query: value
+                .get("query")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            top_k: value
+                .get("top_k")
+                .and_then(Value::as_u64)
+                .map(|v| v as usize),
+            score_threshold: value.get("score_threshold").and_then(Value::as_f64),
+            return_citations: value.get("return_citations").and_then(Value::as_bool),
         }),
         "memory_read" => Ok(SemanticAction::MemoryRead {
             package: required_string(value, "package")?,
@@ -651,7 +676,30 @@ fn semantic_action_from_provider_call(
         }
         "knowledge_request" => Ok(SemanticAction::KnowledgeRequest {
             package: alias.identity.clone(),
-            query: required_string(&call.arguments, "query")?,
+            mode: parse_optional_knowledge_mode(call.arguments.get("mode"))?,
+            document: call
+                .arguments
+                .get("document")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            query: call
+                .arguments
+                .get("query")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            top_k: call
+                .arguments
+                .get("top_k")
+                .and_then(Value::as_u64)
+                .map(|v| v as usize),
+            score_threshold: call
+                .arguments
+                .get("score_threshold")
+                .and_then(Value::as_f64),
+            return_citations: call
+                .arguments
+                .get("return_citations")
+                .and_then(Value::as_bool),
         }),
         "memory_read" => Ok(SemanticAction::MemoryRead {
             package: alias.identity.clone(),
@@ -689,6 +737,28 @@ fn required_string(value: &Value, key: &str) -> Result<String, ModelRuntimeFailu
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| ModelRuntimeFailure::new(format!("provider action is missing `{key}`")))
+}
+
+fn parse_optional_knowledge_mode(
+    value: Option<&Value>,
+) -> Result<Option<super::knowledge::KnowledgeRequestMode>, ModelRuntimeFailure> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(mode) = value.as_str() else {
+        return Err(ModelRuntimeFailure::new(
+            "knowledge_request mode must be a string",
+        ));
+    };
+    match mode {
+        "context_document" => Ok(Some(
+            super::knowledge::KnowledgeRequestMode::ContextDocument,
+        )),
+        "vector_query" => Ok(Some(super::knowledge::KnowledgeRequestMode::VectorQuery)),
+        other => Err(ModelRuntimeFailure::new(format!(
+            "unsupported knowledge_request mode `{other}`"
+        ))),
+    }
 }
 
 #[derive(Default)]
@@ -1152,14 +1222,28 @@ mod tests {
             let schema = action_parameters_schema(&alias, &request);
             assert_eq!(schema["type"], "object");
             assert_eq!(schema["additionalProperties"], false);
-            assert!(
-                schema["required"]
-                    .as_array()
-                    .expect("schema required array")
-                    .contains(&json!(required_field)),
-                "{} should require {required_field}",
-                alias.action_kind
-            );
+            if alias.action_kind == "knowledge_request" {
+                assert!(
+                    schema["anyOf"]
+                        .as_array()
+                        .expect("knowledge schema anyOf")
+                        .iter()
+                        .any(|case| case["required"]
+                            .as_array()
+                            .is_some_and(|required| required.contains(&json!(required_field)))),
+                    "{} should allow {required_field}",
+                    alias.action_kind
+                );
+            } else {
+                assert!(
+                    schema["required"]
+                        .as_array()
+                        .expect("schema required array")
+                        .contains(&json!(required_field)),
+                    "{} should require {required_field}",
+                    alias.action_kind
+                );
+            }
         }
 
         let memory_write_schema = action_parameters_schema(
@@ -1229,9 +1313,9 @@ mod tests {
             json!({ "query": "incident handoff" }),
         );
         match action {
-            SemanticAction::KnowledgeRequest { package, query } => {
+            SemanticAction::KnowledgeRequest { package, query, .. } => {
                 assert_eq!(package, "@zack/guide");
-                assert_eq!(query, "incident handoff");
+                assert_eq!(query.as_deref(), Some("incident handoff"));
             }
             other => panic!("expected knowledge request action, got {other:?}"),
         }
@@ -1751,6 +1835,7 @@ for line in sys.stdin:
                 active_profiles: Vec::new(),
                 active_tools: Vec::new(),
                 active_skills: Vec::new(),
+                active_knowledge: Vec::new(),
                 capability_catalog: vec![capability],
                 suppressed_capabilities: Vec::new(),
             },

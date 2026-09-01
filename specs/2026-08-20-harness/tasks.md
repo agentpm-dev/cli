@@ -588,7 +588,10 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 - [ ] Implement local **context** Knowledge readiness/descriptors with compact package/document inventory and on-demand loading of exactly one declared document.
 - [ ] Treat document `role` as a discovery/reasoning hint only; do not infer eager loading or special authority.
 - [ ] Resolve/canonicalize all package-owned Knowledge paths inside the exact installed package root and reject traversal/symlink escapes.
-- [ ] Implement local **vector** Knowledge readiness from installed build/index/provenance metadata and validate index/corpus/vector compatibility before exposure.
+- [ ] Implement local **vector** Knowledge readiness from installed build/index/provenance metadata.
+- [ ] Before exposing a local vector Knowledge surface, verify that the installed chunks/corpus, vector artifact, and index belong to the same generated build and agree on chunk count, embedding ID/space, dimensions, metric, normalization, and available provenance/hash metadata; reject stale, malformed, or mismatched artifacts rather than querying them.
+- [ ] Distinguish installed artifact integrity from query-time realization readiness in preflight diagnostics: a vector package can have coherent installed artifacts but still be unavailable when Harness cannot produce a compatible query vector.
+- [ ] Require a compatible local/query EmbeddingProvider for the exact embedding space when the built-in local runtime must embed text queries; otherwise suppress the vector surface with an explicit readiness reason.
 - [ ] Treat packaged strategy/`top_k`/score threshold/citation settings as retrieval defaults/hints rather than Loop policy; authorized request/Hook shaping may narrow/adjust them within runtime constraints.
 - [ ] Keep retrieval citation/provenance data separate from final-answer formatting; `return_citations` never forces the final model response to cite sources.
 - [ ] Reuse public `agentpm knowledge query` behavior/machinery for local vector retrieval rather than adding a private Harness-only search implementation.
@@ -618,7 +621,10 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 - [ ] Emit Knowledge surface/readiness/request/retrieval/citation/failure events with content governed by trace policy.
 
 - [ ] Add protocol/golden JSON fixtures for KnowledgeRuntime request/result, EmbeddingProvider request/result, Knowledge Hook inputs/results, and representative typed failures.
-- [ ] Add tests for context progressive loading, undeclared-document rejection, local vector query, embedding fallback/capability mismatch, incompatible vectors, explicit custom runtime attestation/mismatch/no-fallback, unavailable suppression, distinct-package surfaces, Loop access, Hook shaping/reranking, citations, and backend failure returned to the phase.
+- [ ] Add tests for context progressive loading, undeclared-document rejection, local vector query, embedding fallback/capability mismatch, incompatible vectors, custom runtime attestation/mismatch, unavailable suppression, Loop access, Hook reranking, citations, and backend failure returned to the phase.
+- [ ] Add an explicit custom-runtime no-fallback regression test proving a package mapped to a custom KnowledgeRuntime is not served by local retrieval when that runtime is unavailable or inactive.
+- [ ] Add a live `before_knowledge_request` Hook shaping regression test proving allowed request options are patched before KnowledgeRuntime dispatch and then revalidated.
+- [ ] Add a distinct-package non-federation regression test proving bound Knowledge packages remain separate model-visible `knowledge_request` surfaces.
 
 ## Milestone 13: Pinecone and pgvector Knowledge Reference Providers + SDK Helpers
 > Scope note: prove the full custom KnowledgeRuntime path with two usable open-source reference integrations. Provider-specific logic belongs in provider bridges/SDK helpers speaking the public process/host contracts; do not add Pinecone/pgvector-specific branches to HarnessEngine or portable Knowledge artifacts.
@@ -628,6 +634,7 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 - [ ] Keep external index provisioning, corpus upload/upsert, schema creation, and synchronization outside Harness runtime execution; the provider must assume the external realization is already prepared.
 - [ ] Use the existing `knowledge.packages` mapping from Milestone 1/12; do not introduce a second provider-selection mechanism.
 - [ ] Validate package/version/corpus/hash identity against provider metadata where available and reject mismatch rather than serving unrelated data.
+- [ ] Treat provider startup/handshake/capability attestation as an activation result that feeds back into Knowledge surface readiness before `EffectivePhase`/model-facing capability catalog construction; a failed Pinecone/pgvector runtime or stale corpus attestation must suppress only its mapped Knowledge surfaces with explicit diagnostics rather than exposing an action that later kills the phase.
 - [ ] Preserve explicit-mapping no-fallback semantics.
 - [ ] Keep provider credentials inside the provider process/application environment and out of Harness event/report payloads.
 - [ ] Add first-class Pinecone and pgvector provider adapters/helpers to both Node and Python SDK ecosystems using optional dependencies/extras according to repository packaging conventions.
@@ -675,6 +682,7 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 - [ ] Advertise the normalized live MemoryRuntime capability descriptor from `spec.md` (`space_models`, `retrieval_modes`, `retention_actions`, `constraints`, `capacity`, `durable_trigger_state`, `atomic_batches`) containing only currently realizable capabilities.
 - [ ] Compare selected runtime capabilities to every bound space and suppress direct spaces it cannot faithfully realize, with explicit readiness diagnostics.
 - [ ] Honor explicit `memory.packages` mappings now: initialize the configured custom process/host MemoryRuntime, use its live capability descriptor, route direct operations to it, and never silently fall back to SQLite on failure/mismatch.
+- [ ] Reuse the Milestone 12 activation/readiness pattern for MemoryRuntime: startup/host registration/capability/Blueprint realization results must be applied to per-package/space readiness before direct Memory surfaces are exposed, not rediscovered as late dispatch failures after the model selects an unavailable action.
 - [ ] Apply the same readiness/capability enforcement to process and host custom MemoryRuntime implementations: reject `ready:false`, registry/package/version/Blueprint realization mismatches, malformed capability payloads, and unsupported space/retrieval/write/batch requirements before exposing direct Memory surfaces.
 - [ ] Emit equivalent service health diagnostics/events for process and host MemoryRuntime failures/timeouts, and keep explicit custom-runtime failures from silently falling back to SQLite.
 - [ ] For unmapped packages, use the built-in SQLite runtime.
@@ -695,6 +703,7 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 - [ ] Allow a participating operation to access its declared internal input/output/target spaces even when those spaces are not directly bound/model-visible in the current phase.
 - [ ] Keep Loop `memory.read/write` restrictions limited to direct model access; they must not disable internally authorized lifecycle operation reads/writes.
 - [ ] Require live backend readiness for all referenced operation spaces plus durable trigger state/atomic batches where the operation needs them; suppress only the unavailable operation where safe.
+- [ ] Feed MemoryRuntime activation/capability failures into operation readiness before operation scheduling or external invocation; an operation whose backend spaces/state cannot be faithfully realized must be suppressed/diagnosed, not allowed to start and then fail as the normal control path.
 
 - [ ] Compute each operation scope tuple from the union of scope keys required by its declared inputs/output/targets and resolve those values only from trusted RunContext/runtime scope state.
 - [ ] Persist trigger state through MemoryRuntime (`memory_operation_state` for SQLite or equivalent provider API) keyed by exact package/version/operation/resolved operation scope.
@@ -777,6 +786,7 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Require every import to declare explicit `scope.mode: global | phases`; global forbids `phases`, while phase scope requires a non-empty unique list already validated against the selected Loop.
 - [ ] Support optional allowed Tool-name filter; omitted means all currently advertised Tools are eligible within the explicitly configured scope.
 - [ ] Start/connect imports at Session bootstrap, perform MCP initialization and `tools/list`, validate configured filters, and normalize discovered Tool name/description/input schema into runtime Tool descriptors.
+- [ ] Treat MCP import startup/connection/initialization/`tools/list`/filter validation as per-server/per-tool activation results that feed back into augmentation readiness before `EffectivePhase` construction; failed imports or filtered/missing Tools must be suppressed with reasons rather than exposed as model-selectable Tools that later fail resolution.
 - [ ] Replace the Milestone 5 placeholder provider-native `external_mcp_tool` action schema with each discovered MCP Tool's advertised input schema after `tools/list`, preserving the configured filter/scope.
 - [ ] Replace any combined-string `server/tool` alias-decoding placeholder with structured external MCP Tool identity metadata before imported MCP Tool actions become live; server IDs and Tool names must not depend on `/` splitting such as `rsplit_once('/')`.
 - [ ] Apply managed-service lifecycle to owned stdio imports and appropriate connection/readiness failure handling to remote HTTP imports; never replay an in-flight Tool call automatically after reconnect/restart.

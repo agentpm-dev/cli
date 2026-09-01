@@ -9,8 +9,10 @@ use crate::harness_observability::{
 };
 use crate::harness_plan::{PreflightDiagnostic, PreflightStatus};
 use crate::harness_runtime::hook::{
-    apply_before_model_request_decision, apply_before_tool_call_decision,
-    apply_before_tool_selection_decision, before_model_request_hook_from_request,
+    after_knowledge_retrieval_hook_from_result, apply_after_knowledge_retrieval_decision,
+    apply_before_knowledge_request_decision, apply_before_model_request_decision,
+    apply_before_tool_call_decision, apply_before_tool_selection_decision,
+    before_knowledge_request_hook_from_action, before_model_request_hook_from_request,
     before_tool_selection_hook_from_phase,
 };
 use crate::harness_runtime::model::ModelTurn;
@@ -22,6 +24,7 @@ use crate::harness_runtime::{
     RuntimeSnapshot, SemanticAction, ServiceLifecycleEvents, SkillRuntimeSnapshot,
     ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind, assemble_logical_prompt,
 };
+use crate::harness_runtime::{KnowledgeRuntime, KnowledgeRuntimeSnapshot, NoopKnowledgeRuntime};
 use crate::manifest::{
     LoopManifest, LoopPhase, LoopPhaseFailureAction, LoopToolFailureAction,
     LoopToolFailureExhaustedAction, ProfileMetadata,
@@ -82,6 +85,7 @@ pub struct EffectivePhase {
     pub active_profiles: Vec<ActiveProfile>,
     pub active_tools: Vec<ToolRuntimeSnapshot>,
     pub active_skills: Vec<SkillRuntimeSnapshot>,
+    pub active_knowledge: Vec<KnowledgeRuntimeSnapshot>,
     pub capability_catalog: Vec<CapabilityDescriptor>,
     pub suppressed_capabilities: Vec<SuppressedCapability>,
 }
@@ -110,14 +114,17 @@ impl EffectivePhase {
         }
         let mut active_tools = Vec::new();
         let mut active_skills = Vec::new();
+        let mut active_knowledge = Vec::new();
         let mut capability_catalog = phase_completion_descriptors(phase);
         capability_catalog.extend(runtime_capability_descriptors(
             phase,
             runtime,
             access.and_then(|access| access.tools),
+            access.and_then(|access| access.knowledge),
             &mut suppressed_capabilities,
             &mut active_tools,
             &mut active_skills,
+            &mut active_knowledge,
         ));
         Self {
             phase_id: phase.id.clone(),
@@ -133,6 +140,7 @@ impl EffectivePhase {
             active_profiles,
             active_tools,
             active_skills,
+            active_knowledge,
             capability_catalog,
             suppressed_capabilities,
         }
@@ -153,17 +161,21 @@ impl EffectivePhase {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn runtime_capability_descriptors(
     phase: &LoopPhase,
     runtime: &RuntimeSnapshot,
     tools_allowed: Option<bool>,
+    knowledge_allowed: Option<bool>,
     suppressed_capabilities: &mut Vec<SuppressedCapability>,
     active_tools: &mut Vec<ToolRuntimeSnapshot>,
     active_skills: &mut Vec<SkillRuntimeSnapshot>,
+    active_knowledge: &mut Vec<KnowledgeRuntimeSnapshot>,
 ) -> Vec<CapabilityDescriptor> {
     let mut descriptors = Vec::new();
     let mut seen_tools = BTreeSet::new();
     let mut seen_skills = BTreeSet::new();
+    let mut seen_knowledge = BTreeSet::new();
     for candidate in runtime
         .capability_candidates
         .iter()
@@ -247,6 +259,51 @@ fn runtime_capability_descriptors(
                     source: candidate.source.clone(),
                 });
             }
+            "knowledge" => {
+                if !seen_knowledge.insert(candidate.identity.clone()) {
+                    continue;
+                }
+                if knowledge_allowed == Some(false) {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "knowledge".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: "Loop access.knowledge=false for this phase".into(),
+                    });
+                    continue;
+                }
+                let Some(knowledge) = runtime
+                    .knowledge
+                    .iter()
+                    .find(|knowledge| knowledge.name == candidate.identity)
+                else {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "knowledge".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: "resolved Knowledge metadata unavailable".into(),
+                    });
+                    continue;
+                };
+                if !is_available_candidate(candidate) || knowledge.state != "available" {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "knowledge".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: knowledge.readiness_reason.clone().unwrap_or_else(|| {
+                            format!("Knowledge readiness state is {}", knowledge.state)
+                        }),
+                    });
+                    continue;
+                }
+                active_knowledge.push(knowledge.clone());
+                descriptors.push(CapabilityDescriptor {
+                    action_kind: "knowledge_request".into(),
+                    identity: knowledge.name.clone(),
+                    description: knowledge_descriptor_description(knowledge),
+                    source: candidate.source.clone(),
+                });
+            }
             _ => {}
         }
     }
@@ -279,6 +336,47 @@ fn skill_resource_descriptor_description(
             resources
         }
     )
+}
+
+fn knowledge_descriptor_description(knowledge: &KnowledgeRuntimeSnapshot) -> String {
+    match knowledge.mode.as_str() {
+        "context" => {
+            let documents = knowledge
+                .documents
+                .iter()
+                .map(|document| {
+                    if let Some(role) = &document.role {
+                        format!("{} ({role})", document.path)
+                    } else {
+                        document.path.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "{} Context Knowledge. Request one declared document when needed. Documents: {}.",
+                knowledge.description,
+                if documents.is_empty() {
+                    "none".into()
+                } else {
+                    documents
+                }
+            )
+        }
+        "vector" => {
+            let defaults = knowledge
+                .retrieval
+                .as_ref()
+                .and_then(|retrieval| retrieval.default_top_k)
+                .map(|top_k| format!(" Default top_k hint: {top_k}."))
+                .unwrap_or_default();
+            format!(
+                "{} Vector Knowledge. Submit a text query; retrieval returns chunks, sources, scores, and citation metadata.{}",
+                knowledge.description, defaults
+            )
+        }
+        _ => knowledge.description.clone(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -360,6 +458,81 @@ fn validate_semantic_action(action: &SemanticAction, phase: &EffectivePhase) -> 
                     "Skill `{skill}` resource `{resource}` is not active in this phase."
                 ))
             }
+        }
+        SemanticAction::KnowledgeRequest {
+            package,
+            mode,
+            document,
+            query,
+            top_k,
+            ..
+        } => {
+            let Some(knowledge) = phase
+                .active_knowledge
+                .iter()
+                .find(|candidate| candidate.name == *package)
+            else {
+                return Err(format!(
+                    "Knowledge package `{package}` is not available in the current EffectivePhase."
+                ));
+            };
+            if top_k == &Some(0) {
+                return Err("Knowledge request top_k must be greater than 0.".into());
+            }
+            let request_mode = mode.as_ref().cloned().unwrap_or_else(|| {
+                if document.is_some() {
+                    crate::harness_runtime::KnowledgeRequestMode::ContextDocument
+                } else {
+                    crate::harness_runtime::KnowledgeRequestMode::VectorQuery
+                }
+            });
+            match request_mode {
+                crate::harness_runtime::KnowledgeRequestMode::ContextDocument => {
+                    let Some(document) = document else {
+                        return Err(
+                            "Context Knowledge request must include a document path.".into()
+                        );
+                    };
+                    if query.is_some() {
+                        return Err(
+                            "Context Knowledge request must not include a vector query.".into()
+                        );
+                    }
+                    if knowledge.mode != "context" {
+                        return Err(format!(
+                            "Knowledge package `{package}` does not support context-document requests."
+                        ));
+                    }
+                    if !knowledge
+                        .documents
+                        .iter()
+                        .any(|candidate| candidate.path == *document)
+                    {
+                        return Err(format!(
+                            "Document `{document}` is not declared by Knowledge package `{package}`."
+                        ));
+                    }
+                }
+                crate::harness_runtime::KnowledgeRequestMode::VectorQuery => {
+                    let Some(query) = query else {
+                        return Err("Vector Knowledge request must include a query.".into());
+                    };
+                    if document.is_some() {
+                        return Err(
+                            "Vector Knowledge request must not include a context document.".into(),
+                        );
+                    }
+                    if query.trim().is_empty() {
+                        return Err("Vector Knowledge query must not be empty.".into());
+                    }
+                    if knowledge.mode != "vector" {
+                        return Err(format!(
+                            "Knowledge package `{package}` does not support vector-query requests."
+                        ));
+                    }
+                }
+            }
+            Ok(())
         }
         _ => Ok(()),
     }
@@ -660,6 +833,30 @@ impl HarnessEngineOptions {
     }
 }
 
+fn operation_summaries_for_action_kind(
+    action_summaries: &[ActionReportSummary],
+    action_kind: &str,
+) -> Vec<OperationReportSummary> {
+    let mut counts: BTreeMap<(String, String), u64> = BTreeMap::new();
+    for action in action_summaries
+        .iter()
+        .filter(|action| action.action_kind == action_kind)
+    {
+        *counts
+            .entry((action.identity.clone(), action.status.clone()))
+            .or_insert(0) += 1;
+    }
+    counts
+        .into_iter()
+        .map(|((identity, status), count)| OperationReportSummary {
+            operation_kind: action_kind.to_string(),
+            identity,
+            status,
+            count,
+        })
+        .collect()
+}
+
 pub struct HarnessEngine {
     loop_manifest: LoopManifest,
     options: HarnessEngineOptions,
@@ -669,6 +866,7 @@ pub struct HarnessEngine {
 pub struct HarnessRuntimeServices<'a> {
     pub model: &'a mut dyn ModelRuntime,
     pub dispatcher: &'a mut dyn ActionDispatcher,
+    pub knowledge: &'a mut dyn KnowledgeRuntime,
     pub approvals: &'a mut dyn ApprovalController,
     pub hooks: &'a mut dyn HookRuntime,
     pub service_events: Option<&'a mut ServiceLifecycleEvents>,
@@ -700,9 +898,11 @@ impl HarnessEngine {
         approvals: &mut dyn ApprovalController,
     ) -> Result<HarnessRunResult> {
         let mut hooks = NoopHookRuntime;
+        let mut knowledge = NoopKnowledgeRuntime;
         let mut services = HarnessRuntimeServices {
             model,
             dispatcher,
+            knowledge: &mut knowledge,
             approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -799,6 +999,7 @@ impl HarnessEngine {
                 &phase,
                 services.model,
                 services.dispatcher,
+                services.knowledge,
                 services.hooks,
                 &mut services.service_events,
             ) {
@@ -1016,12 +1217,14 @@ impl HarnessEngine {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_phase(
         &mut self,
         session: &mut HarnessSession,
         phase: &LoopPhase,
         model: &mut dyn ModelRuntime,
         dispatcher: &mut dyn ActionDispatcher,
+        knowledge: &mut dyn KnowledgeRuntime,
         hooks: &mut dyn HookRuntime,
         service_events: &mut Option<&mut ServiceLifecycleEvents>,
     ) -> Result<PhaseResult> {
@@ -1301,6 +1504,52 @@ impl HarnessEngine {
                 ..HarnessEventBuilder::default()
             },
         )?;
+        for knowledge in &effective_phase.active_knowledge {
+            session.emitter.emit(
+                HarnessEventType::KnowledgeSurfaceReady,
+                HarnessEventPayload::Action {
+                    action_kind: "knowledge_request".into(),
+                    identity: knowledge.name.clone(),
+                    status: "available".into(),
+                    fields: BTreeMap::from([
+                        ("source".into(), json!(knowledge.source.clone())),
+                        ("runtime".into(), json!(knowledge.runtime.clone())),
+                        ("mode".into(), json!(knowledge.mode.clone())),
+                        ("documents".into(), json!(knowledge.documents.clone())),
+                        ("embedding".into(), json!(knowledge.embedding.clone())),
+                        ("retrieval".into(), json!(knowledge.retrieval.clone())),
+                    ]),
+                },
+                HarnessEventBuilder {
+                    run_id: Some(run_id.clone()),
+                    phase_execution_id: Some(phase_execution_id.clone()),
+                    ..HarnessEventBuilder::default()
+                },
+            )?;
+        }
+        for knowledge in effective_phase
+            .suppressed_capabilities
+            .iter()
+            .filter(|capability| capability.kind == "knowledge")
+        {
+            session.emitter.emit(
+                HarnessEventType::KnowledgeSurfaceUnavailable,
+                HarnessEventPayload::Action {
+                    action_kind: "knowledge_request".into(),
+                    identity: knowledge.identity.clone(),
+                    status: "unavailable".into(),
+                    fields: BTreeMap::from([
+                        ("source".into(), json!(knowledge.source.clone())),
+                        ("reason".into(), json!(knowledge.reason.clone())),
+                    ]),
+                },
+                HarnessEventBuilder {
+                    run_id: Some(run_id.clone()),
+                    phase_execution_id: Some(phase_execution_id.clone()),
+                    ..HarnessEventBuilder::default()
+                },
+            )?;
+        }
         for skill in &effective_phase.active_skills {
             session.emitter.emit(
                 HarnessEventType::SkillActivated,
@@ -2084,6 +2333,191 @@ impl HarnessEngine {
                     };
                     self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
                     action
+                } else if matches!(proposal.action, SemanticAction::KnowledgeRequest { .. }) {
+                    let before_knowledge_hook = HarnessHookId::BeforeKnowledgeRequest;
+                    let before_knowledge_binding_count =
+                        hooks.binding_count(&before_knowledge_hook);
+                    let before_knowledge_enabled = before_knowledge_binding_count > 0;
+                    if before_knowledge_enabled {
+                        self.emit_hook_started(
+                            session,
+                            HookEventContext {
+                                run_id: &run_id,
+                                phase_id: &phase.id,
+                                phase_execution_id: &phase_execution_id,
+                                hook: &before_knowledge_hook,
+                                binding_count: before_knowledge_binding_count,
+                            },
+                            action_trace_fields(&proposal.action),
+                        )?;
+                    }
+                    let hook = match before_knowledge_request_hook_from_action(
+                        &phase.id,
+                        &proposal.action,
+                        &effective_phase,
+                    ) {
+                        Ok(hook) => hook,
+                        Err(err) => {
+                            repair_feedback = Some(err);
+                            self.request_repair(
+                                session,
+                                &mut state,
+                                &phase_execution_id,
+                                repair_feedback.clone(),
+                            )?;
+                            continue;
+                        }
+                    };
+                    let action = match hooks.before_knowledge_request(hook) {
+                        Ok(decision) => {
+                            let patched = decision.document.is_some()
+                                || decision.query.is_some()
+                                || decision.top_k.is_some()
+                                || decision.score_threshold.is_some()
+                                || decision.return_citations.is_some();
+                            let patched_action = match apply_before_knowledge_request_decision(
+                                &proposal.action,
+                                decision,
+                            ) {
+                                Ok(action) => action,
+                                Err(err) => {
+                                    self.emit_nonfatal_hook_failures(
+                                        session,
+                                        &run_id,
+                                        &phase.id,
+                                        &phase_execution_id,
+                                        hooks,
+                                    )?;
+                                    session.emitter.emit(
+                                        HarnessEventType::HookFailed,
+                                        HarnessEventPayload::Lifecycle {
+                                            message: err.clone(),
+                                            fields: hook_event_fields(
+                                                &before_knowledge_hook,
+                                                &phase.id,
+                                                before_knowledge_binding_count,
+                                                action_trace_fields(&proposal.action),
+                                            ),
+                                        },
+                                        HarnessEventBuilder {
+                                            run_id: Some(run_id.clone()),
+                                            phase_execution_id: Some(phase_execution_id.clone()),
+                                            ..HarnessEventBuilder::default()
+                                        },
+                                    )?;
+                                    return self.fail_phase(
+                                        session,
+                                        &phase.id,
+                                        &phase_execution_id,
+                                        format!("before_knowledge_request hook returned invalid patch: {err}"),
+                                        None,
+                                    );
+                                }
+                            };
+                            if let Err(err) =
+                                validate_semantic_action(&patched_action, &effective_phase)
+                            {
+                                self.emit_nonfatal_hook_failures(
+                                    session,
+                                    &run_id,
+                                    &phase.id,
+                                    &phase_execution_id,
+                                    hooks,
+                                )?;
+                                session.emitter.emit(
+                                    HarnessEventType::HookFailed,
+                                    HarnessEventPayload::Lifecycle {
+                                        message: err.clone(),
+                                        fields: hook_event_fields(
+                                            &before_knowledge_hook,
+                                            &phase.id,
+                                            before_knowledge_binding_count,
+                                            action_trace_fields(&proposal.action),
+                                        ),
+                                    },
+                                    HarnessEventBuilder {
+                                        run_id: Some(run_id.clone()),
+                                        phase_execution_id: Some(phase_execution_id.clone()),
+                                        ..HarnessEventBuilder::default()
+                                    },
+                                )?;
+                                return self.fail_phase(
+                                    session,
+                                    &phase.id,
+                                    &phase_execution_id,
+                                    format!("before_knowledge_request hook produced invalid action: {err}"),
+                                    None,
+                                );
+                            }
+                            if before_knowledge_enabled {
+                                self.emit_nonfatal_hook_failures(
+                                    session,
+                                    &run_id,
+                                    &phase.id,
+                                    &phase_execution_id,
+                                    hooks,
+                                )?;
+                                let mut fields = action_trace_fields(&patched_action);
+                                fields.insert("patched".into(), json!(patched));
+                                self.emit_hook_completed(
+                                    session,
+                                    HookEventContext {
+                                        run_id: &run_id,
+                                        phase_id: &phase.id,
+                                        phase_execution_id: &phase_execution_id,
+                                        hook: &before_knowledge_hook,
+                                        binding_count: before_knowledge_binding_count,
+                                    },
+                                    fields,
+                                )?;
+                            }
+                            patched_action
+                        }
+                        Err(err) => {
+                            let is_rejection = err.is_rejection();
+                            self.emit_nonfatal_hook_failures(
+                                session,
+                                &run_id,
+                                &phase.id,
+                                &phase_execution_id,
+                                hooks,
+                            )?;
+                            session.emitter.emit(
+                                if is_rejection {
+                                    HarnessEventType::HookRejected
+                                } else {
+                                    HarnessEventType::HookFailed
+                                },
+                                HarnessEventPayload::Lifecycle {
+                                    message: err.message.clone(),
+                                    fields: hook_event_fields(
+                                        &before_knowledge_hook,
+                                        &phase.id,
+                                        before_knowledge_binding_count,
+                                        action_trace_fields(&proposal.action),
+                                    ),
+                                },
+                                HarnessEventBuilder {
+                                    run_id: Some(run_id.clone()),
+                                    phase_execution_id: Some(phase_execution_id.clone()),
+                                    ..HarnessEventBuilder::default()
+                                },
+                            )?;
+                            return self.fail_phase(
+                                session,
+                                &phase.id,
+                                &phase_execution_id,
+                                format!(
+                                    "before_knowledge_request hook {} action: {}",
+                                    if is_rejection { "rejected" } else { "failed" },
+                                    err.message
+                                ),
+                                None,
+                            );
+                        }
+                    };
+                    self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
+                    action
                 } else {
                     proposal.action.clone()
                 };
@@ -2106,14 +2540,39 @@ impl HarnessEngine {
                         ..HarnessEventBuilder::default()
                     },
                 )?;
-                let result = self.dispatch_with_retry(
-                    session,
-                    dispatcher,
-                    &action,
-                    action_source.as_deref(),
-                    &phase_execution_id,
-                )?;
+                let result = if matches!(action, SemanticAction::KnowledgeRequest { .. }) {
+                    self.dispatch_knowledge(
+                        session,
+                        knowledge,
+                        &action,
+                        action_source.as_deref(),
+                        &phase_execution_id,
+                    )?
+                } else {
+                    self.dispatch_with_retry(
+                        session,
+                        dispatcher,
+                        &action,
+                        action_source.as_deref(),
+                        &phase_execution_id,
+                    )?
+                };
                 self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
+                let result = if matches!(action, SemanticAction::KnowledgeRequest { .. })
+                    && result.ok
+                    && result.output.get("package").is_some()
+                {
+                    self.apply_after_knowledge_retrieval_hook(
+                        session,
+                        hooks,
+                        &phase.id,
+                        &phase_execution_id,
+                        &run_id,
+                        result,
+                    )?
+                } else {
+                    result
+                };
                 if !result.ok {
                     let error = result.error.unwrap_or_else(|| "action failed".to_string());
                     let terminal_status = result.terminal_status;
@@ -2142,6 +2601,32 @@ impl HarnessEngine {
                         error,
                         terminal_status,
                     );
+                }
+                if matches!(action, SemanticAction::KnowledgeRequest { .. })
+                    && result
+                        .output
+                        .get("ok")
+                        .and_then(Value::as_bool)
+                        .is_some_and(|ok| !ok)
+                {
+                    self.active_run_mut(session)?
+                        .action_summaries
+                        .push(ActionReportSummary {
+                            action_kind: action.kind().into(),
+                            identity: action.identity(),
+                            status: "failed".into(),
+                            error: result
+                                .output
+                                .get("error")
+                                .and_then(|error| error.get("message"))
+                                .and_then(Value::as_str)
+                                .map(str::to_string),
+                        });
+                    state.transcript.push(TranscriptEntry {
+                        kind: TranscriptEntryKind::ActionResult,
+                        content: action_result_transcript_content(&action, result.output),
+                    });
+                    continue;
                 }
                 state.transcript.push(TranscriptEntry {
                     kind: TranscriptEntryKind::ActionResult,
@@ -2369,6 +2854,164 @@ impl HarnessEngine {
                     ..HarnessEventBuilder::default()
                 },
             )?;
+        }
+    }
+
+    fn dispatch_knowledge(
+        &self,
+        session: &mut HarnessSession,
+        knowledge: &mut dyn KnowledgeRuntime,
+        action: &SemanticAction,
+        action_source: Option<&str>,
+        phase_execution_id: &str,
+    ) -> Result<ActionDispatchResult> {
+        let run_id = self.active_run(session)?.run_id().to_string();
+        self.active_run_mut(session)?.usage.knowledge_requests += 1;
+        let mut fields = action_trace_fields(action);
+        if let Some(source) = action_source {
+            fields.insert("source".into(), json!(source));
+        }
+        session.emitter.emit(
+            HarnessEventType::KnowledgeRequestStarted,
+            HarnessEventPayload::Action {
+                action_kind: action.kind().into(),
+                identity: action.identity(),
+                status: "requested".into(),
+                fields,
+            },
+            HarnessEventBuilder {
+                run_id: Some(run_id.clone()),
+                phase_execution_id: Some(phase_execution_id.to_string()),
+                ..HarnessEventBuilder::default()
+            },
+        )?;
+        let result = knowledge.dispatch(action);
+        self.merge_usage(session, &result.usage);
+        let status = if !result.ok
+            || result
+                .output
+                .get("ok")
+                .and_then(Value::as_bool)
+                .is_some_and(|ok| !ok)
+        {
+            "failed"
+        } else {
+            "completed"
+        };
+        session.emitter.emit(
+            action_dispatch_event_type(action, result.ok && status == "completed"),
+            HarnessEventPayload::Action {
+                action_kind: action.kind().into(),
+                identity: action.identity(),
+                status: status.into(),
+                fields: action_result_trace_fields(action, &result, 1, action_source),
+            },
+            HarnessEventBuilder {
+                run_id: Some(run_id),
+                phase_execution_id: Some(phase_execution_id.to_string()),
+                ..HarnessEventBuilder::default()
+            },
+        )?;
+        Ok(result)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_after_knowledge_retrieval_hook(
+        &self,
+        session: &mut HarnessSession,
+        hooks: &mut dyn HookRuntime,
+        phase_id: &str,
+        phase_execution_id: &str,
+        run_id: &str,
+        result: ActionDispatchResult,
+    ) -> Result<ActionDispatchResult> {
+        let hook = HarnessHookId::AfterKnowledgeRetrieval;
+        let binding_count = hooks.binding_count(&hook);
+        if binding_count == 0 {
+            return Ok(result);
+        }
+        let knowledge_result: crate::harness_runtime::knowledge::KnowledgeRuntimeResult =
+            serde_json::from_value(result.output.clone())
+                .map_err(|err| anyhow!("KnowledgeRuntime returned malformed result: {err}"))?;
+        self.emit_hook_started(
+            session,
+            HookEventContext {
+                run_id,
+                phase_id,
+                phase_execution_id,
+                hook: &hook,
+                binding_count,
+            },
+            BTreeMap::from([("package".into(), json!(knowledge_result.package.clone()))]),
+        )?;
+        match hooks.after_knowledge_retrieval(after_knowledge_retrieval_hook_from_result(
+            phase_id,
+            knowledge_result.clone(),
+        )) {
+            Ok(decision) => {
+                self.emit_nonfatal_hook_failures(
+                    session,
+                    run_id,
+                    phase_id,
+                    phase_execution_id,
+                    hooks,
+                )?;
+                let patched = decision.content.is_some() || decision.results.is_some();
+                self.emit_hook_completed(
+                    session,
+                    HookEventContext {
+                        run_id,
+                        phase_id,
+                        phase_execution_id,
+                        hook: &hook,
+                        binding_count,
+                    },
+                    BTreeMap::from([("patched".into(), json!(patched))]),
+                )?;
+                Ok(if patched {
+                    let patched_result =
+                        apply_after_knowledge_retrieval_decision(&knowledge_result, decision)
+                            .map_err(|err| {
+                                anyhow!(
+                                    "after_knowledge_retrieval hook returned invalid patch: {err}"
+                                )
+                            })?;
+                    ActionDispatchResult::success(json!(patched_result))
+                } else {
+                    result
+                })
+            }
+            Err(err) => {
+                let is_rejection = err.is_rejection();
+                self.emit_nonfatal_hook_failures(
+                    session,
+                    run_id,
+                    phase_id,
+                    phase_execution_id,
+                    hooks,
+                )?;
+                session.emitter.emit(
+                    if is_rejection {
+                        HarnessEventType::HookRejected
+                    } else {
+                        HarnessEventType::HookFailed
+                    },
+                    HarnessEventPayload::Lifecycle {
+                        message: err.message.clone(),
+                        fields: hook_event_fields(&hook, phase_id, binding_count, BTreeMap::new()),
+                    },
+                    HarnessEventBuilder {
+                        run_id: Some(run_id.to_string()),
+                        phase_execution_id: Some(phase_execution_id.to_string()),
+                        ..HarnessEventBuilder::default()
+                    },
+                )?;
+                Ok(ActionDispatchResult::failure(format!(
+                    "after_knowledge_retrieval hook {} result: {}",
+                    if is_rejection { "rejected" } else { "failed" },
+                    err.message
+                )))
+            }
         }
     }
 
@@ -2639,7 +3282,10 @@ impl HarnessEngine {
             action_summaries: run.action_summaries.clone(),
             tool_summaries: run.operation_summaries.clone(),
             mcp_summaries: Vec::new(),
-            knowledge_summaries: Vec::new(),
+            knowledge_summaries: operation_summaries_for_action_kind(
+                &run.action_summaries,
+                "knowledge_request",
+            ),
             memory_summaries: Vec::new(),
             usage: run.usage.clone(),
             retry_count: run.retry_count,
@@ -2916,6 +3562,9 @@ fn action_source(action: &SemanticAction, phase: &EffectivePhase) -> Option<Stri
         SemanticAction::SkillResourceRead { skill, .. } => {
             capability_source(phase, "skill_resource_read", skill)
         }
+        SemanticAction::KnowledgeRequest { package, .. } => {
+            capability_source(phase, "knowledge_request", package)
+        }
         _ => None,
     }
 }
@@ -2953,8 +3602,35 @@ fn action_trace_fields(action: &SemanticAction) -> BTreeMap<String, Value> {
         SemanticAction::SkillResourceRead { resource, .. } => {
             BTreeMap::from([("resource".into(), json!(resource))])
         }
-        SemanticAction::KnowledgeRequest { query, .. } => {
-            BTreeMap::from([("query".into(), json!(query))])
+        SemanticAction::KnowledgeRequest {
+            mode,
+            document,
+            query,
+            top_k,
+            score_threshold,
+            return_citations,
+            ..
+        } => {
+            let mut fields = BTreeMap::new();
+            if let Some(mode) = mode {
+                fields.insert("mode".into(), json!(mode));
+            }
+            if let Some(document) = document {
+                fields.insert("document".into(), json!(document));
+            }
+            if let Some(query) = query {
+                fields.insert("query".into(), json!(query));
+            }
+            if let Some(top_k) = top_k {
+                fields.insert("top_k".into(), json!(top_k));
+            }
+            if let Some(score_threshold) = score_threshold {
+                fields.insert("score_threshold".into(), json!(score_threshold));
+            }
+            if let Some(return_citations) = return_citations {
+                fields.insert("return_citations".into(), json!(return_citations));
+            }
+            fields
         }
         SemanticAction::MemoryRead { space, .. } => {
             BTreeMap::from([("space".into(), json!(space))])
@@ -3180,6 +3856,7 @@ mod tests {
     };
     use crate::harness_runtime::approval::ScriptedApprovalController;
     use crate::harness_runtime::hook::{
+        BeforeKnowledgeRequestDecision, BeforeKnowledgeRequestHook,
         BeforeModelRequestContextSection, BeforeModelRequestDecision, BeforeModelRequestHook,
         BeforeToolCallDecision, BeforeToolSelectionDecision, BeforeToolSelectionHook,
         HookRuntimeFailure,
@@ -3439,6 +4116,40 @@ mod tests {
         runtime
     }
 
+    fn vector_knowledge_snapshot(name: &str) -> KnowledgeRuntimeSnapshot {
+        KnowledgeRuntimeSnapshot {
+            name: name.into(),
+            version: "0.1.0".into(),
+            mode: "vector".into(),
+            description: format!("{name} search corpus."),
+            root: None,
+            source: "agent_binding".into(),
+            state: "available".into(),
+            runtime: "local".into(),
+            readiness_reason: None,
+            documents: Vec::new(),
+            embedding: None,
+            retrieval: None,
+        }
+    }
+
+    fn runtime_with_knowledge_packages(packages: &[&str]) -> RuntimeSnapshot {
+        let mut runtime = RuntimeSnapshot::empty("session-test".into());
+        for package in packages {
+            runtime.knowledge.push(vector_knowledge_snapshot(package));
+            runtime
+                .capability_candidates
+                .push(RuntimeCapabilitySnapshot {
+                    kind: "knowledge".into(),
+                    identity: (*package).into(),
+                    scope: "global".into(),
+                    source: "agent_binding".into(),
+                    state: "available".into(),
+                });
+        }
+        runtime
+    }
+
     fn session_with_tool_and_skill() -> HarnessSession {
         HarnessSession::with_runtime_snapshot(runtime_with_tool_and_skill())
     }
@@ -3451,6 +4162,8 @@ mod tests {
         model_request: Option<BeforeModelRequestDecision>,
         tool_call: Option<BeforeToolCallDecision>,
         tool_call_hooks: Vec<BeforeToolCallHook>,
+        knowledge_request: Option<BeforeKnowledgeRequestDecision>,
+        knowledge_request_hooks: Vec<BeforeKnowledgeRequestHook>,
         fail_before_tool_call: Option<String>,
         reject_before_tool_call: Option<String>,
         nonfatal_before_tool_call: Option<String>,
@@ -3528,8 +4241,47 @@ mod tests {
             Ok(self.tool_call.clone().unwrap_or_default())
         }
 
+        fn before_knowledge_request(
+            &mut self,
+            hook: BeforeKnowledgeRequestHook,
+        ) -> std::result::Result<BeforeKnowledgeRequestDecision, HookRuntimeFailure> {
+            self.knowledge_request_hooks.push(hook);
+            Ok(self.knowledge_request.clone().unwrap_or_default())
+        }
+
         fn drain_nonfatal_failures(&mut self) -> Vec<HookRuntimeFailure> {
             std::mem::take(&mut self.nonfatal_failures)
+        }
+    }
+
+    struct UsageKnowledgeRuntime {
+        result: ActionDispatchResult,
+    }
+
+    impl KnowledgeRuntime for UsageKnowledgeRuntime {
+        fn dispatch(&mut self, _action: &SemanticAction) -> ActionDispatchResult {
+            self.result.clone()
+        }
+    }
+
+    struct RecordingKnowledgeRuntime {
+        result: ActionDispatchResult,
+        dispatched: Vec<SemanticAction>,
+    }
+
+    impl RecordingKnowledgeRuntime {
+        fn new(result: ActionDispatchResult) -> Self {
+            Self {
+                result,
+                dispatched: Vec::new(),
+            }
+        }
+    }
+
+    impl KnowledgeRuntime for RecordingKnowledgeRuntime {
+        fn dispatch(&mut self, action: &SemanticAction) -> ActionDispatchResult {
+            self.dispatched.push(action.clone());
+            self.result.clone()
         }
     }
 
@@ -3582,9 +4334,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -3669,9 +4423,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -3739,9 +4495,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -3804,9 +4562,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -3870,9 +4630,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -3932,9 +4694,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -3980,9 +4744,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -4039,9 +4805,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -4069,6 +4837,95 @@ mod tests {
         assert!(event_types.contains(&HarnessEventType::HookFailed));
         assert!(!event_types.contains(&HarnessEventType::HookRejected));
         assert!(!event_types.contains(&HarnessEventType::ToolInvoked));
+    }
+
+    #[test]
+    fn before_knowledge_request_hook_shapes_request_before_dispatch() {
+        let mut session =
+            HarnessSession::with_runtime_snapshot(runtime_with_knowledge_packages(&[
+                "@zack/guide",
+            ]));
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new(vec![
+            knowledge_query_turn("@zack/guide"),
+            completion("assess-complete", "execute"),
+            completion("execute-complete", "review"),
+            completion("review-complete", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut hooks = TestHookRuntime {
+            knowledge_request: Some(BeforeKnowledgeRequestDecision {
+                document: None,
+                query: Some("patched query".into()),
+                top_k: Some(3),
+                score_threshold: Some(0.42),
+                return_citations: Some(false),
+            }),
+            active_hooks: vec![HarnessHookId::BeforeKnowledgeRequest],
+            ..TestHookRuntime::default()
+        };
+        let mut knowledge = RecordingKnowledgeRuntime::new(ActionDispatchResult::success(json!({
+            "ok": true,
+            "package": "@zack/guide",
+            "version": "0.1.0",
+            "mode": "vector_query",
+            "query": "patched query",
+            "results": [],
+            "citations": []
+        })));
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let result = {
+            let mut services = HarnessRuntimeServices {
+                model: &mut model,
+                dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
+                approvals: &mut approvals,
+                hooks: &mut hooks,
+                service_events: None,
+            };
+            engine
+                .execute_run_with_id(
+                    &mut session,
+                    "run-hooks-knowledge-request".into(),
+                    "input",
+                    &mut services,
+                )
+                .unwrap()
+        };
+
+        assert!(matches!(result, HarnessRunResult::Terminal(_)));
+        assert_eq!(knowledge.dispatched.len(), 1);
+        assert_eq!(
+            knowledge.dispatched[0],
+            SemanticAction::KnowledgeRequest {
+                package: "@zack/guide".into(),
+                mode: None,
+                document: None,
+                query: Some("patched query".into()),
+                top_k: Some(3),
+                score_threshold: Some(0.42),
+                return_citations: Some(false),
+            }
+        );
+        let hook_input = hooks.knowledge_request_hooks.first().expect("hook input");
+        assert_eq!(hook_input.phase_id, "assess");
+        assert_eq!(hook_input.request.package, "@zack/guide");
+        assert_eq!(hook_input.request.query.as_deref(), Some("alpha"));
+        assert_eq!(hook_input.request.top_k, Some(1));
+        let fields = hook_event_fields_for(
+            &handle.events(),
+            HarnessEventType::HookCompleted,
+            "before_knowledge_request",
+        );
+        assert_eq!(fields["binding_count"], json!(1));
+        assert_eq!(fields["query"], json!("patched query"));
+        assert_eq!(fields["top_k"], json!(3));
+        assert_eq!(fields["score_threshold"], json!(0.42));
+        assert_eq!(fields["return_citations"], json!(false));
+        assert_eq!(fields["patched"], json!(true));
     }
 
     #[test]
@@ -4102,9 +4959,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -4187,9 +5046,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -4241,9 +5102,11 @@ mod tests {
         };
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let result = {
+            let mut knowledge = NoopKnowledgeRuntime;
             let mut services = HarnessRuntimeServices {
                 model: &mut model,
                 dispatcher: &mut dispatcher,
+                knowledge: &mut knowledge,
                 approvals: &mut approvals,
                 hooks: &mut hooks,
                 service_events: None,
@@ -4344,6 +5207,27 @@ mod tests {
                 SemanticAction::AgentPmTool {
                     tool: tool.into(),
                     arguments,
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: None,
+            provider_metadata: BTreeMap::new(),
+        }
+    }
+
+    fn knowledge_query_turn(package: &str) -> ModelTurn {
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "knowledge",
+                SemanticAction::KnowledgeRequest {
+                    package: package.into(),
+                    mode: None,
+                    document: None,
+                    query: Some("alpha".into()),
+                    top_k: Some(1),
+                    score_threshold: None,
+                    return_citations: Some(true),
                 },
             )],
             usage: RunUsage::default(),
@@ -5146,6 +6030,75 @@ mod tests {
     }
 
     #[test]
+    fn knowledge_backend_failure_is_returned_to_phase_transcript() {
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let mut session =
+            HarnessSession::with_runtime_snapshot(runtime_with_knowledge_packages(&[
+                "@zack/guide",
+            ]));
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new(vec![
+            knowledge_query_turn("@zack/guide"),
+            completion("assess-complete", "execute"),
+            completion("execute-complete", "review"),
+            completion("review-complete", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut knowledge = RecordingKnowledgeRuntime::new(ActionDispatchResult::success(json!({
+            "ok": false,
+            "package": "@zack/guide",
+            "version": "0.1.0",
+            "mode": "vector_query",
+            "query": "alpha",
+            "error": {
+                "code": "knowledge_backend_down",
+                "message": "backend unavailable",
+                "retryable": true
+            }
+        })));
+        let mut approvals = ScriptedApprovalController::default();
+        let mut hooks = NoopHookRuntime;
+        let mut services = HarnessRuntimeServices {
+            model: &mut model,
+            dispatcher: &mut dispatcher,
+            knowledge: &mut knowledge,
+            approvals: &mut approvals,
+            hooks: &mut hooks,
+            service_events: None,
+        };
+
+        let result = engine
+            .execute_run_with_id(
+                &mut session,
+                "run-knowledge-backend-failure".into(),
+                "hello",
+                &mut services,
+            )
+            .unwrap();
+
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Ended);
+        assert_eq!(knowledge.dispatched.len(), 1);
+        assert!(model.requests.len() >= 2);
+        let next_prompt = model.requests[1].prompt.render_text();
+        assert!(next_prompt.contains("ActionResult [knowledge_request @zack/guide]"));
+        assert!(next_prompt.contains("\"ok\":false"));
+        assert!(next_prompt.contains("knowledge_backend_down"));
+        assert!(next_prompt.contains("backend unavailable"));
+        let event_types = handle
+            .events()
+            .iter()
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+        assert!(event_types.contains(&HarnessEventType::KnowledgeFailed));
+        assert!(!event_types.contains(&HarnessEventType::PhaseFailed));
+    }
+
+    #[test]
     fn skill_resource_content_is_loaded_on_demand_and_phase_local() {
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let mut session = session_with_tool_and_skill();
@@ -5257,6 +6210,36 @@ mod tests {
             effective.suppressed_capabilities.iter().any(
                 |capability| capability.kind == "tool" && capability.identity == "@zack/search"
             )
+        );
+    }
+
+    #[test]
+    fn knowledge_packages_remain_distinct_model_visible_surfaces() {
+        let runtime = runtime_with_knowledge_packages(&["@zack/alpha", "@zack/beta"]);
+        let phase = &base_loop().r#loop.phases[0];
+        let effective = EffectivePhase::from_phase(phase, &runtime);
+
+        let knowledge_descriptors = effective
+            .capability_catalog
+            .iter()
+            .filter(|descriptor| descriptor.action_kind == "knowledge_request")
+            .map(|descriptor| descriptor.identity.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(knowledge_descriptors, vec!["@zack/alpha", "@zack/beta"]);
+        assert_eq!(
+            effective
+                .active_knowledge
+                .iter()
+                .map(|knowledge| knowledge.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["@zack/alpha", "@zack/beta"]
+        );
+        assert!(
+            !effective
+                .capability_catalog
+                .iter()
+                .any(|descriptor| descriptor.action_kind == "knowledge_request"
+                    && descriptor.identity == "knowledge")
         );
     }
 
@@ -6065,19 +7048,156 @@ mod tests {
     }
 
     #[test]
+    fn knowledge_dispatch_usage_is_reported_and_rolled_up() {
+        let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+        let mut session = HarnessSession::new();
+        session
+            .runtime_snapshot
+            .knowledge
+            .push(KnowledgeRuntimeSnapshot {
+                name: "@zack/guide".into(),
+                version: "0.1.0".into(),
+                mode: "vector".into(),
+                description: "Guide".into(),
+                root: None,
+                source: "agent_binding".into(),
+                state: "available".into(),
+                runtime: "local".into(),
+                readiness_reason: None,
+                documents: Vec::new(),
+                embedding: None,
+                retrieval: None,
+            });
+        session
+            .runtime_snapshot
+            .capability_candidates
+            .push(RuntimeCapabilitySnapshot {
+                kind: "knowledge".into(),
+                identity: "@zack/guide".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+            });
+        let usage = RunUsage {
+            embedding_requests: 1,
+            ..Default::default()
+        };
+        let mut knowledge = UsageKnowledgeRuntime {
+            result: ActionDispatchResult::success(json!({
+                "ok": true,
+                "package": "@zack/guide",
+                "version": "0.1.0",
+                "mode": "vector_query",
+                "query": "alpha",
+                "results": [],
+                "citations": []
+            }))
+            .with_usage(usage),
+        };
+        let mut model = ScriptedModelRuntime::new(vec![
+            knowledge_query_turn("@zack/guide"),
+            completion("assess-complete", "execute"),
+            completion("execute-complete", "review"),
+            completion("review-complete", "ready"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut hooks = NoopHookRuntime;
+        let mut services = HarnessRuntimeServices {
+            model: &mut model,
+            dispatcher: &mut dispatcher,
+            knowledge: &mut knowledge,
+            approvals: &mut approvals,
+            hooks: &mut hooks,
+            service_events: None,
+        };
+
+        let result = engine
+            .execute_run_with_id(&mut session, "run-usage".into(), "hello", &mut services)
+            .unwrap();
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+
+        assert_eq!(result.report.usage.knowledge_requests, 1);
+        assert_eq!(result.report.usage.embedding_requests, 1);
+        assert_eq!(session.usage.knowledge_requests, 1);
+        assert_eq!(session.usage.embedding_requests, 1);
+    }
+
+    #[test]
     fn non_tool_action_failures_emit_specific_failed_event_types() {
         let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
         let mut session = HarnessSession::new();
         let memory = InMemoryEventSink::default();
         let handle = memory.clone();
         session.emitter.add_sink(Box::new(memory));
+        session
+            .runtime_snapshot
+            .knowledge
+            .push(KnowledgeRuntimeSnapshot {
+                name: "@zack/guide".into(),
+                version: "0.1.0".into(),
+                mode: "vector".into(),
+                description: "Guide".into(),
+                root: None,
+                source: "agent_binding".into(),
+                state: "available".into(),
+                runtime: "local".into(),
+                readiness_reason: None,
+                documents: Vec::new(),
+                embedding: None,
+                retrieval: None,
+            });
+        session
+            .runtime_snapshot
+            .knowledge
+            .push(KnowledgeRuntimeSnapshot {
+                name: "@zack/stale-guide".into(),
+                version: "0.1.0".into(),
+                mode: "vector".into(),
+                description: "Stale guide".into(),
+                root: None,
+                source: "agent_binding".into(),
+                state: "unavailable".into(),
+                runtime: "local".into(),
+                readiness_reason: Some("vector index is stale".into()),
+                documents: Vec::new(),
+                embedding: None,
+                retrieval: None,
+            });
+        session
+            .runtime_snapshot
+            .capability_candidates
+            .push(RuntimeCapabilitySnapshot {
+                kind: "knowledge".into(),
+                identity: "@zack/guide".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+            });
+        session
+            .runtime_snapshot
+            .capability_candidates
+            .push(RuntimeCapabilitySnapshot {
+                kind: "knowledge".into(),
+                identity: "@zack/stale-guide".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: "unavailable".into(),
+            });
         let mut model = ScriptedModelRuntime::new(vec![ModelTurn {
             assistant_content: None,
             actions: vec![SemanticActionProposal::new(
                 "knowledge",
                 SemanticAction::KnowledgeRequest {
                     package: "@zack/guide".into(),
-                    query: "x".into(),
+                    mode: None,
+                    document: None,
+                    query: Some("x".into()),
+                    top_k: None,
+                    score_threshold: None,
+                    return_citations: None,
                 },
             )],
             usage: RunUsage::default(),
@@ -6100,12 +7220,28 @@ mod tests {
             panic!("expected terminal result");
         };
         assert_eq!(result.status, HarnessTerminalStatus::Failed);
-        let event_types: Vec<_> = handle
-            .events()
-            .iter()
-            .map(|event| event.event_type)
-            .collect();
+        assert_eq!(
+            result.report.knowledge_summaries,
+            vec![OperationReportSummary {
+                operation_kind: "knowledge_request".into(),
+                identity: "@zack/guide".into(),
+                status: "failed".into(),
+                count: 1,
+            }]
+        );
+        let events = handle.events();
+        let event_types: Vec<_> = events.iter().map(|event| event.event_type).collect();
+        assert!(event_types.contains(&HarnessEventType::KnowledgeSurfaceReady));
+        assert!(event_types.contains(&HarnessEventType::KnowledgeSurfaceUnavailable));
         assert!(event_types.contains(&HarnessEventType::KnowledgeFailed));
         assert!(!event_types.contains(&HarnessEventType::SemanticActionCompleted));
+        let unavailable = events
+            .iter()
+            .find(|event| event.event_type == HarnessEventType::KnowledgeSurfaceUnavailable)
+            .unwrap();
+        let HarnessEventPayload::Action { fields, .. } = &unavailable.payload else {
+            panic!("expected action payload");
+        };
+        assert_eq!(fields["reason"], "vector index is stale");
     }
 }

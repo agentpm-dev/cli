@@ -1,0 +1,43 @@
+{
+  "before_knowledge_request": {
+    "phase_id": "answer",
+    "request": {
+      "package": "@zack/docs",
+      "version": "1.2.3",
+      "mode": "vector_query",
+      "query": "Harness Knowledge routing",
+      "top_k": 5,
+      "return_citations": true
+    }
+  },
+  "before_knowledge_request_result": {
+    "decision": "continue",
+    "patch": {
+      "query": "Harness KnowledgeRuntime routing",
+      "top_k": 3
+    }
+  },
+  "after_knowledge_retrieval": {
+    "phase_id": "answer",
+    "result": {
+      "ok": true,
+      "package": "@zack/docs",
+      "version": "1.2.3",
+      "mode": "vector_query",
+      "query": "Harness KnowledgeRuntime routing",
+      "results": [
+        {
+          "rank": 1,
+          "score": 0.93,
+          "chunk_id": "chunk_001",
+          "source_id": "source_guide",
+          "text": "Harness routes Knowledge through KnowledgeRuntime."
+        }
+      ]
+    }
+  },
+  "after_knowledge_retrieval_result": {
+    "decision": "continue",
+    "patch": {}
+  }
+}
