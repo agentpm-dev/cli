@@ -628,9 +628,9 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 - [ ] Add a distinct-package non-federation regression test proving bound Knowledge packages remain separate model-visible `knowledge_request` surfaces.
 
 ## Milestone 13: Pinecone and pgvector Knowledge Reference Providers + SDK Helpers
-> Scope note: prove the full custom KnowledgeRuntime path with two usable open-source reference integrations. Provider-specific logic belongs in provider bridges/SDK helpers speaking the public process/host contracts; do not add Pinecone/pgvector-specific branches to HarnessEngine or portable Knowledge artifacts.
-- [ ] Implement a Pinecone KnowledgeRuntime reference provider that accepts normalized AgentPM Knowledge requests, advertises/attests the package/corpus it serves, and returns normalized AgentPM results.
-- [ ] Implement a pgvector KnowledgeRuntime reference provider with equivalent normalized semantics.
+> Scope note: prove the full custom KnowledgeRuntime path with two usable open-source reference integrations. Provider-specific logic belongs in SDK-backed reference provider scripts/examples speaking the public process/host contracts, preferably in `agentpm-examples`; do not add Pinecone/pgvector-specific branches to HarnessEngine, portable Knowledge artifacts, or core SDK install paths.
+- [ ] Implement a Pinecone KnowledgeRuntime reference provider script/example that accepts normalized AgentPM Knowledge requests, advertises/attests the package/corpus it serves, and returns normalized AgentPM results.
+- [ ] Implement a pgvector KnowledgeRuntime reference provider script/example with equivalent normalized semantics.
 - [ ] Build the reference providers on the public Milestone 9/10/11 service/provider contracts so third parties can copy/replace them without Harness-core changes.
 - [ ] Keep external index provisioning, corpus upload/upsert, schema creation, and synchronization outside Harness runtime execution; the provider must assume the external realization is already prepared.
 - [ ] Use the existing `knowledge.packages` mapping from Milestone 1/12; do not introduce a second provider-selection mechanism.
@@ -638,8 +638,8 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 - [ ] Treat provider startup/handshake/capability attestation as an activation result that feeds back into Knowledge surface readiness before `EffectivePhase`/model-facing capability catalog construction; a failed Pinecone/pgvector runtime or stale corpus attestation must suppress only its mapped Knowledge surfaces with explicit diagnostics rather than exposing an action that later kills the phase.
 - [ ] Preserve explicit-mapping no-fallback semantics.
 - [ ] Keep provider credentials inside the provider process/application environment and out of Harness event/report payloads.
-- [ ] Add first-class Pinecone and pgvector provider adapters/helpers to both Node and Python SDK ecosystems using optional dependencies/extras according to repository packaging conventions.
-- [ ] Provide runnable process-bridge examples so CLI-only workspaces can launch the same SDK-backed provider implementation through `agentpm.harness.json` without hand-writing JSONL framing.
+- [ ] Add generic `serveKnowledgeRuntimeProcess`-style helpers to both Node and Python SDK ecosystems so SDK-backed KnowledgeRuntime implementations can serve the public `agentpm-service` JSONL process protocol without each provider hand-writing framing.
+- [ ] Provide runnable Pinecone and pgvector process-bridge examples, preferably in `agentpm-examples`, so CLI-only workspaces can launch the same SDK-backed provider implementation through `agentpm.harness.json`; link to these examples from the Node/Python SDK docs rather than making provider-specific SDK exports mandatory.
 - [ ] Keep normalized result fields/source identities/citations consistent across Node/Python implementations.
 
 - [ ] Add mocked provider tests for capability advertisement/attestation, query/options/result mapping, metadata filters, citations/source IDs, provider errors, and identity mismatch.
