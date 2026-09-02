@@ -335,25 +335,7 @@ fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRe
             "required": ["arguments"]
         }),
         "skill_resource_read" => skill_resource_read_parameters_schema(alias, request),
-        "knowledge_request" => json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "mode": {
-                    "type": "string",
-                    "enum": ["context_document", "vector_query"]
-                },
-                "document": { "type": "string", "minLength": 1 },
-                "query": { "type": "string", "minLength": 1 },
-                "top_k": { "type": "integer", "minimum": 1 },
-                "score_threshold": { "type": "number" },
-                "return_citations": { "type": "boolean" }
-            },
-            "anyOf": [
-                { "required": ["document"] },
-                { "required": ["query"] }
-            ]
-        }),
+        "knowledge_request" => knowledge_request_parameters_schema(alias, request),
         "memory_read" => json!({
             "type": "object",
             "additionalProperties": false,
@@ -378,6 +360,102 @@ fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRe
         _ => json!({
             "type": "object",
             "additionalProperties": true
+        }),
+    }
+}
+
+fn knowledge_request_parameters_schema(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    let knowledge = request
+        .effective_phase
+        .active_knowledge
+        .iter()
+        .find(|knowledge| knowledge.name == alias.identity)
+        .or_else(|| {
+            request
+                .runtime
+                .knowledge
+                .iter()
+                .find(|knowledge| knowledge.name == alias.identity)
+        });
+
+    match knowledge.map(|knowledge| knowledge.mode.as_str()) {
+        Some("context") => {
+            let documents = knowledge
+                .map(|knowledge| {
+                    knowledge
+                        .documents
+                        .iter()
+                        .map(|document| document.path.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let document_schema = if documents.is_empty() {
+                json!({
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Declared document path inside this Knowledge package. Do not put the package identity here."
+                })
+            } else {
+                json!({
+                    "type": "string",
+                    "enum": documents,
+                    "description": "Declared document path inside this Knowledge package. Do not put the package identity here."
+                })
+            };
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["context_document"],
+                        "description": "Use context_document for this context Knowledge surface."
+                    },
+                    "document": document_schema,
+                    "return_citations": { "type": "boolean" }
+                },
+                "required": ["document"]
+            })
+        }
+        Some("vector") => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["vector_query"],
+                    "description": "Use vector_query for this vector Knowledge surface."
+                },
+                "query": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Text query to search this vector Knowledge package. Do not include a document path or package identity here."
+                },
+                "top_k": { "type": "integer", "minimum": 1 },
+                "score_threshold": { "type": "number" },
+                "return_citations": { "type": "boolean" }
+            },
+            "required": ["query"]
+        }),
+        _ => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["context_document", "vector_query"],
+                    "description": "Required Knowledge request mode. This fallback schema is used only when Knowledge metadata is unavailable."
+                },
+                "document": { "type": "string", "minLength": 1 },
+                "query": { "type": "string", "minLength": 1 },
+                "top_k": { "type": "integer", "minimum": 1 },
+                "score_threshold": { "type": "number" },
+                "return_citations": { "type": "boolean" }
+            },
+            "required": ["mode"]
         }),
     }
 }
@@ -1107,7 +1185,8 @@ mod tests {
     use super::*;
     use crate::harness_engine::EffectivePhase;
     use crate::harness_runtime::model::{
-        ActionAlias, CapabilityDescriptor, CompletionContract, LogicalPrompt, PromptSection,
+        ActionAlias, CapabilityDescriptor, CompletionContract, KnowledgeDocumentSnapshot,
+        KnowledgeRetrievalSnapshot, KnowledgeRuntimeSnapshot, LogicalPrompt, PromptSection,
         RuntimeSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
     };
     use std::cell::RefCell;
@@ -1180,7 +1259,10 @@ mod tests {
 
     #[test]
     fn action_parameter_schemas_use_resolved_tool_and_skill_metadata() {
-        let request = model_request();
+        let mut request = model_request();
+        let guide = vector_knowledge_snapshot("@zack/guide");
+        request.runtime.knowledge.push(guide.clone());
+        request.effective_phase.active_knowledge.push(guide);
         let tool_schema = action_parameters_schema(
             &action_alias("action_2", "agentpm_tool", "@zack/search"),
             &request,
@@ -1223,16 +1305,14 @@ mod tests {
             assert_eq!(schema["type"], "object");
             assert_eq!(schema["additionalProperties"], false);
             if alias.action_kind == "knowledge_request" {
+                assert!(schema.get("anyOf").is_none());
+                assert!(schema["properties"].get(required_field).is_some());
                 assert!(
-                    schema["anyOf"]
+                    schema["required"]
                         .as_array()
-                        .expect("knowledge schema anyOf")
-                        .iter()
-                        .any(|case| case["required"]
-                            .as_array()
-                            .is_some_and(|required| required.contains(&json!(required_field)))),
-                    "{} should allow {required_field}",
-                    alias.action_kind
+                        .expect("knowledge_request required array")
+                        .contains(&json!(required_field)),
+                    "knowledge_request should require {required_field}"
                 );
             } else {
                 assert!(
@@ -1662,6 +1742,114 @@ mod tests {
     }
 
     #[test]
+    fn knowledge_request_provider_schema_omits_top_level_any_of_for_openai_tools() {
+        let mut request = model_request();
+        let context = context_knowledge_snapshot("@zack/manual-context");
+        let vector = vector_knowledge_snapshot("@zack/manual-vector");
+        request.runtime.knowledge.push(context.clone());
+        request.runtime.knowledge.push(vector.clone());
+        request.effective_phase.active_knowledge.push(context);
+        request.effective_phase.active_knowledge.push(vector);
+        request.prompt.action_aliases.push(action_alias(
+            "action_2",
+            "knowledge_request",
+            "@zack/manual-context",
+        ));
+        request.prompt.action_aliases.push(action_alias(
+            "action_3",
+            "knowledge_request",
+            "@zack/manual-vector",
+        ));
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "knowledge_request".into(),
+                identity: "@zack/manual-context".into(),
+                description: "Manual context Knowledge.".into(),
+                source: "agent_binding".into(),
+            });
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "knowledge_request".into(),
+                identity: "@zack/manual-vector".into(),
+                description: "Manual vector Knowledge.".into(),
+                source: "agent_binding".into(),
+            });
+
+        let tools = provider_action_tools(&request);
+        let openai_tools = openai_tool_definitions(&tools);
+        let context_schema = openai_tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["function"]["name"] == "action_2")
+            .unwrap()
+            .pointer("/function/parameters")
+            .unwrap();
+        let vector_schema = openai_tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["function"]["name"] == "action_3")
+            .unwrap()
+            .pointer("/function/parameters")
+            .unwrap();
+
+        assert_eq!(context_schema["type"], "object");
+        assert!(context_schema.get("anyOf").is_none());
+        assert!(context_schema["properties"].get("document").is_some());
+        assert!(context_schema["properties"].get("query").is_none());
+        assert_eq!(
+            context_schema["properties"]["document"]["enum"],
+            json!(["knowledge/docs/overview.md"])
+        );
+        assert!(
+            context_schema["required"]
+                .as_array()
+                .expect("context required array")
+                .contains(&json!("document"))
+        );
+
+        assert_eq!(vector_schema["type"], "object");
+        assert!(vector_schema.get("anyOf").is_none());
+        assert!(vector_schema["properties"].get("query").is_some());
+        assert!(vector_schema["properties"].get("document").is_none());
+        assert!(
+            vector_schema["required"]
+                .as_array()
+                .expect("vector required array")
+                .contains(&json!("query"))
+        );
+    }
+
+    #[test]
+    fn unresolved_knowledge_request_fallback_schema_rejects_empty_arguments() {
+        let request = model_request();
+        let schema = action_parameters_schema(
+            &action_alias("action_2", "knowledge_request", "@zack/missing-knowledge"),
+            &request,
+        );
+
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["additionalProperties"], false);
+        assert!(schema.get("anyOf").is_none());
+        assert_eq!(
+            schema["properties"]["mode"]["enum"],
+            json!(["context_document", "vector_query"])
+        );
+        assert!(
+            schema["required"]
+                .as_array()
+                .expect("fallback required array")
+                .contains(&json!("mode")),
+            "fallback Knowledge schema should not permit empty arguments"
+        );
+    }
+
+    #[test]
     fn process_model_runtime_uses_agentpm_service_semantic_contract() {
         let temp = std::env::temp_dir().join(format!(
             "agentpm-process-model-runtime-{}",
@@ -1840,6 +2028,52 @@ for line in sys.stdin:
                 suppressed_capabilities: Vec::new(),
             },
             repair_feedback: None,
+        }
+    }
+
+    fn context_knowledge_snapshot(name: &str) -> KnowledgeRuntimeSnapshot {
+        KnowledgeRuntimeSnapshot {
+            name: name.into(),
+            version: "0.1.0".into(),
+            mode: "context".into(),
+            description: "Manual context Knowledge.".into(),
+            root: None,
+            source: "agent_binding".into(),
+            state: "available".into(),
+            runtime: "local".into(),
+            readiness_reason: None,
+            documents: vec![KnowledgeDocumentSnapshot {
+                path: "knowledge/docs/overview.md".into(),
+                content_type: Some("text/markdown".into()),
+                role: Some("context".into()),
+                description: Some("Overview.".into()),
+                bytes: Some(32),
+                sha256: Some("sha256:test".into()),
+            }],
+            embedding: None,
+            retrieval: None,
+        }
+    }
+
+    fn vector_knowledge_snapshot(name: &str) -> KnowledgeRuntimeSnapshot {
+        KnowledgeRuntimeSnapshot {
+            name: name.into(),
+            version: "0.1.0".into(),
+            mode: "vector".into(),
+            description: "Manual vector Knowledge.".into(),
+            root: None,
+            source: "agent_binding".into(),
+            state: "available".into(),
+            runtime: "local".into(),
+            readiness_reason: None,
+            documents: Vec::new(),
+            embedding: None,
+            retrieval: Some(KnowledgeRetrievalSnapshot {
+                strategy: Some("vector".into()),
+                default_top_k: Some(2),
+                default_score_threshold: None,
+                return_citations: Some(true),
+            }),
         }
     }
 

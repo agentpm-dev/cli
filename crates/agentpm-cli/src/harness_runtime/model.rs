@@ -615,6 +615,7 @@ pub struct ModelRequest {
 pub struct ModelTurn {
     pub assistant_content: Option<String>,
     pub actions: Vec<SemanticActionProposal>,
+    #[serde(default)]
     pub usage: RunUsage,
     #[serde(default)]
     pub finish_reason: Option<String>,

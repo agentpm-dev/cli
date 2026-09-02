@@ -19,7 +19,7 @@ use crate::manifest::{
 };
 use crate::prelude::*;
 use crate::{
-    harness_config::HarnessHookId,
+    harness_config::{HarnessHookId, HarnessTraceLevel},
     harness_engine::{
         HarnessEngine, HarnessEngineOptions, HarnessRunResult, HarnessRuntimeServices,
         HarnessSession, RuntimeTerminalResult,
@@ -76,6 +76,10 @@ pub struct HarnessArgs {
     #[arg(long)]
     pub json: bool,
 
+    /// Include detailed human-readable preflight sections
+    #[arg(long)]
+    pub verbose: bool,
+
     /// Run input text for one-shot --headless execution
     #[arg(long, value_name = "TEXT", conflicts_with = "input_file")]
     pub input: Option<String>,
@@ -111,7 +115,12 @@ impl HarnessArgs {
             println!("{}", serde_json::to_string_pretty(&plan.report)?);
         } else {
             let stream = PreflightOutputStream::for_surface(surface);
-            print_harness_preflight(&plan, surface, stream)?;
+            print_harness_preflight(
+                &plan,
+                surface,
+                stream,
+                human_preflight_verbose_enabled(self.verbose, &plan),
+            )?;
         }
 
         match plan.report.status {
@@ -2404,16 +2413,16 @@ fn knowledge_snapshots_from_plan(plan: &ResolvedHarnessPlan) -> Vec<KnowledgeRun
                 .ok()?;
             let (runtime, state, readiness_reason) =
                 knowledge_runtime_readiness(plan, package, &manifest, candidate_state);
-            Some(
-                crate::harness_runtime::knowledge::knowledge_snapshot_from_manifest(
-                    &package.root,
-                    &manifest,
-                    source.clone(),
-                    runtime,
-                    state,
-                    readiness_reason,
-                ),
-            )
+            let mut snapshot = crate::harness_runtime::knowledge::knowledge_snapshot_from_manifest(
+                &package.root,
+                &manifest,
+                source.clone(),
+                runtime,
+                state,
+                readiness_reason,
+            );
+            snapshot.name = package.name.clone();
+            Some(snapshot)
         })
         .collect()
 }
@@ -2646,6 +2655,7 @@ fn print_harness_preflight(
     plan: &ResolvedHarnessPlan,
     surface: HarnessExecutionSurface,
     stream: PreflightOutputStream,
+    verbose: bool,
 ) -> Result<()> {
     stream.line("AgentPM Harness preflight")?;
     stream.line(format!("Workspace: {}", plan.workspace_root.display()))?;
@@ -2694,6 +2704,15 @@ fn print_harness_preflight(
         for (state, count) in capability_counts {
             stream.line(format!("- {state}: {count}"))?;
         }
+        if verbose {
+            let detail_lines = static_capability_detail_lines(plan);
+            if !detail_lines.is_empty() {
+                stream.line("Static capability details:")?;
+                for line in detail_lines {
+                    stream.line(line)?;
+                }
+            }
+        }
     }
 
     if !plan.report.diagnostics.is_empty() {
@@ -2738,19 +2757,50 @@ fn capability_counts(plan: &ResolvedHarnessPlan) -> BTreeMap<&'static str, usize
     let mut counts = BTreeMap::new();
     let mut seen = std::collections::BTreeSet::new();
     for capability in &plan.capabilities {
-        let key = match capability.state {
-            CapabilityState::Available => "available",
-            CapabilityState::Pending => "pending",
-            CapabilityState::Unavailable => "unavailable",
-            CapabilityState::Suppressed => "suppressed",
-            CapabilityState::NotConfigured => "not_configured",
-        };
+        let key = capability_state_preflight_label(capability.state);
         if !seen.insert((&capability.kind, &capability.identity, key)) {
             continue;
         }
         *counts.entry(key).or_insert(0) += 1;
     }
     counts
+}
+
+fn static_capability_detail_lines(plan: &ResolvedHarnessPlan) -> Vec<String> {
+    let mut details: BTreeMap<(&str, &str, &str), (BTreeSet<&str>, BTreeSet<&str>)> =
+        BTreeMap::new();
+    for capability in &plan.capabilities {
+        let state = capability_state_preflight_label(capability.state);
+        let (scopes, sources) = details
+            .entry((state, &capability.kind, &capability.identity))
+            .or_default();
+        scopes.insert(&capability.scope);
+        sources.insert(&capability.source);
+    }
+    details
+        .into_iter()
+        .map(|((state, kind, identity), (scopes, sources))| {
+            format!(
+                "  - {state}: {kind} `{identity}` (scopes: {}, sources: {})",
+                scopes.into_iter().collect::<Vec<_>>().join(", "),
+                sources.into_iter().collect::<Vec<_>>().join(", ")
+            )
+        })
+        .collect()
+}
+
+fn capability_state_preflight_label(state: CapabilityState) -> &'static str {
+    match state {
+        CapabilityState::Available => "available",
+        CapabilityState::Pending => "pending runtime activation",
+        CapabilityState::Unavailable => "unavailable",
+        CapabilityState::Suppressed => "suppressed",
+        CapabilityState::NotConfigured => "not_configured",
+    }
+}
+
+fn human_preflight_verbose_enabled(cli_verbose: bool, plan: &ResolvedHarnessPlan) -> bool {
+    cli_verbose || matches!(plan.config.config.trace.level, HarnessTraceLevel::Verbose)
 }
 
 #[cfg(test)]
@@ -2788,6 +2838,102 @@ mod tests {
     }
 
     #[test]
+    fn capability_counts_describe_pending_runtime_activation() {
+        let root = temp_dir("capability-count-labels");
+        let mut plan = minimal_plan(&root);
+        plan.capabilities
+            .push(crate::harness_plan::StaticCapabilityCandidate {
+                kind: "knowledge".into(),
+                identity: "@zack/manual-context".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: CapabilityState::Available,
+            });
+        plan.capabilities
+            .push(crate::harness_plan::StaticCapabilityCandidate {
+                kind: "model_provider".into(),
+                identity: "openai/gpt-4o-mini".into(),
+                scope: "session".into(),
+                source: "harness_config".into(),
+                state: CapabilityState::Pending,
+            });
+
+        let counts = capability_counts(&plan);
+        assert_eq!(counts.get("available"), Some(&1));
+        assert_eq!(counts.get("pending runtime activation"), Some(&1));
+        assert!(!counts.contains_key("pending"));
+    }
+
+    #[test]
+    fn verbose_static_capability_details_list_available_and_pending_identities() {
+        let root = temp_dir("verbose-static-capability-details");
+        let mut plan = minimal_plan(&root);
+        plan.capabilities
+            .push(crate::harness_plan::StaticCapabilityCandidate {
+                kind: "knowledge".into(),
+                identity: "@zack/manual-vector".into(),
+                scope: "global".into(),
+                source: "agent_binding".into(),
+                state: CapabilityState::Available,
+            });
+        plan.capabilities
+            .push(crate::harness_plan::StaticCapabilityCandidate {
+                kind: "embedding_provider".into(),
+                identity: "toy-embedder".into(),
+                scope: "session".into(),
+                source: "harness_config".into(),
+                state: CapabilityState::Pending,
+            });
+
+        let details = static_capability_detail_lines(&plan);
+        assert_eq!(
+            details,
+            vec![
+                "  - available: knowledge `@zack/manual-vector` (scopes: global, sources: agent_binding)",
+                "  - pending runtime activation: embedding_provider `toy-embedder` (scopes: session, sources: harness_config)",
+            ]
+        );
+    }
+
+    #[test]
+    fn verbose_static_capability_details_combine_scopes_for_counted_identity() {
+        let root = temp_dir("verbose-static-capability-combined-scopes");
+        let mut plan = minimal_plan(&root);
+        for scope in ["phase:no-knowledge", "phase:research"] {
+            plan.capabilities
+                .push(crate::harness_plan::StaticCapabilityCandidate {
+                    kind: "knowledge".into(),
+                    identity: "@zack/manual-context".into(),
+                    scope: scope.into(),
+                    source: "agent_binding".into(),
+                    state: CapabilityState::Available,
+                });
+        }
+
+        let counts = capability_counts(&plan);
+        let details = static_capability_detail_lines(&plan);
+        assert_eq!(counts.get("available"), Some(&1));
+        assert_eq!(
+            details,
+            vec![
+                "  - available: knowledge `@zack/manual-context` (scopes: phase:no-knowledge, phase:research, sources: agent_binding)",
+            ]
+        );
+    }
+
+    #[test]
+    fn trace_verbose_enables_human_preflight_verbose_details() {
+        let root = temp_dir("trace-verbose-human-preflight");
+        let mut plan = minimal_plan(&root);
+
+        assert!(!human_preflight_verbose_enabled(false, &plan));
+        assert!(human_preflight_verbose_enabled(true, &plan));
+
+        plan.config.config.trace.level = HarnessTraceLevel::Verbose;
+        assert!(human_preflight_verbose_enabled(false, &plan));
+    }
+
+    #[test]
     fn default_surface_is_tui_with_explicit_headless_and_machine_modes() {
         let default_args = HarnessArgs {
             agent: None,
@@ -2797,6 +2943,7 @@ mod tests {
             machine: false,
             headless: false,
             json: false,
+            verbose: false,
             input: None,
             input_file: None,
             report: None,
@@ -2838,6 +2985,7 @@ mod tests {
             machine: false,
             headless: true,
             json: true,
+            verbose: false,
             input: None,
             input_file: None,
             report: None,
@@ -2883,6 +3031,7 @@ mod tests {
             machine: true,
             headless: false,
             json: true,
+            verbose: false,
             input: None,
             input_file: None,
             report: None,
@@ -3239,6 +3388,67 @@ mod tests {
     }
 
     #[test]
+    fn knowledge_snapshot_uses_resolved_package_identity_for_scoped_installs() {
+        let root = temp_dir("knowledge-snapshot-scoped-installed-package");
+        let knowledge_root = root.join(".agentpm/knowledge/zack/guide/0.1.0");
+        fs::create_dir_all(knowledge_root.join("knowledge/docs")).unwrap();
+        fs::write(
+            knowledge_root.join("knowledge/docs/guide.md"),
+            "# Guide\n\nScoped installed Knowledge package.\n",
+        )
+        .unwrap();
+        write_json(
+            &knowledge_root.join("agent.json"),
+            json!({
+                "kind": "knowledge",
+                "name": "guide",
+                "version": "0.1.0",
+                "description": "Schema-valid unscoped Knowledge manifest.",
+                "knowledge": {
+                    "mode": "context",
+                    "documents": [
+                        { "path": "knowledge/docs/guide.md", "content_type": "text/markdown" }
+                    ]
+                }
+            }),
+        );
+        crate::commands::knowledge::execute_knowledge_build(
+            &knowledge_root.join("agent.json"),
+            crate::commands::knowledge::KnowledgeBuildMode::Write,
+        )
+        .unwrap();
+
+        let mut plan = minimal_plan(&root);
+        plan.package_graph.insert(
+            "knowledge:@zack/guide@0.1.0".into(),
+            crate::harness_plan::ResolvedPackageInfo {
+                key: "knowledge:@zack/guide@0.1.0".into(),
+                kind: PackageKind::Knowledge,
+                name: "@zack/guide".into(),
+                version: "0.1.0".into(),
+                root: knowledge_root,
+            },
+        );
+        plan.capabilities
+            .push(crate::harness_plan::StaticCapabilityCandidate {
+                kind: "knowledge".into(),
+                identity: "@zack/guide".into(),
+                scope: "phase:research".into(),
+                source: "agent_binding".into(),
+                state: CapabilityState::Available,
+            });
+
+        let snapshots = knowledge_snapshots_from_plan(&plan);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].name, "@zack/guide");
+        assert_eq!(snapshots[0].version, "0.1.0");
+        assert_eq!(snapshots[0].state, "available");
+        assert_eq!(snapshots[0].mode, "context");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn machine_registration_accepts_unconfigured_sdk_hooks_and_approval() {
         let root = temp_dir("sdk-host-service-registration");
         let plan = minimal_plan(&root);
@@ -3349,6 +3559,70 @@ mod tests {
 
         let turn = runtime.generate(empty_model_request(selection)).unwrap();
         assert_eq!(turn, expected_turn);
+    }
+
+    #[test]
+    fn host_model_runtime_defaults_missing_or_partial_usage() {
+        let selection = ModelProviderSelection {
+            provider: "host-model".into(),
+            model: "model-1".into(),
+            options: json!({}),
+        };
+        let capabilities = host_model_capabilities_from_registration(
+            &host_model_capabilities(),
+            "host-model",
+            "model-1",
+        )
+        .unwrap();
+        let mut missing_usage = HostModelRuntime {
+            selection: selection.clone(),
+            invoker: Box::new(FakeHostInvoker {
+                response: json!({
+                    "assistant_content": "from host",
+                    "actions": [],
+                    "finish_reason": "stop",
+                    "provider_metadata": {}
+                }),
+                capabilities: None,
+            }),
+            capabilities: capabilities.clone(),
+            request_timeout_ms: 1_000,
+        };
+        let turn = missing_usage
+            .generate(empty_model_request(selection.clone()))
+            .unwrap();
+        assert_eq!(turn.usage, RunUsage::default());
+
+        let mut partial_usage = HostModelRuntime {
+            selection: selection.clone(),
+            invoker: Box::new(FakeHostInvoker {
+                response: json!({
+                    "assistant_content": "from host",
+                    "actions": [],
+                    "usage": {
+                        "tokens": {
+                            "input_tokens": 7
+                        },
+                        "embedding_requests": 2
+                    }
+                }),
+                capabilities: None,
+            }),
+            capabilities,
+            request_timeout_ms: 1_000,
+        };
+        let turn = partial_usage
+            .generate(empty_model_request(selection.clone()))
+            .unwrap();
+        assert_eq!(turn.usage.tokens.input_tokens, Some(7));
+        assert_eq!(turn.usage.tokens.output_tokens, None);
+        assert_eq!(turn.usage.tokens.total_tokens, None);
+        assert_eq!(turn.usage.embedding_requests, 2);
+        assert_eq!(turn.usage.knowledge_requests, 0);
+        assert_eq!(
+            turn.usage.cost,
+            crate::harness_observability::CostUsage::default()
+        );
     }
 
     #[test]

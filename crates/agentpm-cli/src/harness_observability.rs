@@ -104,6 +104,9 @@ pub enum HarnessEventType {
     KnowledgeRequestStarted,
     KnowledgeRetrieved,
     KnowledgeFailed,
+    EmbeddingRequestStarted,
+    EmbeddingRequestCompleted,
+    EmbeddingRequestFailed,
     MemorySurfaceReady,
     MemorySurfaceUnavailable,
     MemoryReadStarted,
@@ -450,6 +453,10 @@ fn is_content_key(key: &str) -> bool {
             | "argument"
             | "query"
             | "result"
+            | "vector"
+            | "vectors"
+            | "embedding_vector"
+            | "embedding_values"
             | "input"
             | "output"
             | "text"
@@ -471,10 +478,17 @@ fn is_secret_key(key: &str) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TokenUsage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
+}
+
+impl Default for TokenUsage {
+    fn default() -> Self {
+        Self::unknown()
+    }
 }
 
 impl TokenUsage {
@@ -488,9 +502,16 @@ impl TokenUsage {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CostUsage {
     pub amount: Option<f64>,
     pub currency: Option<String>,
+}
+
+impl Default for CostUsage {
+    fn default() -> Self {
+        Self::unknown()
+    }
 }
 
 impl CostUsage {
@@ -503,6 +524,7 @@ impl CostUsage {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RunUsage {
     pub model_calls: u64,
     pub tokens: TokenUsage,
@@ -1277,6 +1299,63 @@ mod tests {
                 .unwrap()
                 .contains("final answer")
         );
+    }
+
+    #[test]
+    fn content_policy_redacts_embedding_event_payload_content_fields() {
+        let event = HarnessEventEnvelope {
+            schema_version: HARNESS_EVENT_SCHEMA_VERSION,
+            event_id: "evt-1".into(),
+            session_id: "session-1".into(),
+            run_id: Some("run-1".into()),
+            session_sequence: 1,
+            run_sequence: Some(1),
+            timestamp: Utc::now(),
+            event_type: HarnessEventType::EmbeddingRequestCompleted,
+            phase_execution_id: Some("phase-exec-1".into()),
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Action {
+                action_kind: "embedding_request".into(),
+                identity: "@zack/guide".into(),
+                status: "completed".into(),
+                fields: BTreeMap::from([
+                    ("package".into(), json!("@zack/guide")),
+                    ("provider".into(), json!("manual")),
+                    ("model".into(), json!("toy-3d")),
+                    ("dimensions".into(), json!(3)),
+                    ("query".into(), json!("alpha launch checklist")),
+                    ("text".into(), json!("alpha launch checklist")),
+                    ("vector".into(), json!([1.0, 0.0, 0.0])),
+                    ("embedding_vector".into(), json!([1.0, 0.0, 0.0])),
+                ]),
+            },
+        };
+
+        let redacted = serde_json::to_value(
+            apply_content_policy(&event, &HarnessTraceContent::Redacted).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(redacted["payload"]["fields"]["package"], "@zack/guide");
+        assert_eq!(redacted["payload"]["fields"]["provider"], "manual");
+        assert_eq!(redacted["payload"]["fields"]["model"], "toy-3d");
+        assert_eq!(redacted["payload"]["fields"]["dimensions"], 3);
+        assert_eq!(redacted["payload"]["fields"]["query"], "[redacted]");
+        assert_eq!(redacted["payload"]["fields"]["text"], "[redacted]");
+        assert_eq!(redacted["payload"]["fields"]["vector"], "[redacted]");
+        assert_eq!(
+            redacted["payload"]["fields"]["embedding_vector"],
+            "[redacted]"
+        );
+
+        let none =
+            serde_json::to_value(apply_content_policy(&event, &HarnessTraceContent::None).unwrap())
+                .unwrap();
+        assert!(none["payload"]["fields"].get("query").is_none());
+        assert!(none["payload"]["fields"].get("text").is_none());
+        assert!(none["payload"]["fields"].get("vector").is_none());
+        assert!(none["payload"]["fields"].get("embedding_vector").is_none());
+        assert_eq!(none["payload"]["fields"]["provider"], "manual");
     }
 
     #[test]

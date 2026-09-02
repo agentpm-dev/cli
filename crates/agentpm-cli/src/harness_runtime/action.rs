@@ -151,6 +151,8 @@ pub struct ActionDispatchResult {
     pub terminal_status: Option<HarnessTerminalStatus>,
     #[serde(default, skip_serializing_if = "is_default_usage")]
     pub usage: RunUsage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_request_duration_ms: Option<u64>,
 }
 
 impl ActionDispatchResult {
@@ -162,6 +164,7 @@ impl ActionDispatchResult {
             failure_category: None,
             terminal_status: None,
             usage: RunUsage::default(),
+            embedding_request_duration_ms: None,
         }
     }
 
@@ -173,6 +176,7 @@ impl ActionDispatchResult {
             failure_category: None,
             terminal_status: None,
             usage: RunUsage::default(),
+            embedding_request_duration_ms: None,
         }
     }
 
@@ -187,6 +191,7 @@ impl ActionDispatchResult {
             failure_category: Some(category),
             terminal_status: None,
             usage: RunUsage::default(),
+            embedding_request_duration_ms: None,
         }
     }
 
@@ -198,11 +203,17 @@ impl ActionDispatchResult {
             failure_category: None,
             terminal_status: Some(status),
             usage: RunUsage::default(),
+            embedding_request_duration_ms: None,
         }
     }
 
     pub fn with_usage(mut self, usage: RunUsage) -> Self {
         self.usage = usage;
+        self
+    }
+
+    pub fn with_embedding_request_duration_ms(mut self, duration_ms: u64) -> Self {
+        self.embedding_request_duration_ms = Some(duration_ms);
         self
     }
 }

@@ -149,6 +149,7 @@ pub struct LocalKnowledgeRuntime {
 struct LocalKnowledgeRetrieval {
     result: KnowledgeRuntimeResult,
     embedding_requests: u64,
+    embedding_request_duration_ms: Option<u64>,
 }
 
 impl LocalKnowledgeRetrieval {
@@ -156,13 +157,15 @@ impl LocalKnowledgeRetrieval {
         Self {
             result,
             embedding_requests: 0,
+            embedding_request_duration_ms: None,
         }
     }
 
-    fn with_embedding(result: KnowledgeRuntimeResult) -> Self {
+    fn with_embedding(result: KnowledgeRuntimeResult, duration_ms: u64) -> Self {
         Self {
             result,
             embedding_requests: 1,
+            embedding_request_duration_ms: Some(duration_ms),
         }
     }
 }
@@ -292,23 +295,29 @@ impl LocalKnowledgeRuntime {
                 err,
             ));
         }
+        let embedding_started = Instant::now();
         let vector = match embedder.embed(space, query) {
             Ok(vector) => vector,
             Err(err) => {
-                return LocalKnowledgeRetrieval::with_embedding(KnowledgeRuntimeResult {
-                    ok: false,
-                    package: package.name.clone(),
-                    version: package.version.clone(),
-                    mode: KnowledgeRequestMode::VectorQuery,
-                    document: None,
-                    query: Some(query.to_string()),
-                    content: None,
-                    results: Vec::new(),
-                    citations: Vec::new(),
-                    error: Some(err),
-                });
+                let duration_ms = elapsed_ms(embedding_started);
+                return LocalKnowledgeRetrieval::with_embedding(
+                    KnowledgeRuntimeResult {
+                        ok: false,
+                        package: package.name.clone(),
+                        version: package.version.clone(),
+                        mode: KnowledgeRequestMode::VectorQuery,
+                        document: None,
+                        query: Some(query.to_string()),
+                        content: None,
+                        results: Vec::new(),
+                        citations: Vec::new(),
+                        error: Some(err),
+                    },
+                    duration_ms,
+                );
             }
         };
+        let embedding_duration_ms = elapsed_ms(embedding_started);
         LocalKnowledgeRetrieval::with_embedding(
             match query_local_vector_knowledge(
                 root,
@@ -330,6 +339,7 @@ impl LocalKnowledgeRuntime {
                     err.to_string(),
                 ),
             },
+            embedding_duration_ms,
         )
     }
 }
@@ -416,8 +426,16 @@ impl KnowledgeRuntime for LocalKnowledgeRuntime {
             embedding_requests: retrieval.embedding_requests,
             ..Default::default()
         };
-        ActionDispatchResult::success(json!(retrieval.result)).with_usage(usage)
+        let mut result = ActionDispatchResult::success(json!(retrieval.result)).with_usage(usage);
+        if let Some(duration_ms) = retrieval.embedding_request_duration_ms {
+            result = result.with_embedding_request_duration_ms(duration_ms);
+        }
+        result
     }
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 pub struct ServiceEmbeddingProvider {
@@ -1539,6 +1557,7 @@ mod tests {
             json!("src_alpha")
         );
         assert_eq!(result.usage.embedding_requests, 1);
+        assert!(result.embedding_request_duration_ms.is_some());
 
         let _ = std::fs::remove_dir_all(root);
     }
