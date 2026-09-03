@@ -1363,6 +1363,27 @@ mod tests {
         }
     }
 
+    struct StaticHostKnowledgeInvoker {
+        result: Value,
+    }
+
+    impl HostServiceInvoker for StaticHostKnowledgeInvoker {
+        fn invoke_host_service(
+            &mut self,
+            role: &str,
+            registry_id: &str,
+            method: &str,
+            payload: Value,
+            _timeout_ms: u64,
+        ) -> Result<Value> {
+            assert_eq!(role, "knowledge");
+            assert_eq!(registry_id, "pinecone-reference");
+            assert_eq!(method, "retrieve");
+            assert_eq!(payload["request"]["package"].as_str(), Some("remote"));
+            Ok(self.result.clone())
+        }
+    }
+
     #[test]
     fn context_document_loads_only_declared_document() {
         let root = temp_dir("context");
@@ -1509,6 +1530,120 @@ mod tests {
                 .contains("custom KnowledgeRuntime route for `guide` is configured but not active")
         );
         assert_eq!(result.output, Value::Null);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn composite_runtime_routes_mapped_package_to_custom_and_unmapped_package_to_local() {
+        let root = temp_dir("custom-and-local-side-by-side");
+        let remote_root = root.join("remote");
+        let local_root = root.join("local");
+        for (package_root, name, body) in [
+            (
+                &remote_root,
+                "remote",
+                "# Remote\nLocal remote content must not be used.",
+            ),
+            (&local_root, "local", "# Local\nLocal content was used."),
+        ] {
+            std::fs::create_dir_all(package_root.join("knowledge/docs")).unwrap();
+            std::fs::write(package_root.join("knowledge/docs/guide.md"), body).unwrap();
+            let manifest = json!({
+                "kind": "knowledge",
+                "name": name,
+                "version": "0.1.0",
+                "description": format!("{name} docs."),
+                "knowledge": {
+                    "mode": "context",
+                    "documents": [
+                        {
+                            "path": "knowledge/docs/guide.md",
+                            "content_type": "text/markdown"
+                        }
+                    ]
+                }
+            });
+            std::fs::write(
+                package_root.join("agent.json"),
+                serde_json::to_vec_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+            execute_knowledge_build(&package_root.join("agent.json"), KnowledgeBuildMode::Write)
+                .unwrap();
+        }
+        let remote = load_knowledge_snapshot(
+            &remote_root,
+            "agent_binding".into(),
+            "pinecone-reference".into(),
+            "available".into(),
+            None,
+        )
+        .unwrap();
+        let local_snapshot = load_knowledge_snapshot(
+            &local_root,
+            "agent_binding".into(),
+            "local".into(),
+            "available".into(),
+            None,
+        )
+        .unwrap();
+        let mut runtime_snapshot = RuntimeSnapshot::empty("session".into());
+        runtime_snapshot.knowledge.push(remote.clone());
+        runtime_snapshot.knowledge.push(local_snapshot);
+        let local = LocalKnowledgeRuntime::from_runtime(&runtime_snapshot, None);
+        let custom = CustomKnowledgeRuntime::new(
+            vec![remote],
+            HashMap::from([(
+                "pinecone-reference".into(),
+                ServiceRuntime::host(
+                    Box::new(StaticHostKnowledgeInvoker {
+                        result: json!({
+                            "ok": true,
+                            "package": "remote",
+                            "version": "0.1.0",
+                            "mode": "context_document",
+                            "document": "knowledge/docs/guide.md",
+                            "content": "custom provider content"
+                        }),
+                    }),
+                    1_000,
+                ),
+            )]),
+            BTreeMap::from([("remote".into(), "pinecone-reference".into())]),
+        );
+        let mut runtime = CompositeKnowledgeRuntime::new(
+            local,
+            Some(custom),
+            BTreeMap::from([("remote".into(), "pinecone-reference".into())]),
+        );
+
+        let remote_result = runtime.dispatch(&SemanticAction::KnowledgeRequest {
+            package: "remote".into(),
+            mode: Some(KnowledgeRequestMode::ContextDocument),
+            document: Some("knowledge/docs/guide.md".into()),
+            query: None,
+            top_k: None,
+            score_threshold: None,
+            return_citations: None,
+        });
+        assert!(remote_result.ok);
+        assert_eq!(remote_result.output["content"], "custom provider content");
+
+        let local_result = runtime.dispatch(&SemanticAction::KnowledgeRequest {
+            package: "local".into(),
+            mode: Some(KnowledgeRequestMode::ContextDocument),
+            document: Some("knowledge/docs/guide.md".into()),
+            query: None,
+            top_k: None,
+            score_threshold: None,
+            return_citations: None,
+        });
+        assert!(local_result.ok);
+        assert_eq!(
+            local_result.output["content"].as_str(),
+            Some("# Local\nLocal content was used.")
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

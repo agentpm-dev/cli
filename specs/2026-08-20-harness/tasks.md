@@ -643,7 +643,7 @@ This gives us the persistent machine protocol, HookRuntime, ApprovalRuntime, can
 - [ ] Keep normalized result fields/source identities/citations consistent across Node/Python implementations.
 
 - [ ] Add mocked provider tests for capability advertisement/attestation, query/options/result mapping, metadata filters, citations/source IDs, provider errors, and identity mismatch.
-- [ ] Add optional real-provider integration tests gated by environment/configuration.
+- [ ] Add optional real-provider integration tests gated by environment/configuration; when live embeddings/data are required, use generated real-document fixtures and real OpenAI `text-embedding-3-small` embeddings, with API keys supplied only through local environment variables and never committed or traced.
 - [ ] Add end-to-end Harness coverage where one Knowledge package is explicitly mapped to a Pinecone/pgvector fixture and another package simultaneously uses local KnowledgeRuntime.
 
 ## Release Band 5: Knowledge Runtime and Reference Providers
