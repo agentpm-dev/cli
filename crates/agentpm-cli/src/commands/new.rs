@@ -190,7 +190,7 @@ impl NewArgs {
             let workspace_metadata = WorkspaceMetadata {
                 schema_version: 1,
                 manifests: std::iter::once("agent.json".to_string())
-                    .chain(extra_local_manifests.into_iter())
+                    .chain(extra_local_manifests)
                     .collect(),
                 package_roots: WorkspacePackageRoots {
                     tools: Vec::new(),

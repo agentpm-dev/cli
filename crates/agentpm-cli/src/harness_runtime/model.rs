@@ -99,6 +99,64 @@ pub struct SkillRuntimeSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnowledgeDocumentSnapshot {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnowledgeEmbeddingSnapshot {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub dimensions: u64,
+    pub metric: String,
+    pub normalized: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KnowledgeRetrievalSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_top_k: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_score_threshold: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub return_citations: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KnowledgeRuntimeSnapshot {
+    pub name: String,
+    pub version: String,
+    pub mode: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
+    pub source: String,
+    pub state: String,
+    pub runtime: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<KnowledgeDocumentSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<KnowledgeEmbeddingSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retrieval: Option<KnowledgeRetrievalSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeCapabilitySnapshot {
     pub kind: String,
     pub identity: String,
@@ -140,6 +198,7 @@ pub struct RuntimeSnapshot {
     pub profile_bindings: ProfileBindingSnapshot,
     pub tools: Vec<ToolRuntimeSnapshot>,
     pub skills: Vec<SkillRuntimeSnapshot>,
+    pub knowledge: Vec<KnowledgeRuntimeSnapshot>,
     pub capability_candidates: Vec<RuntimeCapabilitySnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelProviderSelection>,
@@ -163,6 +222,7 @@ impl RuntimeSnapshot {
             profile_bindings: ProfileBindingSnapshot::default(),
             tools: Vec::new(),
             skills: Vec::new(),
+            knowledge: Vec::new(),
             capability_candidates: Vec::new(),
             model: None,
         }
@@ -555,6 +615,7 @@ pub struct ModelRequest {
 pub struct ModelTurn {
     pub assistant_content: Option<String>,
     pub actions: Vec<SemanticActionProposal>,
+    #[serde(default)]
     pub usage: RunUsage,
     #[serde(default)]
     pub finish_reason: Option<String>,

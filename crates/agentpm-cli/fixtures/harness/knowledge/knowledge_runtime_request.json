@@ -1,0 +1,11 @@
+{
+  "request": {
+    "package": "@zack/docs",
+    "version": "1.2.3",
+    "mode": "vector_query",
+    "query": "How does Harness route Knowledge?",
+    "top_k": 3,
+    "score_threshold": 0.72,
+    "return_citations": true
+  }
+}

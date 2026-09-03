@@ -1254,10 +1254,7 @@ fn validate_memory_manifest_semantics(
                 );
             }
             MemoryOperation::Delete {
-                targets,
-                trigger,
-                cascade_derived_records: _,
-                ..
+                targets, trigger, ..
             } => {
                 validate_unique_operation_targets(file_label, operation_key, targets, &mut issues);
                 for (idx, target) in targets.iter().enumerate() {

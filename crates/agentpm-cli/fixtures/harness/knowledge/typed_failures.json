@@ -1,0 +1,26 @@
+{
+  "knowledge_unavailable": {
+    "ok": false,
+    "package": "@zack/docs",
+    "version": "1.2.3",
+    "mode": "vector_query",
+    "query": "Harness Knowledge routing",
+    "error": {
+      "code": "knowledge_unavailable",
+      "message": "installed vector artifacts are coherent but no compatible EmbeddingProvider is configured",
+      "retryable": false
+    }
+  },
+  "embedding_provider_failed": {
+    "ok": false,
+    "package": "@zack/docs",
+    "version": "1.2.3",
+    "mode": "vector_query",
+    "query": "Harness Knowledge routing",
+    "error": {
+      "code": "embedding_provider_failed",
+      "message": "EmbeddingProvider request failed",
+      "retryable": false
+    }
+  }
+}

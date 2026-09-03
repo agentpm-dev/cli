@@ -1076,13 +1076,13 @@ fn install_signal_handlers() {
         state.previous_sigint = Some(unsafe {
             libc::signal(
                 libc::SIGINT,
-                terminate_active_process_groups as libc::sighandler_t,
+                terminate_active_process_groups as *const () as libc::sighandler_t,
             )
         });
         state.previous_sigterm = Some(unsafe {
             libc::signal(
                 libc::SIGTERM,
-                terminate_active_process_groups as libc::sighandler_t,
+                terminate_active_process_groups as *const () as libc::sighandler_t,
             )
         });
     }
