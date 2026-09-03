@@ -2766,8 +2766,11 @@ fn capability_counts(plan: &ResolvedHarnessPlan) -> BTreeMap<&'static str, usize
     counts
 }
 
+type StaticCapabilityDetailKey<'a> = (&'a str, &'a str, &'a str);
+type StaticCapabilityDetailValue<'a> = (BTreeSet<&'a str>, BTreeSet<&'a str>);
+
 fn static_capability_detail_lines(plan: &ResolvedHarnessPlan) -> Vec<String> {
-    let mut details: BTreeMap<(&str, &str, &str), (BTreeSet<&str>, BTreeSet<&str>)> =
+    let mut details: BTreeMap<StaticCapabilityDetailKey<'_>, StaticCapabilityDetailValue<'_>> =
         BTreeMap::new();
     for capability in &plan.capabilities {
         let state = capability_state_preflight_label(capability.state);

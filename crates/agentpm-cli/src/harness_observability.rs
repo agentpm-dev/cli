@@ -523,7 +523,7 @@ impl CostUsage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RunUsage {
     pub model_calls: u64,
@@ -538,24 +538,8 @@ pub struct RunUsage {
     pub cost: CostUsage,
 }
 
-impl Default for RunUsage {
-    fn default() -> Self {
-        Self {
-            model_calls: 0,
-            tokens: TokenUsage::unknown(),
-            accepted_semantic_actions: 0,
-            tool_calls: 0,
-            tool_retries: 0,
-            knowledge_requests: 0,
-            memory_requests: 0,
-            embedding_requests: 0,
-            duration_ms: None,
-            cost: CostUsage::unknown(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SessionUsage {
     pub started_runs: u64,
     pub completed_runs: u64,
@@ -569,25 +553,6 @@ pub struct SessionUsage {
     pub embedding_requests: u64,
     pub duration_ms: Option<u64>,
     pub cost: CostUsage,
-}
-
-impl Default for SessionUsage {
-    fn default() -> Self {
-        Self {
-            started_runs: 0,
-            completed_runs: 0,
-            model_calls: 0,
-            tokens: TokenUsage::unknown(),
-            accepted_semantic_actions: 0,
-            tool_calls: 0,
-            tool_retries: 0,
-            knowledge_requests: 0,
-            memory_requests: 0,
-            embedding_requests: 0,
-            duration_ms: None,
-            cost: CostUsage::unknown(),
-        }
-    }
 }
 
 impl SessionUsage {
