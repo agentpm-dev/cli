@@ -903,6 +903,10 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 
 - [ ] Add tests for stdio + HTTP imports, secret-header/env handling, explicit scoping, Tool filters, duplicate Tool names across servers, canonical/provider alias mapping, Tool-disabled phases, Hook-modified arguments, logical Tool retry, server disconnect/restart-without-replay, phase-local results, Session cleanup, and no Agent-manifest mutation.
 
+## Release Band 7: MCP Export and Import Runtime
+Covered milestones: 17-18.
+This gives us Harness-managed outward MCP export and explicitly scoped external MCP imports as runtime surfaces independent of the TUI. The band should prove MCP lifecycle, Tool scoping, shared-runner execution, imported Tool augmentation, readiness/suppression, retry/Hook behavior, and cleanup across headless and machine/SDK surfaces before interactive presentation work begins.
+
 ## Milestone 19: Ratatui Harness TUI, Interactive Resolution, Approvals, and Branding
 > Scope note: build a focused Ratatui client over the existing bootstrap/engine/event/control interfaces. TUI code owns presentation and interactive resolution only; it must not duplicate Loop traversal, capability composition, runtime execution, Hook logic, or approval semantics already implemented below it.
 - [ ] Add Ratatui frontend as the default TTY mode for `agentpm harness` and start it early enough to render bootstrap/preflight/service progress rather than showing a blank terminal until readiness completes.
@@ -978,6 +982,6 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 - [ ] Update version markers/release notes/docs according to repository conventions.
 - [ ] Record exact verification evidence required by `test-plan.md`, including skipped optional external-provider tests and environment blockers.
 
-## Release Band 7: MCP, TUI, Templates, and Final Hardening
-Covered milestones: 17-20.
-This gives us Harness-managed outward MCP export, explicitly scoped external MCP imports, the Ratatui interactive UI, branding, realistic Templates/examples, full documentation, and end-to-end release verification across headless, machine/SDK, and TUI surfaces.
+## Release Band 8: TUI, Templates, and Final Hardening
+Covered milestones: 19-20.
+This gives us the Ratatui interactive UI, branding, realistic Templates/examples, full documentation, and end-to-end release verification across headless, machine/SDK, and TUI surfaces after the MCP runtime surfaces have already been proven in Release Band 7.
