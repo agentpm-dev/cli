@@ -1866,7 +1866,50 @@ The phase model does not automatically receive authority to invoke external Memo
 
 ### Governance
 
-- `x-agentpm-persist: false` prevents durable persistence of that field and must be enforced before commit.
+#### Durable Memory Projection and `x-agentpm-persist`
+
+`x-agentpm-persist: false` marks a schema-governed Memory value as ephemeral with respect to durable Memory persistence.
+
+For every direct or lifecycle-created Memory record, Harness applies the following canonical sequence:
+
+1. Validate the full proposed `content` against the generated canonical record content contract.
+2. Apply any authorized Memory Hooks and revalidate the resulting content.
+3. Recursively apply persistence governance to produce the durable content projection, removing values governed by `x-agentpm-persist: false`.
+4. Validate the durable content projection against the same canonical record contract.
+5. Only then dispatch the durable mutation to the selected `MemoryRuntime`.
+
+Removed values must not be persisted as `null`, redacted text, sentinels, encrypted copies, alternate representations, or other placeholders.
+
+The canonical generated record contract remains authoritative before and after persistence projection; Phase 7B does not introduce a second durable-record schema.
+
+##### Authoring validity
+
+A property that is deterministically structurally required by an applicable object schema must not also be governed by `x-agentpm-persist: false`, because the resulting durable record could never satisfy its canonical contract.
+
+Memory lint/build semantic validation must reject such deterministically identifiable conflicts, including nested/referenced cases supported by the existing schema traversal machinery.
+
+The validator is not required to solve arbitrary Draft 2020-12 schema satisfiability for complex conditional/composed schemas. Runtime durable-projection validation remains the final authority for actual record instances.
+
+##### Backend boundary
+
+Persistence governance is Harness/shared Memory semantic behavior, not SQLite-specific behavior.
+
+Built-in, process-backed, and SDK-hosted `MemoryRuntime` implementations receive only the governed durable projection for durable mutations. A custom MemoryRuntime must never receive `x-agentpm-persist: false` values as part of a durable create/update/upsert request.
+
+##### Derived durable state
+
+Any durable representation derived from Memory content must be based only on the durable content projection. This includes:
+
+- persisted content hashes;
+- semantic embedding input;
+- persisted vectors;
+- durable full-text/search index material;
+- equivalent backend-derived durable representations.
+
+Values governed by `x-agentpm-persist: false` must not influence persisted vectors or other durable indexes.
+
+This rule is distinct from Harness trace/content-redaction policy. `x-agentpm-persist` governs durable Memory persistence; trace visibility is controlled independently by trace/redaction policy.
+
 - `x-agentpm-shareable: false` prevents generic semantic export/transfer outside the owning Memory/Agent boundary, including future Agent handoff/agent-to-agent sharing and shareable Memory export. It does not prevent normal owning-Agent use or authorized local inspection.
 - trace/log redaction is controlled independently by trace/sensitivity policy; `shareable` must not be overloaded as a trace flag.
 
