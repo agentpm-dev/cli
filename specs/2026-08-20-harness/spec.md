@@ -376,6 +376,9 @@ The following example is intentionally populated so every nested registry/mappin
     ]
   },
   "memory": {
+    "write_review": {
+      "points": ["phase_end", "run_end"]
+    },
     "local": {
       "semantic": {
         "embedding_provider": "example-4d",
@@ -903,6 +906,8 @@ The built-in local SQLite runtime advertises `semantic` retrieval only when `mem
 ```
 
 `embedding_provider` must reference `providers.embeddings`; `model` is the embedding model ID requested from that provider; `dimensions` is a positive integer and becomes part of the local vector-space identity. The built-in local runtime uses cosine similarity for Phase 7B. If this block is absent, local Memory does not advertise `semantic` even if an embedding provider exists elsewhere in config.
+
+Optional Memory persistence review is configured under `memory.write_review`; if omitted, Harness does not insert persistence-review turns. See “Optional Memory Persistence Review” for semantics and constraints.
 
 ### External MCP import configuration
 
@@ -1913,6 +1918,364 @@ This rule is distinct from Harness trace/content-redaction policy. `x-agentpm-pe
 - `x-agentpm-shareable: false` prevents generic semantic export/transfer outside the owning Memory/Agent boundary, including future Agent handoff/agent-to-agent sharing and shareable Memory export. It does not prevent normal owning-Agent use or authorized local inspection.
 - trace/log redaction is controlled independently by trace/sensitivity policy; `shareable` must not be overloaded as a trace flag.
 
+### Optional Memory Persistence Review
+
+Direct Memory writes normally remain model-initiated semantic actions. A model may choose `MemoryWrite` at any point during a phase when a writable Memory surface is present in the current `EffectivePhase`; Harness does not otherwise require an authored Agent, Loop, or Memory Blueprint to declare explicit write points.
+
+Phase 7B additionally supports an optional Harness persistence-review behavior configured through `agentpm.harness.json`. Persistence review gives the model an explicit, bounded opportunity to inspect currently authorized Memory and preserve information that is useful beyond the current Run.
+
+Persistence review is a Harness runtime behavior only. It:
+
+- does not add fields to Agent, Loop, Profile, Skill, Knowledge, or Memory package contracts;
+- does not create new Memory authority;
+- does not automatically decide what information should be persisted;
+- does not replace normal model-initiated `MemoryRead` or `MemoryWrite` actions;
+- does not create a second Memory read/write execution path.
+
+#### Configuration
+
+Version 1 may configure persistence review under the existing Harness `memory` configuration:
+
+```json
+{
+  "memory": {
+    "write_review": {
+      "points": ["phase_end", "run_end"]
+    }
+  }
+}
+```
+
+`write_review` is optional. If omitted, Harness does not insert persistence-review turns.
+
+`points` is an ordered set using only:
+
+- `phase_end`
+- `run_end`
+
+Duplicate values are invalid.
+
+`phase_end` means: after the current phase has produced a valid `PhaseCompletion`, but before Harness accepts that completion and leaves the phase.
+
+`run_end` means: after the current phase has produced a valid `PhaseCompletion` whose resolved Loop transition is an authored terminal (`$end`, `$handoff`, or `$abort`), but before Harness enters that terminal state.
+
+If both `phase_end` and `run_end` are configured and a phase completion would terminate the Run, Harness performs only the `run_end` review. `run_end` supersedes `phase_end` at that boundary so the same completion does not cause two persistence reviews.
+
+Persistence review is not invoked for runtime termination caused by failure, cancellation, `limit_reached`, unresolved `approval_required`, or other termination that does not arise from an accepted authored `PhaseCompletion`.
+
+If no writable Memory surface is authorized and ready at the configured review point, Harness skips the review rather than making an unnecessary `ModelRuntime` call.
+
+#### Persistence Review Lifecycle
+
+A persistence review reuses the existing Harness model/action machinery.
+
+For a phase-end review:
+
+```text
+normal phase-local agentic loop
+        ↓
+valid PhaseCompletion proposed
+        ↓
+validate outcome and determine transition
+        ↓
+hold pending PhaseCompletion
+        ↓
+configured persistence review
+        ↓
+bounded persistence-review inner loop
+        ↓
+PersistenceReviewComplete
+        ↓
+accept original PhaseCompletion
+        ↓
+finalize PhaseResult
+        ↓
+transition / checkpoint / terminal
+```
+
+The original `PhaseCompletion` remains pending while the review executes. Persistence review must not change:
+
+- the selected phase outcome;
+- `PhaseCompletion` output;
+- the resolved Loop transition;
+- Loop graph state;
+- checkpoints;
+- current phase identity;
+- any other substantive phase result.
+
+The purpose of the review is only to preserve useful Memory before control leaves the phase.
+
+#### Persistence Review ModelRequest
+
+Persistence review uses the same canonical provider-neutral `ModelRequest` and prompt-assembly architecture as an ordinary phase model call. Harness does not create a separate persistence-specific provider protocol or raw prompt format.
+
+The logical request contains the same relevant context already available to the phase:
+
+1. **Harness Control**
+
+   - identifies the request as a persistence review;
+   - instructs the model to consider whether information already learned should survive beyond the current Run;
+   - instructs the model not to continue substantive phase work or perform new external research;
+   - instructs the model to use authorized Memory reads when useful to avoid duplicates or update existing state correctly;
+   - requires `PersistenceReviewComplete` when no further Memory work is needed.
+
+2. **Authored Phase + Behavior**
+
+   - current Loop phase objective;
+   - active Profiles;
+   - active Skill descriptors;
+   - Skill instructions/resources already loaded in this phase.
+
+3. **Run Input + Consumer Context**
+
+   - the same Run input;
+   - the same per-Run Consumer Context snapshot.
+
+4. **Prior PhaseResults**
+
+   - the same prior PhaseResults available to the current phase.
+
+5. **Effective Capability Catalog**
+
+   - authorized and ready `MemoryRead` descriptors from the current `EffectivePhase`;
+   - authorized and ready `MemoryWrite` descriptors from the current `EffectivePhase`;
+   - `PersistenceReviewComplete`.
+
+6. **Current Phase-Local Transcript**
+
+   - the current phase's model content;
+   - Tool/MCP results;
+   - Knowledge results;
+   - prior Memory results;
+   - other structured phase-local action results already accumulated.
+
+The review therefore has access to the information the phase actually learned without automatically copying unrelated earlier Run transcripts or adding new external context.
+
+#### Narrowed Review Capability Surface
+
+Persistence review deliberately narrows the normal phase capability catalog.
+
+The only executable semantic actions available during the review are:
+
+- `MemoryRead`, where direct Memory read is already authorized and ready;
+- `MemoryWrite`, where direct Memory write is already authorized and ready;
+- `PersistenceReviewComplete`.
+
+The review does not expose:
+
+- AgentPM Tools;
+- imported MCP Tools;
+- Knowledge requests;
+- new Skill resource reads;
+- normal `PhaseCompletion`;
+- any other semantic action.
+
+Already-loaded Skill resources remain available as behavioral context, but the review cannot progressively load additional Skill material.
+
+Persistence review derives its Memory authority from the current phase's `EffectivePhase`. Harness configuration changes **when** Memory use is explicitly considered; it never expands **what** Memory the model may access.
+
+For example:
+
+```text
+Current EffectivePhase:
+  Memory read:
+    conversation_state
+    saved_notes
+
+  Memory write:
+    saved_notes
+```
+
+produces a persistence-review catalog containing:
+
+```text
+MemoryRead:
+  conversation_state
+  saved_notes
+
+MemoryWrite:
+  saved_notes
+
+PersistenceReviewComplete
+```
+
+It does not make `conversation_state` writable merely because the review is intended to persist information.
+
+#### Normal Memory Semantics Still Apply
+
+A `MemoryRead` or `MemoryWrite` selected during persistence review is the same canonical semantic action used during ordinary phase execution.
+
+A review-time `MemoryRead` follows the normal path:
+
+```text
+semantic action
+    ↓
+authority/readiness validation
+    ↓
+before_memory_read Hook
+    ↓
+request revalidation
+    ↓
+MemoryRuntime
+    ↓
+structured Memory result
+    ↓
+review transcript
+```
+
+A review-time `MemoryWrite` follows the normal path:
+
+```text
+semantic action
+    ↓
+authority/readiness validation
+    ↓
+canonical content validation
+    ↓
+before_memory_write Hook
+    ↓
+content revalidation
+    ↓
+persistence-governance projection
+    ↓
+durable-projection validation
+    ↓
+MemoryRuntime
+    ↓
+structured Memory result
+    ↓
+review transcript
+```
+
+There is no separate review-specific Memory backend API.
+
+This allows a review to perform bounded sequences such as:
+
+```text
+model
+  ↓
+MemoryRead(saved_notes)
+  ↓
+structured result
+  ↓
+model
+  ↓
+MemoryWrite(saved_notes)
+  ↓
+structured result
+  ↓
+model
+  ↓
+PersistenceReviewComplete
+```
+
+Reading is useful because the model may need to determine whether a durable fact already exists, whether an existing record should be updated rather than duplicated, or what current document state should be preserved when replacing a document.
+
+#### `PersistenceReviewComplete`
+
+`PersistenceReviewComplete` is a Harness-owned semantic control action. It does not invoke a Runtime Service.
+
+It means:
+
+```text
+No additional authorized Memory work is needed for this persistence review; return control to the pending phase completion.
+```
+
+The action carries no Memory authority and cannot alter the pending phase outcome/output/transition.
+
+Provider-native function/tool calling may transport `PersistenceReviewComplete` in the same structured mechanism used for other semantic actions, but `ModelRuntime` must normalize it to the Harness-owned semantic action rather than treating it as an AgentPM Tool call.
+
+#### Safety and Accounting
+
+Persistence review is a bounded agentic sub-loop, not an unrestricted continuation of the phase.
+
+Harness must maintain finite review-specific safety accounting for:
+
+- `ModelRuntime` calls made by the review;
+- accepted `MemoryRead` and `MemoryWrite` actions;
+- malformed/repaired review responses.
+
+Review model calls:
+
+- contribute to Run and Session model-call usage;
+- contribute provider-reported tokens and cost;
+- do not consume additional Loop steps;
+- are not ordinary phase turns for Loop traversal purposes.
+
+Review Memory reads/writes:
+
+- use normal Memory accounting;
+- appear in Run/Session Memory request counts;
+- use normal Memory Hooks;
+- remain visible in trace/report data.
+
+A persistence review must not become a mechanism for restarting substantive phase work.
+
+If review execution cannot complete because of review-specific limit exhaustion or an unrecoverable `ModelRuntime`/service failure, Phase 7B records the review failure/warning and proceeds with the already-valid pending `PhaseCompletion`. Persistence review is an optional Harness persistence aid and must not convert an otherwise completed phase into a runtime failure solely because the review mechanism itself could not finish. Successfully committed Memory writes performed before such a failure remain committed according to normal `MemoryRuntime` transaction semantics.
+
+#### Observability
+
+Harness should emit canonical persistence-review lifecycle events in addition to the normal Model and Memory events generated by the review:
+
+- `memory_write_review_started`
+- `memory_write_review_completed`
+- `memory_write_review_skipped`
+- `memory_write_review_failed`
+
+Payloads should identify at least:
+
+- review point (`phase_end | run_end`);
+- phase execution ID;
+- number of review `ModelRuntime` calls;
+- Memory reads attempted/completed;
+- Memory writes attempted/completed;
+- completion/failure/skip reason.
+
+Content remains governed by the normal trace content policy and unconditional secret redaction.
+
+The TUI, machine protocol, SDKs, JSON trace, and `RunReport` may expose this activity through the normal event/report surfaces; no review-specific client protocol is required.
+
+#### Relationship to Portable Memory Semantics
+
+Persistence review does not change what a Memory Blueprint means.
+
+The division of responsibility remains:
+
+```text
+Memory Blueprint
+  defines:
+    spaces
+    scopes
+    record contracts
+    retrieval
+    retention
+    constraints
+    operations/triggers
+
+Agent bindings + Loop access
+  define:
+    which direct Memory surfaces are available
+    where read/write is authorized
+
+Harness write_review
+  optionally defines:
+    when the model is explicitly asked to consider
+    using those already-authorized writable surfaces
+
+Model
+  decides:
+    whether anything is worth preserving
+    which authorized space is appropriate
+    whether an existing record should be read/updated/created
+
+Memory lifecycle operations
+  independently define:
+    automatic transformation/consolidation/deletion
+    according to Blueprint triggers
+```
+
+An Agent remains portable without `write_review`. Another runtime may choose its own policy for encouraging direct Memory persistence while still honoring the same portable Agent/Loop/Memory authority contracts.
+
 ### External Memory providers
 
 Phase 7B must ship usable reference external MemoryRuntime implementations for:
@@ -2156,7 +2519,7 @@ The implementation may add more granular events, but the stable version-1 taxono
 - Outcome/graph: `outcome_proposed|selected|invalid`, `transition_selected`, `loop_limit_reached`;
 - Tool/Skill: `tool_candidates_computed`, `tool_invoked`, `tool_retrying`, `tool_completed|failed`, `skill_activated`, `skill_resource_requested|loaded|failed`;
 - Knowledge: `knowledge_surface_ready|unavailable`, `knowledge_request_started`, `knowledge_retrieved|failed`;
-- Memory: `memory_surface_ready|unavailable`, `memory_read_started|completed|failed`, `memory_write_started|completed|failed`, `memory_trigger_evaluated`, `memory_operation_eligible|started|completed|failed`;
+- Memory: `memory_surface_ready|unavailable`, `memory_read_started|completed|failed`, `memory_write_started|completed|failed`, `memory_write_review_started|completed|skipped|failed`, `memory_trigger_evaluated`, `memory_operation_eligible|started|completed|failed`;
 - Hooks/approval: `hook_started|completed|rejected|failed`, `approval_requested|approved|denied|failed`;
 - MCP: `mcp_surface_starting|ready|failed|stopped`, `mcp_import_connected|failed`, `mcp_tool_invoked|completed|failed`;
 - Control: `cancellation_requested`, `cancellation_completed`.
