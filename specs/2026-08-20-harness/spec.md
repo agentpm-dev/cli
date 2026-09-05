@@ -1686,6 +1686,14 @@ The arrays contain only capabilities the runtime can actually realize in its **c
 
 `capacity` means the runtime can atomically enforce scoped hard record limits. `durable_trigger_state` means operation scheduling state survives Harness process restarts. `atomic_batches` means the runtime can commit/rollback the related multi-record/source/trigger-state mutations required by lifecycle operations as one semantic batch.
 
+For the built-in SQLite runtime, Phase 7B `full_text` is a practical local text lookup over durable record content string values. Matching is case-insensitive using Unicode simple lowercase mapping. It does not apply Unicode normalization, full case folding, or locale-specific casing rules, so canonically equivalent sequences that differ in composition (precomposed `ä` versus `a` plus combining diaeresis) and full-fold pairs such as `ß`/`ss` are not guaranteed to match. Runtimes may implement stronger text matching. It does not imply SQLite FTS tables, tokenized ranking, stemming, or language-aware search. A future release may add a stronger FTS-backed implementation, but runtimes that advertise `full_text` in Phase 7B must at minimum make declared full-text reads operate over persisted durable content rather than silently failing or falling back to another retrieval mode.
+
+`filter` retrieval matches durable record content by path. A filter key is a sequence of dot-separated segments addressing a value within the record content. A record matches a filter entry when any traversal of that path reaches a value equal to the filter value; traversal descends into objects by key and into arrays by trying every element. A filter entry naming a leaf array therefore matches when the array contains the filter value. Multiple filter entries are conjunctive.
+
+Filter values match by exact equality: structural equality for array and object values. `filter` does not support comparison operators, ranges, or partial string matching. A record property whose name contains a literal `.` is not addressable by `filter`.
+
+Unlike `full_text`, this is a strict contract rather than a floor: a runtime advertising `filter` must return exactly this result set. A backend capable of richer querying must restrict itself to these semantics so that the same Blueprint and request return the same records across runtimes.
+
 Harness compares this live descriptor with every Blueprint space and participating operation during preflight. A direct space is exposed only when all of its declared model/retrieval/retention/constraint/capacity requirements can be faithfully realized. A lifecycle operation is ready only when all referenced spaces are realizable for internal access and the backend provides durable trigger state plus atomic batches for operations that mutate multiple records/state entries.
 
 ### Local SQLite MemoryRuntime

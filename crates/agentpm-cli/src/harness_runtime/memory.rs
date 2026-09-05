@@ -3,23 +3,26 @@ use crate::commands::memory::{
     execute_memory_build_with_output,
 };
 use crate::manifest::{
-    MemoryManifest, MemoryRetentionAction, MemoryRetrievalMode, MemorySpaceModel,
+    MemoryManifest, MemoryRetentionAction, MemoryRetrievalMode, MemorySpace, MemorySpaceModel,
     resolve_existing_relative_file,
 };
 use anyhow::{Context, Result, anyhow, bail};
-use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use jsonschema::{Draft, JSONSchema};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
 
 const LOCAL_MEMORY_SCHEMA_VERSION: u64 = 1;
 const LOCAL_MEMORY_DB_NAME: &str = "memory.sqlite3";
 const LOCAL_MEMORY_BUSY_TIMEOUT_MS: u64 = 5_000;
+static MEMORY_RECORD_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -46,10 +49,18 @@ impl MemoryRuntimeCapabilityDescriptor {
                 MemorySpaceModel::Collection,
                 MemorySpaceModel::Sequence,
             ],
-            retrieval_modes: vec![MemoryRetrievalMode::Key],
-            retention_actions: Vec::new(),
-            constraints: Vec::new(),
-            capacity: false,
+            retrieval_modes: vec![
+                MemoryRetrievalMode::Key,
+                MemoryRetrievalMode::Filter,
+                MemoryRetrievalMode::Chronological,
+                MemoryRetrievalMode::FullText,
+            ],
+            retention_actions: vec![
+                MemoryRetentionAction::Delete,
+                MemoryRetentionAction::Archive,
+            ],
+            constraints: vec![MemoryRuntimeConstraintCapability::AppendOnly],
+            capacity: true,
             durable_trigger_state: true,
             atomic_batches: true,
         }
@@ -157,7 +168,67 @@ pub struct StoredMemoryRecord {
     pub scope_hash: String,
     pub content: Value,
     pub provenance: Value,
+    pub created_at: String,
+    pub updated_at: String,
+    pub expires_at: Option<String>,
+    pub archived_at: Option<String>,
     pub ordinal: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalMemoryWriteOperation {
+    Create,
+    Upsert,
+    Update,
+    Delete,
+    Archive,
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalMemoryWriteRequest<'a> {
+    pub package: &'a str,
+    pub package_version: &'a str,
+    pub manifest: &'a MemoryManifest,
+    pub contracts: &'a ValidatedMemoryContracts,
+    pub space: &'a str,
+    pub record_type: &'a str,
+    pub scope: BTreeMap<String, String>,
+    pub operation: LocalMemoryWriteOperation,
+    pub record_id: Option<String>,
+    pub content: Option<Value>,
+    pub provenance: Value,
+    pub now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalMemoryWriteResult {
+    pub operation: LocalMemoryWriteOperation,
+    pub record: Option<StoredMemoryRecord>,
+    pub affected_record_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalMemoryReadMode {
+    Key,
+    Filter,
+    Chronological,
+    FullText,
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalMemoryReadRequest<'a> {
+    pub package: &'a str,
+    pub package_version: &'a str,
+    pub manifest: &'a MemoryManifest,
+    pub space: &'a str,
+    pub scope: BTreeMap<String, String>,
+    pub mode: LocalMemoryReadMode,
+    pub record_id: Option<String>,
+    pub record_type: Option<String>,
+    pub filter: BTreeMap<String, Value>,
+    pub query: Option<String>,
+    pub limit: Option<usize>,
+    pub now: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
@@ -401,6 +472,7 @@ impl LocalSqliteMemoryRuntime {
             space,
             scope,
             record_id,
+            Utc::now(),
         )
     }
 
@@ -419,7 +491,266 @@ impl LocalSqliteMemoryRuntime {
             space,
             scope,
             record_type,
+            Utc::now(),
         )
+    }
+
+    pub fn write_record(
+        &mut self,
+        request: LocalMemoryWriteRequest<'_>,
+    ) -> Result<LocalMemoryWriteResult> {
+        validate_memory_scope(request.manifest, request.space, &request.scope)?;
+        let space = memory_space(request.manifest, request.space)?;
+        if !space
+            .record_types
+            .contains(&request.record_type.to_string())
+        {
+            bail!(
+                "record type `{}` is not permitted in Memory space `{}`",
+                request.record_type,
+                request.space
+            );
+        }
+
+        if append_only_enabled(space)
+            && matches!(
+                request.operation,
+                LocalMemoryWriteOperation::Update
+                    | LocalMemoryWriteOperation::Delete
+                    | LocalMemoryWriteOperation::Archive
+            )
+        {
+            bail!(
+                "append_only Memory space `{}` rejects direct mutation",
+                request.space
+            );
+        }
+
+        if matches!(
+            request.operation,
+            LocalMemoryWriteOperation::Create | LocalMemoryWriteOperation::Upsert
+        ) && request.record_id.is_some()
+        {
+            bail!("Memory create/upsert cannot assign an authoritative record id");
+        }
+
+        let prepared = match request.operation {
+            LocalMemoryWriteOperation::Create | LocalMemoryWriteOperation::Upsert => Some(
+                prepare_local_memory_record(&request, None)
+                    .context("preparing Memory create/upsert")?,
+            ),
+            LocalMemoryWriteOperation::Update => {
+                let record_id = request
+                    .record_id
+                    .as_deref()
+                    .context("Memory update requires an existing record id")?;
+                Some(
+                    prepare_local_memory_record(&request, Some(record_id))
+                        .context("preparing Memory update")?,
+                )
+            }
+            LocalMemoryWriteOperation::Delete | LocalMemoryWriteOperation::Archive => None,
+        };
+
+        self.atomic_batch(|batch| {
+            expire_memory_records_for_space(
+                &batch.transaction,
+                request.package,
+                request.package_version,
+                request.space,
+                space,
+                request.now,
+            )?;
+
+            match request.operation {
+                LocalMemoryWriteOperation::Create | LocalMemoryWriteOperation::Upsert => {
+                    let mut record = prepared.expect("record prepared for create/upsert");
+                    let existing_id = if matches!(space.model, MemorySpaceModel::Document) {
+                        find_current_document_id(
+                            &batch.transaction,
+                            request.package,
+                            request.package_version,
+                            request.space,
+                            &request.scope,
+                            request.now,
+                        )?
+                    } else {
+                        None
+                    };
+                    let creates_new_active = existing_id.is_none();
+                    enforce_memory_capacity(
+                        &batch.transaction,
+                        &request,
+                        space,
+                        creates_new_active,
+                    )?;
+
+                    if let Some(existing_id) = existing_id {
+                        record.id = existing_id.clone();
+                        validate_memory_record_envelope(request.contracts, &record)?;
+                        update_memory_record(&batch.transaction, &record)?;
+                    } else {
+                        if matches!(space.model, MemorySpaceModel::Sequence) {
+                            record.ordinal = Some(batch.allocate_sequence_ordinal(
+                                request.package,
+                                request.package_version,
+                                request.space,
+                                &request.scope,
+                            )?);
+                        }
+                        validate_memory_record_envelope(request.contracts, &record)?;
+                        insert_memory_record(&batch.transaction, &record)?;
+                    }
+                    delete_memory_vectors_for_record(
+                        &batch.transaction,
+                        request.package,
+                        request.package_version,
+                        request.space,
+                        &request.scope,
+                        &record.id,
+                    )?;
+                    let stored = get_memory_record(
+                        &batch.transaction,
+                        request.package,
+                        request.package_version,
+                        request.space,
+                        &request.scope,
+                        &record.id,
+                        request.now,
+                    )?
+                    .context("Memory write did not return the committed record")?;
+                    Ok(LocalMemoryWriteResult {
+                        operation: request.operation,
+                        affected_record_id: Some(stored.id.clone()),
+                        record: Some(stored),
+                    })
+                }
+                LocalMemoryWriteOperation::Update => {
+                    let mut record = prepared.expect("record prepared for update");
+                    let record_id = request.record_id.as_deref().unwrap();
+                    let existing = get_memory_record(
+                        &batch.transaction,
+                        request.package,
+                        request.package_version,
+                        request.space,
+                        &request.scope,
+                        record_id,
+                        request.now,
+                    )?
+                    .with_context(|| format!("Memory record `{record_id}` was not found"))?;
+                    if !matches!(space.model, MemorySpaceModel::Document)
+                        && existing.record_type != request.record_type
+                    {
+                        bail!(
+                            "Memory update target `{record_id}` has record type `{}` not `{}`",
+                            existing.record_type,
+                            request.record_type
+                        );
+                    }
+                    record.id = existing.id;
+                    record.created_at = parse_rfc3339_utc(&existing.created_at)?;
+                    record.ordinal = existing.ordinal;
+                    validate_memory_record_envelope(request.contracts, &record)?;
+                    update_memory_record(&batch.transaction, &record)?;
+                    delete_memory_vectors_for_record(
+                        &batch.transaction,
+                        request.package,
+                        request.package_version,
+                        request.space,
+                        &request.scope,
+                        &record.id,
+                    )?;
+                    let stored = get_memory_record(
+                        &batch.transaction,
+                        request.package,
+                        request.package_version,
+                        request.space,
+                        &request.scope,
+                        &record.id,
+                        request.now,
+                    )?
+                    .context("Memory update did not return the committed record")?;
+                    Ok(LocalMemoryWriteResult {
+                        operation: request.operation,
+                        affected_record_id: Some(stored.id.clone()),
+                        record: Some(stored),
+                    })
+                }
+                LocalMemoryWriteOperation::Delete => {
+                    let record_id = request
+                        .record_id
+                        .as_deref()
+                        .context("Memory delete requires an existing record id")?;
+                    delete_memory_record(
+                        &batch.transaction,
+                        request.package,
+                        request.package_version,
+                        request.space,
+                        &request.scope,
+                        record_id,
+                    )?;
+                    Ok(LocalMemoryWriteResult {
+                        operation: request.operation,
+                        affected_record_id: Some(record_id.to_string()),
+                        record: None,
+                    })
+                }
+                LocalMemoryWriteOperation::Archive => {
+                    let record_id = request
+                        .record_id
+                        .as_deref()
+                        .context("Memory archive requires an existing record id")?;
+                    archive_memory_record(
+                        &batch.transaction,
+                        request.package,
+                        request.package_version,
+                        request.space,
+                        &request.scope,
+                        record_id,
+                        request.now,
+                    )?;
+                    Ok(LocalMemoryWriteResult {
+                        operation: request.operation,
+                        affected_record_id: Some(record_id.to_string()),
+                        record: None,
+                    })
+                }
+            }
+        })
+    }
+
+    pub fn read_records(
+        &mut self,
+        request: LocalMemoryReadRequest<'_>,
+    ) -> Result<Vec<StoredMemoryRecord>> {
+        validate_memory_scope(request.manifest, request.space, &request.scope)?;
+        let space = memory_space(request.manifest, request.space)?;
+
+        self.atomic_batch(|batch| {
+            expire_memory_records_for_space(
+                &batch.transaction,
+                request.package,
+                request.package_version,
+                request.space,
+                space,
+                request.now,
+            )?;
+
+            match request.mode {
+                LocalMemoryReadMode::Key => {
+                    read_memory_records_by_key(&batch.transaction, &request)
+                }
+                LocalMemoryReadMode::Filter => {
+                    read_memory_records_by_filter(&batch.transaction, &request)
+                }
+                LocalMemoryReadMode::Chronological => {
+                    read_memory_records_chronological(&batch.transaction, &request)
+                }
+                LocalMemoryReadMode::FullText => {
+                    read_memory_records_full_text(&batch.transaction, &request)
+                }
+            }
+        })
     }
 
     pub fn allocate_sequence_ordinal(
@@ -654,6 +985,7 @@ impl LocalSqliteMemoryBatch<'_> {
             space,
             scope,
             record_id,
+            Utc::now(),
         )
     }
 
@@ -672,6 +1004,7 @@ impl LocalSqliteMemoryBatch<'_> {
             space,
             scope,
             record_type,
+            Utc::now(),
         )
     }
 
@@ -748,6 +1081,7 @@ fn get_memory_record(
     space: &str,
     scope: &BTreeMap<String, String>,
     record_id: &str,
+    now: DateTime<Utc>,
 ) -> Result<Option<StoredMemoryRecord>> {
     let (_scope_json, scope_hash) = LocalSqliteMemoryRuntime::scope_identity(scope)?;
     connection
@@ -755,45 +1089,224 @@ fn get_memory_record(
             r#"
             SELECT id, package, package_version, space, space_model, record_type,
                    schema_version, scope_json, scope_hash, content_json, provenance_json,
-                   ordinal
+                   created_at, updated_at, expires_at, archived_at, ordinal
             FROM memory_records
+            WHERE package = ?1 AND package_version = ?2 AND space = ?3
+              AND scope_hash = ?4 AND id = ?5 AND archived_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?6)
+            "#,
+            params![
+                package,
+                package_version,
+                space,
+                scope_hash,
+                record_id,
+                now.to_rfc3339()
+            ],
+            stored_memory_record_from_row,
+        )
+        .optional()
+        .context("reading Memory record")
+}
+
+fn stored_memory_record_from_row(row: &Row<'_>) -> rusqlite::Result<StoredMemoryRecord> {
+    let content_json: String = row.get(9)?;
+    let provenance_json: String = row.get(10)?;
+    Ok(StoredMemoryRecord {
+        id: row.get(0)?,
+        package: row.get(1)?,
+        package_version: row.get(2)?,
+        space: row.get(3)?,
+        space_model: row.get(4)?,
+        record_type: row.get(5)?,
+        schema_version: row.get(6)?,
+        scope_json: row.get(7)?,
+        scope_hash: row.get(8)?,
+        content: serde_json::from_str(&content_json).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(err))
+        })?,
+        provenance: serde_json::from_str(&provenance_json).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                10,
+                rusqlite::types::Type::Text,
+                Box::new(err),
+            )
+        })?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+        expires_at: row.get(13)?,
+        archived_at: row.get(14)?,
+        ordinal: row.get(15)?,
+    })
+}
+
+fn update_memory_record(connection: &Connection, record: &LocalMemoryRecordRow) -> Result<()> {
+    let (_scope_json, scope_hash) = LocalSqliteMemoryRuntime::scope_identity(&record.scope)?;
+    let rows = connection
+        .execute(
+            r#"
+            UPDATE memory_records
+            SET record_type = ?6,
+                schema_version = ?7,
+                content_json = ?8,
+                provenance_json = ?9,
+                updated_at = ?10,
+                expires_at = ?11,
+                archived_at = NULL,
+                ordinal = ?12
+            WHERE package = ?1 AND package_version = ?2 AND space = ?3
+              AND scope_hash = ?4 AND id = ?5 AND archived_at IS NULL
+            "#,
+            params![
+                &record.package,
+                &record.package_version,
+                &record.space,
+                scope_hash,
+                &record.id,
+                &record.record_type,
+                &record.schema_version,
+                serde_json::to_string(&record.content)?,
+                serde_json::to_string(&record.provenance)?,
+                record.updated_at.to_rfc3339(),
+                record.expires_at.as_ref().map(DateTime::to_rfc3339),
+                record.ordinal,
+            ],
+        )
+        .context("updating Memory record")?;
+    if rows == 0 {
+        bail!("Memory record `{}` was not found", record.id);
+    }
+    Ok(())
+}
+
+fn find_current_document_id(
+    connection: &Connection,
+    package: &str,
+    package_version: &str,
+    space: &str,
+    scope: &BTreeMap<String, String>,
+    now: DateTime<Utc>,
+) -> Result<Option<String>> {
+    let (_scope_json, scope_hash) = LocalSqliteMemoryRuntime::scope_identity(scope)?;
+    connection
+        .query_row(
+            r#"
+            SELECT id
+            FROM memory_records
+            WHERE package = ?1 AND package_version = ?2 AND space = ?3
+              AND scope_hash = ?4 AND space_model = 'document'
+              AND archived_at IS NULL AND (expires_at IS NULL OR expires_at > ?5)
+            ORDER BY updated_at DESC, id ASC
+            LIMIT 1
+            "#,
+            params![
+                package,
+                package_version,
+                space,
+                scope_hash,
+                now.to_rfc3339()
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("finding current Memory document")
+}
+
+fn delete_memory_vectors_for_record(
+    connection: &Connection,
+    package: &str,
+    package_version: &str,
+    space: &str,
+    scope: &BTreeMap<String, String>,
+    record_id: &str,
+) -> Result<()> {
+    let (_scope_json, scope_hash) = LocalSqliteMemoryRuntime::scope_identity(scope)?;
+    connection
+        .execute(
+            r#"
+            DELETE FROM memory_vectors
+            WHERE package = ?1 AND package_version = ?2 AND space = ?3
+              AND scope_hash = ?4 AND record_id = ?5
+            "#,
+            params![package, package_version, space, scope_hash, record_id],
+        )
+        .context("deleting stale Memory vectors")?;
+    Ok(())
+}
+
+fn delete_memory_record(
+    connection: &Connection,
+    package: &str,
+    package_version: &str,
+    space: &str,
+    scope: &BTreeMap<String, String>,
+    record_id: &str,
+) -> Result<()> {
+    delete_memory_vectors_for_record(
+        connection,
+        package,
+        package_version,
+        space,
+        scope,
+        record_id,
+    )?;
+    let (_scope_json, scope_hash) = LocalSqliteMemoryRuntime::scope_identity(scope)?;
+    let rows = connection
+        .execute(
+            r#"
+            DELETE FROM memory_records
             WHERE package = ?1 AND package_version = ?2 AND space = ?3
               AND scope_hash = ?4 AND id = ?5 AND archived_at IS NULL
             "#,
             params![package, package_version, space, scope_hash, record_id],
-            |row| {
-                let content_json: String = row.get(9)?;
-                let provenance_json: String = row.get(10)?;
-                Ok(StoredMemoryRecord {
-                    id: row.get(0)?,
-                    package: row.get(1)?,
-                    package_version: row.get(2)?,
-                    space: row.get(3)?,
-                    space_model: row.get(4)?,
-                    record_type: row.get(5)?,
-                    schema_version: row.get(6)?,
-                    scope_json: row.get(7)?,
-                    scope_hash: row.get(8)?,
-                    content: serde_json::from_str(&content_json).map_err(|err| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            9,
-                            rusqlite::types::Type::Text,
-                            Box::new(err),
-                        )
-                    })?,
-                    provenance: serde_json::from_str(&provenance_json).map_err(|err| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            10,
-                            rusqlite::types::Type::Text,
-                            Box::new(err),
-                        )
-                    })?,
-                    ordinal: row.get(11)?,
-                })
-            },
         )
-        .optional()
-        .context("reading Memory record")
+        .context("deleting Memory record")?;
+    if rows == 0 {
+        bail!("Memory record `{record_id}` was not found");
+    }
+    Ok(())
+}
+
+fn archive_memory_record(
+    connection: &Connection,
+    package: &str,
+    package_version: &str,
+    space: &str,
+    scope: &BTreeMap<String, String>,
+    record_id: &str,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    delete_memory_vectors_for_record(
+        connection,
+        package,
+        package_version,
+        space,
+        scope,
+        record_id,
+    )?;
+    let (_scope_json, scope_hash) = LocalSqliteMemoryRuntime::scope_identity(scope)?;
+    let rows = connection
+        .execute(
+            r#"
+            UPDATE memory_records
+            SET archived_at = ?6, updated_at = ?6
+            WHERE package = ?1 AND package_version = ?2 AND space = ?3
+              AND scope_hash = ?4 AND id = ?5 AND archived_at IS NULL
+            "#,
+            params![
+                package,
+                package_version,
+                space,
+                scope_hash,
+                record_id,
+                now.to_rfc3339()
+            ],
+        )
+        .context("archiving Memory record")?;
+    if rows == 0 {
+        bail!("Memory record `{record_id}` was not found");
+    }
+    Ok(())
 }
 
 fn active_memory_record_count(
@@ -803,6 +1316,7 @@ fn active_memory_record_count(
     space: &str,
     scope: &BTreeMap<String, String>,
     record_type: Option<&str>,
+    now: DateTime<Utc>,
 ) -> Result<u64> {
     let (_scope_json, scope_hash) = LocalSqliteMemoryRuntime::scope_identity(scope)?;
     let count = match record_type {
@@ -812,8 +1326,16 @@ fn active_memory_record_count(
             FROM memory_records
             WHERE package = ?1 AND package_version = ?2 AND space = ?3
               AND scope_hash = ?4 AND record_type = ?5 AND archived_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?6)
             "#,
-            params![package, package_version, space, scope_hash, record_type],
+            params![
+                package,
+                package_version,
+                space,
+                scope_hash,
+                record_type,
+                now.to_rfc3339()
+            ],
             |row| row.get::<_, u64>(0),
         ),
         None => connection.query_row(
@@ -822,13 +1344,765 @@ fn active_memory_record_count(
             FROM memory_records
             WHERE package = ?1 AND package_version = ?2 AND space = ?3
               AND scope_hash = ?4 AND archived_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?5)
             "#,
-            params![package, package_version, space, scope_hash],
+            params![
+                package,
+                package_version,
+                space,
+                scope_hash,
+                now.to_rfc3339()
+            ],
             |row| row.get::<_, u64>(0),
         ),
     }
     .context("counting active Memory records")?;
     Ok(count)
+}
+
+fn prepare_local_memory_record(
+    request: &LocalMemoryWriteRequest<'_>,
+    existing_record_id: Option<&str>,
+) -> Result<LocalMemoryRecordRow> {
+    let content = request
+        .content
+        .as_ref()
+        .context("Memory create/update requires record content")?;
+    let space = memory_space(request.manifest, request.space)?;
+    let schema_version = request
+        .manifest
+        .memory
+        .record_types
+        .get(request.record_type)
+        .with_context(|| format!("unknown Memory record type `{}`", request.record_type))?
+        .version
+        .clone();
+    let durable_content = durable_memory_content_projection_for_record(
+        request.contracts,
+        request.space,
+        request.record_type,
+        content,
+    )?;
+
+    let id = existing_record_id
+        .map(ToString::to_string)
+        .unwrap_or_else(allocate_memory_record_id);
+    let expires_at = memory_record_expires_at(space, request.now)?;
+    let provenance = match &request.provenance {
+        Value::Null => json!({}),
+        other => other.clone(),
+    };
+    let record = LocalMemoryRecordRow {
+        id,
+        package: request.package.to_string(),
+        package_version: request.package_version.to_string(),
+        space: request.space.to_string(),
+        space_model: space.model.clone(),
+        record_type: request.record_type.to_string(),
+        schema_version,
+        scope: request.scope.clone(),
+        content: durable_content,
+        provenance,
+        created_at: request.now,
+        updated_at: request.now,
+        expires_at,
+        archived_at: None,
+        ordinal: None,
+    };
+    Ok(record)
+}
+
+pub fn durable_memory_content_projection_for_record(
+    contracts: &ValidatedMemoryContracts,
+    space: &str,
+    record_type: &str,
+    content: &Value,
+) -> Result<Value> {
+    let schemas = memory_contract_schemas(contracts, space, record_type)?;
+    validate_json_schema(
+        &schemas.content_schema,
+        content,
+        "full proposed Memory content",
+    )?;
+    let durable_content = durable_content_projection(content, &schemas.content_schema)?;
+    validate_json_schema(
+        &schemas.content_schema,
+        &durable_content,
+        "durable Memory content projection",
+    )?;
+    Ok(durable_content)
+}
+
+fn validate_memory_record_envelope(
+    contracts: &ValidatedMemoryContracts,
+    record: &LocalMemoryRecordRow,
+) -> Result<()> {
+    let schemas = memory_contract_schemas(contracts, &record.space, &record.record_type)?;
+    validate_json_schema(
+        &schemas.envelope_schema,
+        &memory_record_contract_envelope(record),
+        "Memory record envelope",
+    )
+}
+
+fn memory_contract_schemas(
+    contracts: &ValidatedMemoryContracts,
+    space: &str,
+    record_type: &str,
+) -> Result<MemoryContractSchemas> {
+    let index_entry = contracts
+        .index
+        .contracts
+        .iter()
+        .find(|entry| entry.space == space && entry.record_type == record_type)
+        .with_context(|| {
+            format!(
+                "generated Memory contract missing for space `{space}` record type `{record_type}`"
+            )
+        })?;
+    let contract = contracts
+        .contracts
+        .iter()
+        .find(|contract| contract.path == index_entry.path)
+        .with_context(|| {
+            format!(
+                "generated Memory contract file `{}` was not loaded",
+                index_entry.path
+            )
+        })?;
+    let envelope_schema: Value = serde_json::from_slice(&contract.schema_bytes)
+        .with_context(|| format!("parsing generated Memory contract `{}`", contract.path))?;
+    let content_schema = envelope_schema
+        .pointer("/properties/content")
+        .cloned()
+        .with_context(|| {
+            format!(
+                "generated Memory contract `{}` has no content schema",
+                contract.path
+            )
+        })?;
+    Ok(MemoryContractSchemas {
+        envelope_schema,
+        content_schema,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct MemoryContractSchemas {
+    envelope_schema: Value,
+    content_schema: Value,
+}
+
+fn validate_json_schema(schema: &Value, instance: &Value, label: &str) -> Result<()> {
+    let compile_schema = schema_for_standalone_compile(schema);
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&compile_schema)
+        .map_err(|err| anyhow!("compiling {label} schema failed: {err}"))?;
+    if let Err(errors) = compiled.validate(instance) {
+        let details = errors
+            .take(5)
+            .map(|err| err.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        bail!("{label} validation failed: {details}");
+    }
+    Ok(())
+}
+
+fn schema_for_standalone_compile(schema: &Value) -> Value {
+    let mut schema = schema.clone();
+    if let Some(object) = schema.as_object_mut()
+        && let Some(Value::String(id)) = object.get("$id")
+        && !id.contains(':')
+    {
+        object.remove("$id");
+    }
+    schema
+}
+
+fn durable_content_projection(content: &Value, content_schema: &Value) -> Result<Value> {
+    project_non_persistable_value(content, content_schema, content_schema, 0)
+        .map(|projection| projection.unwrap_or(Value::Null))
+}
+
+fn project_non_persistable_value(
+    value: &Value,
+    schema: &Value,
+    root_schema: &Value,
+    depth: usize,
+) -> Result<Option<Value>> {
+    if depth > 128 {
+        bail!("Memory persistence governance schema traversal exceeded recursion limit");
+    }
+    let resolved_schema = resolve_local_schema_ref(schema, root_schema).unwrap_or(schema);
+    if schema_has_persist_false(resolved_schema) {
+        return Ok(None);
+    }
+
+    let mut projected = value.clone();
+    for keyword in ["allOf", "anyOf", "oneOf"] {
+        if let Some(subschemas) = resolved_schema.get(keyword).and_then(Value::as_array) {
+            for subschema in subschemas {
+                projected = match project_non_persistable_value(
+                    &projected,
+                    subschema,
+                    root_schema,
+                    depth + 1,
+                )? {
+                    Some(projected) => projected,
+                    None => return Ok(None),
+                };
+            }
+        }
+    }
+
+    match (&projected, resolved_schema) {
+        (Value::Object(object), Value::Object(schema_object)) => {
+            let properties = schema_object.get("properties").and_then(Value::as_object);
+            let additional_properties = schema_object.get("additionalProperties");
+            let mut durable = Map::new();
+            for (key, child_value) in object {
+                let child_schema = properties
+                    .and_then(|properties| properties.get(key))
+                    .or_else(|| additional_properties.filter(|value| value.is_object()));
+                let projected_child = match child_schema {
+                    Some(child_schema) => project_non_persistable_value(
+                        child_value,
+                        child_schema,
+                        root_schema,
+                        depth + 1,
+                    )?,
+                    None => Some(child_value.clone()),
+                };
+                if let Some(projected_child) = projected_child {
+                    durable.insert(key.clone(), projected_child);
+                }
+            }
+            Ok(Some(Value::Object(durable)))
+        }
+        (Value::Array(items), Value::Object(schema_object)) => {
+            if let Some(item_schema) = schema_object.get("items") {
+                let mut durable = Vec::new();
+                for item in items {
+                    if let Some(projected_item) =
+                        project_non_persistable_value(item, item_schema, root_schema, depth + 1)?
+                    {
+                        durable.push(projected_item);
+                    }
+                }
+                Ok(Some(Value::Array(durable)))
+            } else {
+                Ok(Some(projected))
+            }
+        }
+        _ => Ok(Some(projected)),
+    }
+}
+
+fn schema_has_persist_false(schema: &Value) -> bool {
+    schema
+        .as_object()
+        .and_then(|object| object.get("x-agentpm-persist"))
+        .and_then(Value::as_bool)
+        == Some(false)
+}
+
+fn resolve_local_schema_ref<'a>(schema: &'a Value, root_schema: &'a Value) -> Option<&'a Value> {
+    let reference = schema.as_object()?.get("$ref")?.as_str()?;
+    let pointer = reference.strip_prefix('#')?;
+    root_schema.pointer(pointer)
+}
+
+fn memory_record_contract_envelope(record: &LocalMemoryRecordRow) -> Value {
+    let mut envelope = Map::new();
+    envelope.insert("id".into(), Value::String(record.id.clone()));
+    envelope.insert(
+        "record_type".into(),
+        Value::String(record.record_type.clone()),
+    );
+    envelope.insert("space".into(), Value::String(record.space.clone()));
+    envelope.insert(
+        "scope".into(),
+        serde_json::to_value(&record.scope).unwrap_or_else(|_| json!({})),
+    );
+    envelope.insert(
+        "schema_version".into(),
+        Value::String(record.schema_version.clone()),
+    );
+    envelope.insert(
+        "created_at".into(),
+        Value::String(record.created_at.to_rfc3339()),
+    );
+    envelope.insert(
+        "updated_at".into(),
+        Value::String(record.updated_at.to_rfc3339()),
+    );
+    if let Some(expires_at) = record.expires_at.as_ref() {
+        envelope.insert("expires_at".into(), Value::String(expires_at.to_rfc3339()));
+    }
+    if let Some(ordinal) = record.ordinal {
+        envelope.insert("ordinal".into(), Value::Number(ordinal.into()));
+    }
+    envelope.insert("provenance".into(), record.provenance.clone());
+    envelope.insert("content".into(), record.content.clone());
+    Value::Object(envelope)
+}
+
+fn memory_space<'a>(manifest: &'a MemoryManifest, space: &str) -> Result<&'a MemorySpace> {
+    manifest
+        .memory
+        .spaces
+        .get(space)
+        .with_context(|| format!("unknown Memory space `{space}`"))
+}
+
+fn validate_memory_scope(
+    manifest: &MemoryManifest,
+    space_name: &str,
+    scope: &BTreeMap<String, String>,
+) -> Result<()> {
+    let space = memory_space(manifest, space_name)?;
+    let expected = space.scope.iter().cloned().collect::<BTreeSetLike>();
+    let actual = scope.keys().cloned().collect::<BTreeSetLike>();
+    if actual != expected {
+        bail!("Memory scope for space `{space_name}` must match declared complete scope tuple");
+    }
+    if scope.values().any(String::is_empty) {
+        bail!("Memory scope for space `{space_name}` contains an empty value");
+    }
+    Ok(())
+}
+
+type BTreeSetLike = std::collections::BTreeSet<String>;
+
+fn append_only_enabled(space: &MemorySpace) -> bool {
+    space
+        .constraints
+        .as_ref()
+        .and_then(|constraints| constraints.append_only)
+        .unwrap_or(false)
+}
+
+fn memory_record_expires_at(
+    space: &MemorySpace,
+    updated_at: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>> {
+    match &space.retention {
+        Some(retention) => Ok(Some(updated_at + parse_memory_ttl(&retention.ttl)?)),
+        None => Ok(None),
+    }
+}
+
+fn parse_memory_ttl(ttl: &str) -> Result<ChronoDuration> {
+    let Some(rest) = ttl.strip_prefix('P') else {
+        bail!("Memory retention ttl `{ttl}` must be an ISO-8601 duration starting with `P`");
+    };
+    if rest.is_empty() {
+        bail!("Memory retention ttl `{ttl}` is empty");
+    }
+
+    let mut in_time = false;
+    let mut number = String::new();
+    let mut duration = ChronoDuration::zero();
+    for ch in rest.chars() {
+        if ch == 'T' {
+            if in_time {
+                bail!("Memory retention ttl `{ttl}` has duplicate time marker");
+            }
+            in_time = true;
+            continue;
+        }
+        if ch.is_ascii_digit() {
+            number.push(ch);
+            continue;
+        }
+        if number.is_empty() {
+            bail!("Memory retention ttl `{ttl}` has a unit without a value");
+        }
+        let value = number
+            .parse::<i64>()
+            .with_context(|| format!("parsing Memory retention ttl `{ttl}`"))?;
+        number.clear();
+        duration = match (in_time, ch) {
+            (false, 'D') => duration + ChronoDuration::days(value),
+            (true, 'H') => duration + ChronoDuration::hours(value),
+            (true, 'M') => duration + ChronoDuration::minutes(value),
+            (true, 'S') => duration + ChronoDuration::seconds(value),
+            _ => bail!("Memory retention ttl `{ttl}` uses unsupported unit `{ch}`"),
+        };
+    }
+    if !number.is_empty() || duration <= ChronoDuration::zero() {
+        bail!("Memory retention ttl `{ttl}` is not a positive supported duration");
+    }
+    Ok(duration)
+}
+
+fn enforce_memory_capacity(
+    connection: &Connection,
+    request: &LocalMemoryWriteRequest<'_>,
+    space: &MemorySpace,
+    creates_new_active: bool,
+) -> Result<()> {
+    if !creates_new_active {
+        return Ok(());
+    }
+    let Some(capacity) = &space.capacity else {
+        return Ok(());
+    };
+    let active_count = active_memory_record_count(
+        connection,
+        request.package,
+        request.package_version,
+        request.space,
+        &request.scope,
+        None,
+        request.now,
+    )?;
+    if active_count >= capacity.max_records {
+        bail!(
+            "capacity_exceeded: Memory space `{}` scope already has {} active records; max_records is {}",
+            request.space,
+            active_count,
+            capacity.max_records
+        );
+    }
+    Ok(())
+}
+
+fn expire_memory_records_for_space(
+    connection: &Connection,
+    package: &str,
+    package_version: &str,
+    space: &str,
+    space_manifest: &MemorySpace,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let Some(retention) = &space_manifest.retention else {
+        return Ok(());
+    };
+    match retention.on_expire {
+        MemoryRetentionAction::Archive => {
+            connection
+                .execute(
+                    r#"
+                    DELETE FROM memory_vectors
+                    WHERE package = ?1 AND package_version = ?2 AND space = ?3
+                      AND record_id IN (
+                          SELECT id
+                          FROM memory_records
+                          WHERE package = ?1 AND package_version = ?2 AND space = ?3
+                            AND archived_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ?4
+                      )
+                    "#,
+                    params![package, package_version, space, now.to_rfc3339()],
+                )
+                .context("deleting vectors for expired archived Memory records")?;
+            connection
+                .execute(
+                    r#"
+                    UPDATE memory_records
+                    SET archived_at = ?4, updated_at = ?4
+                    WHERE package = ?1 AND package_version = ?2 AND space = ?3
+                      AND archived_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ?4
+                    "#,
+                    params![package, package_version, space, now.to_rfc3339()],
+                )
+                .context("archiving expired Memory records")?;
+        }
+        MemoryRetentionAction::Delete => {
+            connection
+                .execute(
+                    r#"
+                    DELETE FROM memory_vectors
+                    WHERE package = ?1 AND package_version = ?2 AND space = ?3
+                      AND record_id IN (
+                          SELECT id
+                          FROM memory_records
+                          WHERE package = ?1 AND package_version = ?2 AND space = ?3
+                            AND archived_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ?4
+                      )
+                    "#,
+                    params![package, package_version, space, now.to_rfc3339()],
+                )
+                .context("deleting vectors for expired Memory records")?;
+            connection
+                .execute(
+                    r#"
+                    DELETE FROM memory_records
+                    WHERE package = ?1 AND package_version = ?2 AND space = ?3
+                      AND archived_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ?4
+                    "#,
+                    params![package, package_version, space, now.to_rfc3339()],
+                )
+                .context("deleting expired Memory records")?;
+        }
+    }
+    Ok(())
+}
+
+fn read_memory_records_by_key(
+    connection: &Connection,
+    request: &LocalMemoryReadRequest<'_>,
+) -> Result<Vec<StoredMemoryRecord>> {
+    ensure_retrieval_mode(request.manifest, request.space, MemoryRetrievalMode::Key)?;
+    if let Some(record_id) = &request.record_id {
+        return Ok(get_memory_record(
+            connection,
+            request.package,
+            request.package_version,
+            request.space,
+            &request.scope,
+            record_id,
+            request.now,
+        )?
+        .into_iter()
+        .collect());
+    }
+
+    let space = memory_space(request.manifest, request.space)?;
+    if !matches!(space.model, MemorySpaceModel::Document) {
+        bail!("Memory key read requires a record id for non-document spaces");
+    }
+    let Some(record_id) = find_current_document_id(
+        connection,
+        request.package,
+        request.package_version,
+        request.space,
+        &request.scope,
+        request.now,
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(get_memory_record(
+        connection,
+        request.package,
+        request.package_version,
+        request.space,
+        &request.scope,
+        &record_id,
+        request.now,
+    )?
+    .into_iter()
+    .collect())
+}
+
+fn read_memory_records_by_filter(
+    connection: &Connection,
+    request: &LocalMemoryReadRequest<'_>,
+) -> Result<Vec<StoredMemoryRecord>> {
+    ensure_retrieval_mode(request.manifest, request.space, MemoryRetrievalMode::Filter)?;
+    let mut records = query_active_memory_records(
+        connection,
+        request,
+        "updated_at DESC, created_at DESC, id ASC",
+        None,
+    )?;
+    records.retain(|record| content_matches_filter(&record.content, &request.filter));
+    if let Some(limit) = request.limit {
+        records.truncate(limit);
+    }
+    Ok(records)
+}
+
+fn read_memory_records_chronological(
+    connection: &Connection,
+    request: &LocalMemoryReadRequest<'_>,
+) -> Result<Vec<StoredMemoryRecord>> {
+    ensure_retrieval_mode(
+        request.manifest,
+        request.space,
+        MemoryRetrievalMode::Chronological,
+    )?;
+    query_active_memory_records(
+        connection,
+        request,
+        "ordinal ASC, created_at ASC, id ASC",
+        request.limit,
+    )
+}
+
+fn read_memory_records_full_text(
+    connection: &Connection,
+    request: &LocalMemoryReadRequest<'_>,
+) -> Result<Vec<StoredMemoryRecord>> {
+    ensure_retrieval_mode(
+        request.manifest,
+        request.space,
+        MemoryRetrievalMode::FullText,
+    )?;
+    let query = request
+        .query
+        .as_deref()
+        .context("Memory full_text read requires a query")?
+        .to_lowercase();
+    let mut records = query_active_memory_records(
+        connection,
+        request,
+        "updated_at DESC, created_at DESC, id ASC",
+        None,
+    )?;
+    records.retain(|record| content_contains_text(&record.content, &query));
+    if let Some(limit) = request.limit {
+        records.truncate(limit);
+    }
+    Ok(records)
+}
+
+fn ensure_retrieval_mode(
+    manifest: &MemoryManifest,
+    space: &str,
+    mode: MemoryRetrievalMode,
+) -> Result<()> {
+    let space_manifest = memory_space(manifest, space)?;
+    if !space_manifest.retrieval.modes.contains(&mode) {
+        bail!(
+            "Memory space `{space}` does not declare retrieval mode `{:?}`",
+            mode
+        );
+    }
+    Ok(())
+}
+
+fn content_matches_filter(content: &Value, filter: &BTreeMap<String, Value>) -> bool {
+    filter.iter().all(|(key, expected)| {
+        content_matches_filter_path(content, &filter_path_segments(key), expected)
+    })
+}
+
+fn filter_path_segments(path: &str) -> Vec<&str> {
+    path.split('.').collect()
+}
+
+fn content_matches_filter_path(value: &Value, path: &[&str], expected: &Value) -> bool {
+    if path.is_empty() && value == expected {
+        return true;
+    }
+
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .any(|item| content_matches_filter_path(item, path, expected)),
+        Value::Object(object) if !path.is_empty() => object
+            .get(path[0])
+            .is_some_and(|child| content_matches_filter_path(child, &path[1..], expected)),
+        _ => false,
+    }
+}
+
+fn content_contains_text(value: &Value, query: &str) -> bool {
+    match value {
+        Value::String(text) => text.to_lowercase().contains(query),
+        Value::Array(items) => items.iter().any(|item| content_contains_text(item, query)),
+        Value::Object(object) => object
+            .values()
+            .any(|item| content_contains_text(item, query)),
+        _ => false,
+    }
+}
+
+fn query_active_memory_records(
+    connection: &Connection,
+    request: &LocalMemoryReadRequest<'_>,
+    order_by: &str,
+    limit: Option<usize>,
+) -> Result<Vec<StoredMemoryRecord>> {
+    let (_scope_json, scope_hash) = LocalSqliteMemoryRuntime::scope_identity(&request.scope)?;
+    let now = request.now.to_rfc3339();
+    let mut sql = r#"
+        SELECT id, package, package_version, space, space_model, record_type,
+               schema_version, scope_json, scope_hash, content_json, provenance_json,
+               created_at, updated_at, expires_at, archived_at, ordinal
+        FROM memory_records
+        WHERE package = ?1 AND package_version = ?2 AND space = ?3
+          AND scope_hash = ?4 AND archived_at IS NULL
+          AND (expires_at IS NULL OR expires_at > ?5)
+        "#
+    .to_string();
+    if request.record_type.is_some() {
+        sql.push_str(" AND record_type = ?6");
+    }
+    sql.push_str(" ORDER BY ");
+    sql.push_str(order_by);
+    if limit.is_some() && request.record_type.is_none() {
+        sql.push_str(" LIMIT ?6");
+    } else if limit.is_some() {
+        sql.push_str(" LIMIT ?7");
+    }
+
+    let mut statement = connection
+        .prepare(&sql)
+        .context("preparing Memory read query")?;
+    let records = match (request.record_type.as_deref(), limit) {
+        (Some(record_type), Some(limit)) => statement
+            .query_map(
+                params![
+                    request.package,
+                    request.package_version,
+                    request.space,
+                    scope_hash,
+                    now,
+                    record_type,
+                    limit as i64
+                ],
+                stored_memory_record_from_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?,
+        (Some(record_type), None) => statement
+            .query_map(
+                params![
+                    request.package,
+                    request.package_version,
+                    request.space,
+                    scope_hash,
+                    now,
+                    record_type
+                ],
+                stored_memory_record_from_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?,
+        (None, Some(limit)) => statement
+            .query_map(
+                params![
+                    request.package,
+                    request.package_version,
+                    request.space,
+                    scope_hash,
+                    now,
+                    limit as i64
+                ],
+                stored_memory_record_from_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?,
+        (None, None) => statement
+            .query_map(
+                params![
+                    request.package,
+                    request.package_version,
+                    request.space,
+                    scope_hash,
+                    now
+                ],
+                stored_memory_record_from_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?,
+    };
+    Ok(records)
+}
+
+fn allocate_memory_record_id() -> String {
+    let counter = MEMORY_RECORD_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let timestamp = Utc::now()
+        .timestamp_nanos_opt()
+        .unwrap_or_else(|| Utc::now().timestamp_micros() * 1_000);
+    format!("mem-{timestamp:x}-{counter:x}")
+}
+
+fn parse_rfc3339_utc(value: &str) -> Result<DateTime<Utc>> {
+    Ok(DateTime::parse_from_rfc3339(value)
+        .with_context(|| format!("parsing Memory record timestamp `{value}`"))?
+        .with_timezone(&Utc))
 }
 
 fn allocate_memory_sequence_ordinal(
@@ -1340,6 +2614,298 @@ mod tests {
         .unwrap();
     }
 
+    fn write_m14b_memory_package(dir: &Path) -> (MemoryManifest, ValidatedMemoryContracts) {
+        fs::write(
+            dir.join("agent.json"),
+            r#"{
+  "kind": "memory",
+  "name": "m14b-memory-test",
+  "version": "0.1.0",
+  "description": "M14b direct Memory runtime test package.",
+  "memory": {
+    "scopes": {
+      "user": { "description": "User scope." }
+    },
+    "record_types": {
+      "note": {
+        "version": "1.0.0",
+        "description": "Durable note.",
+        "schema": "schemas/note.schema.json"
+      },
+      "profile_a": {
+        "version": "1.0.0",
+        "description": "Profile A.",
+        "schema": "schemas/profile-a.schema.json"
+      },
+      "profile_b": {
+        "version": "1.0.0",
+        "description": "Profile B.",
+        "schema": "schemas/profile-b.schema.json"
+      },
+      "event": {
+        "version": "1.0.0",
+        "description": "Event.",
+        "schema": "schemas/event.schema.json"
+      },
+      "volatile_note": {
+        "version": "1.0.0",
+        "description": "Complex non-persistable note.",
+        "schema": "schemas/volatile-note.schema.json"
+      }
+    },
+    "spaces": {
+      "notes": {
+        "description": "Notes.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key", "filter", "full_text"] },
+        "capacity": { "max_records": 2 },
+        "retention": { "ttl": "PT1S", "on_expire": "archive" }
+      },
+      "delete_notes": {
+        "description": "Delete-on-expiry notes.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key"] },
+        "retention": { "ttl": "PT1S", "on_expire": "delete" }
+      },
+      "profile": {
+        "description": "Single current profile.",
+        "model": "document",
+        "record_types": ["profile_a", "profile_b"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key"] }
+      },
+      "events": {
+        "description": "Append-only events.",
+        "model": "sequence",
+        "record_types": ["event"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["chronological", "key"] },
+        "constraints": { "append_only": true }
+      },
+      "volatile_notes": {
+        "description": "Volatile projection validation.",
+        "model": "collection",
+        "record_types": ["volatile_note"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key"] }
+      }
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("schemas")).unwrap();
+        fs::write(
+            dir.join("schemas/note.schema.json"),
+            r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "x-agentpm-persist": true,
+      "x-agentpm-shareable": true
+    },
+	    "tag": {
+	      "type": "string",
+	      "x-agentpm-persist": true
+	    },
+	    "labels": {
+	      "type": "array",
+	      "items": { "type": "string" },
+	      "x-agentpm-persist": true
+	    },
+	    "assignee": {
+	      "type": "object",
+	      "properties": {
+	        "team": { "type": "string" },
+	        "user": { "type": "string" }
+	      },
+	      "additionalProperties": false,
+	      "x-agentpm-persist": true
+	    },
+	    "items": {
+	      "type": "array",
+	      "items": {
+	        "type": "object",
+	        "properties": {
+	          "name": { "type": "string" }
+	        },
+	        "additionalProperties": false
+	      },
+	      "x-agentpm-persist": true
+	    },
+	    "secret": {
+      "type": "string",
+      "x-agentpm-persist": false
+    },
+    "nested": {
+      "type": "object",
+      "properties": {
+        "visible": { "type": "string" },
+        "ephemeral": { "type": "string", "x-agentpm-persist": false }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["body"],
+  "additionalProperties": false
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("schemas/profile-a.schema.json"),
+            r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": { "name": { "type": "string", "minLength": 1 } },
+  "required": ["name"],
+  "additionalProperties": false
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("schemas/profile-b.schema.json"),
+            r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": { "display": { "type": "string", "minLength": 1 } },
+  "required": ["display"],
+  "additionalProperties": false
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("schemas/event.schema.json"),
+            r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": { "body": { "type": "string", "minLength": 1 } },
+  "required": ["body"],
+  "additionalProperties": false
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("schemas/volatile-note.schema.json"),
+            r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "durable": { "type": "string" },
+    "volatile": { "type": "string", "x-agentpm-persist": false }
+  },
+  "anyOf": [
+    { "required": ["durable"] },
+    { "required": ["volatile"] }
+  ],
+  "additionalProperties": false
+}
+"#,
+        )
+        .unwrap();
+
+        crate::commands::memory::execute_memory_build(
+            &dir.join("agent.json"),
+            MemoryBuildMode::Write,
+        )
+        .unwrap();
+        let manifest: MemoryManifest =
+            serde_json::from_str(&fs::read_to_string(dir.join("agent.json")).unwrap()).unwrap();
+        let contracts = validate_and_load_memory_contracts(dir).unwrap();
+        (manifest, contracts)
+    }
+
+    fn m14b_write_request<'a>(
+        manifest: &'a MemoryManifest,
+        contracts: &'a ValidatedMemoryContracts,
+        space: &'a str,
+        record_type: &'a str,
+        content: Option<Value>,
+    ) -> LocalMemoryWriteRequest<'a> {
+        LocalMemoryWriteRequest {
+            package: &manifest.name,
+            package_version: &manifest.version,
+            manifest,
+            contracts,
+            space,
+            record_type,
+            scope: BTreeMap::from([("user".to_string(), "u-123".to_string())]),
+            operation: LocalMemoryWriteOperation::Create,
+            record_id: None,
+            content,
+            provenance: json!({ "source_record_ids": [] }),
+            now: Utc::now(),
+        }
+    }
+
+    fn m14b_read_request<'a>(
+        manifest: &'a MemoryManifest,
+        space: &'a str,
+        mode: LocalMemoryReadMode,
+    ) -> LocalMemoryReadRequest<'a> {
+        LocalMemoryReadRequest {
+            package: &manifest.name,
+            package_version: &manifest.version,
+            manifest,
+            space,
+            scope: BTreeMap::from([("user".to_string(), "u-123".to_string())]),
+            mode,
+            record_id: None,
+            record_type: None,
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        }
+    }
+
+    fn insert_fake_vector(runtime: &LocalSqliteMemoryRuntime, record: &StoredMemoryRecord) {
+        runtime
+            .connection
+            .execute(
+                r#"
+                INSERT INTO memory_vectors (
+                    record_id, package, package_version, space, record_type, scope_hash,
+                    embedding_provider, embedding_model, dimensions, content_hash, vector, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'test', 'test-model', 1, 'sha256:test', ?7, ?8)
+                "#,
+                params![
+                    &record.id,
+                    &record.package,
+                    &record.package_version,
+                    &record.space,
+                    &record.record_type,
+                    &record.scope_hash,
+                    vec![0_u8, 0, 0, 0],
+                    Utc::now().to_rfc3339(),
+                ],
+            )
+            .unwrap();
+    }
+
+    fn vector_count(runtime: &LocalSqliteMemoryRuntime, record_id: &str) -> u64 {
+        runtime
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM memory_vectors WHERE record_id = ?1",
+                params![record_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
     #[test]
     fn sqlite_memory_store_initializes_schema_version_one() {
         let dir = temp_dir("schema");
@@ -1745,7 +3311,598 @@ mod tests {
     }
 
     #[test]
-    fn local_sqlite_capabilities_advertise_only_m14a_primitives() {
+    fn sqlite_direct_document_replace_allows_cross_record_type_replacement() {
+        let dir = temp_dir("m14b-document-replace");
+        let (manifest, contracts) = write_m14b_memory_package(&dir);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+        let scoped_user = BTreeMap::from([("user".to_string(), "u-123".to_string())]);
+
+        let first = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "profile",
+                "profile_a",
+                Some(json!({ "name": "A" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        let second = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "profile",
+                "profile_b",
+                Some(json!({ "display": "B" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(second.record_type, "profile_b");
+        assert_eq!(second.content, json!({ "display": "B" }));
+        assert_eq!(
+            runtime
+                .active_record_count(
+                    &manifest.name,
+                    &manifest.version,
+                    "profile",
+                    &scoped_user,
+                    None
+                )
+                .unwrap(),
+            1
+        );
+
+        let current = runtime
+            .read_records(m14b_read_request(
+                &manifest,
+                "profile",
+                LocalMemoryReadMode::Key,
+            ))
+            .unwrap();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].record_type, "profile_b");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_direct_collection_supports_crud_filter_full_text_and_capacity() {
+        let dir = temp_dir("m14b-collection");
+        let (manifest, contracts) = write_m14b_memory_package(&dir);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+        let now = Utc::now();
+        let scoped_user = BTreeMap::from([("user".to_string(), "u-123".to_string())]);
+
+        let alpha = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({
+                    "body": "Alpha launch checklist Änderung am Release Straße",
+                    "tag": "alpha",
+                    "labels": ["bug", "release"],
+                    "assignee": { "team": "platform", "user": "ada" },
+                    "items": [{ "name": "smoke-test" }, { "name": "rollback" }]
+                })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        let beta = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({
+                    "body": "Beta support note",
+                    "tag": "beta",
+                    "labels": ["support"],
+                    "assignee": { "team": "support", "user": "lin" },
+                    "items": [{ "name": "triage" }]
+                })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+
+        let mut filter_request = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Filter);
+        filter_request.filter = BTreeMap::from([("tag".into(), json!("alpha"))]);
+        let filtered = runtime.read_records(filter_request).unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, alpha.id);
+
+        let mut label_filter = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Filter);
+        label_filter.filter = BTreeMap::from([("labels".into(), json!("bug"))]);
+        let label_matches = runtime.read_records(label_filter).unwrap();
+        assert_eq!(label_matches.len(), 1);
+        assert_eq!(label_matches[0].id, alpha.id);
+
+        let mut array_equality_filter =
+            m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Filter);
+        array_equality_filter.filter =
+            BTreeMap::from([("labels".into(), json!(["bug", "release"]))]);
+        let array_equality_matches = runtime.read_records(array_equality_filter).unwrap();
+        assert_eq!(array_equality_matches.len(), 1);
+        assert_eq!(array_equality_matches[0].id, alpha.id);
+
+        let mut nested_filter = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Filter);
+        nested_filter.filter = BTreeMap::from([("assignee.team".into(), json!("platform"))]);
+        let nested_matches = runtime.read_records(nested_filter).unwrap();
+        assert_eq!(nested_matches.len(), 1);
+        assert_eq!(nested_matches[0].id, alpha.id);
+
+        let mut array_object_filter =
+            m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Filter);
+        array_object_filter.filter = BTreeMap::from([("items.name".into(), json!("rollback"))]);
+        let array_object_matches = runtime.read_records(array_object_filter).unwrap();
+        assert_eq!(array_object_matches.len(), 1);
+        assert_eq!(array_object_matches[0].id, alpha.id);
+
+        let mut conjunctive_filter =
+            m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Filter);
+        conjunctive_filter.filter = BTreeMap::from([
+            ("labels".into(), json!("release")),
+            ("assignee.team".into(), json!("platform")),
+        ]);
+        let conjunctive_matches = runtime.read_records(conjunctive_filter).unwrap();
+        assert_eq!(conjunctive_matches.len(), 1);
+        assert_eq!(conjunctive_matches[0].id, alpha.id);
+
+        let mut non_matching_filter =
+            m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Filter);
+        non_matching_filter.filter = BTreeMap::from([("labels".into(), json!("security"))]);
+        assert!(
+            runtime
+                .read_records(non_matching_filter)
+                .unwrap()
+                .is_empty()
+        );
+
+        let mut full_text_request =
+            m14b_read_request(&manifest, "notes", LocalMemoryReadMode::FullText);
+        full_text_request.query = Some("support".into());
+        let searched = runtime.read_records(full_text_request).unwrap();
+        assert_eq!(searched.len(), 1);
+        assert_eq!(searched[0].id, beta.id);
+
+        let mut unicode_full_text_request =
+            m14b_read_request(&manifest, "notes", LocalMemoryReadMode::FullText);
+        unicode_full_text_request.query = Some("änderung".into());
+        let unicode_searched = runtime.read_records(unicode_full_text_request).unwrap();
+        assert_eq!(unicode_searched.len(), 1);
+        assert_eq!(unicode_searched[0].id, alpha.id);
+
+        let mut normalization_limited_request =
+            m14b_read_request(&manifest, "notes", LocalMemoryReadMode::FullText);
+        normalization_limited_request.query = Some("strasse".into());
+        assert!(
+            runtime
+                .read_records(normalization_limited_request)
+                .unwrap()
+                .is_empty()
+        );
+
+        let overflow = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({ "body": "Overflow", "tag": "gamma" })),
+            ))
+            .unwrap_err();
+        assert!(overflow.to_string().contains("capacity_exceeded"));
+
+        let updated = {
+            let mut request = m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({ "body": "Alpha launch checklist updated", "tag": "alpha" })),
+            );
+            request.operation = LocalMemoryWriteOperation::Update;
+            request.record_id = Some(alpha.id.clone());
+            request.now = now;
+            runtime.write_record(request).unwrap().record.unwrap()
+        };
+        assert_eq!(updated.id, alpha.id);
+        assert_eq!(updated.content["body"], "Alpha launch checklist updated");
+
+        insert_fake_vector(&runtime, &beta);
+        assert_eq!(vector_count(&runtime, &beta.id), 1);
+        {
+            let mut request = m14b_write_request(&manifest, &contracts, "notes", "note", None);
+            request.operation = LocalMemoryWriteOperation::Archive;
+            request.record_id = Some(beta.id.clone());
+            request.now = now;
+            runtime.write_record(request).unwrap();
+        }
+        assert!(
+            runtime
+                .get_record(
+                    &manifest.name,
+                    &manifest.version,
+                    "notes",
+                    &scoped_user,
+                    &beta.id
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(vector_count(&runtime, &beta.id), 0);
+
+        {
+            let mut request = m14b_write_request(&manifest, &contracts, "notes", "note", None);
+            request.operation = LocalMemoryWriteOperation::Delete;
+            request.record_id = Some(alpha.id.clone());
+            request.now = now;
+            runtime.write_record(request).unwrap();
+        }
+        assert_eq!(
+            runtime
+                .active_record_count(
+                    &manifest.name,
+                    &manifest.version,
+                    "notes",
+                    &scoped_user,
+                    None
+                )
+                .unwrap(),
+            0
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_direct_sequence_orders_chronologically_and_never_reuses_ordinals() {
+        let dir = temp_dir("m14b-sequence");
+        let (manifest, contracts) = write_m14b_memory_package(&dir);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+        let now = Utc::now();
+
+        let first = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "events",
+                "event",
+                Some(json!({ "body": "first" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        let second = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "events",
+                "event",
+                Some(json!({ "body": "second" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        assert_eq!(first.ordinal, Some(0));
+        assert_eq!(second.ordinal, Some(1));
+
+        let append_only_update = {
+            let mut request = m14b_write_request(
+                &manifest,
+                &contracts,
+                "events",
+                "event",
+                Some(json!({ "body": "forbidden" })),
+            );
+            request.operation = LocalMemoryWriteOperation::Update;
+            request.record_id = Some(first.id.clone());
+            request.now = now;
+            runtime.write_record(request).unwrap_err()
+        };
+        assert!(append_only_update.to_string().contains("append_only"));
+
+        let third = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "events",
+                "event",
+                Some(json!({ "body": "third" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        assert_eq!(third.ordinal, Some(2));
+
+        let ordered = runtime
+            .read_records(m14b_read_request(
+                &manifest,
+                "events",
+                LocalMemoryReadMode::Chronological,
+            ))
+            .unwrap();
+        assert_eq!(
+            ordered
+                .iter()
+                .map(|record| record.content["body"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["first", "second", "third"]
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_direct_write_enforces_contract_and_persistence_projection_before_mutation() {
+        let dir = temp_dir("m14b-projection");
+        let (manifest, contracts) = write_m14b_memory_package(&dir);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+        let scoped_user = BTreeMap::from([("user".to_string(), "u-123".to_string())]);
+
+        let invalid_full_content = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({ "tag": "missing-body" })),
+            ))
+            .unwrap_err();
+        assert!(
+            format!("{invalid_full_content:?}")
+                .contains("full proposed Memory content validation failed")
+        );
+
+        let persisted = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({
+                    "body": "Keep this",
+                    "secret": "drop this",
+                    "nested": { "visible": "yes", "ephemeral": "drop nested" }
+                })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        assert_eq!(
+            persisted.content,
+            json!({ "body": "Keep this", "nested": { "visible": "yes" } })
+        );
+
+        drop(runtime);
+        let runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+        let read_back = runtime
+            .get_record(
+                &manifest.name,
+                &manifest.version,
+                "notes",
+                &scoped_user,
+                &persisted.id,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            read_back.content,
+            json!({ "body": "Keep this", "nested": { "visible": "yes" } })
+        );
+
+        let mut runtime = runtime;
+        let invalid_projection = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "volatile_notes",
+                "volatile_note",
+                Some(json!({ "volatile": "full content is initially valid" })),
+            ))
+            .unwrap_err();
+        assert!(
+            format!("{invalid_projection:?}")
+                .contains("durable Memory content projection validation failed")
+        );
+        assert_eq!(
+            runtime
+                .active_record_count(
+                    &manifest.name,
+                    &manifest.version,
+                    "volatile_notes",
+                    &scoped_user,
+                    None
+                )
+                .unwrap(),
+            0
+        );
+
+        let schemas = memory_contract_schemas(&contracts, "notes", "note").unwrap();
+        assert_eq!(
+            schemas.content_schema["properties"]["body"]["x-agentpm-shareable"],
+            true
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_direct_ttl_lazy_expiry_archives_or_deletes_before_active_reads() {
+        let dir = temp_dir("m14b-ttl");
+        let (manifest, contracts) = write_m14b_memory_package(&dir);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+        let now = Utc::now();
+        let scoped_user = BTreeMap::from([("user".to_string(), "u-123".to_string())]);
+
+        let archived = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({ "body": "expires by archive" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        let deleted = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "delete_notes",
+                "note",
+                Some(json!({ "body": "expires by delete" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+
+        insert_fake_vector(&runtime, &archived);
+        assert_eq!(vector_count(&runtime, &archived.id), 1);
+        let mut archive_read = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Filter);
+        archive_read.now = now + ChronoDuration::seconds(2);
+        runtime.read_records(archive_read).unwrap();
+        assert!(
+            runtime
+                .get_record(
+                    &manifest.name,
+                    &manifest.version,
+                    "notes",
+                    &scoped_user,
+                    &archived.id
+                )
+                .unwrap()
+                .is_none()
+        );
+        let archived_at: Option<String> = runtime
+            .connection
+            .query_row(
+                "SELECT archived_at FROM memory_records WHERE id = ?1",
+                params![archived.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(archived_at.is_some());
+        assert_eq!(vector_count(&runtime, &archived.id), 0);
+
+        let mut delete_read =
+            m14b_read_request(&manifest, "delete_notes", LocalMemoryReadMode::Key);
+        delete_read.record_id = Some(deleted.id.clone());
+        delete_read.now = now + ChronoDuration::seconds(2);
+        assert!(runtime.read_records(delete_read).unwrap().is_empty());
+        let deleted_count: u64 = runtime
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM memory_records WHERE id = ?1",
+                params![deleted.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(deleted_count, 0);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_direct_read_rolls_back_lazy_expiry_when_read_fails() {
+        let dir = temp_dir("m14b-read-expiry-rollback");
+        let (manifest, contracts) = write_m14b_memory_package(&dir);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+        let now = Utc::now();
+
+        let record = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({ "body": "expires by archive" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        insert_fake_vector(&runtime, &record);
+
+        let mut failing_read = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::FullText);
+        failing_read.now = now + ChronoDuration::seconds(2);
+        let err = runtime.read_records(failing_read).unwrap_err();
+        assert!(err.to_string().contains("requires a query"));
+
+        let archived_at: Option<String> = runtime
+            .connection
+            .query_row(
+                "SELECT archived_at FROM memory_records WHERE id = ?1",
+                params![record.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(archived_at.is_none());
+        assert_eq!(vector_count(&runtime, &record.id), 1);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_direct_read_and_capacity_filters_honor_request_clock() {
+        let dir = temp_dir("m14b-request-clock");
+        let (manifest, contracts) = write_m14b_memory_package(&dir);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+        let old_now = Utc::now() - ChronoDuration::seconds(10);
+
+        let mut first_request = m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({ "body": "first old note", "tag": "clock" })),
+        );
+        first_request.now = old_now;
+        let first = runtime.write_record(first_request).unwrap().record.unwrap();
+
+        let mut key_read = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Key);
+        key_read.record_id = Some(first.id.clone());
+        key_read.now = old_now;
+        assert_eq!(runtime.read_records(key_read).unwrap().len(), 1);
+
+        let mut filter_read = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Filter);
+        filter_read.filter = BTreeMap::from([("tag".into(), json!("clock"))]);
+        filter_read.now = old_now;
+        assert_eq!(runtime.read_records(filter_read).unwrap().len(), 1);
+
+        let mut second_request = m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({ "body": "second old note", "tag": "clock" })),
+        );
+        second_request.now = old_now;
+        runtime.write_record(second_request).unwrap();
+
+        let mut overflow_request = m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({ "body": "third old note", "tag": "clock" })),
+        );
+        overflow_request.now = old_now;
+        let overflow = runtime.write_record(overflow_request).unwrap_err();
+        assert!(overflow.to_string().contains("capacity_exceeded"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn local_sqlite_capabilities_advertise_only_current_primitives() {
         let capabilities = MemoryRuntimeCapabilityDescriptor::local_sqlite();
 
         assert_eq!(
@@ -1756,10 +3913,27 @@ mod tests {
                 MemorySpaceModel::Sequence
             ]
         );
-        assert_eq!(capabilities.retrieval_modes, vec![MemoryRetrievalMode::Key]);
-        assert!(capabilities.retention_actions.is_empty());
-        assert!(capabilities.constraints.is_empty());
-        assert!(!capabilities.capacity);
+        assert_eq!(
+            capabilities.retrieval_modes,
+            vec![
+                MemoryRetrievalMode::Key,
+                MemoryRetrievalMode::Filter,
+                MemoryRetrievalMode::Chronological,
+                MemoryRetrievalMode::FullText,
+            ]
+        );
+        assert_eq!(
+            capabilities.retention_actions,
+            vec![
+                MemoryRetentionAction::Delete,
+                MemoryRetentionAction::Archive
+            ]
+        );
+        assert_eq!(
+            capabilities.constraints,
+            vec![MemoryRuntimeConstraintCapability::AppendOnly]
+        );
+        assert!(capabilities.capacity);
         assert!(capabilities.durable_trigger_state);
         assert!(capabilities.atomic_batches);
     }
@@ -1787,7 +3961,7 @@ mod tests {
                         "model": "collection",
                         "record_types": ["note"],
                         "scope": ["user"],
-                        "retrieval": { "modes": ["filter", "full_text", "semantic"] },
+                        "retrieval": { "modes": ["semantic"] },
                         "capacity": { "max_records": 10 },
                         "retention": { "ttl": "P30D", "on_expire": "archive" },
                         "constraints": { "append_only": true }
@@ -1802,7 +3976,7 @@ mod tests {
             &MemoryRuntimeCapabilityDescriptor::local_sqlite(),
         );
 
-        assert_eq!(diagnostics.len(), 6);
+        assert_eq!(diagnostics.len(), 1);
         let reasons = diagnostics
             .iter()
             .map(|diagnostic| diagnostic.reason.as_str())
@@ -1812,12 +3986,7 @@ mod tests {
                 .iter()
                 .all(|diagnostic| diagnostic.space == "notes")
         );
-        assert!(reasons.contains(&"retrieval mode `Filter` is not supported"));
-        assert!(reasons.contains(&"retrieval mode `FullText` is not supported"));
         assert!(reasons.contains(&"retrieval mode `Semantic` is not supported"));
-        assert!(reasons.contains(&"retention action `Archive` is not supported"));
-        assert!(reasons.contains(&"capacity checks are not supported"));
-        assert!(reasons.contains(&"append-only constraints are not supported"));
     }
 
     #[test]

@@ -3627,7 +3627,7 @@ mod tests {
                         "session": {
                             "model": "collection",
                             "scope": ["user"],
-                            "retrieval": { "modes": ["full_text"] },
+                            "retrieval": { "modes": ["semantic"] },
                             "description": "Session state.",
                             "record_types": ["note"]
                         }
@@ -3651,7 +3651,7 @@ mod tests {
             diagnostic.code == "unrealizable_memory_space"
                 && diagnostic
                     .message
-                    .contains("retrieval mode `FullText` is not supported")
+                    .contains("retrieval mode `Semantic` is not supported")
         }));
         assert!(plan.capabilities.iter().any(|capability| {
             capability.kind == "memory"
