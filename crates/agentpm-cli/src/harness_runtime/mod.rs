@@ -4,6 +4,7 @@ pub(crate) mod action;
 pub(crate) mod approval;
 pub(crate) mod hook;
 pub(crate) mod knowledge;
+pub(crate) mod memory;
 pub(crate) mod model;
 pub(crate) mod provider;
 pub(crate) mod service;

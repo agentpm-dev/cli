@@ -1658,7 +1658,7 @@ A direct space or operation requiring unresolved scope keys is unavailable and d
 
 Per complete resolved scope tuple:
 
-- `document`: one current logical document per space/record type; direct write is create-or-replace/update;
+- `document`: one current logical document per exact Memory package/version + space + complete resolved scope tuple; direct write is create-or-replace/update. `record_type` remains validated record metadata but does not create an independent current document within a document space. A document space may declare multiple permitted record types. These record types are alternative schemas for the space's single current logical document; they do not create separate document identities. Replacing the current document may change its record type to another type permitted by the space;
 - `collection`: multiple identified records; direct create/read/update/delete where constraints permit;
 - `sequence`: ordered records; direct creation appends and runtime assigns ordinal; mutation/deletion only where constraints permit.
 
@@ -1730,7 +1730,7 @@ For operation state spanning multiple spaces, the operation scope tuple is the u
 - `schema_version TEXT NOT NULL`
 - `ordinal INTEGER NULL`
 - `created_at TEXT NOT NULL`
-- `updated_at TEXT NULL`
+- `updated_at TEXT NOT NULL`
 - `expires_at TEXT NULL`
 - `archived_at TEXT NULL`
 - `provenance_json TEXT NULL`
@@ -1744,7 +1744,7 @@ Required indexes/constraints:
 - index `(package, package_version, space, scope_hash, record_type, archived_at)` for active scoped lookup;
 - index `(package, package_version, space, scope_hash, ordinal)` for sequence reads;
 - index `expires_at` for retention cleanup;
-- partial unique index `(package, package_version, space, scope_hash, record_type)` where `space_model = 'document' AND archived_at IS NULL`, enforcing one active document per scope/record type;
+- partial unique index `(package, package_version, space, scope_hash)` where `space_model = 'document' AND archived_at IS NULL`, enforcing one active document per exact Memory package/version + space + complete resolved scope tuple;
 - sequence records require non-null `ordinal`; non-sequence records require null `ordinal`, enforced in runtime validation if a portable SQLite CHECK would make migrations awkward.
 
 Archived records remain in `memory_records` with `archived_at` set and are excluded from normal active reads/counts/retrieval. Delete semantics physically remove the record and any local vector row.
@@ -1809,8 +1809,10 @@ All SQLite writes that combine record mutation, sequence allocation, vector inva
 TTL anchor:
 
 ```text
-expires_at = (updated_at if present else created_at) + ttl
+expires_at = updated_at + ttl
 ```
+
+On creation, `updated_at` equals `created_at`; subsequent updates refresh `updated_at` and therefore refresh the TTL anchor.
 
 Local runtime may enforce expiry lazily on startup/read/write/trigger evaluation; expired records must not participate as active Memory after expiry.
 

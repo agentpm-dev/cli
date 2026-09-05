@@ -27,6 +27,8 @@
 - Confirm omitted `output_mode` is backward-compatible `create`.
 - Confirm `replace_input` is semantically restricted to matching single input/output pairing.
 - Confirm flagship Memory examples/docs were updated where in-place transform is intended.
+- Confirm document singleton identity is one current logical record per exact Memory package/version + space + complete resolved scope tuple; `record_type` is not part of document identity, document spaces may permit multiple record types as alternative schemas for that singleton document, and replacement may change the current record type.
+- Reject implementations that permit one simultaneous current document per record type within the same document space/scope.
 - Reject any additional portable manifest/schema changes that are not justified by `spec.md` or explicitly raised during implementation.
 
 ## Harness configuration

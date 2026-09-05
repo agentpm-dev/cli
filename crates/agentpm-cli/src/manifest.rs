@@ -2471,6 +2471,7 @@ fn validate_source_schema_file(
     }
 
     validate_source_schema_tree(&schema_file, "", &schema_value, issues);
+    validate_persist_required_conflicts(&schema_file, "", &schema_value, false, issues);
 }
 
 fn validate_source_schema_tree(
@@ -2570,6 +2571,84 @@ fn validate_source_schema_tree(
                     schema_file,
                     &json_pointer_child(pointer, &idx.to_string()),
                     child,
+                    issues,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn validate_persist_required_conflicts(
+    schema_file: &str,
+    pointer: &str,
+    value: &Value,
+    inside_complex_composition: bool,
+    issues: &mut Vec<LintIssue>,
+) {
+    match value {
+        Value::Object(map) => {
+            if !inside_complex_composition
+                && let (Some(Value::Object(properties)), Some(Value::Array(required))) =
+                    (map.get("properties"), map.get("required"))
+            {
+                let required_properties: HashSet<&str> =
+                    required.iter().filter_map(Value::as_str).collect();
+                for property_name in required_properties {
+                    if let Some(Value::Object(property_schema)) = properties.get(property_name)
+                        && property_schema
+                            .get("x-agentpm-persist")
+                            .and_then(Value::as_bool)
+                            == Some(false)
+                    {
+                        issues.push(LintIssue {
+                            file: schema_file.to_string(),
+                            level: "error",
+                            message: format!(
+                                "required Memory property `{property_name}` must not declare `x-agentpm-persist: false` because its durable projection could not satisfy the canonical record contract"
+                            ),
+                            instance_path: json_pointer_child(
+                                &json_pointer_child(
+                                    &json_pointer_child(pointer, "properties"),
+                                    property_name,
+                                ),
+                                "x-agentpm-persist",
+                            ),
+                            schema_path: "".into(),
+                        });
+                    }
+                }
+            }
+
+            for (key, child) in map {
+                let child_inside_complex = inside_complex_composition
+                    || matches!(
+                        key.as_str(),
+                        "oneOf"
+                            | "anyOf"
+                            | "allOf"
+                            | "if"
+                            | "then"
+                            | "else"
+                            | "not"
+                            | "dependentSchemas"
+                    );
+                validate_persist_required_conflicts(
+                    schema_file,
+                    &json_pointer_child(pointer, key),
+                    child,
+                    child_inside_complex,
+                    issues,
+                );
+            }
+        }
+        Value::Array(items) => {
+            for (idx, child) in items.iter().enumerate() {
+                validate_persist_required_conflicts(
+                    schema_file,
+                    &json_pointer_child(pointer, &idx.to_string()),
+                    child,
+                    inside_complex_composition,
                     issues,
                 );
             }
@@ -5525,6 +5604,180 @@ mod tests {
                 && issues.iter().any(|issue| issue.instance_path
                     == "/$defs/detail/properties/note/x-agentpm-shareable"),
             "expected invalid governance values failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_required_non_persistable_fields() {
+        let dir = temp_dir("memory-required-non-persistable");
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            base_memory_manifest(),
+            &[(
+                "schemas/user-preference.schema.json",
+                r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "secret_note": {
+      "type": "string",
+      "x-agentpm-persist": false
+    }
+  },
+  "required": ["secret_note"],
+  "additionalProperties": false
+}
+"#,
+            )],
+        );
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/properties/secret_note/x-agentpm-persist"),
+            "expected required non-persistable property failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_nested_required_non_persistable_fields() {
+        let dir = temp_dir("memory-nested-required-non-persistable");
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            base_memory_manifest(),
+            &[(
+                "schemas/user-preference.schema.json",
+                r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "profile": {
+      "type": "object",
+      "properties": {
+        "session_token": {
+          "type": "string",
+          "x-agentpm-persist": false
+        }
+      },
+      "required": ["session_token"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["profile"],
+  "additionalProperties": false
+}
+"#,
+            )],
+        );
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path
+                == "/properties/profile/properties/session_token/x-agentpm-persist"),
+            "expected nested required non-persistable property failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_allows_optional_non_persistable_fields() {
+        let dir = temp_dir("memory-optional-non-persistable");
+        assert_manifest_file_ok(
+            &dir,
+            base_memory_manifest(),
+            &[(
+                "schemas/user-preference.schema.json",
+                r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "favorite_color": { "type": "string" },
+    "scratch": {
+      "type": "string",
+      "x-agentpm-persist": false
+    }
+  },
+  "required": ["favorite_color"],
+  "additionalProperties": false
+}
+"#,
+            )],
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_reject_referenced_required_non_persistable_fields() {
+        let dir = temp_dir("memory-referenced-required-non-persistable");
+        let issues = assert_manifest_file_invalid(
+            &dir,
+            base_memory_manifest(),
+            &[(
+                "schemas/user-preference.schema.json",
+                r##"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "details": {
+      "type": "object",
+      "properties": {
+        "transient": {
+          "type": "string",
+          "x-agentpm-persist": false
+        }
+      },
+      "required": ["transient"],
+      "additionalProperties": false
+    }
+  },
+  "$ref": "#/$defs/details"
+}
+"##,
+            )],
+        );
+
+        assert!(
+            issues.iter().any(|issue| issue.instance_path
+                == "/$defs/details/properties/transient/x-agentpm-persist"),
+            "expected referenced required non-persistable property failure, got: {issues:#?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_semantics_does_not_overreject_complex_persist_composition() {
+        let dir = temp_dir("memory-complex-persist-composition");
+        assert_manifest_file_ok(
+            &dir,
+            base_memory_manifest(),
+            &[(
+                "schemas/user-preference.schema.json",
+                r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "secret_note": {
+          "type": "string",
+          "x-agentpm-persist": false
+        }
+      },
+      "required": ["secret_note"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "favorite_color": { "type": "string" }
+      },
+      "required": ["favorite_color"],
+      "additionalProperties": false
+    }
+  ]
+}
+"#,
+            )],
         );
         let _ = std::fs::remove_dir_all(dir);
     }
