@@ -21,6 +21,26 @@ impl SemanticActionProposal {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryReadMode {
+    Key,
+    Filter,
+    Chronological,
+    FullText,
+    Semantic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryWriteOperation {
+    Create,
+    Upsert,
+    Update,
+    Delete,
+    Archive,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SemanticAction {
@@ -55,11 +75,27 @@ pub enum SemanticAction {
     MemoryRead {
         package: String,
         space: String,
+        mode: MemoryReadMode,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        record_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        record_type: Option<String>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        filter: BTreeMap<String, Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        limit: Option<usize>,
     },
     MemoryWrite {
         package: String,
         space: String,
-        content: Value,
+        operation: MemoryWriteOperation,
+        record_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        record_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content: Option<Value>,
     },
     PhaseCompletion {
         outcome: Option<String>,
@@ -119,7 +155,7 @@ impl SemanticAction {
             Self::ExternalMcpTool { server, tool, .. } => format!("{server}/{tool}"),
             Self::SkillResourceRead { skill, resource } => format!("{skill}/{resource}"),
             Self::KnowledgeRequest { package, .. } => package.clone(),
-            Self::MemoryRead { package, space } | Self::MemoryWrite { package, space, .. } => {
+            Self::MemoryRead { package, space, .. } | Self::MemoryWrite { package, space, .. } => {
                 format!("{package}/{space}")
             }
             Self::PhaseCompletion { outcome, .. } => {

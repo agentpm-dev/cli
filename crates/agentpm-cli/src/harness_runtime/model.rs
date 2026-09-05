@@ -3,7 +3,9 @@
 use super::action::SemanticActionProposal;
 use crate::harness_engine::{EffectivePhase, PhaseResult};
 use crate::harness_observability::RunUsage;
-use crate::manifest::{ProfileConstraintStrength, ProfileMetadata};
+use crate::manifest::{
+    MemoryRetrievalMode, MemorySpaceModel, ProfileConstraintStrength, ProfileMetadata,
+};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -156,6 +158,35 @@ pub struct KnowledgeRuntimeSnapshot {
     pub retrieval: Option<KnowledgeRetrievalSnapshot>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryRecordTypeRuntimeSnapshot {
+    pub name: String,
+    pub schema_version: String,
+    pub content_schema: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemorySpaceRuntimeSnapshot {
+    pub package: String,
+    pub package_version: String,
+    pub space: String,
+    pub model: MemorySpaceModel,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
+    pub runtime: String,
+    pub source: String,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness_reason: Option<String>,
+    pub binding_scope: String,
+    pub scope_keys: Vec<String>,
+    pub retrieval_modes: Vec<MemoryRetrievalMode>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub append_only: bool,
+    pub record_types: Vec<MemoryRecordTypeRuntimeSnapshot>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeCapabilitySnapshot {
     pub kind: String,
@@ -199,6 +230,8 @@ pub struct RuntimeSnapshot {
     pub tools: Vec<ToolRuntimeSnapshot>,
     pub skills: Vec<SkillRuntimeSnapshot>,
     pub knowledge: Vec<KnowledgeRuntimeSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory: Vec<MemorySpaceRuntimeSnapshot>,
     pub capability_candidates: Vec<RuntimeCapabilitySnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelProviderSelection>,
@@ -223,6 +256,7 @@ impl RuntimeSnapshot {
             tools: Vec::new(),
             skills: Vec::new(),
             knowledge: Vec::new(),
+            memory: Vec::new(),
             capability_candidates: Vec::new(),
             model: None,
         }

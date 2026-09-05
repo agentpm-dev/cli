@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,6 +24,81 @@ const LOCAL_MEMORY_SCHEMA_VERSION: u64 = 1;
 const LOCAL_MEMORY_DB_NAME: &str = "memory.sqlite3";
 const LOCAL_MEMORY_BUSY_TIMEOUT_MS: u64 = 5_000;
 static MEMORY_RECORD_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalMemoryActionErrorKind {
+    NotFound,
+    CapacityExceeded,
+    ConstraintViolation,
+    ContractViolation,
+    Backend,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalMemoryActionError {
+    kind: LocalMemoryActionErrorKind,
+    message: String,
+}
+
+impl LocalMemoryActionError {
+    fn new(kind: LocalMemoryActionErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self::new(LocalMemoryActionErrorKind::NotFound, message)
+    }
+
+    fn capacity_exceeded(message: impl Into<String>) -> Self {
+        Self::new(LocalMemoryActionErrorKind::CapacityExceeded, message)
+    }
+
+    fn constraint_violation(message: impl Into<String>) -> Self {
+        Self::new(LocalMemoryActionErrorKind::ConstraintViolation, message)
+    }
+
+    fn contract_violation(message: impl Into<String>) -> Self {
+        Self::new(LocalMemoryActionErrorKind::ContractViolation, message)
+    }
+
+    pub fn code(&self) -> &'static str {
+        match self.kind {
+            LocalMemoryActionErrorKind::NotFound => "not_found",
+            LocalMemoryActionErrorKind::CapacityExceeded => "capacity_exceeded",
+            LocalMemoryActionErrorKind::ConstraintViolation => "constraint_violation",
+            LocalMemoryActionErrorKind::ContractViolation => "contract_violation",
+            LocalMemoryActionErrorKind::Backend => "memory_runtime_failed",
+        }
+    }
+
+    pub fn is_model_correctable(&self) -> bool {
+        matches!(
+            self.kind,
+            LocalMemoryActionErrorKind::NotFound
+                | LocalMemoryActionErrorKind::ConstraintViolation
+                | LocalMemoryActionErrorKind::ContractViolation
+        )
+    }
+}
+
+impl fmt::Display for LocalMemoryActionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for LocalMemoryActionError {}
+
+fn has_local_memory_schema_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<LocalMemoryActionError>()
+            .is_some_and(LocalMemoryActionError::is_model_correctable)
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -155,7 +231,7 @@ pub struct LocalMemoryRecordRow {
     pub ordinal: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StoredMemoryRecord {
     pub id: String,
     pub package: String,
@@ -505,11 +581,11 @@ impl LocalSqliteMemoryRuntime {
             .record_types
             .contains(&request.record_type.to_string())
         {
-            bail!(
+            return Err(LocalMemoryActionError::contract_violation(format!(
                 "record type `{}` is not permitted in Memory space `{}`",
-                request.record_type,
-                request.space
-            );
+                request.record_type, request.space
+            ))
+            .into());
         }
 
         if append_only_enabled(space)
@@ -520,10 +596,11 @@ impl LocalSqliteMemoryRuntime {
                     | LocalMemoryWriteOperation::Archive
             )
         {
-            bail!(
+            return Err(LocalMemoryActionError::constraint_violation(format!(
                 "append_only Memory space `{}` rejects direct mutation",
                 request.space
-            );
+            ))
+            .into());
         }
 
         if matches!(
@@ -531,22 +608,36 @@ impl LocalSqliteMemoryRuntime {
             LocalMemoryWriteOperation::Create | LocalMemoryWriteOperation::Upsert
         ) && request.record_id.is_some()
         {
-            bail!("Memory create/upsert cannot assign an authoritative record id");
+            return Err(LocalMemoryActionError::constraint_violation(
+                "Memory create/upsert cannot assign an authoritative record id",
+            )
+            .into());
         }
 
         let prepared = match request.operation {
-            LocalMemoryWriteOperation::Create | LocalMemoryWriteOperation::Upsert => Some(
-                prepare_local_memory_record(&request, None)
-                    .context("preparing Memory create/upsert")?,
-            ),
+            LocalMemoryWriteOperation::Create | LocalMemoryWriteOperation::Upsert => {
+                Some(prepare_local_memory_record(&request, None).map_err(|err| {
+                    if has_local_memory_schema_error(&err) {
+                        err
+                    } else {
+                        err.context("preparing Memory create/upsert")
+                    }
+                })?)
+            }
             LocalMemoryWriteOperation::Update => {
-                let record_id = request
-                    .record_id
-                    .as_deref()
-                    .context("Memory update requires an existing record id")?;
+                let record_id = request.record_id.as_deref().ok_or_else(|| {
+                    LocalMemoryActionError::constraint_violation(
+                        "Memory update requires an existing record id",
+                    )
+                })?;
                 Some(
-                    prepare_local_memory_record(&request, Some(record_id))
-                        .context("preparing Memory update")?,
+                    prepare_local_memory_record(&request, Some(record_id)).map_err(|err| {
+                        if has_local_memory_schema_error(&err) {
+                            err
+                        } else {
+                            err.context("preparing Memory update")
+                        }
+                    })?,
                 )
             }
             LocalMemoryWriteOperation::Delete | LocalMemoryWriteOperation::Archive => None,
@@ -637,15 +728,19 @@ impl LocalSqliteMemoryRuntime {
                         record_id,
                         request.now,
                     )?
-                    .with_context(|| format!("Memory record `{record_id}` was not found"))?;
+                    .ok_or_else(|| {
+                        LocalMemoryActionError::not_found(format!(
+                            "Memory record `{record_id}` was not found"
+                        ))
+                    })?;
                     if !matches!(space.model, MemorySpaceModel::Document)
                         && existing.record_type != request.record_type
                     {
-                        bail!(
+                        return Err(LocalMemoryActionError::constraint_violation(format!(
                             "Memory update target `{record_id}` has record type `{}` not `{}`",
-                            existing.record_type,
-                            request.record_type
-                        );
+                            existing.record_type, request.record_type
+                        ))
+                        .into());
                     }
                     record.id = existing.id;
                     record.created_at = parse_rfc3339_utc(&existing.created_at)?;
@@ -677,10 +772,11 @@ impl LocalSqliteMemoryRuntime {
                     })
                 }
                 LocalMemoryWriteOperation::Delete => {
-                    let record_id = request
-                        .record_id
-                        .as_deref()
-                        .context("Memory delete requires an existing record id")?;
+                    let record_id = request.record_id.as_deref().ok_or_else(|| {
+                        LocalMemoryActionError::constraint_violation(
+                            "Memory delete requires an existing record id",
+                        )
+                    })?;
                     delete_memory_record(
                         &batch.transaction,
                         request.package,
@@ -696,10 +792,11 @@ impl LocalSqliteMemoryRuntime {
                     })
                 }
                 LocalMemoryWriteOperation::Archive => {
-                    let record_id = request
-                        .record_id
-                        .as_deref()
-                        .context("Memory archive requires an existing record id")?;
+                    let record_id = request.record_id.as_deref().ok_or_else(|| {
+                        LocalMemoryActionError::constraint_violation(
+                            "Memory archive requires an existing record id",
+                        )
+                    })?;
                     archive_memory_record(
                         &batch.transaction,
                         request.package,
@@ -1262,7 +1359,10 @@ fn delete_memory_record(
         )
         .context("deleting Memory record")?;
     if rows == 0 {
-        bail!("Memory record `{record_id}` was not found");
+        return Err(LocalMemoryActionError::not_found(format!(
+            "Memory record `{record_id}` was not found"
+        ))
+        .into());
     }
     Ok(())
 }
@@ -1304,7 +1404,10 @@ fn archive_memory_record(
         )
         .context("archiving Memory record")?;
     if rows == 0 {
-        bail!("Memory record `{record_id}` was not found");
+        return Err(LocalMemoryActionError::not_found(format!(
+            "Memory record `{record_id}` was not found"
+        ))
+        .into());
     }
     Ok(())
 }
@@ -1364,17 +1467,21 @@ fn prepare_local_memory_record(
     request: &LocalMemoryWriteRequest<'_>,
     existing_record_id: Option<&str>,
 ) -> Result<LocalMemoryRecordRow> {
-    let content = request
-        .content
-        .as_ref()
-        .context("Memory create/update requires record content")?;
+    let content = request.content.as_ref().ok_or_else(|| {
+        LocalMemoryActionError::constraint_violation("Memory create/update requires record content")
+    })?;
     let space = memory_space(request.manifest, request.space)?;
     let schema_version = request
         .manifest
         .memory
         .record_types
         .get(request.record_type)
-        .with_context(|| format!("unknown Memory record type `{}`", request.record_type))?
+        .ok_or_else(|| {
+            LocalMemoryActionError::contract_violation(format!(
+                "unknown Memory record type `{}`",
+                request.record_type
+            ))
+        })?
         .version
         .clone();
     let durable_content = durable_memory_content_projection_for_record(
@@ -1382,7 +1489,14 @@ fn prepare_local_memory_record(
         request.space,
         request.record_type,
         content,
-    )?;
+    )
+    .map_err(|err| {
+        if has_local_memory_schema_error(&err) {
+            err
+        } else {
+            err.context("projecting durable Memory content")
+        }
+    })?;
 
     let id = existing_record_id
         .map(ToString::to_string)
@@ -1423,13 +1537,15 @@ pub fn durable_memory_content_projection_for_record(
         &schemas.content_schema,
         content,
         "full proposed Memory content",
-    )?;
+    )
+    .map_err(|err| LocalMemoryActionError::contract_violation(err.to_string()))?;
     let durable_content = durable_content_projection(content, &schemas.content_schema)?;
     validate_json_schema(
         &schemas.content_schema,
         &durable_content,
         "durable Memory content projection",
-    )?;
+    )
+    .map_err(|err| LocalMemoryActionError::contract_violation(err.to_string()))?;
     Ok(durable_content)
 }
 
@@ -1438,11 +1554,88 @@ fn validate_memory_record_envelope(
     record: &LocalMemoryRecordRow,
 ) -> Result<()> {
     let schemas = memory_contract_schemas(contracts, &record.space, &record.record_type)?;
+    let mut envelope_schema = schemas.envelope_schema;
+    allow_harness_memory_provenance(&mut envelope_schema);
     validate_json_schema(
-        &schemas.envelope_schema,
+        &envelope_schema,
         &memory_record_contract_envelope(record),
         "Memory record envelope",
     )
+    .map_err(|err| LocalMemoryActionError::contract_violation(err.to_string()).into())
+}
+
+fn allow_harness_memory_provenance(envelope_schema: &mut Value) {
+    let Some(properties) = envelope_schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    let Some(provenance) = properties
+        .get_mut("provenance")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    let provenance_properties = provenance.entry("properties").or_insert_with(|| json!({}));
+    let Some(provenance_properties) = provenance_properties.as_object_mut() else {
+        return;
+    };
+    provenance_properties
+        .entry("harness")
+        .or_insert_with(harness_memory_provenance_schema);
+}
+
+fn harness_memory_provenance_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+            "kind",
+            "run_id",
+            "phase_execution_id",
+            "phase_id",
+            "action_kind",
+            "operation"
+        ],
+        "properties": {
+            "kind": {
+                "type": "string",
+                "minLength": 1
+            },
+            "run_id": {
+                "type": "string",
+                "minLength": 1
+            },
+            "phase_execution_id": {
+                "type": "string",
+                "minLength": 1
+            },
+            "phase_id": {
+                "type": "string",
+                "minLength": 1
+            },
+            "action_kind": {
+                "const": "memory_write"
+            },
+            "operation": {
+                "type": "string",
+                "enum": ["create", "upsert", "update", "delete", "archive"]
+            },
+            "source": {
+                "type": "string",
+                "minLength": 1
+            },
+            "model_provider": {
+                "type": "string",
+                "minLength": 1
+            },
+            "model_id": {
+                "type": "string",
+                "minLength": 1
+            }
+        }
+    })
 }
 
 fn memory_contract_schemas(
@@ -1485,6 +1678,14 @@ fn memory_contract_schemas(
         envelope_schema,
         content_schema,
     })
+}
+
+pub fn generated_memory_content_schema(
+    contracts: &ValidatedMemoryContracts,
+    space: &str,
+    record_type: &str,
+) -> Result<Value> {
+    Ok(memory_contract_schemas(contracts, space, record_type)?.content_schema)
 }
 
 #[derive(Debug, Clone)]
@@ -1760,12 +1961,11 @@ fn enforce_memory_capacity(
         request.now,
     )?;
     if active_count >= capacity.max_records {
-        bail!(
-            "capacity_exceeded: Memory space `{}` scope already has {} active records; max_records is {}",
-            request.space,
-            active_count,
-            capacity.max_records
-        );
+        return Err(LocalMemoryActionError::capacity_exceeded(format!(
+            "Memory space `{}` scope already has {} active records; max_records is {}",
+            request.space, active_count, capacity.max_records
+        ))
+        .into());
     }
     Ok(())
 }
@@ -2444,6 +2644,13 @@ mod tests {
             ("thread".to_string(), "t-456".to_string()),
             ("user".to_string(), "u-123".to_string()),
         ])
+    }
+
+    fn local_memory_error_code(error: &anyhow::Error) -> Option<&'static str> {
+        error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<LocalMemoryActionError>())
+            .map(LocalMemoryActionError::code)
     }
 
     fn test_record(id: &str) -> LocalMemoryRecordRow {
@@ -3498,7 +3705,10 @@ mod tests {
                 Some(json!({ "body": "Overflow", "tag": "gamma" })),
             ))
             .unwrap_err();
-        assert!(overflow.to_string().contains("capacity_exceeded"));
+        assert_eq!(
+            local_memory_error_code(&overflow),
+            Some("capacity_exceeded")
+        );
 
         let updated = {
             let mut request = m14b_write_request(
@@ -3896,7 +4106,10 @@ mod tests {
         );
         overflow_request.now = old_now;
         let overflow = runtime.write_record(overflow_request).unwrap_err();
-        assert!(overflow.to_string().contains("capacity_exceeded"));
+        assert_eq!(
+            local_memory_error_code(&overflow),
+            Some("capacity_exceeded")
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }

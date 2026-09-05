@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::action::{SemanticAction, SemanticActionProposal};
+use super::action::{MemoryReadMode, MemoryWriteOperation, SemanticAction, SemanticActionProposal};
 use super::model::{
     ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
     ModelRuntimeFailure, ModelTurn,
@@ -8,6 +8,7 @@ use super::model::{
 use super::service::{ProcessServiceClient, ProcessServiceConfig, ServiceLifecycleEmitter};
 use crate::harness_config::HarnessImplementation;
 use crate::harness_observability::RunUsage;
+use crate::manifest::MemoryRetrievalMode;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -336,32 +337,184 @@ fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRe
         }),
         "skill_resource_read" => skill_resource_read_parameters_schema(alias, request),
         "knowledge_request" => knowledge_request_parameters_schema(alias, request),
-        "memory_read" => json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "space": { "type": "string", "minLength": 1 }
-            },
-            "required": ["space"]
-        }),
-        "memory_write" => json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "space": { "type": "string", "minLength": 1 },
-                "content": {
-                    "type": "object",
-                    "additionalProperties": true,
-                    "description": "Memory record content proposed by the model."
-                }
-            },
-            "required": ["space", "content"]
-        }),
+        "memory_read" => memory_read_parameters_schema(alias, request),
+        "memory_write" => memory_write_parameters_schema(alias, request),
         _ => json!({
             "type": "object",
             "additionalProperties": true
         }),
     }
+}
+
+fn memory_read_parameters_schema(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    let modes = request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .map(|memory| {
+            memory
+                .retrieval_modes
+                .iter()
+                .map(memory_retrieval_mode_label)
+                .collect::<Vec<_>>()
+        })
+        .filter(|modes| !modes.is_empty())
+        .unwrap_or_else(|| {
+            vec![
+                "key".into(),
+                "filter".into(),
+                "chronological".into(),
+                "full_text".into(),
+            ]
+        });
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "mode": {
+                "type": "string",
+                "enum": modes,
+                "description": "Memory retrieval mode for this already-selected package/space."
+            },
+            "record_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Existing Memory record id returned by authorized Memory access."
+            },
+            "record_type": memory_record_type_schema(alias, request),
+            "filter": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Conjunctive exact-match filter using dot-path keys over durable record content."
+            },
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Text query for full_text or semantic Memory retrieval."
+            },
+            "limit": { "type": "integer", "minimum": 1 }
+        },
+        "required": ["mode"]
+    })
+}
+
+fn memory_write_parameters_schema(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    let content_schema = memory_write_content_schema(alias, request);
+    let operations = memory_write_operation_values(alias, request);
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "operation": {
+                "type": "string",
+                "enum": operations,
+                "description": "Direct Memory mutation intent for this already-selected package/space."
+            },
+            "record_type": memory_record_type_schema(alias, request),
+            "record_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Existing Memory record id returned by authorized Memory access for update/delete/archive."
+            },
+            "content": content_schema
+        },
+        "required": ["operation", "record_type"]
+    })
+}
+
+fn memory_write_operation_values(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Vec<&'static str> {
+    let append_only = request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .map(|memory| memory.append_only)
+        .unwrap_or(false);
+    if append_only {
+        vec!["create"]
+    } else {
+        vec!["create", "upsert", "update", "delete", "archive"]
+    }
+}
+
+fn memory_record_type_schema(alias: &super::model::ActionAlias, request: &ModelRequest) -> Value {
+    let record_types = request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .map(|memory| {
+            memory
+                .record_types
+                .iter()
+                .map(|record_type| record_type.name.clone())
+                .collect::<Vec<_>>()
+        })
+        .filter(|record_types| !record_types.is_empty());
+    match record_types {
+        Some(record_types) => json!({
+            "type": "string",
+            "enum": record_types
+        }),
+        None => json!({
+            "type": "string",
+            "minLength": 1
+        }),
+    }
+}
+
+fn memory_write_content_schema(alias: &super::model::ActionAlias, request: &ModelRequest) -> Value {
+    let schemas = request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .map(|memory| {
+            memory
+                .record_types
+                .iter()
+                .map(|record_type| record_type.content_schema.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    match schemas.as_slice() {
+        [schema] => schema.clone(),
+        [] => json!({
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Memory record content proposed by the model."
+        }),
+        _ => json!({
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Memory record content proposed by the model. Harness validates this against the selected record type contract before mutation."
+        }),
+    }
+}
+
+fn memory_identity(package: &str, space: &str) -> String {
+    format!("{package}/{space}")
+}
+
+fn memory_retrieval_mode_label(mode: &MemoryRetrievalMode) -> String {
+    match mode {
+        MemoryRetrievalMode::Key => "key",
+        MemoryRetrievalMode::Filter => "filter",
+        MemoryRetrievalMode::Chronological => "chronological",
+        MemoryRetrievalMode::FullText => "full_text",
+        MemoryRetrievalMode::Semantic => "semantic",
+    }
+    .into()
 }
 
 fn knowledge_request_parameters_schema(
@@ -691,11 +844,44 @@ fn semantic_action_from_json(value: &Value) -> Result<SemanticAction, ModelRunti
         "memory_read" => Ok(SemanticAction::MemoryRead {
             package: required_string(value, "package")?,
             space: required_string(value, "space")?,
+            mode: parse_memory_read_mode(value.get("mode"))?,
+            record_id: value
+                .get("record_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            record_type: value
+                .get("record_type")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            filter: value
+                .get("filter")
+                .and_then(Value::as_object)
+                .map(|object| {
+                    object
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            query: value
+                .get("query")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            limit: value
+                .get("limit")
+                .and_then(Value::as_u64)
+                .map(|limit| limit as usize),
         }),
         "memory_write" => Ok(SemanticAction::MemoryWrite {
             package: required_string(value, "package")?,
             space: required_string(value, "space")?,
-            content: value.get("content").cloned().unwrap_or(Value::Null),
+            operation: parse_memory_write_operation(value.get("operation"))?,
+            record_type: required_string(value, "record_type")?,
+            record_id: value
+                .get("record_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            content: value.get("content").cloned(),
         }),
         other => Err(ModelRuntimeFailure::new(format!(
             "unsupported provider action type `{other}`"
@@ -779,19 +965,60 @@ fn semantic_action_from_provider_call(
                 .get("return_citations")
                 .and_then(Value::as_bool),
         }),
-        "memory_read" => Ok(SemanticAction::MemoryRead {
-            package: alias.identity.clone(),
-            space: required_string(&call.arguments, "space")?,
-        }),
-        "memory_write" => Ok(SemanticAction::MemoryWrite {
-            package: alias.identity.clone(),
-            space: required_string(&call.arguments, "space")?,
-            content: call
-                .arguments
-                .get("content")
-                .cloned()
-                .unwrap_or(Value::Null),
-        }),
+        "memory_read" => {
+            let (package, space) = split_identity(&alias.identity)?;
+            Ok(SemanticAction::MemoryRead {
+                package,
+                space,
+                mode: parse_memory_read_mode(call.arguments.get("mode"))?,
+                record_id: call
+                    .arguments
+                    .get("record_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                record_type: call
+                    .arguments
+                    .get("record_type")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                filter: call
+                    .arguments
+                    .get("filter")
+                    .and_then(Value::as_object)
+                    .map(|object| {
+                        object
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                query: call
+                    .arguments
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                limit: call
+                    .arguments
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .map(|limit| limit as usize),
+            })
+        }
+        "memory_write" => {
+            let (package, space) = split_identity(&alias.identity)?;
+            Ok(SemanticAction::MemoryWrite {
+                package,
+                space,
+                operation: parse_memory_write_operation(call.arguments.get("operation"))?,
+                record_type: required_string(&call.arguments, "record_type")?,
+                record_id: call
+                    .arguments
+                    .get("record_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                content: call.arguments.get("content").cloned(),
+            })
+        }
         other => Err(ModelRuntimeFailure::new(format!(
             "unsupported provider action kind `{other}`"
         ))),
@@ -835,6 +1062,52 @@ fn parse_optional_knowledge_mode(
         "vector_query" => Ok(Some(super::knowledge::KnowledgeRequestMode::VectorQuery)),
         other => Err(ModelRuntimeFailure::new(format!(
             "unsupported knowledge_request mode `{other}`"
+        ))),
+    }
+}
+
+fn parse_memory_read_mode(value: Option<&Value>) -> Result<MemoryReadMode, ModelRuntimeFailure> {
+    let Some(value) = value else {
+        return Err(ModelRuntimeFailure::new("memory_read mode is required"));
+    };
+    let Some(mode) = value.as_str() else {
+        return Err(ModelRuntimeFailure::new(
+            "memory_read mode must be a string",
+        ));
+    };
+    match mode {
+        "key" => Ok(MemoryReadMode::Key),
+        "filter" => Ok(MemoryReadMode::Filter),
+        "chronological" => Ok(MemoryReadMode::Chronological),
+        "full_text" => Ok(MemoryReadMode::FullText),
+        "semantic" => Ok(MemoryReadMode::Semantic),
+        other => Err(ModelRuntimeFailure::new(format!(
+            "unsupported memory_read mode `{other}`"
+        ))),
+    }
+}
+
+fn parse_memory_write_operation(
+    value: Option<&Value>,
+) -> Result<MemoryWriteOperation, ModelRuntimeFailure> {
+    let Some(value) = value else {
+        return Err(ModelRuntimeFailure::new(
+            "memory_write operation is required",
+        ));
+    };
+    let Some(operation) = value.as_str() else {
+        return Err(ModelRuntimeFailure::new(
+            "memory_write operation must be a string",
+        ));
+    };
+    match operation {
+        "create" => Ok(MemoryWriteOperation::Create),
+        "upsert" => Ok(MemoryWriteOperation::Upsert),
+        "update" => Ok(MemoryWriteOperation::Update),
+        "delete" => Ok(MemoryWriteOperation::Delete),
+        "archive" => Ok(MemoryWriteOperation::Archive),
+        other => Err(ModelRuntimeFailure::new(format!(
+            "unsupported memory_write operation `{other}`"
         ))),
     }
 }
@@ -1186,9 +1459,11 @@ mod tests {
     use crate::harness_engine::EffectivePhase;
     use crate::harness_runtime::model::{
         ActionAlias, CapabilityDescriptor, CompletionContract, KnowledgeDocumentSnapshot,
-        KnowledgeRetrievalSnapshot, KnowledgeRuntimeSnapshot, LogicalPrompt, PromptSection,
+        KnowledgeRetrievalSnapshot, KnowledgeRuntimeSnapshot, LogicalPrompt,
+        MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, PromptSection,
         RuntimeSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
     };
+    use crate::manifest::MemorySpaceModel;
     use std::cell::RefCell;
     use std::fs;
     use std::rc::Rc;
@@ -1263,6 +1538,35 @@ mod tests {
         let guide = vector_knowledge_snapshot("@zack/guide");
         request.runtime.knowledge.push(guide.clone());
         request.effective_phase.active_knowledge.push(guide);
+        let memory = MemorySpaceRuntimeSnapshot {
+            package: "@zack/state".into(),
+            package_version: "0.1.0".into(),
+            space: "conversation_state".into(),
+            model: MemorySpaceModel::Document,
+            description: "Conversation state.".into(),
+            root: None,
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![MemoryRetrievalMode::Key, MemoryRetrievalMode::Filter],
+            append_only: false,
+            record_types: vec![MemoryRecordTypeRuntimeSnapshot {
+                name: "summary".into(),
+                schema_version: "1.0.0".into(),
+                content_schema: json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "summary": { "type": "string", "minLength": 1 }
+                    },
+                    "required": ["summary"]
+                }),
+            }],
+        };
+        request.effective_phase.active_memory.push(memory);
         let tool_schema = action_parameters_schema(
             &action_alias("action_2", "agentpm_tool", "@zack/search"),
             &request,
@@ -1295,8 +1599,8 @@ mod tests {
                 "query",
             ),
             (
-                action_alias("action_6", "memory_read", "@zack/state"),
-                "space",
+                action_alias("action_6", "memory_read", "@zack/state/conversation_state"),
+                "mode",
             ),
         ];
 
@@ -1327,21 +1631,121 @@ mod tests {
         }
 
         let memory_write_schema = action_parameters_schema(
-            &action_alias("action_7", "memory_write", "@zack/state"),
+            &action_alias("action_7", "memory_write", "@zack/state/conversation_state"),
             &request,
         );
         assert_eq!(memory_write_schema["type"], "object");
-        assert!(
-            memory_write_schema["required"]
-                .as_array()
-                .expect("memory_write required array")
-                .contains(&json!("space"))
+        assert_eq!(
+            memory_write_schema["properties"]["record_type"]["enum"],
+            json!(["summary"])
+        );
+        assert_eq!(
+            memory_write_schema["properties"]["content"]["properties"]["summary"]["type"],
+            json!("string")
+        );
+        assert_eq!(
+            memory_write_schema["properties"]["operation"]["enum"],
+            json!(["create", "upsert", "update", "delete", "archive"])
         );
         assert!(
             memory_write_schema["required"]
                 .as_array()
                 .expect("memory_write required array")
-                .contains(&json!("content"))
+                .contains(&json!("operation"))
+        );
+        assert!(
+            memory_write_schema["required"]
+                .as_array()
+                .expect("memory_write required array")
+                .contains(&json!("record_type"))
+        );
+
+        request.effective_phase.active_memory[0].append_only = true;
+        let append_only_memory_write_schema = action_parameters_schema(
+            &action_alias("action_7", "memory_write", "@zack/state/conversation_state"),
+            &request,
+        );
+        assert_eq!(
+            append_only_memory_write_schema["properties"]["operation"]["enum"],
+            json!(["create"])
+        );
+    }
+
+    #[test]
+    fn memory_write_provider_schema_simplifies_multi_record_content_for_compatibility() {
+        let mut request = model_request();
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "memory_write".into(),
+                identity: "@zack/state/conversation_state".into(),
+                description: "Write conversation state.".into(),
+                source: "agent_binding".into(),
+            });
+        request.prompt.action_aliases.push(ActionAlias {
+            alias: "action_2".into(),
+            action_kind: "memory_write".into(),
+            identity: "@zack/state/conversation_state".into(),
+        });
+        request
+            .effective_phase
+            .active_memory
+            .push(MemorySpaceRuntimeSnapshot {
+                package: "@zack/state".into(),
+                package_version: "0.1.0".into(),
+                space: "conversation_state".into(),
+                model: MemorySpaceModel::Collection,
+                description: "Conversation state.".into(),
+                root: None,
+                runtime: "local".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+                readiness_reason: None,
+                binding_scope: "global".into(),
+                scope_keys: vec!["user".into()],
+                retrieval_modes: vec![MemoryRetrievalMode::Key],
+                append_only: false,
+                record_types: vec![
+                    MemoryRecordTypeRuntimeSnapshot {
+                        name: "summary".into(),
+                        schema_version: "1.0.0".into(),
+                        content_schema: json!({
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "summary": { "type": "string", "minLength": 1 }
+                            },
+                            "required": ["summary"]
+                        }),
+                    },
+                    MemoryRecordTypeRuntimeSnapshot {
+                        name: "preference".into(),
+                        schema_version: "1.0.0".into(),
+                        content_schema: json!({
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "preference": { "type": "string", "minLength": 1 }
+                            },
+                            "required": ["preference"]
+                        }),
+                    },
+                ],
+            });
+
+        let tools = provider_action_tools(&request);
+        let write_tool = tools
+            .iter()
+            .find(|tool| tool.action_kind == "memory_write")
+            .expect("memory_write tool");
+        let content_schema = &write_tool.parameters["properties"]["content"];
+        assert_eq!(content_schema["type"], json!("object"));
+        assert_eq!(content_schema["additionalProperties"], json!(true));
+        assert!(content_schema.get("oneOf").is_none());
+        assert_eq!(
+            write_tool.parameters["properties"]["record_type"]["enum"],
+            json!(["summary", "preference"])
         );
     }
 
@@ -1402,12 +1806,18 @@ mod tests {
 
         let action = decode_provider_call(
             action_alias("action_1", "memory_read", "@zack/state"),
-            json!({ "space": "conversation_state" }),
+            json!({ "mode": "key" }),
         );
         match action {
-            SemanticAction::MemoryRead { package, space } => {
-                assert_eq!(package, "@zack/state");
-                assert_eq!(space, "conversation_state");
+            SemanticAction::MemoryRead {
+                package,
+                space,
+                mode,
+                ..
+            } => {
+                assert_eq!(package, "@zack");
+                assert_eq!(space, "state");
+                assert_eq!(mode, MemoryReadMode::Key);
             }
             other => panic!("expected memory read action, got {other:?}"),
         }
@@ -1415,7 +1825,8 @@ mod tests {
         let action = decode_provider_call(
             action_alias("action_1", "memory_write", "@zack/state"),
             json!({
-                "space": "conversation_state",
+                "operation": "upsert",
+                "record_type": "summary",
                 "content": { "summary": "updated" }
             }),
         );
@@ -1423,11 +1834,16 @@ mod tests {
             SemanticAction::MemoryWrite {
                 package,
                 space,
+                operation,
+                record_type,
                 content,
+                ..
             } => {
-                assert_eq!(package, "@zack/state");
-                assert_eq!(space, "conversation_state");
-                assert_eq!(content["summary"], json!("updated"));
+                assert_eq!(package, "@zack");
+                assert_eq!(space, "state");
+                assert_eq!(operation, MemoryWriteOperation::Upsert);
+                assert_eq!(record_type, "summary");
+                assert_eq!(content.as_ref().unwrap()["summary"], json!("updated"));
             }
             other => panic!("expected memory write action, got {other:?}"),
         }
@@ -2024,6 +2440,7 @@ for line in sys.stdin:
                 active_tools: Vec::new(),
                 active_skills: Vec::new(),
                 active_knowledge: Vec::new(),
+                active_memory: Vec::new(),
                 capability_catalog: vec![capability],
                 suppressed_capabilities: Vec::new(),
             },

@@ -1646,6 +1646,8 @@ The model proposes `content` only. Harness/MemoryRuntime owns:
 
 Model-proposed content is validated against the content schema before persistence; the completed envelope is validated against the generated contract.
 
+For direct Memory writes, Harness records non-content execution provenance under `provenance.harness`, including the Run ID, phase execution ID, phase ID, Memory action kind, direct write operation, capability source, and model provider/model ID when available. `provenance.harness` is a Harness-owned runtime envelope namespace recognized during envelope validation and must not require already-generated or already-published Memory contracts to be rebuilt. Lifecycle operation provenance remains separate and may use operation/source-record metadata governed by the Blueprint lifecycle operation semantics.
+
 ### Scope resolution
 
 Blueprint scope keys are arbitrary authored identifiers. `user` and `conversation` are examples, not special literals.

@@ -7,14 +7,15 @@ use crate::harness_runtime::{
     CompositeKnowledgeRuntime, ConfiguredApprovalController, ConfiguredHookRuntime,
     ConsumerContextSnapshot, CustomKnowledgeRuntime, HookRuntime, HostServiceInvoker,
     KnowledgeEmbeddingSnapshot, KnowledgeRuntime, KnowledgeRuntimeSnapshot, LocalKnowledgeRuntime,
-    ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
-    ModelRuntimeFailure, ModelTurn, PackageSnapshot, ProcessModelRuntime, RoutingEmbeddingProvider,
-    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceEmbeddingProvider, ServiceLifecycleEmitter,
-    ServiceLifecycleEvents, ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot,
-    ToolRuntimeSnapshot,
+    MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelCapabilityAdvertisement,
+    ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure, ModelTurn,
+    PackageSnapshot, ProcessModelRuntime, RoutingEmbeddingProvider, RuntimeCapabilitySnapshot,
+    RuntimeSnapshot, ServiceEmbeddingProvider, ServiceLifecycleEmitter, ServiceLifecycleEvents,
+    ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::manifest::{
-    load_manifest_value, parse_knowledge_manifest, parse_loop_manifest, parse_skill_manifest,
+    AgentManifest, AgentMemoryBinding, MemoryManifest, load_manifest_value,
+    parse_knowledge_manifest, parse_loop_manifest, parse_memory_manifest, parse_skill_manifest,
     parse_tool_manifest,
 };
 use crate::prelude::*;
@@ -2273,6 +2274,7 @@ fn runtime_snapshot_from_plan(plan: &ResolvedHarnessPlan) -> RuntimeSnapshot {
         tools: tool_snapshots_from_plan(plan),
         skills: skill_snapshots_from_plan(plan),
         knowledge: knowledge_snapshots_from_plan(plan),
+        memory: memory_snapshots_from_plan(plan),
         capability_candidates: plan
             .capabilities
             .iter()
@@ -2423,6 +2425,173 @@ fn knowledge_snapshots_from_plan(plan: &ResolvedHarnessPlan) -> Vec<KnowledgeRun
             );
             snapshot.name = package.name.clone();
             Some(snapshot)
+        })
+        .collect()
+}
+
+fn memory_snapshots_from_plan(plan: &ResolvedHarnessPlan) -> Vec<MemorySpaceRuntimeSnapshot> {
+    let Some(agent) = &plan.selected_agent else {
+        return Vec::new();
+    };
+    let agent_manifest = load_manifest_value(&agent.manifest_path)
+        .and_then(|(value, _)| serde_json::from_value::<AgentManifest>(value).map_err(Into::into))
+        .ok();
+    let Some(agent_manifest) = agent_manifest else {
+        return Vec::new();
+    };
+
+    let mut snapshots = Vec::new();
+    if let Some(bindings) = agent_manifest.bindings.as_ref() {
+        if let Some(global) = bindings.global.as_ref() {
+            snapshots.extend(memory_binding_snapshots_from_plan(
+                plan,
+                &global.memory,
+                "global",
+            ));
+        }
+        let mut phase_bindings = bindings.phases.iter().collect::<Vec<_>>();
+        phase_bindings.sort_by_key(|(phase_id, _)| *phase_id);
+        for (phase_id, scope) in phase_bindings {
+            snapshots.extend(memory_binding_snapshots_from_plan(
+                plan,
+                &scope.memory,
+                &format!("phase:{phase_id}"),
+            ));
+        }
+    }
+    snapshots
+}
+
+fn memory_binding_snapshots_from_plan(
+    plan: &ResolvedHarnessPlan,
+    bindings: &[AgentMemoryBinding],
+    binding_scope: &str,
+) -> Vec<MemorySpaceRuntimeSnapshot> {
+    let mut snapshots = Vec::new();
+    for binding in bindings {
+        let package_name = package_identity_for_harness_runtime(&binding.package);
+        let Some(package) = plan
+            .package_graph
+            .values()
+            .find(|package| package.kind == PackageKind::Memory && package.name == package_name)
+        else {
+            continue;
+        };
+        let manifest_path = package.root.join("agent.json");
+        let manifest = load_manifest_value(&manifest_path)
+            .and_then(|(value, _)| parse_memory_manifest(&value))
+            .ok();
+        let Some(manifest) = manifest else {
+            continue;
+        };
+        let contract_result =
+            crate::harness_runtime::memory::validate_and_load_memory_contracts(&package.root);
+        let unrealizable = crate::harness_runtime::memory::unrealizable_memory_spaces(
+            &manifest,
+            &crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor::local_sqlite(),
+        )
+        .into_iter()
+        .map(|diagnostic| (diagnostic.space, diagnostic.reason))
+        .collect::<BTreeMap<_, _>>();
+
+        for space_name in &binding.spaces {
+            let Some(space) = manifest.memory.spaces.get(space_name) else {
+                continue;
+            };
+            let (runtime, mut state, mut readiness_reason) =
+                memory_runtime_readiness(plan, &package_name);
+            if state == "available"
+                && let Some(reason) = unrealizable.get(space_name)
+            {
+                state = "unavailable".into();
+                readiness_reason = Some(reason.clone());
+            }
+            let record_types = if state == "available" {
+                match &contract_result {
+                    Ok(contracts) => memory_record_type_snapshots(&manifest, contracts, space_name),
+                    Err(err) => {
+                        state = "unavailable".into();
+                        readiness_reason = Some(err.to_string());
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+            snapshots.push(MemorySpaceRuntimeSnapshot {
+                package: package.name.clone(),
+                package_version: package.version.clone(),
+                space: space_name.clone(),
+                model: space.model.clone(),
+                description: space.description.clone(),
+                root: Some(package.root.clone()),
+                runtime: runtime.clone(),
+                source: "agent_binding".into(),
+                state,
+                readiness_reason,
+                binding_scope: binding_scope.to_string(),
+                scope_keys: space.scope.clone(),
+                retrieval_modes: space.retrieval.modes.clone(),
+                append_only: space
+                    .constraints
+                    .as_ref()
+                    .and_then(|constraints| constraints.append_only)
+                    .unwrap_or(false),
+                record_types,
+            });
+        }
+    }
+    snapshots
+}
+
+fn package_identity_for_harness_runtime(raw: &str) -> String {
+    raw.rsplit_once('@')
+        .filter(|(name, version)| !name.is_empty() && !version.is_empty())
+        .map(|(name, _)| name.to_string())
+        .unwrap_or_else(|| raw.to_string())
+}
+
+fn memory_runtime_readiness(
+    plan: &ResolvedHarnessPlan,
+    package_name: &str,
+) -> (String, String, Option<String>) {
+    if let Some(mapping) = plan.config.config.memory.packages.get(package_name) {
+        return (
+            mapping.runtime.clone(),
+            "unavailable".into(),
+            Some(format!(
+                "configured MemoryRuntime `{}` activation is deferred to Milestone 14e",
+                mapping.runtime
+            )),
+        );
+    }
+    ("local".into(), "available".into(), None)
+}
+
+fn memory_record_type_snapshots(
+    manifest: &MemoryManifest,
+    contracts: &crate::harness_runtime::memory::ValidatedMemoryContracts,
+    space_name: &str,
+) -> Vec<MemoryRecordTypeRuntimeSnapshot> {
+    let Some(space) = manifest.memory.spaces.get(space_name) else {
+        return Vec::new();
+    };
+    space
+        .record_types
+        .iter()
+        .filter_map(|record_type| {
+            let metadata = manifest.memory.record_types.get(record_type)?;
+            let content_schema = crate::harness_runtime::memory::generated_memory_content_schema(
+                contracts,
+                space_name,
+                record_type,
+            )
+            .ok()?;
+            Some(MemoryRecordTypeRuntimeSnapshot {
+                name: record_type.clone(),
+                schema_version: metadata.version.clone(),
+                content_schema,
+            })
         })
         .collect()
 }
@@ -4539,6 +4708,7 @@ mod tests {
                 active_tools: Vec::new(),
                 active_skills: Vec::new(),
                 active_knowledge: Vec::new(),
+                active_memory: Vec::new(),
                 capability_catalog: Vec::new(),
                 suppressed_capabilities: Vec::new(),
             },
