@@ -25,10 +25,10 @@ pub use model::{
     CapabilityDescriptor, ConsumerContextSnapshot, KnowledgeEmbeddingSnapshot,
     KnowledgeRuntimeSnapshot, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
     ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
-    ModelRuntimeFailure, ModelTurn, PackageSnapshot, ProfileSnapshot, PromptAssemblyInput,
-    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot, SkillResourceSnapshot,
-    SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind,
-    assemble_logical_prompt,
+    ModelRuntimeFailure, ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProfileSnapshot,
+    PromptAssemblyInput, RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot,
+    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry,
+    TranscriptEntryKind, assemble_logical_prompt,
 };
 pub use provider::{BuiltInModelRuntime, ProcessModelRuntime};
 pub use service::{HostServiceInvoker, ServiceLifecycleEmitter, ServiceLifecycleEvents};

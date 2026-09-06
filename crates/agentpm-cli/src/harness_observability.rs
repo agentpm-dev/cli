@@ -78,6 +78,7 @@ pub enum HarnessEventType {
     RunLimitReached,
     RunApprovalRequired,
     PromptPrepared,
+    ModelRuntimeRequestPrepared,
     ModelRequestStarted,
     ModelRequestCompleted,
     ModelRequestFailed,
@@ -363,6 +364,7 @@ fn trace_level_includes(level: &HarnessTraceLevel, event_type: HarnessEventType)
         HarnessTraceLevel::Normal => !matches!(
             event_type,
             HarnessEventType::PromptPrepared
+                | HarnessEventType::ModelRuntimeRequestPrepared
                 | HarnessEventType::SemanticActionProposed
                 | HarnessEventType::ModelRepairRequested
         ),
@@ -1100,9 +1102,17 @@ mod tests {
             &HarnessTraceLevel::Normal,
             HarnessEventType::PromptPrepared
         ));
+        assert!(!trace_level_includes(
+            &HarnessTraceLevel::Normal,
+            HarnessEventType::ModelRuntimeRequestPrepared
+        ));
         assert!(trace_level_includes(
             &HarnessTraceLevel::Verbose,
             HarnessEventType::PromptPrepared
+        ));
+        assert!(trace_level_includes(
+            &HarnessTraceLevel::Verbose,
+            HarnessEventType::ModelRuntimeRequestPrepared
         ));
     }
 
@@ -1119,7 +1129,7 @@ mod tests {
             session_sequence: 1,
             run_sequence: Some(1),
             timestamp: Utc::now(),
-            event_type: HarnessEventType::PromptPrepared,
+            event_type: HarnessEventType::ModelRuntimeRequestPrepared,
             phase_execution_id: None,
             correlation_id: None,
             parent_event_id: None,

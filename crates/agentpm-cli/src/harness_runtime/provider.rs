@@ -20,6 +20,7 @@ use std::path::PathBuf;
 pub struct ProviderRequest {
     pub selection: ModelProviderSelection,
     pub prompt: String,
+    pub include_capability_catalog: bool,
     // Provider-safe alias -> canonical Harness identity. Provider adapters use
     // aliases in native tool/function definitions and map calls back here.
     pub action_aliases: BTreeMap<String, String>,
@@ -129,6 +130,28 @@ impl ProcessModelRuntime {
 impl ModelRuntime for ProcessModelRuntime {
     fn capabilities(&self) -> ModelCapabilityAdvertisement {
         self.capabilities.clone()
+    }
+
+    fn inspect_request(
+        &self,
+        request: &ModelRequest,
+    ) -> Option<super::model::ModelRuntimeRequestSnapshot> {
+        let selection = request
+            .model
+            .clone()
+            .unwrap_or_else(|| self.selection.clone());
+        let prompt = request.prompt.render_text();
+        Some(super::model::ModelRuntimeRequestSnapshot {
+            runtime_kind: "process".into(),
+            request_kind: "canonical_model_request".into(),
+            provider: selection.provider,
+            model: selection.model,
+            action_descriptors: request.prompt.action_aliases.len(),
+            structured_actions: None,
+            capability_catalog_in_prompt: request.prompt.has_capability_catalog_section(),
+            action_aliases: request.prompt.action_aliases.clone(),
+            prompt,
+        })
     }
 
     fn generate(&mut self, request: ModelRequest) -> Result<ModelTurn, ModelRuntimeFailure> {
@@ -267,19 +290,50 @@ impl ModelRuntime for BuiltInModelRuntime {
         self.capabilities.clone()
     }
 
+    fn inspect_request(
+        &self,
+        request: &ModelRequest,
+    ) -> Option<super::model::ModelRuntimeRequestSnapshot> {
+        let provider_request = self.provider_request(request);
+        let capability_catalog_in_prompt = provider_request.include_capability_catalog
+            && request.prompt.has_capability_catalog_section();
+        Some(super::model::ModelRuntimeRequestSnapshot {
+            runtime_kind: "built_in".into(),
+            request_kind: "provider_wire_request".into(),
+            provider: provider_request.selection.provider,
+            model: provider_request.selection.model,
+            action_descriptors: request.prompt.action_aliases.len(),
+            structured_actions: Some(provider_request.actions.len()),
+            capability_catalog_in_prompt,
+            action_aliases: request.prompt.action_aliases.clone(),
+            prompt: provider_request.prompt,
+        })
+    }
+
     fn generate(&mut self, request: ModelRequest) -> Result<ModelTurn, ModelRuntimeFailure> {
         if !self.capabilities.semantic_actions || !self.capabilities.structured_output {
             return Err(ModelRuntimeFailure::new(
                 "selected model runtime does not advertise required Harness semantic action support",
             ));
         }
+        let provider_request = self.provider_request(&request);
+        let response = self.transport.send(provider_request)?;
+        normalize_provider_response(response, &request.prompt.action_aliases)
+    }
+}
+
+impl BuiltInModelRuntime {
+    fn provider_request(&self, request: &ModelRequest) -> ProviderRequest {
         let selection = request
             .model
             .clone()
             .unwrap_or_else(|| self.selection.clone());
-        let actions = provider_action_tools(&request);
-        let prompt = request.prompt.render_provider_text(actions.is_empty());
-        let provider_request = ProviderRequest {
+        let actions = provider_action_tools(request);
+        let include_capability_catalog = actions.is_empty();
+        let prompt = request
+            .prompt
+            .render_provider_text(include_capability_catalog);
+        ProviderRequest {
             selection,
             prompt,
             action_aliases: request
@@ -289,9 +343,8 @@ impl ModelRuntime for BuiltInModelRuntime {
                 .map(|alias| (alias.alias.clone(), alias.identity.clone()))
                 .collect(),
             actions,
-        };
-        let response = self.transport.send(provider_request)?;
-        normalize_provider_response(response, &request.prompt.action_aliases)
+            include_capability_catalog,
+        }
     }
 }
 
@@ -2028,6 +2081,22 @@ mod tests {
             let mut runtime = BuiltInModelRuntime::new(selection(provider), Box::new(transport));
             let mut request = model_request();
             request.model = Some(selection(provider));
+            let snapshot = runtime.inspect_request(&request).unwrap();
+            assert_eq!(snapshot.runtime_kind, "built_in", "provider {provider}");
+            assert_eq!(
+                snapshot.request_kind, "provider_wire_request",
+                "provider {provider}"
+            );
+            assert_eq!(snapshot.provider, provider, "provider {provider}");
+            assert_eq!(snapshot.structured_actions, Some(1), "provider {provider}");
+            assert!(
+                !snapshot.capability_catalog_in_prompt,
+                "provider {provider}"
+            );
+            assert!(
+                !snapshot.prompt.contains("EFFECTIVE CAPABILITY CATALOG"),
+                "provider {provider}"
+            );
 
             runtime.generate(request).unwrap();
 

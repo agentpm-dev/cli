@@ -8,10 +8,11 @@ use crate::harness_runtime::{
     ConsumerContextSnapshot, CustomKnowledgeRuntime, HookRuntime, HostServiceInvoker,
     KnowledgeEmbeddingSnapshot, KnowledgeRuntime, KnowledgeRuntimeSnapshot, LocalKnowledgeRuntime,
     MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelCapabilityAdvertisement,
-    ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure, ModelTurn,
-    PackageSnapshot, ProcessModelRuntime, RoutingEmbeddingProvider, RuntimeCapabilitySnapshot,
-    RuntimeSnapshot, ServiceEmbeddingProvider, ServiceLifecycleEmitter, ServiceLifecycleEvents,
-    ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure,
+    ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProcessModelRuntime,
+    RoutingEmbeddingProvider, RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceEmbeddingProvider,
+    ServiceLifecycleEmitter, ServiceLifecycleEvents, ServiceReadinessSnapshot,
+    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::manifest::{
     AgentManifest, AgentMemoryBinding, MemoryManifest, load_manifest_value,
@@ -1610,6 +1611,25 @@ struct HostModelRuntime {
 impl ModelRuntime for HostModelRuntime {
     fn capabilities(&self) -> ModelCapabilityAdvertisement {
         self.capabilities.clone()
+    }
+
+    fn inspect_request(&self, request: &ModelRequest) -> Option<ModelRuntimeRequestSnapshot> {
+        let selection = request
+            .model
+            .clone()
+            .unwrap_or_else(|| self.selection.clone());
+        let prompt = request.prompt.render_text();
+        Some(ModelRuntimeRequestSnapshot {
+            runtime_kind: "host".into(),
+            request_kind: "canonical_model_request".into(),
+            provider: selection.provider,
+            model: selection.model,
+            action_descriptors: request.prompt.action_aliases.len(),
+            structured_actions: None,
+            capability_catalog_in_prompt: request.prompt.has_capability_catalog_section(),
+            action_aliases: request.prompt.action_aliases.clone(),
+            prompt,
+        })
     }
 
     fn generate(
@@ -4304,6 +4324,26 @@ mod tests {
             .unwrap();
         assert!(prompt.contains("Harness authority"));
         assert!(prompt.contains("write a response"));
+        let runtime_request = parsed_events
+            .iter()
+            .find(|event: &&serde_json::Value| {
+                event["event_type"] == "model_runtime_request_prepared"
+            })
+            .unwrap();
+        assert_eq!(
+            runtime_request["payload"]["fields"]["request_kind"],
+            "canonical_model_request"
+        );
+        assert_eq!(
+            runtime_request["payload"]["fields"]["runtime_kind"],
+            "scripted"
+        );
+        assert_eq!(runtime_request["payload"]["fields"]["provider"], "ollama");
+        let runtime_prompt = runtime_request["payload"]["fields"]["prompt"]
+            .as_str()
+            .unwrap();
+        assert!(runtime_prompt.contains("Harness authority"));
+        assert!(runtime_prompt.contains("write a response"));
         let model_completed = parsed_events
             .iter()
             .find(|event: &&serde_json::Value| event["event_type"] == "model_request_completed")

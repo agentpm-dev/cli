@@ -6,13 +6,14 @@ use crate::harness_observability::RunUsage;
 use crate::manifest::{
     MemoryRetrievalMode, MemorySpaceModel, ProfileConstraintStrength, ProfileMetadata,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 
 pub const CONSUMER_RUN_CONTEXT_SECTION_TITLE: &str = "CONSUMER / RUN CONTEXT";
+pub const EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE: &str = "EFFECTIVE CAPABILITY CATALOG";
 pub(crate) const SUCCESSFUL_ACTION_RESULT_CONTROL: &str = "If the phase-local transcript already contains successful ActionResults for all requested executable actions, do not propose any of those actions again; propose phase_completion next. For repeated actions, compare action kind, identity, and arguments.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,11 +315,17 @@ impl LogicalPrompt {
         })
     }
 
+    pub fn has_capability_catalog_section(&self) -> bool {
+        self.sections
+            .iter()
+            .any(|section| section.title == EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE)
+    }
+
     fn render_text_with_options(&self, options: LogicalPromptRenderOptions) -> String {
         let mut rendered = String::new();
         for section in &self.sections {
             if !options.include_capability_catalog
-                && section.title == "EFFECTIVE CAPABILITY CATALOG"
+                && section.title == EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE
             {
                 continue;
             }
@@ -503,7 +510,7 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
             },
             PromptSection {
                 number: 5,
-                title: "EFFECTIVE CAPABILITY CATALOG".into(),
+                title: EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE.into(),
                 content: capability_catalog,
             },
             PromptSection {
@@ -687,6 +694,32 @@ pub struct ModelRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelRuntimeRequestSnapshot {
+    pub runtime_kind: String,
+    pub request_kind: String,
+    pub provider: String,
+    pub model: String,
+    pub action_descriptors: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structured_actions: Option<usize>,
+    pub capability_catalog_in_prompt: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub action_aliases: Vec<ActionAlias>,
+    pub prompt: String,
+}
+
+impl ModelRuntimeRequestSnapshot {
+    pub fn into_trace_fields(self) -> Result<BTreeMap<String, Value>> {
+        let value =
+            serde_json::to_value(self).context("serializing model runtime request snapshot")?;
+        let Value::Object(map) = value else {
+            return Ok(BTreeMap::new());
+        };
+        Ok(map.into_iter().collect())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelTurn {
     pub assistant_content: Option<String>,
     pub actions: Vec<SemanticActionProposal>,
@@ -701,6 +734,10 @@ pub struct ModelTurn {
 pub trait ModelRuntime {
     fn capabilities(&self) -> ModelCapabilityAdvertisement {
         ModelCapabilityAdvertisement::default()
+    }
+
+    fn inspect_request(&self, _request: &ModelRequest) -> Option<ModelRuntimeRequestSnapshot> {
+        None
     }
 
     fn generate(&mut self, request: ModelRequest) -> Result<ModelTurn, ModelRuntimeFailure>;
@@ -766,6 +803,29 @@ impl ScriptedModelRuntime {
 }
 
 impl ModelRuntime for ScriptedModelRuntime {
+    fn inspect_request(&self, request: &ModelRequest) -> Option<ModelRuntimeRequestSnapshot> {
+        let selection = request
+            .model
+            .clone()
+            .unwrap_or_else(|| ModelProviderSelection {
+                provider: "scripted".into(),
+                model: "scripted".into(),
+                options: Value::Object(Default::default()),
+            });
+        let prompt = request.prompt.render_text();
+        Some(ModelRuntimeRequestSnapshot {
+            runtime_kind: "scripted".into(),
+            request_kind: "canonical_model_request".into(),
+            provider: selection.provider,
+            model: selection.model,
+            action_descriptors: request.prompt.action_aliases.len(),
+            structured_actions: None,
+            capability_catalog_in_prompt: request.prompt.has_capability_catalog_section(),
+            action_aliases: request.prompt.action_aliases.clone(),
+            prompt,
+        })
+    }
+
     fn generate(&mut self, request: ModelRequest) -> Result<ModelTurn, ModelRuntimeFailure> {
         self.requests.push(request);
         self.turns

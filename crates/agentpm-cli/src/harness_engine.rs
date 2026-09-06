@@ -1456,6 +1456,20 @@ impl HarnessEngine {
                 }
             }
             self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
+            if let Some(snapshot) = model.inspect_request(&request) {
+                session.emitter.emit(
+                    HarnessEventType::ModelRuntimeRequestPrepared,
+                    HarnessEventPayload::Lifecycle {
+                        message: "Model runtime request prepared.".into(),
+                        fields: snapshot.into_trace_fields()?,
+                    },
+                    HarnessEventBuilder {
+                        run_id: Some(run_id.clone()),
+                        phase_execution_id: Some(phase_execution_id.clone()),
+                        ..HarnessEventBuilder::default()
+                    },
+                )?;
+            }
             session.emitter.emit(
                 HarnessEventType::ModelRequestStarted,
                 HarnessEventPayload::Lifecycle {
