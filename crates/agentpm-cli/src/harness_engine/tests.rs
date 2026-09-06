@@ -13,7 +13,8 @@ use crate::harness_runtime::hook::{
 use crate::harness_runtime::model::{
     KnowledgeEmbeddingSnapshot, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
     ModelProviderSelection, ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot,
-    ScriptedModelRuntime, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    SUCCESSFUL_ACTION_RESULT_CONTROL, ScriptedModelRuntime, SkillResourceSnapshot,
+    SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::manifest::{
     LoopAccessMemory, LoopCheckpoint, LoopErrorPolicy, LoopLimits, LoopMetadata, LoopOutcome,
@@ -366,6 +367,16 @@ fn write_m14c_memory_package(root: &std::path::Path) -> MemoryRecordTypeRuntimeS
         "version": "1.0.0",
         "description": "Durable task.",
         "schema": "schemas/task.schema.json"
+      },
+      "profile_a": {
+        "version": "1.0.0",
+        "description": "Profile shape A.",
+        "schema": "schemas/profile-a.schema.json"
+      },
+      "profile_b": {
+        "version": "1.0.0",
+        "description": "Profile shape B.",
+        "schema": "schemas/profile-b.schema.json"
       }
     },
     "spaces": {
@@ -376,6 +387,13 @@ fn write_m14c_memory_package(root: &std::path::Path) -> MemoryRecordTypeRuntimeS
         "scope": ["user"],
         "retrieval": { "modes": ["key", "filter", "chronological", "full_text"] },
         "capacity": { "max_records": 1 }
+      },
+      "profile": {
+        "description": "Single current profile.",
+        "model": "document",
+        "record_types": ["profile_a", "profile_b"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key"] }
       }
     }
   }
@@ -422,6 +440,34 @@ fn write_m14c_memory_package(root: &std::path::Path) -> MemoryRecordTypeRuntimeS
 "#,
     )
     .unwrap();
+    std::fs::write(
+        root.join("schemas/profile-a.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": { "type": "string", "minLength": 1 }
+  },
+  "required": ["name"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("schemas/profile-b.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "display": { "type": "string", "minLength": 1 }
+  },
+  "required": ["display"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
     crate::commands::memory::execute_memory_build(
         &root.join("agent.json"),
         crate::commands::memory::MemoryBuildMode::Write,
@@ -447,6 +493,24 @@ fn m14c_task_record_type_snapshot(root: &std::path::Path) -> MemoryRecordTypeRun
         schema_version: "1.0.0".into(),
         content_schema: crate::harness_runtime::memory::generated_memory_content_schema(
             &contracts, "notes", "task",
+        )
+        .unwrap(),
+    }
+}
+
+fn m14c_profile_record_type_snapshot(
+    root: &std::path::Path,
+    record_type: &str,
+) -> MemoryRecordTypeRuntimeSnapshot {
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(root).unwrap();
+    MemoryRecordTypeRuntimeSnapshot {
+        name: record_type.into(),
+        schema_version: "1.0.0".into(),
+        content_schema: crate::harness_runtime::memory::generated_memory_content_schema(
+            &contracts,
+            "profile",
+            record_type,
         )
         .unwrap(),
     }
@@ -505,9 +569,15 @@ fn memory_descriptors_require_bound_ready_space_and_trusted_scope() {
     let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
     let effective =
         EffectivePhase::from_phase(&one_phase_memory_loop(None).r#loop.phases[0], &runtime);
-    assert!(effective.capability_catalog.iter().any(|descriptor| {
-        descriptor.action_kind == "memory_read" && descriptor.identity == "m14c-memory-test/notes"
-    }));
+    let notes_read = effective
+        .capability_catalog
+        .iter()
+        .find(|descriptor| {
+            descriptor.action_kind == "memory_read"
+                && descriptor.identity == "m14c-memory-test/notes"
+        })
+        .expect("notes read descriptor");
+    assert!(notes_read.description.contains("For collection spaces, key requires record_id; use filter, chronological, or full_text to find/list records when available."));
     assert!(effective.capability_catalog.iter().any(|descriptor| {
         descriptor.action_kind == "memory_write" && descriptor.identity == "m14c-memory-test/notes"
     }));
@@ -606,6 +676,82 @@ fn memory_descriptors_union_global_and_phase_scoped_bindings() {
 }
 
 #[test]
+fn memory_read_descriptors_explain_key_mode_by_space_model() {
+    let temp = temp_workspace_dir("m14c-read-key-descriptors");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let record_type = write_m14c_memory_package(&package_root);
+    let mut runtime = RuntimeSnapshot::empty("session-test".into());
+    runtime.workspace_root = temp.to_path_buf();
+    runtime.state_dir = temp.join(".agentpm-state");
+    runtime
+        .runtime_scopes
+        .insert("user".into(), "user-123".into());
+    runtime.memory = vec![
+        MemorySpaceRuntimeSnapshot {
+            package: "m14c-memory-test".into(),
+            package_version: "0.1.0".into(),
+            space: "session".into(),
+            model: MemorySpaceModel::Document,
+            description: "Current session.".into(),
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![MemoryRetrievalMode::Key],
+            append_only: false,
+            record_types: vec![record_type.clone()],
+        },
+        MemorySpaceRuntimeSnapshot {
+            package: "m14c-memory-test".into(),
+            package_version: "0.1.0".into(),
+            space: "log".into(),
+            model: MemorySpaceModel::Sequence,
+            description: "Ordered log.".into(),
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![MemoryRetrievalMode::Key, MemoryRetrievalMode::Chronological],
+            append_only: false,
+            record_types: vec![record_type],
+        },
+    ];
+    let effective =
+        EffectivePhase::from_phase(&one_phase_memory_loop(None).r#loop.phases[0], &runtime);
+
+    let document_read = effective
+        .capability_catalog
+        .iter()
+        .find(|descriptor| {
+            descriptor.action_kind == "memory_read"
+                && descriptor.identity == "m14c-memory-test/session"
+        })
+        .expect("document read descriptor");
+    assert!(document_read.description.contains(
+        "For document spaces, key reads the current scoped document and does not require record_id."
+    ));
+    let sequence_read = effective
+        .capability_catalog
+        .iter()
+        .find(|descriptor| {
+            descriptor.action_kind == "memory_read" && descriptor.identity == "m14c-memory-test/log"
+        })
+        .expect("sequence read descriptor");
+    assert!(sequence_read.description.contains(
+        "For sequence spaces, key requires record_id; use chronological to find/list records when available."
+    ));
+    assert!(!sequence_read.description.contains("filter"));
+    assert!(!sequence_read.description.contains("full_text"));
+}
+
+#[test]
 fn direct_memory_actions_route_to_local_runtime_and_phase_transcript() {
     let temp = temp_workspace_dir("m14c-direct");
     let package_root = temp.join("memory-package");
@@ -687,6 +833,7 @@ fn direct_memory_actions_route_to_local_runtime_and_phase_transcript() {
     let request_after_write = &model.requests[1];
     let transcript_text = request_after_write.prompt.render_text();
     assert!(transcript_text.contains("ActionResult [memory_write m14c-memory-test/notes]"));
+    assert!(transcript_text.contains(SUCCESSFUL_ACTION_RESULT_CONTROL));
     let request_after_read = &model.requests[2];
     let transcript_text = request_after_read.prompt.render_text();
     assert!(transcript_text.contains("ActionResult [memory_read m14c-memory-test/notes]"));
@@ -1194,6 +1341,136 @@ fn append_only_memory_write_rejects_mutation_before_dispatch() {
             .render_text()
             .contains("append-only")
     );
+}
+
+#[test]
+fn duplicate_document_create_requests_repair_after_runtime_lookup() {
+    let temp = temp_workspace_dir("m14c-duplicate-document-create-repair");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let mut runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    runtime.memory.push(MemorySpaceRuntimeSnapshot {
+        package: "m14c-memory-test".into(),
+        package_version: "0.1.0".into(),
+        space: "profile".into(),
+        model: MemorySpaceModel::Document,
+        description: "Single current profile.".into(),
+        root: Some(package_root.to_path_buf()),
+        runtime: "local".into(),
+        source: "agent_binding".into(),
+        state: "available".into(),
+        readiness_reason: None,
+        binding_scope: "global".into(),
+        scope_keys: vec!["user".into()],
+        retrieval_modes: vec![MemoryRetrievalMode::Key],
+        append_only: false,
+        record_types: vec![
+            m14c_profile_record_type_snapshot(&package_root, "profile_a"),
+            m14c_profile_record_type_snapshot(&package_root, "profile_b"),
+        ],
+    });
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-profile-a",
+                SemanticAction::MemoryWrite {
+                    package: "m14c-memory-test".into(),
+                    space: "profile".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "profile_a".into(),
+                    record_id: None,
+                    content: Some(json!({ "name": "A" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "duplicate-create-profile-b",
+                SemanticAction::MemoryWrite {
+                    package: "m14c-memory-test".into(),
+                    space: "profile".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "profile_b".into(),
+                    record_id: None,
+                    content: Some(json!({ "display": "B" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "duplicate document create",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.memory_requests, 2);
+    assert_eq!(result.report.repair_count, 1);
+    assert!(dispatcher.dispatched.is_empty());
+    let expected = "Memory document create for space `profile` requires no current document for the resolved scope";
+    assert!(handle.events().iter().any(|event| {
+        if event.event_type != HarnessEventType::SemanticActionRejected {
+            return false;
+        }
+        let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+            return false;
+        };
+        fields
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| error.contains(expected))
+    }));
+    assert!(model.requests[2].prompt.render_text().contains(expected));
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let records = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m14c-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "profile",
+            scope: BTreeMap::from([("user".into(), "user-123".into())]),
+            mode: LocalMemoryReadMode::Key,
+            record_id: None,
+            record_type: None,
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].record_type, "profile_a");
+    assert_eq!(records[0].content, json!({ "name": "A" }));
 }
 
 #[test]
@@ -3833,7 +4110,7 @@ fn tool_retry_counts_additional_attempts_after_initial_failure() {
     dispatcher.push_result("@zack/search", ActionDispatchResult::failure("temporary"));
     dispatcher.push_result(
         "@zack/search",
-        ActionDispatchResult::success(json!({"ok": true})),
+        ActionDispatchResult::success(json!({"results": ["cached hit"]})),
     );
     let mut approvals = ScriptedApprovalController::default();
     let result = engine
@@ -3852,6 +4129,9 @@ fn tool_retry_counts_additional_attempts_after_initial_failure() {
     assert_eq!(result.report.retry_count, 1);
     assert_eq!(result.report.usage.tool_retries, 1);
     assert_eq!(dispatcher.dispatched.len(), 2);
+    let next_prompt = model.requests[1].prompt.render_text();
+    assert!(next_prompt.contains("ActionResult [agentpm_tool @zack/search]"));
+    assert!(next_prompt.contains(SUCCESSFUL_ACTION_RESULT_CONTROL));
 }
 
 #[test]

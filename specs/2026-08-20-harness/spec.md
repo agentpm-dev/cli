@@ -1421,6 +1421,10 @@ Conceptually each phase ModelRequest is assembled as:
    - current phase identity
    - valid completion/outcome contract
    - authority rule: model proposes; Harness validates/executes
+   - after Engine-recorded successful executable ActionResults, guidance to
+     avoid repeating completed actions by action kind, identity, and arguments,
+     and to complete the phase when all requested executable actions have
+     succeeded
 
 2. AUTHORED PHASE + BEHAVIOR
    - Loop phase objective
@@ -1660,7 +1664,7 @@ A direct space or operation requiring unresolved scope keys is unavailable and d
 
 Per complete resolved scope tuple:
 
-- `document`: one current logical document per exact Memory package/version + space + complete resolved scope tuple; direct write is create-or-replace/update. `record_type` remains validated record metadata but does not create an independent current document within a document space. A document space may declare multiple permitted record types. These record types are alternative schemas for the space's single current logical document; they do not create separate document identities. Replacing the current document may change its record type to another type permitted by the space;
+- `document`: one current logical document per exact Memory package/version + space + complete resolved scope tuple; direct `create` succeeds only when no current document exists for that identity, while direct `upsert` replaces the current document when present. `record_type` remains validated record metadata but does not create an independent current document within a document space. A document space may declare multiple permitted record types. These record types are alternative schemas for the space's single current logical document; they do not create separate document identities. Replacing the current document may change its record type to another type permitted by the space;
 - `collection`: multiple identified records; direct create/read/update/delete where constraints permit;
 - `sequence`: ordered records; direct creation appends and runtime assigns ordinal; mutation/deletion only where constraints permit.
 

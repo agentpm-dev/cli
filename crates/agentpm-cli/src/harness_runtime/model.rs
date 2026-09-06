@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 
 pub const CONSUMER_RUN_CONTEXT_SECTION_TITLE: &str = "CONSUMER / RUN CONTEXT";
+pub(crate) const SUCCESSFUL_ACTION_RESULT_CONTROL: &str = "If the phase-local transcript already contains successful ActionResults for all requested executable actions, do not propose any of those actions again; propose phase_completion next. For repeated actions, compare action kind, identity, and arguments.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,6 +28,8 @@ pub enum TranscriptEntryKind {
 pub struct TranscriptEntry {
     pub kind: TranscriptEntryKind,
     pub content: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_succeeded: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -361,6 +364,10 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
     if let Some(feedback) = input.repair_feedback {
         control.push_str(&format!("\nRepair feedback from previous turn: {feedback}"));
     }
+    if transcript_has_successful_action_result(input.transcript) {
+        control.push('\n');
+        control.push_str(SUCCESSFUL_ACTION_RESULT_CONTROL);
+    }
 
     let mut authored = format!("Phase objective:\n  {}", input.phase_objective);
     let profiles = render_active_profiles(input.effective_phase);
@@ -481,6 +488,12 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         completion,
         diagnostics,
     }
+}
+
+fn transcript_has_successful_action_result(transcript: &[TranscriptEntry]) -> bool {
+    transcript.iter().any(|entry| {
+        entry.kind == TranscriptEntryKind::ActionResult && entry.action_succeeded == Some(true)
+    })
 }
 
 fn render_transcript_entry(entry: &TranscriptEntry) -> String {

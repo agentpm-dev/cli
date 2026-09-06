@@ -189,6 +189,7 @@ pub fn resolve_harness_plan(
             state_dir: options.state_dir_override.clone(),
         },
     )?;
+    let runtime_scopes = merged_runtime_scopes(&config.config.scopes, &options.runtime_scopes);
 
     let lock_path = workspace_root.join("agent.lock");
     let mut diagnostics = Vec::new();
@@ -215,7 +216,7 @@ pub fn resolve_harness_plan(
             selected_agent: None,
             loop_package: None,
             package_graph,
-            runtime_scopes: options.runtime_scopes.clone(),
+            runtime_scopes,
             consumer_context,
             profile_bindings,
             profiles,
@@ -232,7 +233,7 @@ pub fn resolve_harness_plan(
             selected_agent: None,
             loop_package: None,
             package_graph,
-            runtime_scopes: options.runtime_scopes.clone(),
+            runtime_scopes,
             consumer_context,
             profile_bindings,
             profiles,
@@ -269,7 +270,7 @@ pub fn resolve_harness_plan(
             loop_info,
             &package_graph,
             &config,
-            &options.runtime_scopes,
+            &runtime_scopes,
             options.surface,
             &mut consumer_context,
             &mut profile_bindings,
@@ -286,13 +287,25 @@ pub fn resolve_harness_plan(
         selected_agent,
         loop_package,
         package_graph,
-        runtime_scopes: options.runtime_scopes.clone(),
+        runtime_scopes,
         consumer_context,
         profile_bindings,
         profiles,
         capabilities,
         diagnostics,
     }))
+}
+
+fn merged_runtime_scopes(
+    config_scopes: &HashMap<String, String>,
+    override_scopes: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut scopes = config_scopes
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<BTreeMap<_, _>>();
+    scopes.extend(override_scopes.clone());
+    scopes
 }
 
 fn build_plan(parts: PlanParts) -> ResolvedHarnessPlan {
@@ -3046,6 +3059,73 @@ mod tests {
                 .as_deref()
                 .is_some_and(|sha| sha.starts_with("sha256:"))
         );
+    }
+
+    #[test]
+    fn preflight_uses_configured_runtime_scopes() {
+        let root = temp_dir("config-runtime-scopes");
+        write_base_workspace(&root);
+        write_json(
+            &root.join("agentpm.harness.json"),
+            json!({
+                "version": 1,
+                "scopes": {
+                    "user": "config-user"
+                }
+            }),
+        );
+        lock_with_root(&root, base_root(), base_packages());
+
+        let plan = resolve_harness_plan(&root, &options()).unwrap();
+
+        assert_eq!(plan.report.status, PreflightStatus::Ready);
+        assert_eq!(
+            plan.runtime_scopes.get("user").map(String::as_str),
+            Some("config-user")
+        );
+        assert!(!codes(&plan).contains("unresolved_runtime_scope"));
+        assert!(plan.capabilities.iter().any(|capability| {
+            capability.kind == "memory"
+                && capability.identity == "@zack/session-memory"
+                && capability.scope == "global"
+                && capability.state == CapabilityState::Pending
+        }));
+    }
+
+    #[test]
+    fn cli_runtime_scopes_override_configured_runtime_scopes() {
+        let root = temp_dir("cli-runtime-scope-override");
+        write_base_workspace(&root);
+        write_json(
+            &root.join("agentpm.harness.json"),
+            json!({
+                "version": 1,
+                "scopes": {
+                    "user": "config-user",
+                    "conversation": "config-conversation"
+                }
+            }),
+        );
+        lock_with_root(&root, base_root(), base_packages());
+
+        let plan = resolve_harness_plan(
+            &root,
+            &HarnessBootstrapOptions {
+                runtime_scopes: BTreeMap::from([("user".to_string(), "cli-user".to_string())]),
+                ..options()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.runtime_scopes.get("user").map(String::as_str),
+            Some("cli-user")
+        );
+        assert_eq!(
+            plan.runtime_scopes.get("conversation").map(String::as_str),
+            Some("config-conversation")
+        );
+        assert!(!codes(&plan).contains("unresolved_runtime_scope"));
     }
 
     #[test]

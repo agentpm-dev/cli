@@ -1205,6 +1205,7 @@ impl HarnessEngine {
             transcript: vec![TranscriptEntry {
                 kind: TranscriptEntryKind::UserInput,
                 content: json!(self.active_run(session)?.context.input),
+                action_succeeded: None,
             }],
             model_calls: 0,
             accepted_actions: 0,
@@ -1513,6 +1514,7 @@ impl HarnessEngine {
                 state.transcript.push(TranscriptEntry {
                     kind: TranscriptEntryKind::Assistant,
                     content: json!(content),
+                    action_succeeded: None,
                 });
             }
 
@@ -2269,6 +2271,7 @@ impl HarnessEngine {
                     state.transcript.push(TranscriptEntry {
                         kind: TranscriptEntryKind::ActionResult,
                         content: action_result_transcript_content(&action, result.output),
+                        action_succeeded: Some(false),
                     });
                     continue;
                 }
@@ -2297,12 +2300,14 @@ impl HarnessEngine {
                     state.transcript.push(TranscriptEntry {
                         kind: TranscriptEntryKind::ActionResult,
                         content: action_result_transcript_content(&action, result.output),
+                        action_succeeded: Some(false),
                     });
                     continue;
                 }
                 state.transcript.push(TranscriptEntry {
                     kind: TranscriptEntryKind::ActionResult,
                     content: action_result_transcript_content(&action, result.output),
+                    action_succeeded: Some(true),
                 });
                 self.active_run_mut(session)?
                     .action_summaries
@@ -2385,6 +2390,7 @@ impl HarnessEngine {
         state.transcript.push(TranscriptEntry {
             kind: TranscriptEntryKind::RepairFeedback,
             content: json!(message),
+            action_succeeded: None,
         });
         let run_id = self.active_run(session)?.run_id().to_string();
         session.emitter.emit(

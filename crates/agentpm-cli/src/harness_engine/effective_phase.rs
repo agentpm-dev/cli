@@ -356,8 +356,9 @@ pub(super) fn memory_read_descriptor_description(memory: &MemorySpaceRuntimeSnap
         .map(memory_retrieval_mode_label)
         .collect::<Vec<_>>()
         .join(", ");
+    let key_guidance = memory_read_key_guidance(memory);
     format!(
-        "{} Memory read for `{}`/`{}`. Modes: {}. Record types: {}. Scope is resolved by Harness.",
+        "{} Memory read for `{}`/`{}`. Modes: {}.{} Record types: {}. Scope is resolved by Harness.",
         memory.description,
         memory.package,
         memory.space,
@@ -366,12 +367,69 @@ pub(super) fn memory_read_descriptor_description(memory: &MemorySpaceRuntimeSnap
         } else {
             retrieval_modes
         },
+        key_guidance,
         if record_types.is_empty() {
             "none".into()
         } else {
             record_types
         }
     )
+}
+
+fn memory_read_key_guidance(memory: &MemorySpaceRuntimeSnapshot) -> String {
+    if !memory.retrieval_modes.contains(&MemoryRetrievalMode::Key) {
+        return String::new();
+    }
+
+    if matches!(memory.model, MemorySpaceModel::Document) {
+        return " For document spaces, key reads the current scoped document and does not require record_id.".into();
+    }
+
+    let listing_modes = memory
+        .retrieval_modes
+        .iter()
+        .filter(|mode| {
+            matches!(
+                mode,
+                MemoryRetrievalMode::Filter
+                    | MemoryRetrievalMode::Chronological
+                    | MemoryRetrievalMode::FullText
+                    | MemoryRetrievalMode::Semantic
+            )
+        })
+        .map(memory_retrieval_mode_label)
+        .collect::<Vec<_>>();
+    let space_model = memory_space_model_label(&memory.model);
+    if listing_modes.is_empty() {
+        format!(" For {space_model} spaces, key requires record_id.")
+    } else {
+        format!(
+            " For {space_model} spaces, key requires record_id; use {} to find/list records when available.",
+            human_join(&listing_modes)
+        )
+    }
+}
+
+fn memory_space_model_label(model: &MemorySpaceModel) -> &'static str {
+    match model {
+        MemorySpaceModel::Document => "document",
+        MemorySpaceModel::Collection => "collection",
+        MemorySpaceModel::Sequence => "sequence",
+    }
+}
+
+fn human_join(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [first, second] => format!("{first} or {second}"),
+        _ => {
+            let mut result = items[..items.len() - 1].join(", ");
+            result.push_str(", or ");
+            result.push_str(items[items.len() - 1]);
+            result
+        }
+    }
 }
 
 pub(super) fn memory_write_descriptor_description(memory: &MemorySpaceRuntimeSnapshot) -> String {
@@ -382,7 +440,7 @@ pub(super) fn memory_write_descriptor_description(memory: &MemorySpaceRuntimeSna
         .collect::<Vec<_>>()
         .join(", ");
     let operations = if matches!(memory.model, MemorySpaceModel::Document) {
-        "create, upsert, update, delete, archive"
+        "create when no current document exists, upsert to replace the current document, update, delete, archive"
     } else {
         "create, upsert, update, delete, archive where permitted by constraints"
     };

@@ -668,6 +668,15 @@ impl LocalSqliteMemoryRuntime {
                     } else {
                         None
                     };
+                    if existing_id.is_some()
+                        && matches!(request.operation, LocalMemoryWriteOperation::Create)
+                    {
+                        return Err(LocalMemoryActionError::constraint_violation(format!(
+                            "Memory document create for space `{}` requires no current document for the resolved scope; use upsert to replace the current document",
+                            request.space
+                        ))
+                        .into());
+                    }
                     let creates_new_active = existing_id.is_none();
                     enforce_memory_capacity(
                         &batch.transaction,
@@ -3535,7 +3544,7 @@ mod tests {
             .unwrap()
             .record
             .unwrap();
-        let second = runtime
+        let duplicate_create = runtime
             .write_record(m14b_write_request(
                 &manifest,
                 &contracts,
@@ -3543,9 +3552,28 @@ mod tests {
                 "profile_b",
                 Some(json!({ "display": "B" })),
             ))
-            .unwrap()
-            .record
-            .unwrap();
+            .unwrap_err();
+        let duplicate_error = duplicate_create
+            .downcast_ref::<LocalMemoryActionError>()
+            .expect("duplicate document create should return typed Memory error");
+        assert_eq!(duplicate_error.code(), "constraint_violation");
+        assert!(
+            duplicate_error
+                .to_string()
+                .contains("use upsert to replace")
+        );
+
+        let second = {
+            let mut request = m14b_write_request(
+                &manifest,
+                &contracts,
+                "profile",
+                "profile_b",
+                Some(json!({ "display": "B" })),
+            );
+            request.operation = LocalMemoryWriteOperation::Upsert;
+            runtime.write_record(request).unwrap().record.unwrap()
+        };
 
         assert_eq!(first.id, second.id);
         assert_eq!(second.record_type, "profile_b");

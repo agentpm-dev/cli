@@ -27,7 +27,7 @@
 - Confirm omitted `output_mode` is backward-compatible `create`.
 - Confirm `replace_input` is semantically restricted to matching single input/output pairing.
 - Confirm flagship Memory examples/docs were updated where in-place transform is intended.
-- Confirm document singleton identity is one current logical record per exact Memory package/version + space + complete resolved scope tuple; `record_type` is not part of document identity, document spaces may permit multiple record types as alternative schemas for that singleton document, and replacement may change the current record type.
+- Confirm document singleton identity is one current logical record per exact Memory package/version + space + complete resolved scope tuple; `record_type` is not part of document identity, document spaces may permit multiple record types as alternative schemas for that singleton document, `create` rejects when a current document already exists, and `upsert` replacement may change the current record type.
 - Reject implementations that permit one simultaneous current document per record type within the same document space/scope.
 - Confirm Memory filter semantics are conjunctive dot-path matching over durable record content: a path segment descends into an object by key or into an array existentially, and a match occurs when any traversal reaches a value exactly equal to the filter value, making leaf-array containment a case of the same rule.
 - Reject MemoryRuntime implementations that advertise `filter` but return records outside the strict filter contract, including comparison operators, ranges, partial string matching, properties whose names contain a literal `.`, or backend-native richer query behavior.
