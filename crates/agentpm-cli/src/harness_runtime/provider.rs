@@ -1606,6 +1606,7 @@ mod tests {
             binding_scope: "global".into(),
             scope_keys: vec!["user".into()],
             retrieval_modes: vec![MemoryRetrievalMode::Key, MemoryRetrievalMode::Filter],
+            semantic: None,
             append_only: false,
             record_types: vec![MemoryRecordTypeRuntimeSnapshot {
                 name: "summary".into(),
@@ -1759,6 +1760,7 @@ mod tests {
                 binding_scope: "global".into(),
                 scope_keys: vec!["user".into()],
                 retrieval_modes: vec![MemoryRetrievalMode::Key],
+                semantic: None,
                 append_only: false,
                 record_types: vec![
                     MemoryRecordTypeRuntimeSnapshot {

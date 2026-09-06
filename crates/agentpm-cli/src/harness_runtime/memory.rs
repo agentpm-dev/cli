@@ -2,6 +2,8 @@ use crate::commands::memory::{
     GeneratedMemoryContract, MemoryBuildMetadata, MemoryBuildMode, MemoryContractIndex,
     execute_memory_build_with_output,
 };
+use crate::harness_runtime::knowledge::{EmbeddingProvider, KnowledgeRuntimeFailure};
+use crate::harness_runtime::model::KnowledgeEmbeddingSnapshot;
 use crate::manifest::{
     MemoryManifest, MemoryRetentionAction, MemoryRetrievalMode, MemorySpace, MemorySpaceModel,
     resolve_existing_relative_file,
@@ -23,6 +25,7 @@ use std::time::{Duration, UNIX_EPOCH};
 const LOCAL_MEMORY_SCHEMA_VERSION: u64 = 1;
 const LOCAL_MEMORY_DB_NAME: &str = "memory.sqlite3";
 const LOCAL_MEMORY_BUSY_TIMEOUT_MS: u64 = 5_000;
+const LOCAL_MEMORY_SEMANTIC_READ_BACKFILL_LIMIT: usize = 32;
 static MEMORY_RECORD_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +34,8 @@ pub enum LocalMemoryActionErrorKind {
     CapacityExceeded,
     ConstraintViolation,
     ContractViolation,
+    EmbeddingProviderUnavailable,
+    EmbeddingProviderFailed,
     Backend,
 }
 
@@ -60,8 +65,23 @@ impl LocalMemoryActionError {
         Self::new(LocalMemoryActionErrorKind::ConstraintViolation, message)
     }
 
-    fn contract_violation(message: impl Into<String>) -> Self {
+    pub(crate) fn contract_violation(message: impl Into<String>) -> Self {
         Self::new(LocalMemoryActionErrorKind::ContractViolation, message)
+    }
+
+    pub(crate) fn backend(message: impl Into<String>) -> Self {
+        Self::new(LocalMemoryActionErrorKind::Backend, message)
+    }
+
+    fn embedding_provider_unavailable(message: impl Into<String>) -> Self {
+        Self::new(
+            LocalMemoryActionErrorKind::EmbeddingProviderUnavailable,
+            message,
+        )
+    }
+
+    fn embedding_provider_failed(message: impl Into<String>) -> Self {
+        Self::new(LocalMemoryActionErrorKind::EmbeddingProviderFailed, message)
     }
 
     pub fn code(&self) -> &'static str {
@@ -70,6 +90,10 @@ impl LocalMemoryActionError {
             LocalMemoryActionErrorKind::CapacityExceeded => "capacity_exceeded",
             LocalMemoryActionErrorKind::ConstraintViolation => "constraint_violation",
             LocalMemoryActionErrorKind::ContractViolation => "contract_violation",
+            LocalMemoryActionErrorKind::EmbeddingProviderUnavailable => {
+                "embedding_provider_unavailable"
+            }
+            LocalMemoryActionErrorKind::EmbeddingProviderFailed => "embedding_provider_failed",
             LocalMemoryActionErrorKind::Backend => "memory_runtime_failed",
         }
     }
@@ -141,6 +165,14 @@ impl MemoryRuntimeCapabilityDescriptor {
             atomic_batches: true,
         }
     }
+
+    pub fn local_sqlite_with_semantic() -> Self {
+        let mut descriptor = Self::local_sqlite();
+        descriptor
+            .retrieval_modes
+            .push(MemoryRetrievalMode::Semantic);
+        descriptor
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,13 +195,23 @@ pub fn unrealizable_memory_spaces(
             });
         }
 
-        for retrieval_mode in &space.retrieval.modes {
-            if !capabilities.retrieval_modes.contains(retrieval_mode) {
-                diagnostics.push(MemorySpaceReadinessDiagnostic {
-                    space: space_name.clone(),
-                    reason: format!("retrieval mode `{:?}` is not supported", retrieval_mode),
-                });
-            }
+        let has_supported_retrieval_mode = space
+            .retrieval
+            .modes
+            .iter()
+            .any(|mode| capabilities.retrieval_modes.contains(mode));
+        if !has_supported_retrieval_mode {
+            let declared_modes = space
+                .retrieval
+                .modes
+                .iter()
+                .map(|mode| format!("`{mode:?}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            diagnostics.push(MemorySpaceReadinessDiagnostic {
+                space: space_name.clone(),
+                reason: format!("no supported retrieval modes; declared modes: {declared_modes}"),
+            });
         }
 
         if let Some(retention) = &space.retention
@@ -281,6 +323,9 @@ pub struct LocalMemoryWriteResult {
     pub operation: LocalMemoryWriteOperation,
     pub record: Option<StoredMemoryRecord>,
     pub affected_record_id: Option<String>,
+    pub embedding_requests: u64,
+    pub embedding_request_duration_ms: Option<u64>,
+    pub semantic_embedding_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -289,6 +334,28 @@ pub enum LocalMemoryReadMode {
     Filter,
     Chronological,
     FullText,
+    Semantic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalMemorySemanticConfig {
+    pub embedding_provider: String,
+    pub embedding_model: String,
+    pub dimensions: u64,
+    pub normalized: bool,
+}
+
+impl LocalMemorySemanticConfig {
+    pub fn embedding_space(&self) -> KnowledgeEmbeddingSnapshot {
+        KnowledgeEmbeddingSnapshot {
+            id: "memory.local.semantic".into(),
+            provider: self.embedding_provider.clone(),
+            model: self.embedding_model.clone(),
+            dimensions: self.dimensions,
+            metric: "cosine".into(),
+            normalized: self.normalized,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -305,6 +372,15 @@ pub struct LocalMemoryReadRequest<'a> {
     pub query: Option<String>,
     pub limit: Option<usize>,
     pub now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalMemoryReadResult {
+    pub records: Vec<StoredMemoryRecord>,
+    pub embedding_requests: u64,
+    pub embedding_request_duration_ms: Option<u64>,
+    pub vectors_materialized: u64,
+    pub vectors_pending: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -575,6 +651,23 @@ impl LocalSqliteMemoryRuntime {
         &mut self,
         request: LocalMemoryWriteRequest<'_>,
     ) -> Result<LocalMemoryWriteResult> {
+        self.write_record_inner(request, None)
+    }
+
+    pub fn write_record_with_semantic(
+        &mut self,
+        request: LocalMemoryWriteRequest<'_>,
+        semantic: &LocalMemorySemanticConfig,
+        embedder: &mut dyn EmbeddingProvider,
+    ) -> Result<LocalMemoryWriteResult> {
+        self.write_record_inner(request, Some((semantic, embedder)))
+    }
+
+    fn write_record_inner(
+        &mut self,
+        request: LocalMemoryWriteRequest<'_>,
+        mut semantic_write: Option<(&LocalMemorySemanticConfig, &mut dyn EmbeddingProvider)>,
+    ) -> Result<LocalMemoryWriteResult> {
         validate_memory_scope(request.manifest, request.space, &request.scope)?;
         let space = memory_space(request.manifest, request.space)?;
         if !space
@@ -719,10 +812,24 @@ impl LocalSqliteMemoryRuntime {
                         request.now,
                     )?
                     .context("Memory write did not return the committed record")?;
+                    let semantic_result =
+                        if let Some((semantic, embedder)) = semantic_write.as_mut() {
+                            materialize_memory_vector_best_effort(
+                                &batch.transaction,
+                                &stored,
+                                semantic,
+                                &mut **embedder,
+                            )
+                        } else {
+                            LocalMemoryWriteEmbeddingResult::default()
+                        };
                     Ok(LocalMemoryWriteResult {
                         operation: request.operation,
                         affected_record_id: Some(stored.id.clone()),
                         record: Some(stored),
+                        embedding_requests: semantic_result.embedding_requests,
+                        embedding_request_duration_ms: semantic_result.duration_ms,
+                        semantic_embedding_error: semantic_result.error,
                     })
                 }
                 LocalMemoryWriteOperation::Update => {
@@ -774,10 +881,24 @@ impl LocalSqliteMemoryRuntime {
                         request.now,
                     )?
                     .context("Memory update did not return the committed record")?;
+                    let semantic_result =
+                        if let Some((semantic, embedder)) = semantic_write.as_mut() {
+                            materialize_memory_vector_best_effort(
+                                &batch.transaction,
+                                &stored,
+                                semantic,
+                                &mut **embedder,
+                            )
+                        } else {
+                            LocalMemoryWriteEmbeddingResult::default()
+                        };
                     Ok(LocalMemoryWriteResult {
                         operation: request.operation,
                         affected_record_id: Some(stored.id.clone()),
                         record: Some(stored),
+                        embedding_requests: semantic_result.embedding_requests,
+                        embedding_request_duration_ms: semantic_result.duration_ms,
+                        semantic_embedding_error: semantic_result.error,
                     })
                 }
                 LocalMemoryWriteOperation::Delete => {
@@ -798,6 +919,9 @@ impl LocalSqliteMemoryRuntime {
                         operation: request.operation,
                         affected_record_id: Some(record_id.to_string()),
                         record: None,
+                        embedding_requests: 0,
+                        embedding_request_duration_ms: None,
+                        semantic_embedding_error: None,
                     })
                 }
                 LocalMemoryWriteOperation::Archive => {
@@ -819,6 +943,9 @@ impl LocalSqliteMemoryRuntime {
                         operation: request.operation,
                         affected_record_id: Some(record_id.to_string()),
                         record: None,
+                        embedding_requests: 0,
+                        embedding_request_duration_ms: None,
+                        semantic_embedding_error: None,
                     })
                 }
             }
@@ -855,7 +982,148 @@ impl LocalSqliteMemoryRuntime {
                 LocalMemoryReadMode::FullText => {
                     read_memory_records_full_text(&batch.transaction, &request)
                 }
+                LocalMemoryReadMode::Semantic => Err(LocalMemoryActionError::constraint_violation(
+                    "semantic Memory retrieval requires an EmbeddingProvider",
+                )
+                .into()),
             }
+        })
+    }
+
+    pub fn read_records_semantic(
+        &mut self,
+        request: LocalMemoryReadRequest<'_>,
+        semantic: &LocalMemorySemanticConfig,
+        embedder: &mut dyn EmbeddingProvider,
+    ) -> Result<LocalMemoryReadResult> {
+        validate_memory_scope(request.manifest, request.space, &request.scope)?;
+        ensure_retrieval_mode(
+            request.manifest,
+            request.space,
+            MemoryRetrievalMode::Semantic,
+        )?;
+        let query = request
+            .query
+            .as_deref()
+            .filter(|query| !query.trim().is_empty())
+            .ok_or_else(|| {
+                LocalMemoryActionError::constraint_violation(
+                    "Memory semantic read requires a non-empty query",
+                )
+            })?;
+        let embedding_space = semantic.embedding_space();
+        embedder
+            .validate_space(&embedding_space)
+            .map_err(LocalMemoryActionError::embedding_provider_unavailable)?;
+
+        let (query_vector, query_duration_ms) =
+            embed_text_timed(embedder, &embedding_space, query)?;
+        validate_vector_dimensions(&query_vector, semantic.dimensions)?;
+
+        let space = memory_space(request.manifest, request.space)?;
+        let (mut ranked, backfill_candidates, mut vectors_pending) =
+            self.atomic_batch(|batch| {
+                expire_memory_records_for_space(
+                    &batch.transaction,
+                    request.package,
+                    request.package_version,
+                    request.space,
+                    space,
+                    request.now,
+                )?;
+                let mut records = query_active_memory_records(
+                    &batch.transaction,
+                    &request,
+                    "updated_at DESC, created_at DESC, id ASC",
+                    None,
+                )?;
+                records.retain(|record| content_matches_filter(&record.content, &request.filter));
+
+                let mut ranked = Vec::new();
+                let mut backfill_candidates = Vec::new();
+                let mut vectors_pending = 0_u64;
+                for record in records.drain(..) {
+                    let content_hash = durable_memory_content_hash(&record.content)?;
+                    let vector = match read_memory_vector(&batch.transaction, &record, semantic)? {
+                        Some(row) if row.content_hash == content_hash => {
+                            Some(decode_f32_le_vector(&row.vector, semantic.dimensions)?)
+                        }
+                        _ => {
+                            if backfill_candidates.len()
+                                >= LOCAL_MEMORY_SEMANTIC_READ_BACKFILL_LIMIT
+                            {
+                                vectors_pending += 1;
+                                None
+                            } else {
+                                backfill_candidates.push(SemanticMemoryBackfillCandidate {
+                                    record,
+                                    content_hash,
+                                });
+                                continue;
+                            }
+                        }
+                    };
+                    if let Some(vector) = vector {
+                        let score = cosine_similarity(&query_vector, &vector)?;
+                        ranked.push((score, record));
+                    }
+                }
+
+                Ok((ranked, backfill_candidates, vectors_pending))
+            })?;
+
+        let mut embedding_requests = 1;
+        let mut embedding_request_duration_ms = query_duration_ms;
+        let mut vectors_materialized = 0_u64;
+        for candidate in backfill_candidates {
+            let (vector, duration_ms) = embed_memory_vector_for_record(
+                &candidate.record,
+                semantic,
+                &embedding_space,
+                embedder,
+            )?;
+            embedding_requests += 1;
+            embedding_request_duration_ms =
+                embedding_request_duration_ms.saturating_add(duration_ms);
+            let materialized = self.atomic_batch(|batch| {
+                upsert_memory_vector_if_current(
+                    &batch.transaction,
+                    &candidate.record,
+                    semantic,
+                    &candidate.content_hash,
+                    &vector,
+                    request.now,
+                )
+            })?;
+            if materialized {
+                let score = cosine_similarity(&query_vector, &vector)?;
+                ranked.push((score, candidate.record));
+                vectors_materialized += 1;
+            } else {
+                vectors_pending += 1;
+            }
+        }
+
+        ranked.sort_by(|(left_score, left), (right_score, right)| {
+            right_score
+                .total_cmp(left_score)
+                .then_with(|| left.updated_at.cmp(&right.updated_at))
+                .then_with(|| left.created_at.cmp(&right.created_at))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let mut records = ranked
+            .into_iter()
+            .map(|(_score, record)| record)
+            .collect::<Vec<_>>();
+        if let Some(limit) = request.limit {
+            records.truncate(limit);
+        }
+        Ok(LocalMemoryReadResult {
+            records,
+            embedding_requests,
+            embedding_request_duration_ms: Some(embedding_request_duration_ms),
+            vectors_materialized,
+            vectors_pending,
         })
     }
 
@@ -2159,6 +2427,343 @@ fn read_memory_records_full_text(
     Ok(records)
 }
 
+#[derive(Debug, Clone)]
+struct StoredMemoryVector {
+    content_hash: String,
+    vector: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct SemanticMemoryBackfillCandidate {
+    record: StoredMemoryRecord,
+    content_hash: String,
+}
+
+#[derive(Debug, Default)]
+struct LocalMemoryWriteEmbeddingResult {
+    embedding_requests: u64,
+    duration_ms: Option<u64>,
+    error: Option<String>,
+}
+
+fn embed_text_timed(
+    embedder: &mut dyn EmbeddingProvider,
+    embedding_space: &KnowledgeEmbeddingSnapshot,
+    text: &str,
+) -> Result<(Vec<f32>, u64)> {
+    embed_text_timed_raw(embedder, embedding_space, text).map_err(|(err, _duration_ms)| {
+        LocalMemoryActionError::embedding_provider_failed(format!("{}: {}", err.code, err.message))
+            .into()
+    })
+}
+
+fn embed_text_timed_raw(
+    embedder: &mut dyn EmbeddingProvider,
+    embedding_space: &KnowledgeEmbeddingSnapshot,
+    text: &str,
+) -> std::result::Result<(Vec<f32>, u64), (KnowledgeRuntimeFailure, u64)> {
+    let started = std::time::Instant::now();
+    match embedder.embed(embedding_space, text) {
+        Ok(vector) => {
+            let duration_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+            Ok((vector, duration_ms))
+        }
+        Err(err) => {
+            let duration_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+            Err((err, duration_ms))
+        }
+    }
+}
+
+fn embed_memory_vector_for_record(
+    record: &StoredMemoryRecord,
+    semantic: &LocalMemorySemanticConfig,
+    embedding_space: &KnowledgeEmbeddingSnapshot,
+    embedder: &mut dyn EmbeddingProvider,
+) -> Result<(Vec<f32>, u64)> {
+    let input = semantic_memory_embedding_input(&record.content)?;
+    let (vector, duration_ms) = embed_text_timed(embedder, embedding_space, &input)?;
+    validate_vector_dimensions(&vector, semantic.dimensions)?;
+    Ok((vector, duration_ms))
+}
+
+fn materialize_memory_vector_best_effort(
+    connection: &Connection,
+    record: &StoredMemoryRecord,
+    semantic: &LocalMemorySemanticConfig,
+    embedder: &mut dyn EmbeddingProvider,
+) -> LocalMemoryWriteEmbeddingResult {
+    let embedding_space = semantic.embedding_space();
+    if let Err(err) = embedder.validate_space(&embedding_space) {
+        return LocalMemoryWriteEmbeddingResult {
+            embedding_requests: 0,
+            duration_ms: None,
+            error: Some(format!("embedding_provider_unavailable: {err}")),
+        };
+    }
+    let content_hash = match durable_memory_content_hash(&record.content) {
+        Ok(hash) => hash,
+        Err(err) => {
+            return LocalMemoryWriteEmbeddingResult {
+                embedding_requests: 0,
+                duration_ms: None,
+                error: Some(err.to_string()),
+            };
+        }
+    };
+    let input = match semantic_memory_embedding_input(&record.content) {
+        Ok(input) => input,
+        Err(err) => {
+            return LocalMemoryWriteEmbeddingResult {
+                embedding_requests: 0,
+                duration_ms: None,
+                error: Some(err.to_string()),
+            };
+        }
+    };
+    let (vector, duration_ms) = match embed_text_timed_raw(embedder, &embedding_space, &input) {
+        Ok(result) => result,
+        Err((err, duration_ms)) => {
+            return LocalMemoryWriteEmbeddingResult {
+                embedding_requests: 1,
+                duration_ms: Some(duration_ms),
+                error: Some(format!("{}: {}", err.code, err.message)),
+            };
+        }
+    };
+    if let Err(err) = validate_vector_dimensions(&vector, semantic.dimensions)
+        .and_then(|_| upsert_memory_vector(connection, record, semantic, &content_hash, &vector))
+    {
+        return LocalMemoryWriteEmbeddingResult {
+            embedding_requests: 1,
+            duration_ms: Some(duration_ms),
+            error: Some(err.to_string()),
+        };
+    }
+    LocalMemoryWriteEmbeddingResult {
+        embedding_requests: 1,
+        duration_ms: Some(duration_ms),
+        error: None,
+    }
+}
+
+fn read_memory_vector(
+    connection: &Connection,
+    record: &StoredMemoryRecord,
+    semantic: &LocalMemorySemanticConfig,
+) -> Result<Option<StoredMemoryVector>> {
+    connection
+        .query_row(
+            r#"
+            SELECT content_hash, vector
+            FROM memory_vectors
+            WHERE package = ?1 AND package_version = ?2 AND space = ?3
+              AND scope_hash = ?4 AND record_id = ?5
+              AND embedding_provider = ?6 AND embedding_model = ?7
+              AND dimensions = ?8
+            "#,
+            params![
+                &record.package,
+                &record.package_version,
+                &record.space,
+                &record.scope_hash,
+                &record.id,
+                &semantic.embedding_provider,
+                &semantic.embedding_model,
+                semantic.dimensions as i64,
+            ],
+            |row| {
+                Ok(StoredMemoryVector {
+                    content_hash: row.get(0)?,
+                    vector: row.get(1)?,
+                })
+            },
+        )
+        .optional()
+        .context("reading Memory semantic vector")
+}
+
+fn upsert_memory_vector(
+    connection: &Connection,
+    record: &StoredMemoryRecord,
+    semantic: &LocalMemorySemanticConfig,
+    content_hash: &str,
+    vector: &[f32],
+) -> Result<()> {
+    let blob = encode_f32_le_vector(vector, semantic.dimensions)?;
+    connection
+        .execute(
+            r#"
+            INSERT INTO memory_vectors (
+                record_id, package, package_version, space, record_type, scope_hash,
+                embedding_provider, embedding_model, dimensions, content_hash, vector, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            ON CONFLICT(package, package_version, space, scope_hash, record_id, embedding_provider, embedding_model)
+            DO UPDATE SET
+                record_type = excluded.record_type,
+                dimensions = excluded.dimensions,
+                content_hash = excluded.content_hash,
+                vector = excluded.vector,
+                updated_at = excluded.updated_at
+            "#,
+            params![
+                &record.id,
+                &record.package,
+                &record.package_version,
+                &record.space,
+                &record.record_type,
+                &record.scope_hash,
+                &semantic.embedding_provider,
+                &semantic.embedding_model,
+                semantic.dimensions as i64,
+                content_hash,
+                blob,
+                Utc::now().to_rfc3339(),
+            ],
+        )
+        .context("upserting Memory semantic vector")?;
+    Ok(())
+}
+
+fn upsert_memory_vector_if_current(
+    connection: &Connection,
+    snapshot: &StoredMemoryRecord,
+    semantic: &LocalMemorySemanticConfig,
+    expected_content_hash: &str,
+    vector: &[f32],
+    now: DateTime<Utc>,
+) -> Result<bool> {
+    let current_content_json = connection
+        .query_row(
+            r#"
+            SELECT content_json
+            FROM memory_records
+            WHERE package = ?1 AND package_version = ?2 AND space = ?3
+              AND scope_hash = ?4 AND id = ?5 AND archived_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?6)
+            "#,
+            params![
+                &snapshot.package,
+                &snapshot.package_version,
+                &snapshot.space,
+                &snapshot.scope_hash,
+                &snapshot.id,
+                now.to_rfc3339(),
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .context("checking current Memory record before vector upsert")?;
+    let Some(current_content_json) = current_content_json else {
+        return Ok(false);
+    };
+    let current_content: Value = serde_json::from_str(&current_content_json)
+        .context("parsing current Memory record content before vector upsert")?;
+    if durable_memory_content_hash(&current_content)? != expected_content_hash {
+        return Ok(false);
+    }
+    upsert_memory_vector(
+        connection,
+        snapshot,
+        semantic,
+        expected_content_hash,
+        vector,
+    )?;
+    Ok(true)
+}
+
+fn durable_memory_content_hash(content: &Value) -> Result<String> {
+    let input = semantic_memory_embedding_input(content)?;
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+}
+
+fn semantic_memory_embedding_input(content: &Value) -> Result<String> {
+    serde_json::to_string(content).context("serializing durable Memory content for embedding")
+}
+
+fn encode_f32_le_vector(vector: &[f32], dimensions: u64) -> Result<Vec<u8>> {
+    validate_vector_dimensions(vector, dimensions)?;
+    let mut blob = Vec::with_capacity(vector.len() * 4);
+    for value in vector {
+        blob.extend_from_slice(&value.to_le_bytes());
+    }
+    Ok(blob)
+}
+
+fn decode_f32_le_vector(blob: &[u8], dimensions: u64) -> Result<Vec<f32>> {
+    let expected_len = usize::try_from(dimensions)
+        .ok()
+        .and_then(|dimensions| dimensions.checked_mul(4))
+        .ok_or_else(|| LocalMemoryActionError::contract_violation("invalid vector dimensions"))?;
+    if blob.len() != expected_len {
+        return Err(LocalMemoryActionError::backend(format!(
+            "stored Memory vector has {} bytes; expected {expected_len}",
+            blob.len()
+        ))
+        .into());
+    }
+    let mut vector = Vec::with_capacity(expected_len / 4);
+    let (chunks, remainder) = blob.as_chunks::<4>();
+    if !remainder.is_empty() {
+        return Err(LocalMemoryActionError::backend(format!(
+            "stored Memory vector has {} bytes; expected {expected_len}",
+            blob.len()
+        ))
+        .into());
+    }
+    for chunk in chunks {
+        vector.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    validate_vector_dimensions(&vector, dimensions)?;
+    Ok(vector)
+}
+
+fn validate_vector_dimensions(vector: &[f32], dimensions: u64) -> Result<()> {
+    if dimensions == 0 {
+        return Err(LocalMemoryActionError::contract_violation(
+            "Memory semantic dimensions must be greater than 0",
+        )
+        .into());
+    }
+    if vector.len() != dimensions as usize {
+        return Err(LocalMemoryActionError::backend(format!(
+            "embedding vector has {} dimensions; expected {dimensions}",
+            vector.len()
+        ))
+        .into());
+    }
+    if vector.iter().any(|value| !value.is_finite()) {
+        return Err(
+            LocalMemoryActionError::backend("embedding vector contains non-finite values").into(),
+        );
+    }
+    Ok(())
+}
+
+fn cosine_similarity(left: &[f32], right: &[f32]) -> Result<f32> {
+    if left.len() != right.len() {
+        return Err(LocalMemoryActionError::backend(
+            "cannot compare embedding vectors with different dimensions",
+        )
+        .into());
+    }
+    let mut dot = 0.0_f32;
+    let mut left_norm = 0.0_f32;
+    let mut right_norm = 0.0_f32;
+    for (left, right) in left.iter().zip(right.iter()) {
+        dot += left * right;
+        left_norm += left * left;
+        right_norm += right * right;
+    }
+    if left_norm == 0.0 || right_norm == 0.0 {
+        return Ok(0.0);
+    }
+    Ok(dot / (left_norm.sqrt() * right_norm.sqrt()))
+}
+
 fn ensure_retrieval_mode(
     manifest: &MemoryManifest,
     space: &str,
@@ -2627,6 +3232,7 @@ fn sha256_prefixed_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness_runtime::knowledge::KnowledgeRuntimeFailure;
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -3118,6 +3724,140 @@ mod tests {
                 "SELECT COUNT(*) FROM memory_vectors WHERE record_id = ?1",
                 params![record_id],
                 |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    fn total_vector_count(runtime: &LocalSqliteMemoryRuntime) -> u64 {
+        runtime
+            .connection
+            .query_row("SELECT COUNT(*) FROM memory_vectors", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn enable_semantic_notes(manifest: &mut MemoryManifest) {
+        let notes = manifest.memory.spaces.get_mut("notes").unwrap();
+        if !notes
+            .retrieval
+            .modes
+            .contains(&MemoryRetrievalMode::Semantic)
+        {
+            notes.retrieval.modes.push(MemoryRetrievalMode::Semantic);
+        }
+    }
+
+    fn semantic_config() -> LocalMemorySemanticConfig {
+        LocalMemorySemanticConfig {
+            embedding_provider: "test".into(),
+            embedding_model: "toy-2d".into(),
+            dimensions: 2,
+            normalized: true,
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct TestEmbeddingProvider {
+        calls: Vec<String>,
+    }
+
+    impl EmbeddingProvider for TestEmbeddingProvider {
+        fn validate_space(&self, space: &KnowledgeEmbeddingSnapshot) -> Result<(), String> {
+            if space.provider == "test"
+                && space.model == "toy-2d"
+                && space.dimensions == 2
+                && space.metric == "cosine"
+                && space.normalized
+            {
+                Ok(())
+            } else {
+                Err("unexpected embedding space".into())
+            }
+        }
+
+        fn embed(
+            &mut self,
+            _space: &KnowledgeEmbeddingSnapshot,
+            text: &str,
+        ) -> std::result::Result<Vec<f32>, KnowledgeRuntimeFailure> {
+            self.calls.push(text.to_string());
+            if text.contains("alpha") {
+                Ok(vec![1.0, 0.0])
+            } else if text.contains("beta") {
+                Ok(vec![0.0, 1.0])
+            } else {
+                Ok(vec![0.5, 0.5])
+            }
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct FailingEmbeddingProvider;
+
+    impl EmbeddingProvider for FailingEmbeddingProvider {
+        fn validate_space(&self, _space: &KnowledgeEmbeddingSnapshot) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn embed(
+            &mut self,
+            _space: &KnowledgeEmbeddingSnapshot,
+            _text: &str,
+        ) -> std::result::Result<Vec<f32>, KnowledgeRuntimeFailure> {
+            Err(KnowledgeRuntimeFailure::new(
+                "embedding_provider_failed",
+                "test embedder failed",
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct DeletingEmbeddingProvider {
+        database_path: PathBuf,
+        record_id: String,
+        calls: Vec<String>,
+        deleted: bool,
+    }
+
+    impl EmbeddingProvider for DeletingEmbeddingProvider {
+        fn validate_space(&self, _space: &KnowledgeEmbeddingSnapshot) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn embed(
+            &mut self,
+            _space: &KnowledgeEmbeddingSnapshot,
+            text: &str,
+        ) -> std::result::Result<Vec<f32>, KnowledgeRuntimeFailure> {
+            self.calls.push(text.to_string());
+            if !self.deleted && text.contains("alpha durable note") {
+                let connection = Connection::open(&self.database_path).map_err(|err| {
+                    KnowledgeRuntimeFailure::new("test_delete_failed", err.to_string())
+                })?;
+                connection
+                    .execute(
+                        "DELETE FROM memory_records WHERE id = ?1",
+                        params![&self.record_id],
+                    )
+                    .map_err(|err| {
+                        KnowledgeRuntimeFailure::new("test_delete_failed", err.to_string())
+                    })?;
+                self.deleted = true;
+            }
+            if text.contains("alpha") {
+                Ok(vec![1.0, 0.0])
+            } else {
+                Ok(vec![0.5, 0.5])
+            }
+        }
+    }
+
+    fn vector_row(runtime: &LocalSqliteMemoryRuntime, record_id: &str) -> (String, Vec<u8>) {
+        runtime
+            .connection
+            .query_row(
+                "SELECT content_hash, vector FROM memory_vectors WHERE record_id = ?1",
+                params![record_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap()
     }
@@ -4180,6 +4920,468 @@ mod tests {
     }
 
     #[test]
+    fn local_sqlite_with_semantic_adds_semantic_retrieval() {
+        let capabilities = MemoryRuntimeCapabilityDescriptor::local_sqlite_with_semantic();
+
+        assert!(
+            capabilities
+                .retrieval_modes
+                .contains(&MemoryRetrievalMode::Semantic)
+        );
+        assert!(capabilities.capacity);
+        assert!(capabilities.atomic_batches);
+    }
+
+    #[test]
+    fn sqlite_semantic_read_backfills_vectors_and_ranks_exact_cosine() {
+        let dir = temp_dir("m14d-semantic-read");
+        let (mut manifest, contracts) = write_m14b_memory_package(&dir);
+        enable_semantic_notes(&mut manifest);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+
+        let alpha = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({ "body": "alpha durable note" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        let beta = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({ "body": "beta durable note" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+
+        runtime
+            .connection
+            .execute(
+                r#"
+                INSERT INTO memory_vectors (
+                    record_id, package, package_version, space, record_type, scope_hash,
+                    embedding_provider, embedding_model, dimensions, content_hash, vector, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'test', 'toy-2d', 2, 'sha256:stale', ?7, ?8)
+                "#,
+                params![
+                    &beta.id,
+                    &beta.package,
+                    &beta.package_version,
+                    &beta.space,
+                    &beta.record_type,
+                    &beta.scope_hash,
+                    encode_f32_le_vector(&[1.0, 0.0], 2).unwrap(),
+                    Utc::now().to_rfc3339(),
+                ],
+            )
+            .unwrap();
+
+        let mut request = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Semantic);
+        request.record_type = Some("note".into());
+        request.query = Some("alpha query".into());
+        request.limit = Some(5);
+        let mut embedder = TestEmbeddingProvider::default();
+        let result = runtime
+            .read_records_semantic(request, &semantic_config(), &mut embedder)
+            .unwrap();
+
+        assert_eq!(result.embedding_requests, 3);
+        assert_eq!(result.records.len(), 2);
+        assert_eq!(result.records[0].id, alpha.id);
+        assert_eq!(result.records[1].id, beta.id);
+        let (alpha_hash, alpha_blob) = vector_row(&runtime, &alpha.id);
+        assert_eq!(alpha_blob, encode_f32_le_vector(&[1.0, 0.0], 2).unwrap());
+        assert_eq!(
+            alpha_hash,
+            durable_memory_content_hash(&alpha.content).unwrap()
+        );
+        let (beta_hash, beta_blob) = vector_row(&runtime, &beta.id);
+        assert_eq!(beta_blob, encode_f32_le_vector(&[0.0, 1.0], 2).unwrap());
+        assert_eq!(
+            beta_hash,
+            durable_memory_content_hash(&beta.content).unwrap()
+        );
+
+        let mut cached_request =
+            m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Semantic);
+        cached_request.record_type = Some("note".into());
+        cached_request.query = Some("alpha query".into());
+        let mut cached_embedder = TestEmbeddingProvider::default();
+        let cached = runtime
+            .read_records_semantic(cached_request, &semantic_config(), &mut cached_embedder)
+            .unwrap();
+        assert_eq!(cached.embedding_requests, 1);
+        assert_eq!(cached_embedder.calls, vec!["alpha query"]);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_semantic_write_generates_vector_best_effort() {
+        let dir = temp_dir("m14d-semantic-write-vector");
+        let (mut manifest, contracts) = write_m14b_memory_package(&dir);
+        enable_semantic_notes(&mut manifest);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+
+        let mut embedder = TestEmbeddingProvider::default();
+        let result = runtime
+            .write_record_with_semantic(
+                m14b_write_request(
+                    &manifest,
+                    &contracts,
+                    "notes",
+                    "note",
+                    Some(json!({
+                        "body": "alpha durable note",
+                        "secret": "ephemeral-secret"
+                    })),
+                ),
+                &semantic_config(),
+                &mut embedder,
+            )
+            .unwrap();
+        assert_eq!(result.embedding_requests, 1);
+        assert!(result.semantic_embedding_error.is_none());
+        let record = result.record.unwrap();
+        assert_eq!(vector_count(&runtime, &record.id), 1);
+        assert_eq!(embedder.calls.len(), 1);
+        assert!(!embedder.calls[0].contains("ephemeral-secret"));
+        let (_hash, blob) = vector_row(&runtime, &record.id);
+        assert_eq!(
+            blob,
+            vec![
+                0x00, 0x00, 0x80, 0x3f, // 1.0f32 little-endian
+                0x00, 0x00, 0x00, 0x00, // 0.0f32 little-endian
+            ]
+        );
+
+        let mut failing_embedder = FailingEmbeddingProvider;
+        let failed_embedding = runtime
+            .write_record_with_semantic(
+                m14b_write_request(
+                    &manifest,
+                    &contracts,
+                    "notes",
+                    "note",
+                    Some(json!({ "body": "beta durable note" })),
+                ),
+                &semantic_config(),
+                &mut failing_embedder,
+            )
+            .unwrap();
+        assert_eq!(failed_embedding.embedding_requests, 1);
+        assert!(
+            failed_embedding
+                .semantic_embedding_error
+                .as_deref()
+                .is_some_and(|error| error.contains("test embedder failed"))
+        );
+        let failed_record = failed_embedding.record.unwrap();
+        assert_eq!(vector_count(&runtime, &failed_record.id), 0);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_semantic_mutations_delete_or_replace_vectors() {
+        let dir = temp_dir("m14d-semantic-mutation-vectors");
+        let (mut manifest, contracts) = write_m14b_memory_package(&dir);
+        enable_semantic_notes(&mut manifest);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+
+        let mut embedder = TestEmbeddingProvider::default();
+        let record = runtime
+            .write_record_with_semantic(
+                m14b_write_request(
+                    &manifest,
+                    &contracts,
+                    "notes",
+                    "note",
+                    Some(json!({ "body": "alpha durable note" })),
+                ),
+                &semantic_config(),
+                &mut embedder,
+            )
+            .unwrap()
+            .record
+            .unwrap();
+        assert_eq!(vector_count(&runtime, &record.id), 1);
+
+        let mut update = m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({ "body": "beta durable note" })),
+        );
+        update.operation = LocalMemoryWriteOperation::Update;
+        update.record_id = Some(record.id.clone());
+        let updated = runtime.write_record(update).unwrap().record.unwrap();
+        assert_eq!(vector_count(&runtime, &updated.id), 0);
+
+        let mut semantic_update = m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({ "body": "alpha durable note again" })),
+        );
+        semantic_update.operation = LocalMemoryWriteOperation::Update;
+        semantic_update.record_id = Some(updated.id.clone());
+        let mut update_embedder = TestEmbeddingProvider::default();
+        let regenerated = runtime
+            .write_record_with_semantic(semantic_update, &semantic_config(), &mut update_embedder)
+            .unwrap()
+            .record
+            .unwrap();
+        assert_eq!(vector_count(&runtime, &regenerated.id), 1);
+
+        let mut delete = m14b_write_request(&manifest, &contracts, "notes", "note", None);
+        delete.operation = LocalMemoryWriteOperation::Delete;
+        delete.record_id = Some(regenerated.id.clone());
+        runtime.write_record(delete).unwrap();
+        assert_eq!(vector_count(&runtime, &regenerated.id), 0);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_semantic_read_bounds_lazy_backfill_and_reports_pending() {
+        let dir = temp_dir("m14d-semantic-bounded-backfill");
+        let (mut manifest, contracts) = write_m14b_memory_package(&dir);
+        enable_semantic_notes(&mut manifest);
+        {
+            let notes = manifest.memory.spaces.get_mut("notes").unwrap();
+            notes.capacity = None;
+            notes.retention = None;
+        }
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+
+        let total_records = LOCAL_MEMORY_SEMANTIC_READ_BACKFILL_LIMIT + 3;
+        for index in 0..total_records {
+            runtime
+                .write_record(m14b_write_request(
+                    &manifest,
+                    &contracts,
+                    "notes",
+                    "note",
+                    Some(json!({ "body": format!("gamma durable note {index}") })),
+                ))
+                .unwrap();
+        }
+
+        let mut request = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Semantic);
+        request.record_type = Some("note".into());
+        request.query = Some("alpha query".into());
+        request.limit = Some(5);
+        let mut embedder = TestEmbeddingProvider::default();
+        let result = runtime
+            .read_records_semantic(request, &semantic_config(), &mut embedder)
+            .unwrap();
+
+        assert_eq!(result.records.len(), 5);
+        assert_eq!(
+            result.vectors_materialized,
+            LOCAL_MEMORY_SEMANTIC_READ_BACKFILL_LIMIT as u64
+        );
+        assert_eq!(result.vectors_pending, 3);
+        assert_eq!(
+            result.embedding_requests,
+            1 + LOCAL_MEMORY_SEMANTIC_READ_BACKFILL_LIMIT as u64
+        );
+        assert_eq!(
+            total_vector_count(&runtime),
+            LOCAL_MEMORY_SEMANTIC_READ_BACKFILL_LIMIT as u64
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_semantic_read_skips_backfill_upsert_when_snapshot_is_stale() {
+        let dir = temp_dir("m14d-semantic-stale-backfill");
+        let (mut manifest, contracts) = write_m14b_memory_package(&dir);
+        enable_semantic_notes(&mut manifest);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+
+        let record = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({ "body": "alpha durable note" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+
+        let mut request = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Semantic);
+        request.record_type = Some("note".into());
+        request.query = Some("lookup query".into());
+        let mut embedder = DeletingEmbeddingProvider {
+            database_path: runtime.database_path().to_path_buf(),
+            record_id: record.id.clone(),
+            calls: Vec::new(),
+            deleted: false,
+        };
+        let result = runtime
+            .read_records_semantic(request, &semantic_config(), &mut embedder)
+            .unwrap();
+
+        assert_eq!(result.embedding_requests, 2);
+        assert_eq!(result.vectors_materialized, 0);
+        assert_eq!(result.vectors_pending, 1);
+        assert!(result.records.is_empty());
+        assert_eq!(vector_count(&runtime, &record.id), 0);
+        assert!(
+            runtime
+                .get_record(
+                    &record.package,
+                    &record.package_version,
+                    &record.space,
+                    &BTreeMap::from([("user".into(), "m14b-user".into())]),
+                    &record.id
+                )
+                .unwrap()
+                .is_none()
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_semantic_read_filters_candidates_and_maps_embedding_failures() {
+        let dir = temp_dir("m14d-semantic-filter-failure");
+        let (mut manifest, contracts) = write_m14b_memory_package(&dir);
+        enable_semantic_notes(&mut manifest);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+
+        let kept = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({ "body": "alpha durable note", "tag": "keep" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        let skipped = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({ "body": "beta durable note", "tag": "skip" })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+
+        let mut request = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Semantic);
+        request.record_type = Some("note".into());
+        request.filter = BTreeMap::from([("tag".into(), json!("keep"))]);
+        request.query = Some("alpha query".into());
+        let mut embedder = TestEmbeddingProvider::default();
+        let result = runtime
+            .read_records_semantic(request, &semantic_config(), &mut embedder)
+            .unwrap();
+        assert_eq!(result.records.len(), 1);
+        assert_eq!(result.records[0].id, kept.id);
+        assert_eq!(vector_count(&runtime, &kept.id), 1);
+        assert_eq!(vector_count(&runtime, &skipped.id), 0);
+        assert!(
+            embedder
+                .calls
+                .iter()
+                .all(|call| !call.contains("beta durable note"))
+        );
+
+        let mut failing_request =
+            m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Semantic);
+        failing_request.record_type = Some("note".into());
+        failing_request.query = Some("alpha query".into());
+        let mut failing_embedder = FailingEmbeddingProvider;
+        let failure = runtime
+            .read_records_semantic(failing_request, &semantic_config(), &mut failing_embedder)
+            .unwrap_err();
+        assert_eq!(
+            local_memory_error_code(&failure),
+            Some("embedding_provider_failed")
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sqlite_semantic_embedding_uses_persistable_projection_only() {
+        let dir = temp_dir("m14d-semantic-projection");
+        let (mut manifest, contracts) = write_m14b_memory_package(&dir);
+        enable_semantic_notes(&mut manifest);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+
+        let record = runtime
+            .write_record(m14b_write_request(
+                &manifest,
+                &contracts,
+                "notes",
+                "note",
+                Some(json!({
+                    "body": "alpha durable note",
+                    "secret": "ephemeral-secret",
+                    "nested": {
+                        "visible": "kept",
+                        "ephemeral": "ephemeral-nested-secret"
+                    }
+                })),
+            ))
+            .unwrap()
+            .record
+            .unwrap();
+        assert_eq!(
+            record.content,
+            json!({
+                "body": "alpha durable note",
+                "nested": { "visible": "kept" }
+            })
+        );
+
+        let mut request = m14b_read_request(&manifest, "notes", LocalMemoryReadMode::Semantic);
+        request.record_type = Some("note".into());
+        request.query = Some("alpha query".into());
+        let mut embedder = TestEmbeddingProvider::default();
+        runtime
+            .read_records_semantic(request, &semantic_config(), &mut embedder)
+            .unwrap();
+
+        assert!(
+            embedder
+                .calls
+                .iter()
+                .all(|call| !call.contains("ephemeral-secret")
+                    && !call.contains("ephemeral-nested-secret"))
+        );
+        let (content_hash, _blob) = vector_row(&runtime, &record.id);
+        assert_eq!(
+            content_hash,
+            durable_memory_content_hash(&record.content).unwrap()
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn runtime_capability_comparison_reports_unrealizable_space_requirements() {
         let manifest: MemoryManifest = serde_json::from_value(json!({
             "kind": "memory",
@@ -4227,7 +5429,7 @@ mod tests {
                 .iter()
                 .all(|diagnostic| diagnostic.space == "notes")
         );
-        assert!(reasons.contains(&"retrieval mode `Semantic` is not supported"));
+        assert!(reasons.contains(&"no supported retrieval modes; declared modes: `Semantic`"));
     }
 
     #[test]

@@ -198,7 +198,16 @@ pub(super) fn validate_semantic_action(
                     }
                 }
                 MemoryReadMode::Semantic => {
-                    return Err("Memory semantic read is deferred to Milestone 14d.".into());
+                    let Some(query) = query else {
+                        return Err("Memory semantic read requires a query.".into());
+                    };
+                    if query.trim().is_empty() {
+                        return Err("Memory semantic query must not be empty.".into());
+                    }
+                    if record_id.is_some() {
+                        return Err("Memory semantic read must not include record_id.".into());
+                    }
+                    validate_memory_filter_paths(memory, filter)?;
                 }
             }
             Ok(())

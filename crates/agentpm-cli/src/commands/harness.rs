@@ -15,7 +15,7 @@ use crate::harness_runtime::{
     SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::manifest::{
-    AgentManifest, AgentMemoryBinding, MemoryManifest, load_manifest_value,
+    AgentManifest, AgentMemoryBinding, MemoryManifest, MemoryRetrievalMode, load_manifest_value,
     parse_knowledge_manifest, parse_loop_manifest, parse_memory_manifest, parse_skill_manifest,
     parse_tool_manifest,
 };
@@ -405,10 +405,13 @@ fn execute_machine_run(
         loop_manifest,
         HarnessEngineOptions::new(plan.config.config.runtime.limits.clone()),
     );
+    let memory_embedding_provider =
+        embedding_provider_for_plan(plan, Some(bridge.clone()), Some(&service_events));
     let mut services = HarnessRuntimeServices {
         model: model.as_mut(),
         dispatcher: &mut dispatcher,
         knowledge: knowledge.as_mut(),
+        embedding_provider: memory_embedding_provider,
         approvals: approvals.as_mut(),
         hooks: &mut hooks,
         service_events: Some(&mut service_events),
@@ -1864,10 +1867,15 @@ fn execute_headless_plan_with_hooks(
             service_events_ref,
         )
     };
+    let memory_embedding_provider = {
+        let service_events_ref = service_events.as_deref();
+        embedding_provider_for_plan(plan, None, service_events_ref)
+    };
     let mut services = HarnessRuntimeServices {
         model,
         dispatcher,
         knowledge: knowledge.as_mut(),
+        embedding_provider: memory_embedding_provider,
         approvals: approvals.as_mut(),
         hooks,
         service_events,
@@ -2128,27 +2136,46 @@ fn embedding_provider_for_plan(
     let mut providers: BTreeMap<String, Box<dyn crate::harness_runtime::EmbeddingProvider>> =
         BTreeMap::new();
     let mut routes = BTreeMap::new();
-    for item in &plan.config.config.knowledge.embedding_matches {
+    let mut route_specs = plan
+        .config
+        .config
+        .knowledge
+        .embedding_matches
+        .iter()
+        .map(|item| {
+            (
+                item.embedding_provider.clone(),
+                item.r#match.provider.clone(),
+                item.r#match.model.clone(),
+                item.r#match.dimensions,
+                item.r#match.normalized,
+            )
+        })
+        .collect::<Vec<_>>();
+    if let Some(semantic) = &plan.config.config.memory.local.semantic {
+        route_specs.push((
+            semantic.embedding_provider.clone(),
+            semantic.embedding_provider.clone(),
+            semantic.model.clone(),
+            semantic.dimensions,
+            true,
+        ));
+    }
+    for (embedding_provider_id, provider, model, dimensions, normalized) in route_specs {
         let Some(entry) = plan
             .config
             .config
             .providers
             .embeddings
-            .get(&item.embedding_provider)
+            .get(&embedding_provider_id)
         else {
             continue;
         };
         routes.insert(
-            format!(
-                "{}\n{}\n{}\n{}",
-                item.r#match.provider,
-                item.r#match.model,
-                item.r#match.dimensions,
-                item.r#match.normalized
-            ),
-            item.embedding_provider.clone(),
+            format!("{provider}\n{model}\n{dimensions}\n{normalized}"),
+            embedding_provider_id.clone(),
         );
-        if providers.contains_key(&item.embedding_provider) {
+        if providers.contains_key(&embedding_provider_id) {
             continue;
         }
         let provider: Result<Box<dyn crate::harness_runtime::EmbeddingProvider>> =
@@ -2156,7 +2183,7 @@ fn embedding_provider_for_plan(
                 crate::harness_config::HarnessImplementation::Process { .. } => {
                     ServiceEmbeddingProvider::process(
                         &plan.workspace_root,
-                        &item.embedding_provider,
+                        &embedding_provider_id,
                         entry,
                         service_events.map(ServiceLifecycleEvents::emitter),
                     )
@@ -2169,7 +2196,7 @@ fn embedding_provider_for_plan(
                         continue;
                     };
                     ServiceEmbeddingProvider::host(
-                        &item.embedding_provider,
+                        &embedding_provider_id,
                         entry,
                         Box::new(bridge),
                         service_events.map(ServiceLifecycleEvents::emitter),
@@ -2180,7 +2207,7 @@ fn embedding_provider_for_plan(
                 }
             };
         if let Ok(provider) = provider {
-            providers.insert(item.embedding_provider.clone(), provider);
+            providers.insert(embedding_provider_id, provider);
         }
     }
     if providers.is_empty() {
@@ -2506,13 +2533,6 @@ fn memory_binding_snapshots_from_plan(
         };
         let contract_result =
             crate::harness_runtime::memory::validate_and_load_memory_contracts(&package.root);
-        let unrealizable = crate::harness_runtime::memory::unrealizable_memory_spaces(
-            &manifest,
-            &crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor::local_sqlite(),
-        )
-        .into_iter()
-        .map(|diagnostic| (diagnostic.space, diagnostic.reason))
-        .collect::<BTreeMap<_, _>>();
 
         for space_name in &binding.spaces {
             let Some(space) = manifest.memory.spaces.get(space_name) else {
@@ -2520,11 +2540,33 @@ fn memory_binding_snapshots_from_plan(
             };
             let (runtime, mut state, mut readiness_reason) =
                 memory_runtime_readiness(plan, &package_name);
+            let (semantic, semantic_unavailable_reason) =
+                memory_semantic_snapshot_for_plan(plan, space);
+            let capabilities = if semantic.is_some() {
+                crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor::local_sqlite_with_semantic()
+            } else {
+                crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor::local_sqlite()
+            };
+            let unrealizable = crate::harness_runtime::memory::unrealizable_memory_spaces(
+                &manifest,
+                &capabilities,
+            )
+            .into_iter()
+            .map(|diagnostic| (diagnostic.space, diagnostic.reason))
+            .collect::<BTreeMap<_, _>>();
             if state == "available"
                 && let Some(reason) = unrealizable.get(space_name)
             {
                 state = "unavailable".into();
-                readiness_reason = Some(reason.clone());
+                readiness_reason = semantic_unavailable_reason
+                    .clone()
+                    .or_else(|| Some(reason.clone()));
+            }
+            let retrieval_modes = memory_retrieval_modes_for_runtime(space, &capabilities);
+            if state == "available" && retrieval_modes.is_empty() {
+                state = "unavailable".into();
+                readiness_reason = semantic_unavailable_reason
+                    .or_else(|| Some("Memory space has no supported retrieval modes".into()));
             }
             let record_types = if state == "available" {
                 match &contract_result {
@@ -2551,7 +2593,8 @@ fn memory_binding_snapshots_from_plan(
                 readiness_reason,
                 binding_scope: binding_scope.to_string(),
                 scope_keys: space.scope.clone(),
-                retrieval_modes: space.retrieval.modes.clone(),
+                retrieval_modes,
+                semantic,
                 append_only: space
                     .constraints
                     .as_ref()
@@ -2562,6 +2605,73 @@ fn memory_binding_snapshots_from_plan(
         }
     }
     snapshots
+}
+
+fn memory_retrieval_modes_for_runtime(
+    space: &crate::manifest::MemorySpace,
+    capabilities: &crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor,
+) -> Vec<MemoryRetrievalMode> {
+    space
+        .retrieval
+        .modes
+        .iter()
+        .filter(|mode| capabilities.retrieval_modes.contains(mode))
+        .cloned()
+        .collect()
+}
+
+fn memory_semantic_snapshot_for_plan(
+    plan: &ResolvedHarnessPlan,
+    space: &crate::manifest::MemorySpace,
+) -> (Option<KnowledgeEmbeddingSnapshot>, Option<String>) {
+    if !space
+        .retrieval
+        .modes
+        .contains(&MemoryRetrievalMode::Semantic)
+    {
+        return (None, None);
+    }
+    let Some(semantic) = &plan.config.config.memory.local.semantic else {
+        return (
+            None,
+            Some("Memory semantic retrieval requires memory.local.semantic configuration".into()),
+        );
+    };
+    if !plan
+        .config
+        .config
+        .providers
+        .embeddings
+        .contains_key(&semantic.embedding_provider)
+    {
+        return (
+            None,
+            Some(format!(
+                "Memory semantic retrieval references undefined EmbeddingProvider `{}`",
+                semantic.embedding_provider
+            )),
+        );
+    }
+    if !configured_embedding_provider_is_realizable(plan, &semantic.embedding_provider) {
+        return (
+            None,
+            Some(format!(
+                "Memory semantic retrieval requires available EmbeddingProvider `{}`",
+                semantic.embedding_provider
+            )),
+        );
+    }
+    (
+        Some(KnowledgeEmbeddingSnapshot {
+            id: "memory.local.semantic".into(),
+            provider: semantic.embedding_provider.clone(),
+            model: semantic.model.clone(),
+            dimensions: semantic.dimensions,
+            metric: "cosine".into(),
+            normalized: true,
+        }),
+        None,
+    )
 }
 
 fn package_identity_for_harness_runtime(raw: &str) -> String {
@@ -3001,8 +3111,8 @@ mod tests {
     use crate::harness_config::{
         HarnessApprovalController, HarnessConfig, HarnessConfigSource, HarnessHookBinding,
         HarnessHookFailurePolicy, HarnessHookId, HarnessImplementation, HarnessImplementationEntry,
-        HarnessRuntimeMapping, HarnessTraceConfig, HarnessTraceContent, HarnessTraceLevel,
-        ResolvedHarnessConfig,
+        HarnessMemorySemanticConfig, HarnessRuntimeMapping, HarnessTraceConfig,
+        HarnessTraceContent, HarnessTraceLevel, ResolvedHarnessConfig,
     };
     use crate::harness_observability::{
         HarnessTerminalStatus, ReportPackageIdentity, RunReport, RunUsage,
@@ -3576,6 +3686,88 @@ mod tests {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("configured KnowledgeRuntime `unhealthy-knowledge` could not start")
+        );
+    }
+
+    #[test]
+    fn memory_semantic_retrieval_advertises_only_when_embedding_provider_ready() {
+        let root = temp_dir("memory-semantic-readiness");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture(&root, &mut plan);
+
+        let runtime = runtime_snapshot_from_plan(&plan);
+        assert_eq!(runtime.memory.len(), 1);
+        assert_eq!(runtime.memory[0].state, "unavailable");
+        assert!(runtime.memory[0].semantic.is_none());
+        assert!(runtime.memory[0].retrieval_modes.is_empty());
+        assert!(
+            runtime.memory[0]
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("memory.local.semantic configuration")
+        );
+
+        plan.config.config.memory.local.semantic = Some(HarnessMemorySemanticConfig {
+            embedding_provider: "test-embedder".into(),
+            model: "toy-2d".into(),
+            dimensions: 2,
+        });
+        let runtime = runtime_snapshot_from_plan(&plan);
+        assert_eq!(runtime.memory[0].state, "unavailable");
+        assert!(runtime.memory[0].semantic.is_none());
+        assert!(
+            runtime.memory[0]
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("undefined EmbeddingProvider `test-embedder`")
+        );
+
+        plan.config.config.providers.embeddings.insert(
+            "test-embedder".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.capabilities
+            .push(crate::harness_plan::StaticCapabilityCandidate {
+                kind: "embedding_provider".into(),
+                identity: "test-embedder".into(),
+                scope: "session".into(),
+                source: "harness_config".into(),
+                state: CapabilityState::Available,
+            });
+        let runtime = runtime_snapshot_from_plan(&plan);
+        assert_eq!(runtime.memory[0].state, "available");
+        assert_eq!(
+            runtime.memory[0].retrieval_modes,
+            vec![MemoryRetrievalMode::Semantic]
+        );
+        let semantic = runtime.memory[0].semantic.as_ref().unwrap();
+        assert_eq!(semantic.provider, "test-embedder");
+        assert_eq!(semantic.model, "toy-2d");
+        assert_eq!(semantic.dimensions, 2);
+        assert_eq!(semantic.metric, "cosine");
+        assert!(semantic.normalized);
+    }
+
+    #[test]
+    fn memory_semantic_retrieval_degrades_to_supported_modes_without_embedding_provider() {
+        let root = temp_dir("memory-semantic-degrades-to-key");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key", "semantic"]));
+
+        let runtime = runtime_snapshot_from_plan(&plan);
+        assert_eq!(runtime.memory.len(), 1);
+        assert_eq!(runtime.memory[0].state, "available");
+        assert!(runtime.memory[0].readiness_reason.is_none());
+        assert!(runtime.memory[0].semantic.is_none());
+        assert_eq!(
+            runtime.memory[0].retrieval_modes,
+            vec![MemoryRetrievalMode::Key]
         );
     }
 
@@ -4631,6 +4823,94 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    }
+
+    fn write_semantic_memory_fixture(root: &Path, plan: &mut ResolvedHarnessPlan) {
+        write_semantic_memory_fixture_with_modes(root, plan, json!(["semantic"]));
+    }
+
+    fn write_semantic_memory_fixture_with_modes(
+        root: &Path,
+        plan: &mut ResolvedHarnessPlan,
+        retrieval_modes: Value,
+    ) {
+        write_json(
+            &root.join("agent.json"),
+            json!({
+                "kind": "agent",
+                "name": "@zack/test-agent",
+                "version": "0.1.0",
+                "memory": ["semantic-memory-test@0.1.0"],
+                "bindings": {
+                    "global": {
+                        "memory": [
+                            {
+                                "package": "semantic-memory-test@0.1.0",
+                                "spaces": ["notes"]
+                            }
+                        ]
+                    }
+                }
+            }),
+        );
+        let memory_root = root.join(".agentpm/memory/semantic-memory-test/0.1.0");
+        write_json(
+            &memory_root.join("agent.json"),
+            json!({
+                "kind": "memory",
+                "name": "semantic-memory-test",
+                "version": "0.1.0",
+                "description": "Semantic Memory test package.",
+                "memory": {
+                    "scopes": {
+                        "user": { "description": "User scope." }
+                    },
+                    "record_types": {
+                        "note": {
+                            "version": "1.0.0",
+                            "description": "Note.",
+                            "schema": "schemas/note.schema.json"
+                        }
+                    },
+                    "spaces": {
+                        "notes": {
+                            "description": "Semantic notes.",
+                            "model": "collection",
+                            "record_types": ["note"],
+                            "scope": ["user"],
+                            "retrieval": { "modes": retrieval_modes }
+                        }
+                    }
+                }
+            }),
+        );
+        write_json(
+            &memory_root.join("schemas/note.schema.json"),
+            json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "body": { "type": "string", "minLength": 1 }
+                },
+                "required": ["body"],
+                "additionalProperties": false
+            }),
+        );
+        crate::commands::memory::execute_memory_build(
+            &memory_root.join("agent.json"),
+            crate::commands::memory::MemoryBuildMode::Write,
+        )
+        .unwrap();
+        plan.package_graph.insert(
+            "memory:semantic-memory-test@0.1.0".into(),
+            ResolvedPackageInfo {
+                key: "memory:semantic-memory-test@0.1.0".into(),
+                kind: PackageKind::Memory,
+                name: "semantic-memory-test".into(),
+                version: "0.1.0".into(),
+                root: memory_root,
+            },
+        );
     }
 
     fn host_service(role: &str, registry_id: &str) -> HostServiceRegistration {

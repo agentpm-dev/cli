@@ -3731,7 +3731,7 @@ mod tests {
             diagnostic.code == "unrealizable_memory_space"
                 && diagnostic
                     .message
-                    .contains("retrieval mode `Semantic` is not supported")
+                    .contains("no supported retrieval modes; declared modes: `Semantic`")
         }));
         assert!(plan.capabilities.iter().any(|capability| {
             capability.kind == "memory"

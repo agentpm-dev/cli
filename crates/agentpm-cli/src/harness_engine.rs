@@ -17,8 +17,9 @@ use crate::harness_runtime::hook::{
     before_tool_selection_hook_from_phase,
 };
 use crate::harness_runtime::memory::{
-    LocalMemoryActionError, LocalMemoryReadMode, LocalMemoryReadRequest, LocalMemoryWriteOperation,
-    LocalMemoryWriteRequest, LocalSqliteMemoryRuntime, MemoryContractCache,
+    LocalMemoryActionError, LocalMemoryReadMode, LocalMemoryReadRequest, LocalMemorySemanticConfig,
+    LocalMemoryWriteOperation, LocalMemoryWriteRequest, LocalSqliteMemoryRuntime,
+    MemoryContractCache,
 };
 use crate::harness_runtime::model::ModelTurn;
 use crate::harness_runtime::model::{CONSUMER_RUN_CONTEXT_SECTION_TITLE, CompletionContract};
@@ -407,6 +408,7 @@ pub struct HarnessRuntimeServices<'a> {
     pub model: &'a mut dyn ModelRuntime,
     pub dispatcher: &'a mut dyn ActionDispatcher,
     pub knowledge: &'a mut dyn KnowledgeRuntime,
+    pub embedding_provider: Option<Box<dyn crate::harness_runtime::EmbeddingProvider>>,
     pub approvals: &'a mut dyn ApprovalController,
     pub hooks: &'a mut dyn HookRuntime,
     pub service_events: Option<&'a mut ServiceLifecycleEvents>,
@@ -443,6 +445,7 @@ impl HarnessEngine {
             model,
             dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -540,6 +543,7 @@ impl HarnessEngine {
                 services.model,
                 services.dispatcher,
                 services.knowledge,
+                &mut services.embedding_provider,
                 services.hooks,
                 &mut services.service_events,
             ) {
@@ -765,6 +769,7 @@ impl HarnessEngine {
         model: &mut dyn ModelRuntime,
         dispatcher: &mut dyn ActionDispatcher,
         knowledge: &mut dyn KnowledgeRuntime,
+        embedding_provider: &mut Option<Box<dyn crate::harness_runtime::EmbeddingProvider>>,
         hooks: &mut dyn HookRuntime,
         service_events: &mut Option<&mut ServiceLifecycleEvents>,
     ) -> Result<PhaseResult> {
@@ -2178,6 +2183,7 @@ impl HarnessEngine {
                         session,
                         &effective_phase,
                         &action,
+                        embedding_provider,
                         action_source.as_deref(),
                         &phase_execution_id,
                     )?

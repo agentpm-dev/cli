@@ -1712,7 +1712,7 @@ Filter values match by exact equality: structural equality for array and object 
 
 Unlike `full_text`, this is a strict contract rather than a floor: a runtime advertising `filter` must return exactly this result set. A backend capable of richer querying must restrict itself to these semantics so that the same Blueprint and request return the same records across runtimes.
 
-Harness compares this live descriptor with every Blueprint space and participating operation during preflight. A direct space is exposed only when all of its declared model/retrieval/retention/constraint/capacity requirements can be faithfully realized. A lifecycle operation is ready only when all referenced spaces are realizable for internal access and the backend provides durable trigger state plus atomic batches for operations that mutate multiple records/state entries.
+Harness compares this live descriptor with every Blueprint space and participating operation during preflight. A direct space is exposed only when its declared model/retention/constraint/capacity requirements can be faithfully realized and at least one declared retrieval mode is currently supported. Retrieval modes are exposed as the intersection of Blueprint-declared modes and runtime-supported modes; unsupported retrieval modes are omitted with readiness diagnostics when that omission leaves no usable direct retrieval surface. A lifecycle operation is ready only when all referenced spaces are realizable for internal access and the backend provides durable trigger state plus atomic batches for operations that mutate multiple records/state entries.
 
 ### Local SQLite MemoryRuntime
 

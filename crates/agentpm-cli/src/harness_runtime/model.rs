@@ -186,6 +186,8 @@ pub struct MemorySpaceRuntimeSnapshot {
     pub binding_scope: String,
     pub scope_keys: Vec<String>,
     pub retrieval_modes: Vec<MemoryRetrievalMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<KnowledgeEmbeddingSnapshot>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub append_only: bool,
     pub record_types: Vec<MemoryRecordTypeRuntimeSnapshot>,

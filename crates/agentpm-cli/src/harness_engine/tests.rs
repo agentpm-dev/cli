@@ -10,6 +10,7 @@ use crate::harness_runtime::hook::{
     BeforeModelRequestDecision, BeforeModelRequestHook, BeforeToolCallDecision,
     BeforeToolSelectionDecision, BeforeToolSelectionHook, HookRuntimeFailure,
 };
+use crate::harness_runtime::knowledge::{EmbeddingProvider, KnowledgeRuntimeFailure};
 use crate::harness_runtime::model::{
     KnowledgeEmbeddingSnapshot, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
     ModelProviderSelection, ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot,
@@ -23,6 +24,39 @@ use crate::manifest::{
 };
 use std::collections::VecDeque;
 use std::path::PathBuf;
+
+#[derive(Debug, Default)]
+struct TestMemoryEmbeddingProvider {
+    calls: Vec<String>,
+}
+
+impl EmbeddingProvider for TestMemoryEmbeddingProvider {
+    fn validate_space(&self, space: &KnowledgeEmbeddingSnapshot) -> Result<(), String> {
+        if space.provider == "test"
+            && space.model == "toy-2d"
+            && space.dimensions == 2
+            && space.metric == "cosine"
+            && space.normalized
+        {
+            Ok(())
+        } else {
+            Err("unexpected Memory embedding space".into())
+        }
+    }
+
+    fn embed(
+        &mut self,
+        _space: &KnowledgeEmbeddingSnapshot,
+        text: &str,
+    ) -> std::result::Result<Vec<f32>, KnowledgeRuntimeFailure> {
+        self.calls.push(text.to_string());
+        if text.contains("Alpha") || text.contains("alpha") {
+            Ok(vec![1.0, 0.0])
+        } else {
+            Ok(vec![0.0, 1.0])
+        }
+    }
+}
 
 fn hook_event_fields_for(
     events: &[HarnessEventEnvelope],
@@ -485,6 +519,24 @@ fn write_m14c_memory_package(root: &std::path::Path) -> MemoryRecordTypeRuntimeS
     }
 }
 
+fn enable_m14c_memory_package_semantic(root: &std::path::Path) {
+    let manifest_path = root.join("agent.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["memory"]["spaces"]["notes"]["retrieval"]["modes"] =
+        json!(["key", "filter", "chronological", "full_text", "semantic"]);
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    crate::commands::memory::execute_memory_build(
+        &manifest_path,
+        crate::commands::memory::MemoryBuildMode::Write,
+    )
+    .unwrap();
+}
+
 fn m14c_task_record_type_snapshot(root: &std::path::Path) -> MemoryRecordTypeRuntimeSnapshot {
     let contracts =
         crate::harness_runtime::memory::validate_and_load_memory_contracts(root).unwrap();
@@ -551,6 +603,7 @@ fn runtime_with_m14c_memory(
             MemoryRetrievalMode::Chronological,
             MemoryRetrievalMode::FullText,
         ],
+        semantic: None,
         append_only: false,
         record_types: vec![record_type],
     });
@@ -702,6 +755,7 @@ fn memory_read_descriptors_explain_key_mode_by_space_model() {
             binding_scope: "global".into(),
             scope_keys: vec!["user".into()],
             retrieval_modes: vec![MemoryRetrievalMode::Key],
+            semantic: None,
             append_only: false,
             record_types: vec![record_type.clone()],
         },
@@ -719,6 +773,7 @@ fn memory_read_descriptors_explain_key_mode_by_space_model() {
             binding_scope: "global".into(),
             scope_keys: vec!["user".into()],
             retrieval_modes: vec![MemoryRetrievalMode::Key, MemoryRetrievalMode::Chronological],
+            semantic: None,
             append_only: false,
             record_types: vec![record_type],
         },
@@ -875,6 +930,133 @@ fn direct_memory_actions_route_to_local_runtime_and_phase_transcript() {
     assert_eq!(provenance["action_kind"], json!("memory_write"));
     assert_eq!(provenance["operation"], json!("create"));
     assert_eq!(provenance["source"], json!("agent_binding"));
+}
+
+#[test]
+fn semantic_memory_read_reports_embedding_usage_and_events() {
+    let temp = temp_workspace_dir("m14d-semantic-memory-usage");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let mut runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let record_type = runtime.memory[0].record_types[0].clone();
+    enable_m14c_memory_package_semantic(&package_root);
+    runtime.memory[0]
+        .retrieval_modes
+        .push(MemoryRetrievalMode::Semantic);
+    runtime.memory[0].semantic = Some(KnowledgeEmbeddingSnapshot {
+        id: "memory.local.semantic".into(),
+        provider: "test".into(),
+        model: "toy-2d".into(),
+        dimensions: 2,
+        metric: "cosine".into(),
+        normalized: true,
+    });
+    runtime.memory[0].record_types = vec![record_type];
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "write",
+                SemanticAction::MemoryWrite {
+                    package: "m14c-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "Alpha semantic note" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "semantic-read",
+                SemanticAction::MemoryRead {
+                    package: "m14c-memory-test".into(),
+                    space: "notes".into(),
+                    mode: MemoryReadMode::Semantic,
+                    record_id: None,
+                    record_type: Some("note".into()),
+                    filter: BTreeMap::new(),
+                    query: Some("alpha semantic".into()),
+                    limit: Some(1),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = NoopHookRuntime;
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        embedding_provider: Some(Box::new(TestMemoryEmbeddingProvider::default())),
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-semantic-memory".into(),
+            "remember semantic note",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.report.usage.memory_requests, 2);
+    assert_eq!(result.report.usage.embedding_requests, 2);
+    assert_eq!(session.usage.embedding_requests, 2);
+    let events = handle.events();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::EmbeddingRequestStarted)
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::EmbeddingRequestCompleted)
+    );
+    let completed_fields = events
+        .iter()
+        .filter(|event| event.event_type == HarnessEventType::EmbeddingRequestCompleted)
+        .map(|event| {
+            let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+                panic!("expected embedding action payload");
+            };
+            fields
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(completed_fields.len(), 2);
+    assert!(completed_fields.iter().all(|fields| {
+        fields["package"] == "m14c-memory-test"
+            && fields["space"] == "notes"
+            && fields["provider"] == "test"
+            && fields["model"] == "toy-2d"
+            && fields["embedding_requests"] == 1
+            && fields["duration_ms"].as_u64().is_some()
+    }));
 }
 
 #[test]
@@ -1363,6 +1545,7 @@ fn duplicate_document_create_requests_repair_after_runtime_lookup() {
         binding_scope: "global".into(),
         scope_keys: vec!["user".into()],
         retrieval_modes: vec![MemoryRetrievalMode::Key],
+        semantic: None,
         append_only: false,
         record_types: vec![
             m14c_profile_record_type_snapshot(&package_root, "profile_a"),
@@ -1908,6 +2091,7 @@ fn before_tool_selection_hook_subsets_model_visible_tool_catalog() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -1997,6 +2181,7 @@ fn before_tool_selection_invalid_patch_still_reports_queued_nonfatal_failures() 
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -2069,6 +2254,7 @@ fn before_tool_call_hook_patches_arguments_and_revalidates() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -2136,6 +2322,7 @@ fn before_tool_call_continue_failure_is_reported_before_completed() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -2204,6 +2391,7 @@ fn before_tool_call_hook_revalidates_patched_arguments_before_dispatch() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -2268,6 +2456,7 @@ fn before_tool_call_hook_rejection_blocks_dispatch_and_emits_rejected() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -2318,6 +2507,7 @@ fn before_tool_call_rejection_still_reports_queued_nonfatal_failures() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -2379,6 +2569,7 @@ fn before_tool_call_hook_failure_emits_failed_not_rejected() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -2449,6 +2640,7 @@ fn before_knowledge_request_hook_shapes_request_before_dispatch() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -2531,6 +2723,7 @@ fn before_model_request_hook_appends_context_and_merges_provider_options() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -2619,6 +2812,7 @@ fn before_model_request_hook_fails_closed_before_model_runtime() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -2675,6 +2869,7 @@ fn before_model_request_invalid_patch_still_reports_queued_nonfatal_failures() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
             service_events: None,
@@ -3628,6 +3823,7 @@ fn knowledge_backend_failure_is_returned_to_phase_transcript() {
         model: &mut model,
         dispatcher: &mut dispatcher,
         knowledge: &mut knowledge,
+        embedding_provider: None,
         approvals: &mut approvals,
         hooks: &mut hooks,
         service_events: None,
@@ -4682,6 +4878,7 @@ fn knowledge_dispatch_usage_is_reported_and_rolled_up() {
         model: &mut model,
         dispatcher: &mut dispatcher,
         knowledge: &mut knowledge,
+        embedding_provider: None,
         approvals: &mut approvals,
         hooks: &mut hooks,
         service_events: None,
@@ -4800,6 +4997,7 @@ fn embedding_provider_failures_emit_embedding_failed_event() {
         model: &mut model,
         dispatcher: &mut dispatcher,
         knowledge: &mut knowledge,
+        embedding_provider: None,
         approvals: &mut approvals,
         hooks: &mut hooks,
         service_events: None,
