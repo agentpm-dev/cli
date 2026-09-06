@@ -305,8 +305,23 @@ pub struct LogicalPrompt {
 
 impl LogicalPrompt {
     pub fn render_text(&self) -> String {
+        self.render_text_with_options(LogicalPromptRenderOptions::default())
+    }
+
+    pub fn render_provider_text(&self, include_capability_catalog: bool) -> String {
+        self.render_text_with_options(LogicalPromptRenderOptions {
+            include_capability_catalog,
+        })
+    }
+
+    fn render_text_with_options(&self, options: LogicalPromptRenderOptions) -> String {
         let mut rendered = String::new();
         for section in &self.sections {
+            if !options.include_capability_catalog
+                && section.title == "EFFECTIVE CAPABILITY CATALOG"
+            {
+                continue;
+            }
             if !rendered.is_empty() {
                 rendered.push_str("\n\n");
             }
@@ -314,6 +329,19 @@ impl LogicalPrompt {
             rendered.push_str(&section.content);
         }
         rendered
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LogicalPromptRenderOptions {
+    include_capability_catalog: bool,
+}
+
+impl Default for LogicalPromptRenderOptions {
+    fn default() -> Self {
+        Self {
+            include_capability_catalog: true,
+        }
     }
 }
 

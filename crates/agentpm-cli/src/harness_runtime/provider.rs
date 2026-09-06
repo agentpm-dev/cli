@@ -278,9 +278,10 @@ impl ModelRuntime for BuiltInModelRuntime {
             .clone()
             .unwrap_or_else(|| self.selection.clone());
         let actions = provider_action_tools(&request);
+        let prompt = request.prompt.render_provider_text(actions.is_empty());
         let provider_request = ProviderRequest {
             selection,
-            prompt: request.prompt.render_text(),
+            prompt,
             action_aliases: request
                 .prompt
                 .action_aliases
@@ -1975,6 +1976,10 @@ mod tests {
 
     #[test]
     fn built_in_runtime_generate_passes_aliases_to_transport() {
+        let diagnostic_prompt = model_request().prompt.render_text();
+        assert!(diagnostic_prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
+        assert!(diagnostic_prompt.contains("- action_1 [phase_completion] review/completion"));
+
         let transport = SharedMockTransport::new(vec![ProviderResponse {
             text: json!({ "outcome": "ready" }).to_string(),
             action_calls: Vec::new(),
@@ -2000,7 +2005,78 @@ mod tests {
             requests[0].actions[0].parameters["properties"]["outcome"]["enum"],
             json!(["ready"])
         );
-        assert!(requests[0].prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
+        assert!(requests[0].prompt.contains("HARNESS CONTROL"));
+        assert!(!requests[0].prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
+        assert!(
+            !requests[0]
+                .prompt
+                .contains("- action_1 [phase_completion] review/completion")
+        );
+    }
+
+    #[test]
+    fn native_provider_prompt_omits_catalog_for_supported_built_in_providers() {
+        for provider in ["openai", "anthropic", "ollama"] {
+            let transport = SharedMockTransport::new(vec![ProviderResponse {
+                text: json!({ "outcome": "ready" }).to_string(),
+                action_calls: Vec::new(),
+                usage: RunUsage::default(),
+                finish_reason: Some("stop".into()),
+                metadata: BTreeMap::new(),
+            }]);
+            let requests = transport.requests.clone();
+            let mut runtime = BuiltInModelRuntime::new(selection(provider), Box::new(transport));
+            let mut request = model_request();
+            request.model = Some(selection(provider));
+
+            runtime.generate(request).unwrap();
+
+            let requests = requests.borrow();
+            assert_eq!(requests.len(), 1, "provider {provider}");
+            assert_eq!(requests[0].actions.len(), 1, "provider {provider}");
+            assert!(
+                requests[0].prompt.contains("HARNESS CONTROL"),
+                "provider {provider}"
+            );
+            assert!(
+                !requests[0].prompt.contains("EFFECTIVE CAPABILITY CATALOG"),
+                "provider {provider}"
+            );
+            assert!(
+                !requests[0]
+                    .prompt
+                    .contains("- action_1 [phase_completion] review/completion"),
+                "provider {provider}"
+            );
+        }
+    }
+
+    #[test]
+    fn ollama_does_not_serialize_tools_without_structured_action_capability() {
+        let transport = SharedMockTransport::new(vec![ProviderResponse {
+            text: json!({ "outcome": "ready" }).to_string(),
+            action_calls: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            metadata: BTreeMap::new(),
+        }]);
+        let requests = transport.requests.clone();
+        let mut runtime = BuiltInModelRuntime {
+            selection: selection("ollama"),
+            capabilities: ModelCapabilityAdvertisement {
+                semantic_actions: false,
+                structured_output: true,
+                ..ModelCapabilityAdvertisement::default()
+            },
+            transport: Box::new(transport),
+        };
+        let mut request = model_request();
+        request.model = Some(selection("ollama"));
+
+        let err = runtime.generate(request).unwrap_err();
+
+        assert!(err.message.contains("does not advertise"));
+        assert!(requests.borrow().is_empty());
     }
 
     #[test]
@@ -2405,11 +2481,18 @@ for line in sys.stdin:
             runtime,
             model: Some(selection("openai")),
             prompt: LogicalPrompt {
-                sections: vec![PromptSection {
-                    number: 5,
-                    title: "EFFECTIVE CAPABILITY CATALOG".into(),
-                    content: "- action_1 [phase_completion] review/completion".into(),
-                }],
+                sections: vec![
+                    PromptSection {
+                        number: 1,
+                        title: "HARNESS CONTROL".into(),
+                        content: "Harness authority: propose semantic actions only.".into(),
+                    },
+                    PromptSection {
+                        number: 5,
+                        title: "EFFECTIVE CAPABILITY CATALOG".into(),
+                        content: "- action_1 [phase_completion] review/completion".into(),
+                    },
+                ],
                 action_aliases: vec![crate::harness_runtime::model::ActionAlias {
                     alias: "action_1".into(),
                     action_kind: capability.action_kind.clone(),
