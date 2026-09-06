@@ -456,8 +456,7 @@ The following example is intentionally populated so every nested registry/mappin
   "trace": {
     "enabled": true,
     "level": "normal",
-    "content": "redacted",
-    "include_logical_capability_catalog": true
+    "content": "redacted"
   },
   "ui": {
     "branding": {
@@ -1037,13 +1036,18 @@ Rules:
   "trace": {
     "enabled": true,
     "level": "normal",
-    "content": "redacted",
-    "include_logical_capability_catalog": true
+    "content": "redacted"
   }
 }
 ```
 
-Defaults are exactly the values above. `level` is exactly `minimal | normal | verbose`. `content` is exactly `none | redacted | full`. `include_logical_capability_catalog` controls whether trace/report/debug renderings of the logical prompt include Section 5 by default; it does not control provider-native structured action declarations, which remain authoritative for providers that support them. `full` still never serializes values classified by Harness as secrets.
+Defaults are exactly the values above. `level` is exactly `minimal | normal | verbose`. `content` is exactly `none | redacted | full`. `full` still never serializes values classified by Harness as secrets.
+
+Prompt/context observability uses those same controls rather than prompt-specific knobs:
+
+- `minimal`: do not include full logical prompt bodies;
+- `normal`: include prompt metadata such as section names/counts where useful, but not full logical prompt bodies by default;
+- `verbose`: include full logical prompt renderings, including Section 5 Effective Capability Catalog, subject to `content` policy and unconditional secret redaction.
 
 ### UI branding configuration
 
@@ -1457,11 +1461,11 @@ Conceptually each phase ModelRequest is assembled as:
      during this phase
 ```
 
-The Effective Capability Catalog is a logical part of the `ModelRequest`, not necessarily a literal prose block sent to the model provider. For ModelRuntimes with native structured action support, the catalog should be translated into provider-native tool/function/structured action declarations. Those structured declarations are authoritative for action aliases, canonical identities, input schemas, and argument constraints.
+The Effective Capability Catalog is a logical part of the `ModelRequest`, not necessarily a literal prose block sent to the model provider. Harness's canonical `ModelRequest` remains the source of truth for action aliases, canonical identities, input schemas, and argument constraints. For ModelRuntimes with native structured action support, the catalog should be translated into provider-native tool/function/structured action declarations as the authoritative wire representation of that canonical request.
 
 Prompt text should provide Harness control and behavioral guidance about how and when to use available actions. It should not duplicate full action schemas already supplied through the structured provider API unless a runtime explicitly supports a text-action emulation mode with its own validation and repair semantics.
 
-Harness may still render the complete logical request, including Section 5, as text for diagnostics, trace/report output, tests, and debugging. That diagnostic rendering must not become a second source of truth for provider requests that use native structured actions.
+Harness may still render the complete logical request, including Section 5, as text for diagnostics, trace/report output, tests, and debugging whenever the configured trace level/content policy permits full prompt/context detail. That diagnostic rendering must not become a second source of truth for provider requests that use native structured actions.
 
 Knowledge/Memory contents and Tool results are not inserted until retrieved/executed. Consumer Context is eager because that is its contract. Profiles/Skills are instructional; retrieved/generated results remain lower-trust data even if a provider serializes everything into one message stream.
 
