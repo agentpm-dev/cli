@@ -311,6 +311,7 @@
 - Confirm full content capture is separate from event occurrence metadata.
 - Confirm default trace content is redacted rather than full.
 - Confirm secrets are never captured even under full content mode.
+- Confirm native structured-action provider requests do not duplicate the detailed Effective Capability Catalog prose in prompt text by default, while logical trace/report/debug rendering can still include Section 5 according to `trace.include_logical_capability_catalog`.
 - Confirm decision events explain direct/inherited/runtime Tool origins, Loop suppression, readiness, and Hook influence.
 - Confirm every Run writes a versioned JSON report and JSONL event trace by default when trace enabled.
 - Confirm reports exist for failed/cancelled/approval-required Runs.

@@ -456,7 +456,8 @@ The following example is intentionally populated so every nested registry/mappin
   "trace": {
     "enabled": true,
     "level": "normal",
-    "content": "redacted"
+    "content": "redacted",
+    "include_logical_capability_catalog": true
   },
   "ui": {
     "branding": {
@@ -1036,12 +1037,13 @@ Rules:
   "trace": {
     "enabled": true,
     "level": "normal",
-    "content": "redacted"
+    "content": "redacted",
+    "include_logical_capability_catalog": true
   }
 }
 ```
 
-Defaults are exactly the values above. `level` is exactly `minimal | normal | verbose`. `content` is exactly `none | redacted | full`. `full` still never serializes values classified by Harness as secrets.
+Defaults are exactly the values above. `level` is exactly `minimal | normal | verbose`. `content` is exactly `none | redacted | full`. `include_logical_capability_catalog` controls whether trace/report/debug renderings of the logical prompt include Section 5 by default; it does not control provider-native structured action declarations, which remain authoritative for providers that support them. `full` still never serializes values classified by Harness as secrets.
 
 ### UI branding configuration
 
@@ -1409,9 +1411,9 @@ Requirements:
 
 Ollama is the required local/open path so a user can run the Harness without a paid hosted model provider when a suitable local model is installed.
 
-## Prompt assembly and model-visible structure
+## ModelRequest assembly and provider serialization
 
-Harness should have one canonical logical prompt/request structure even though different providers map those sections to system/developer/user messages or other API fields differently. Provider adaptation must not change the semantic ordering/authority of the sections.
+Harness should have one canonical provider-neutral `ModelRequest` structure even though different providers map those logical parts to system/developer/user messages, structured tool/function declarations, or other API fields differently. Provider adaptation must not change the semantic ordering/authority of the logical request.
 
 Conceptually each phase ModelRequest is assembled as:
 
@@ -1455,7 +1457,13 @@ Conceptually each phase ModelRequest is assembled as:
      during this phase
 ```
 
-The capability catalog may be carried through provider-native tool/function definitions rather than literal prompt text. Knowledge/Memory contents and Tool results are not inserted until retrieved/executed. Consumer Context is eager because that is its contract. Profiles/Skills are instructional; retrieved/generated results remain lower-trust data even if a provider serializes everything into one message stream.
+The Effective Capability Catalog is a logical part of the `ModelRequest`, not necessarily a literal prose block sent to the model provider. For ModelRuntimes with native structured action support, the catalog should be translated into provider-native tool/function/structured action declarations. Those structured declarations are authoritative for action aliases, canonical identities, input schemas, and argument constraints.
+
+Prompt text should provide Harness control and behavioral guidance about how and when to use available actions. It should not duplicate full action schemas already supplied through the structured provider API unless a runtime explicitly supports a text-action emulation mode with its own validation and repair semantics.
+
+Harness may still render the complete logical request, including Section 5, as text for diagnostics, trace/report output, tests, and debugging. That diagnostic rendering must not become a second source of truth for provider requests that use native structured actions.
+
+Knowledge/Memory contents and Tool results are not inserted until retrieved/executed. Consumer Context is eager because that is its contract. Profiles/Skills are instructional; retrieved/generated results remain lower-trust data even if a provider serializes everything into one message stream.
 
 `before_model_request` Hook executes after canonical assembly and before provider-specific translation. It may shape the mutable model-facing context/provider options allowed by its typed contract, but it cannot remove/replace Harness control authority, change canonical phase/outcome IDs, add action descriptors, or change EffectivePhase.
 
