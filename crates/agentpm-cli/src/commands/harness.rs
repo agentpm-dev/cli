@@ -424,10 +424,8 @@ fn execute_machine_run(
     } else {
         approval_controller_from_plan(plan, Some(Box::new(bridge.clone())), Some(&service_events))?
     };
-    let mut engine = HarnessEngine::new(
-        loop_manifest,
-        HarnessEngineOptions::new(plan.config.config.runtime.limits.clone()),
-    );
+    let engine_options = harness_engine_options_from_plan(plan);
+    let mut engine = HarnessEngine::new(loop_manifest, engine_options);
     let memory_embedding_provider =
         embedding_provider_for_plan(plan, Some(bridge.clone()), Some(&service_events));
     let mut services = HarnessRuntimeServices {
@@ -495,6 +493,14 @@ struct MachineError {
 struct HostServiceRegistration {
     role: String,
     registry_id: String,
+}
+
+fn harness_engine_options_from_plan(plan: &ResolvedHarnessPlan) -> HarnessEngineOptions {
+    let mut options = HarnessEngineOptions::new(plan.config.config.runtime.limits.clone());
+    if let Some(write_review) = &plan.config.config.memory.write_review {
+        options = options.with_memory_write_review_points(write_review.points.clone());
+    }
+    options
 }
 
 #[derive(Clone)]
@@ -1500,10 +1506,8 @@ fn execute_headless_plan_with_services(
             plan.config.config.trace.clone(),
         )?));
     }
-    let mut engine = HarnessEngine::new(
-        loop_manifest,
-        HarnessEngineOptions::new(plan.config.config.runtime.limits.clone()),
-    );
+    let engine_options = harness_engine_options_from_plan(plan);
+    let mut engine = HarnessEngine::new(loop_manifest, engine_options);
     let result = engine.execute_run_with_id(&mut session, run_id, input, services)?;
     let HarnessRunResult::Terminal(result) = result else {
         bail!("Harness --headless cannot wait for interactive approval");

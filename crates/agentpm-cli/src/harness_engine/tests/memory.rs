@@ -3143,3 +3143,1344 @@ fn memory_runtime_failure_returns_structured_action_result_without_fake_dispatch
             .any(|event| event.event_type == HarnessEventType::MemoryReadFailed)
     );
 }
+
+fn review_complete_turn() -> ModelTurn {
+    ModelTurn {
+        assistant_content: Some("review complete".into()),
+        actions: vec![SemanticActionProposal::new(
+            "review-complete",
+            SemanticAction::PersistenceReviewComplete,
+        )],
+        usage: RunUsage::default(),
+        finish_reason: None,
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
+fn review_write_turn(body: &str) -> ModelTurn {
+    review_write_turn_for_package("m14c-memory-test", body)
+}
+
+fn review_write_turn_for_package(package: &str, body: &str) -> ModelTurn {
+    ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "review-write",
+            SemanticAction::MemoryWrite {
+                package: package.into(),
+                space: "notes".into(),
+                operation: MemoryWriteOperation::Create,
+                record_type: "note".into(),
+                record_id: None,
+                content: Some(json!({ "body": body })),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
+fn review_read_by_body_turn(body: &str) -> ModelTurn {
+    ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "review-read",
+            SemanticAction::MemoryRead {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                mode: MemoryReadMode::Filter,
+                record_id: None,
+                record_type: Some("note".into()),
+                filter: BTreeMap::from([("body".into(), json!(body))]),
+                query: None,
+                limit: Some(1),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
+fn review_update_turn(record_id: &str, body: &str) -> ModelTurn {
+    ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "review-update",
+            SemanticAction::MemoryWrite {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                operation: MemoryWriteOperation::Update,
+                record_type: "note".into(),
+                record_id: Some(record_id.into()),
+                content: Some(json!({ "body": body })),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
+fn review_action_turn(id: &str, action: SemanticAction) -> ModelTurn {
+    ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(id, action)],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
+fn empty_review_turn() -> ModelTurn {
+    ModelTurn {
+        assistant_content: Some("no action".into()),
+        actions: Vec::new(),
+        usage: RunUsage::default(),
+        finish_reason: None,
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
+fn memory_review_options(
+    points: Vec<crate::harness_config::HarnessMemoryWriteReviewPoint>,
+) -> HarnessEngineOptions {
+    HarnessEngineOptions::new(limits()).with_memory_write_review_points(points)
+}
+
+fn lifecycle_fields_for(
+    events: &[HarnessEventEnvelope],
+    event_type: HarnessEventType,
+) -> Vec<BTreeMap<String, Value>> {
+    events
+        .iter()
+        .filter_map(|event| {
+            if event.event_type != event_type {
+                return None;
+            }
+            let HarnessEventPayload::Lifecycle { fields, .. } = &event.payload else {
+                return None;
+            };
+            Some(fields.clone())
+        })
+        .collect()
+}
+
+fn two_phase_memory_loop() -> LoopManifest {
+    LoopManifest {
+        kind: "loop".into(),
+        name: "m14g-two-phase-memory-loop".into(),
+        version: "0.1.0".into(),
+        description: None,
+        readme: None,
+        license: None,
+        r#loop: LoopMetadata {
+            archetype: None,
+            entry_phase: "remember".into(),
+            limits: None,
+            phases: vec![
+                LoopPhase {
+                    id: "remember".into(),
+                    objective: "Use direct Memory when useful.".into(),
+                    access: None,
+                    outcomes: vec![LoopOutcome {
+                        id: "next".into(),
+                        description: "Next.".into(),
+                    }],
+                },
+                LoopPhase {
+                    id: "finish".into(),
+                    objective: "Finish.".into(),
+                    access: None,
+                    outcomes: vec![LoopOutcome {
+                        id: "done".into(),
+                        description: "Done.".into(),
+                    }],
+                },
+            ],
+            transitions: vec![
+                LoopTransition {
+                    from: "remember".into(),
+                    on: "next".into(),
+                    to: "finish".into(),
+                },
+                LoopTransition {
+                    from: "finish".into(),
+                    on: "done".into(),
+                    to: "$end".into(),
+                },
+            ],
+            checkpoints: Vec::new(),
+            error_policy: None,
+        },
+    }
+}
+
+fn seed_m14c_note(
+    session: &mut HarnessSession,
+    package_root: &std::path::Path,
+    body: &str,
+) -> String {
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(package_root).unwrap();
+    session
+        .local_memory_runtime()
+        .unwrap()
+        .write_record(LocalMemoryWriteRequest {
+            package: "m14c-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            contracts: &contracts,
+            space: "notes",
+            record_type: "note",
+            scope: BTreeMap::from([("user".into(), "user-123".into())]),
+            operation: LocalMemoryWriteOperation::Create,
+            record_id: None,
+            content: Some(json!({ "body": body })),
+            provenance: json!({}),
+            now: Utc::now(),
+        })
+        .unwrap()
+        .affected_record_id
+        .unwrap()
+}
+
+#[test]
+fn omitted_memory_write_review_preserves_existing_behavior() {
+    let temp = temp_workspace_dir("m14g-omitted-review");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![completion("done", "done")]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "no review configured",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.model_calls, 1);
+    assert_eq!(model.requests.len(), 1);
+    assert!(result.report.memory_write_review_summaries.is_empty());
+    assert!(!handle.events().iter().any(|event| {
+        matches!(
+            event.event_type,
+            HarnessEventType::MemoryWriteReviewStarted
+                | HarnessEventType::MemoryWriteReviewCompleted
+                | HarnessEventType::MemoryWriteReviewSkipped
+                | HarnessEventType::MemoryWriteReviewFailed
+        )
+    }));
+}
+
+#[test]
+fn memory_write_review_run_end_supersedes_phase_end_and_uses_memory_pipeline() {
+    let temp = temp_workspace_dir("m14g-run-end-review");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("done", "done"),
+        review_write_turn("M14g reviewed terminal write"),
+        review_complete_turn(),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::PhaseEnd,
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "review terminal memory",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.model_calls, 3);
+    assert_eq!(result.report.usage.memory_requests, 1);
+    assert_eq!(result.report.usage.accepted_semantic_actions, 2);
+    assert!(dispatcher.dispatched.is_empty());
+
+    let review_request = &model.requests[1];
+    let review_actions = review_request
+        .effective_phase
+        .capability_catalog
+        .iter()
+        .map(|descriptor| descriptor.action_kind.as_str())
+        .collect::<Vec<_>>();
+    assert!(review_actions.contains(&"memory_read"));
+    assert!(review_actions.contains(&"memory_write"));
+    assert!(review_actions.contains(&"persistence_review_complete"));
+    assert!(!review_actions.contains(&"phase_completion"));
+    assert!(
+        review_request
+            .prompt
+            .render_text()
+            .contains("bounded Memory write review at `run_end`")
+    );
+
+    let events = handle.events();
+    let starts = lifecycle_fields_for(&events, HarnessEventType::MemoryWriteReviewStarted);
+    assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0]["point"], json!("run_end"));
+    let completed = lifecycle_fields_for(&events, HarnessEventType::MemoryWriteReviewCompleted);
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0]["memory_writes_attempted"], json!(1));
+    assert_eq!(completed[0]["memory_writes_completed"], json!(1));
+    assert_eq!(result.report.memory_write_review_summaries.len(), 1);
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].point,
+        "run_end"
+    );
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].memory_writes_completed,
+        1
+    );
+    assert!(lifecycle_fields_for(&events, HarnessEventType::MemoryWriteReviewSkipped).is_empty());
+    assert!(lifecycle_fields_for(&events, HarnessEventType::MemoryWriteReviewFailed).is_empty());
+
+    let event_types = events
+        .iter()
+        .map(|event| event.event_type)
+        .collect::<Vec<_>>();
+    let outcome = event_types
+        .iter()
+        .position(|event| *event == HarnessEventType::OutcomeSelected)
+        .unwrap();
+    let review_started = event_types
+        .iter()
+        .position(|event| *event == HarnessEventType::MemoryWriteReviewStarted)
+        .unwrap();
+    let memory_started = event_types
+        .iter()
+        .position(|event| *event == HarnessEventType::MemoryWriteStarted)
+        .unwrap();
+    let review_completed = event_types
+        .iter()
+        .position(|event| *event == HarnessEventType::MemoryWriteReviewCompleted)
+        .unwrap();
+    let phase_result = event_types
+        .iter()
+        .position(|event| *event == HarnessEventType::PhaseResultReady)
+        .unwrap();
+    let transition = event_types
+        .iter()
+        .position(|event| *event == HarnessEventType::TransitionSelected)
+        .unwrap();
+    assert!(outcome < review_started);
+    assert!(review_started < memory_started);
+    assert!(memory_started < review_completed);
+    assert!(review_completed < phase_result);
+    assert!(phase_result < transition);
+}
+
+#[test]
+fn memory_write_review_completion_does_not_reenter_review() {
+    let temp = temp_workspace_dir("m14g-no-recursive-review");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model =
+        ScriptedModelRuntime::new(vec![completion("done", "done"), review_complete_turn()]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "no recursive review",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(model.requests.len(), 2);
+    assert_eq!(
+        lifecycle_fields_for(&handle.events(), HarnessEventType::MemoryWriteReviewStarted).len(),
+        1
+    );
+    assert_eq!(
+        lifecycle_fields_for(
+            &handle.events(),
+            HarnessEventType::MemoryWriteReviewCompleted
+        )
+        .len(),
+        1
+    );
+    assert!(
+        lifecycle_fields_for(&handle.events(), HarnessEventType::MemoryWriteReviewFailed)
+            .is_empty()
+    );
+    assert_eq!(result.report.memory_write_review_summaries.len(), 1);
+}
+
+#[test]
+fn memory_write_review_phase_end_runs_before_transition_without_leaking_transcript() {
+    let temp = temp_workspace_dir("m14g-phase-end-review");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let review_sentinel = "M14g phase review write sentinel";
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("next", "next"),
+        review_write_turn(review_sentinel),
+        review_complete_turn(),
+        completion("done", "done"),
+        review_complete_turn(),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        two_phase_memory_loop(),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::PhaseEnd,
+        ]),
+    );
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "phase end review",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.phase_summaries.len(), 2);
+    assert_eq!(
+        result.report.phase_summaries[0].outcome.as_deref(),
+        Some("next")
+    );
+    assert_eq!(result.report.memory_write_review_summaries.len(), 2);
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].point,
+        "phase_end"
+    );
+
+    let second_phase_request = &model.requests[3];
+    assert_eq!(second_phase_request.prior_phase_results.len(), 1);
+    assert_eq!(second_phase_request.prior_phase_results[0].outcome, "next");
+    let second_phase_prompt = second_phase_request.prompt.render_text();
+    assert!(!second_phase_prompt.contains("ActionResult [memory_write"));
+    assert!(!second_phase_prompt.contains("PersistenceReviewComplete"));
+    assert!(!second_phase_prompt.contains("persistence_review_complete"));
+    assert!(!second_phase_prompt.contains(review_sentinel));
+    assert!(!second_phase_prompt.contains("review complete"));
+
+    let event_types = handle
+        .events()
+        .iter()
+        .map(|event| event.event_type)
+        .collect::<Vec<_>>();
+    let review_started = event_types
+        .iter()
+        .position(|event| *event == HarnessEventType::MemoryWriteReviewStarted)
+        .unwrap();
+    let transition = event_types
+        .iter()
+        .position(|event| *event == HarnessEventType::TransitionSelected)
+        .unwrap();
+    assert!(review_started < transition);
+}
+
+#[test]
+fn memory_write_review_run_end_covers_handoff_and_abort_terminals() {
+    for (target, status) in [
+        ("$handoff", HarnessTerminalStatus::HandedOff),
+        ("$abort", HarnessTerminalStatus::Aborted),
+    ] {
+        let temp = temp_workspace_dir(&format!("m14g-run-end-{target}").replace('$', ""));
+        let package_root = temp.join("memory-package");
+        std::fs::create_dir_all(&package_root).unwrap();
+        let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+        let mut session = HarnessSession::with_runtime_snapshot(runtime);
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut loop_manifest = one_phase_memory_loop(None);
+        loop_manifest.r#loop.transitions[0].to = target.into();
+        let mut model =
+            ScriptedModelRuntime::new(vec![completion("done", "done"), review_complete_turn()]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut engine = HarnessEngine::new(
+            loop_manifest,
+            memory_review_options(vec![
+                crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+            ]),
+        );
+
+        let result = engine
+            .execute_run(
+                &mut session,
+                "terminal review",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.report.terminal_status, status);
+        assert_eq!(result.report.memory_write_review_summaries.len(), 1);
+        assert_eq!(
+            result.report.memory_write_review_summaries[0].point,
+            "run_end"
+        );
+        assert_eq!(
+            lifecycle_fields_for(&handle.events(), HarnessEventType::MemoryWriteReviewStarted)
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn memory_write_review_skips_without_writable_surface() {
+    let temp = temp_workspace_dir("m14g-skip-review");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![completion("done", "done")]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let write_disabled_loop = one_phase_memory_loop(Some(LoopPhaseAccess {
+        tools: None,
+        knowledge: None,
+        memory: Some(LoopAccessMemory {
+            read: Some(true),
+            write: Some(false),
+        }),
+    }));
+    let mut engine = HarnessEngine::new(
+        write_disabled_loop,
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "review terminal memory",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.model_calls, 1);
+    assert_eq!(result.report.usage.memory_requests, 0);
+    assert_eq!(model.requests.len(), 1);
+    let skipped =
+        lifecycle_fields_for(&handle.events(), HarnessEventType::MemoryWriteReviewSkipped);
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0]["reason"], json!("no_writable_memory_surface"));
+    assert_eq!(skipped[0]["point"], json!("run_end"));
+    assert_eq!(result.report.memory_write_review_summaries.len(), 1);
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].status,
+        "skipped"
+    );
+}
+
+#[test]
+fn memory_write_review_failure_preserves_pending_completion() {
+    let temp = temp_workspace_dir("m14g-review-failure");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::with_results(vec![
+        Ok(completion("done", "done")),
+        Err(ModelRuntimeFailure::new("review model down")),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "review terminal memory",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.phase_summaries.len(), 1);
+    assert_eq!(
+        result.report.phase_summaries[0].outcome.as_deref(),
+        Some("done")
+    );
+    assert_eq!(result.report.usage.model_calls, 2);
+    assert_eq!(result.report.usage.memory_requests, 0);
+    let failed = lifecycle_fields_for(&handle.events(), HarnessEventType::MemoryWriteReviewFailed);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0]["reason"], json!("model_request_failed"));
+    assert_eq!(result.report.memory_write_review_summaries.len(), 1);
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].status,
+        "failed"
+    );
+    assert!(
+        handle
+            .events()
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::PhaseResultReady)
+    );
+    assert!(
+        handle
+            .events()
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::RunCompleted)
+    );
+}
+
+#[test]
+fn memory_write_review_can_read_then_write_using_review_transcript() {
+    let temp = temp_workspace_dir("m14g-read-write-review");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let seeded_id = seed_m14c_note(&mut session, &package_root, "seed note");
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("done", "done"),
+        review_read_by_body_turn("seed note"),
+        review_update_turn(&seeded_id, "updated by review"),
+        review_complete_turn(),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "read then write review",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.memory_requests, 2);
+    assert_eq!(result.report.memory_summaries.len(), 2);
+    assert_eq!(result.report.memory_write_review_summaries.len(), 1);
+    let review = &result.report.memory_write_review_summaries[0];
+    assert_eq!(review.memory_reads_completed, 1);
+    assert_eq!(review.memory_writes_completed, 1);
+    assert!(model.requests[2].prompt.render_text().contains("seed note"));
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let records = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m14c-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: BTreeMap::from([("user".into(), "user-123".into())]),
+            mode: LocalMemoryReadMode::Key,
+            record_id: Some(seeded_id.clone()),
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(records[0].content, json!({ "body": "updated by review" }));
+}
+
+#[test]
+fn memory_write_review_write_only_catalog_allows_writes_without_reads() {
+    let temp = temp_workspace_dir("m14g-write-only-review");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("done", "done"),
+        review_write_turn("write-only review note"),
+        review_complete_turn(),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let loop_manifest = one_phase_memory_loop(Some(LoopPhaseAccess {
+        tools: None,
+        knowledge: None,
+        memory: Some(LoopAccessMemory {
+            read: Some(false),
+            write: Some(true),
+        }),
+    }));
+    let mut engine = HarnessEngine::new(
+        loop_manifest,
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write-only review",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    let review_actions = model.requests[1]
+        .effective_phase
+        .capability_catalog
+        .iter()
+        .map(|descriptor| descriptor.action_kind.as_str())
+        .collect::<Vec<_>>();
+    assert!(!review_actions.contains(&"memory_read"));
+    assert!(review_actions.contains(&"memory_write"));
+    assert_eq!(result.report.usage.memory_requests, 1);
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].memory_writes_completed,
+        1
+    );
+}
+
+#[test]
+fn memory_write_review_rejects_non_review_catalog_actions_before_execution() {
+    let prohibited_actions = vec![
+        (
+            "tool",
+            SemanticAction::AgentPmTool {
+                tool: "@zack/search".into(),
+                arguments: json!({ "query": "x" }),
+            },
+        ),
+        (
+            "knowledge",
+            SemanticAction::KnowledgeRequest {
+                package: "@zack/kb".into(),
+                mode: None,
+                document: None,
+                query: Some("x".into()),
+                top_k: Some(1),
+                score_threshold: None,
+                return_citations: None,
+            },
+        ),
+        (
+            "skill",
+            SemanticAction::SkillResourceRead {
+                skill: "@zack/skill".into(),
+                resource: "SKILL.md".into(),
+            },
+        ),
+        (
+            "phase-completion",
+            SemanticAction::PhaseCompletion {
+                outcome: Some("done".into()),
+                output: None,
+            },
+        ),
+    ];
+
+    for (label, action) in prohibited_actions {
+        let temp = temp_workspace_dir(&format!("m14g-review-reject-{label}"));
+        let package_root = temp.join("memory-package");
+        std::fs::create_dir_all(&package_root).unwrap();
+        let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+        let mut session = HarnessSession::with_runtime_snapshot(runtime);
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+        let mut model = ScriptedModelRuntime::new(vec![
+            completion("done", "done"),
+            review_action_turn(label, action),
+            review_complete_turn(),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut engine = HarnessEngine::new(
+            one_phase_memory_loop(None),
+            memory_review_options(vec![
+                crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+            ]),
+        );
+
+        let result = engine
+            .execute_run(
+                &mut session,
+                "reject non-review action",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+        assert_eq!(result.report.usage.memory_requests, 0);
+        assert_eq!(result.report.usage.accepted_semantic_actions, 1);
+        assert_eq!(result.report.repair_count, 1);
+        assert!(dispatcher.dispatched.is_empty());
+        assert!(
+            !handle
+                .events()
+                .iter()
+                .any(|event| event.event_type == HarnessEventType::MemoryWriteStarted)
+        );
+        assert!(handle.events().iter().any(|event| {
+            if event.event_type != HarnessEventType::SemanticActionRejected {
+                return false;
+            }
+            matches!(
+                &event.payload,
+                HarnessEventPayload::Action { status, .. } if status == "prohibited_by_review"
+            )
+        }));
+    }
+}
+
+#[test]
+fn memory_write_review_write_uses_hooks_and_durable_projection() {
+    let temp = temp_workspace_dir("m14g-hook-projection-review");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14f_projected_memory(&temp, &package_root, "local");
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("done", "done"),
+        review_write_turn_for_package("m14f-projected-memory-test", "original review note"),
+        review_complete_turn(),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryWrite],
+        memory_write: Some(BeforeMemoryWriteDecision {
+            content: Some(json!({
+                "body": "hooked review note",
+                "scratch": {
+                    "public": "visible review scratch",
+                    "private": "hidden review scratch"
+                }
+            })),
+            ..BeforeMemoryWriteDecision::default()
+        }),
+        ..TestHookRuntime::default()
+    };
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            allocate_harness_run_id(),
+            "review hook projection",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(hooks.memory_write_hooks.len(), 1);
+    assert!(
+        handle
+            .events()
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::HookCompleted)
+    );
+    let events = handle.events();
+    let write_completed = events
+        .iter()
+        .find(|event| event.event_type == HarnessEventType::MemoryWriteCompleted)
+        .expect("memory write completed");
+    let HarnessEventPayload::Action { fields, .. } = &write_completed.payload else {
+        panic!("expected action payload");
+    };
+    let content = &fields["result"]["record"]["content"];
+    assert_eq!(content["body"], json!("hooked review note"));
+    assert_eq!(
+        content["scratch"]["public"],
+        json!("visible review scratch")
+    );
+    assert!(content["scratch"].get("private").is_none());
+}
+
+#[test]
+fn memory_write_review_limit_exhaustion_preserves_pending_completion() {
+    let temp = temp_workspace_dir("m14g-review-limit");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("done", "done"),
+        empty_review_turn(),
+        empty_review_turn(),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut runtime_limits = limits();
+    runtime_limits.max_model_calls_per_phase = 2;
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(runtime_limits).with_memory_write_review_points(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "review limit",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.model_calls, 3);
+    assert_eq!(model.requests.len(), 3);
+    assert_eq!(
+        result.report.phase_summaries[0].outcome.as_deref(),
+        Some("done")
+    );
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].reason,
+        "max_model_calls_per_phase"
+    );
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].status,
+        "failed"
+    );
+    assert!(
+        lifecycle_fields_for(&handle.events(), HarnessEventType::MemoryWriteReviewFailed)
+            .iter()
+            .any(|fields| fields["reason"] == json!("max_model_calls_per_phase"))
+    );
+}
+
+#[test]
+fn memory_write_review_committed_writes_survive_later_review_failure() {
+    let temp = temp_workspace_dir("m14g-review-write-before-failure");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::with_results(vec![
+        Ok(completion("done", "done")),
+        Ok(review_write_turn("committed before review failure")),
+        Err(ModelRuntimeFailure::new("review failed after write")),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "review write then failure",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.memory_requests, 1);
+    assert_eq!(result.report.memory_summaries.len(), 1);
+    assert_eq!(result.report.memory_summaries[0].status, "completed");
+    assert_eq!(result.report.memory_write_review_summaries.len(), 1);
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].memory_writes_completed,
+        1
+    );
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].reason,
+        "model_request_failed"
+    );
+}
+
+#[test]
+fn memory_write_review_routes_custom_host_memory_without_fake_dispatch() {
+    #[derive(Clone)]
+    struct RecordingReviewMemoryRuntime {
+        calls: std::sync::Arc<std::sync::Mutex<Vec<(String, String, String, Value)>>>,
+    }
+
+    impl HostServiceInvoker for RecordingReviewMemoryRuntime {
+        fn invoke_host_service(
+            &mut self,
+            role: &str,
+            registry_id: &str,
+            method: &str,
+            payload: Value,
+            _timeout_ms: u64,
+        ) -> Result<Value> {
+            self.calls.lock().unwrap().push((
+                role.into(),
+                registry_id.into(),
+                method.into(),
+                payload.clone(),
+            ));
+            Ok(json!({
+                "ok": true,
+                "package": payload["request"]["package"].clone(),
+                "package_version": payload["request"]["package_version"].clone(),
+                "space": payload["request"]["space"].clone(),
+                "operation": payload["request"]["operation"].clone(),
+                "record_id": "remote-review-1"
+            }))
+        }
+    }
+
+    let temp = temp_workspace_dir("m14g-custom-host-review");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let mut runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    runtime.memory[0].runtime = "remote-memory".into();
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let custom_memory = CustomMemoryRuntime::new(
+        runtime.memory.clone(),
+        HashMap::from([(
+            "remote-memory".into(),
+            ServiceRuntime::host(
+                Box::new(RecordingReviewMemoryRuntime {
+                    calls: calls.clone(),
+                }),
+                1_000,
+            ),
+        )]),
+    );
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("done", "done"),
+        review_write_turn("custom host review write"),
+        review_complete_turn(),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut hooks = NoopHookRuntime;
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: Some(custom_memory),
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            allocate_harness_run_id(),
+            "custom review write",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.memory_requests, 1);
+    assert!(dispatcher.dispatched.is_empty());
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].memory_writes_completed,
+        1
+    );
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "memory");
+    assert_eq!(calls[0].1, "remote-memory");
+    assert_eq!(calls[0].2, "write");
+    assert_eq!(
+        calls[0].3["request"]["content"]["body"],
+        "custom host review write"
+    );
+}
+
+#[test]
+fn memory_write_review_routes_custom_process_memory_without_fake_dispatch() {
+    let temp = temp_workspace_dir("m14g-custom-process-review");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let mut runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    runtime.memory[0].runtime = "process-memory".into();
+
+    let script = temp.join("process_memory_service.py");
+    std::fs::write(
+        &script,
+        r#"
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg["kind"] == "initialize":
+        result = {
+            "ready": True,
+            "registry_id": "process-memory",
+            "protocol_version": 1,
+            "capabilities": {
+                "space_models": ["collection"],
+                "retrieval_modes": ["key", "filter", "chronological", "full_text"],
+                "retention_actions": [],
+                "constraints": [],
+                "capacity": False,
+                "durable_trigger_state": False,
+                "atomic_batches": False,
+                "packages": [
+                    { "package": "m14c-memory-test", "version": "0.1.0", "ready": True }
+                ]
+            }
+        }
+        print(json.dumps({
+            "protocol": "agentpm-service",
+            "version": 1,
+            "kind": "initialized",
+            "id": msg.get("id"),
+            "service": "memory",
+            "result": result
+        }), flush=True)
+    elif msg["kind"] == "request" and msg.get("method") == "write":
+        req = msg["payload"]["request"]
+        result = {
+            "ok": True,
+            "package": req["package"],
+            "package_version": req["package_version"],
+            "space": req["space"],
+            "operation": req["operation"],
+            "record_id": "process-review-1"
+        }
+        print(json.dumps({
+            "protocol": "agentpm-service",
+            "version": 1,
+            "kind": "response",
+            "id": msg.get("id"),
+            "service": "memory",
+            "result": result
+        }), flush=True)
+"#,
+    )
+    .unwrap();
+    let entry = crate::harness_config::HarnessImplementationEntry {
+        implementation: crate::harness_config::HarnessImplementation::Process {
+            command: "python3".into(),
+            args: vec![script.display().to_string()],
+            cwd: None,
+            env: Vec::new(),
+            startup_timeout_ms: 1_000,
+            request_timeout_ms: 1_000,
+            restart: Default::default(),
+        },
+    };
+    let (process_runtime, _capabilities) =
+        crate::harness_runtime::memory::process_memory_runtime_service(
+            &temp,
+            "process-memory",
+            &entry,
+            &runtime.memory,
+            None,
+        )
+        .unwrap();
+    let custom_memory = CustomMemoryRuntime::new(
+        runtime.memory.clone(),
+        HashMap::from([("process-memory".into(), process_runtime)]),
+    );
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("done", "done"),
+        review_write_turn("custom process review write"),
+        review_complete_turn(),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut hooks = NoopHookRuntime;
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: Some(custom_memory),
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            allocate_harness_run_id(),
+            "custom process review write",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.memory_requests, 1);
+    assert!(dispatcher.dispatched.is_empty());
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].memory_writes_completed,
+        1
+    );
+    let events = handle.events();
+    let write_completed = events
+        .iter()
+        .find(|event| event.event_type == HarnessEventType::MemoryWriteCompleted)
+        .expect("memory write completed");
+    let HarnessEventPayload::Action { fields, .. } = &write_completed.payload else {
+        panic!("expected action payload");
+    };
+    assert_eq!(fields["result"]["record_id"], json!("process-review-1"));
+}

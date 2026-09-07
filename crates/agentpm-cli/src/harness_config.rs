@@ -306,9 +306,23 @@ pub struct HarnessEmbeddingMatchKey {
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct HarnessMemoryConfig {
+    pub write_review: Option<HarnessMemoryWriteReviewConfig>,
     pub local: HarnessMemoryLocalConfig,
     pub runtimes: HashMap<String, HarnessImplementationEntry>,
     pub packages: HashMap<String, HarnessRuntimeMapping>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct HarnessMemoryWriteReviewConfig {
+    pub points: Vec<HarnessMemoryWriteReviewPoint>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessMemoryWriteReviewPoint {
+    PhaseEnd,
+    RunEnd,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -645,6 +659,21 @@ pub fn validate_harness_config_semantics(
         }
     }
 
+    if let Some(write_review) = &config.memory.write_review {
+        if write_review.points.is_empty() {
+            bail!("memory.write_review.points must not be empty when write_review is configured");
+        }
+        let mut seen = HashSet::new();
+        for point in &write_review.points {
+            if !seen.insert(*point) {
+                bail!(
+                    "memory.write_review.points contains duplicate `{}`",
+                    memory_write_review_point_label(*point)
+                );
+            }
+        }
+    }
+
     if let Some(semantic) = &config.memory.local.semantic
         && !config
             .providers
@@ -672,6 +701,13 @@ pub fn validate_harness_config_semantics(
     }
 
     Ok(())
+}
+
+fn memory_write_review_point_label(point: HarnessMemoryWriteReviewPoint) -> &'static str {
+    match point {
+        HarnessMemoryWriteReviewPoint::PhaseEnd => "phase_end",
+        HarnessMemoryWriteReviewPoint::RunEnd => "run_end",
+    }
 }
 
 fn validate_implementation_map(
@@ -1402,5 +1438,32 @@ mod tests {
             }),
             "oneOf",
         );
+    }
+
+    #[test]
+    fn memory_write_review_points_validate_shape_and_uniqueness() {
+        let mut config = complete_config();
+        config["memory"]["write_review"] = json!({
+            "points": ["phase_end", "run_end"]
+        });
+        assert_config_valid(config);
+
+        let mut empty = complete_config();
+        empty["memory"]["write_review"] = json!({
+            "points": []
+        });
+        assert_config_invalid(empty, "less than 1 item");
+
+        let mut duplicate = complete_config();
+        duplicate["memory"]["write_review"] = json!({
+            "points": ["run_end", "run_end"]
+        });
+        assert_config_invalid(duplicate, "uniqueItems");
+
+        let mut unknown = complete_config();
+        unknown["memory"]["write_review"] = json!({
+            "points": ["phase_middle"]
+        });
+        assert_config_invalid(unknown, "is not one of");
     }
 }

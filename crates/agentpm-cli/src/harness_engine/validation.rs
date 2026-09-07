@@ -9,6 +9,9 @@ pub(super) fn validate_semantic_action(
     phase: &EffectivePhase,
 ) -> Result<(), String> {
     match action {
+        SemanticAction::PersistenceReviewComplete => {
+            Err("persistence_review_complete is only valid during Memory write review.".into())
+        }
         SemanticAction::AgentPmTool { tool, arguments } => {
             let Some(tool_snapshot) = phase
                 .active_tools

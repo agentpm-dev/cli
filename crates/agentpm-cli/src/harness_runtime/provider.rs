@@ -377,6 +377,11 @@ fn provider_action_tools(request: &ModelRequest) -> Vec<ProviderActionTool> {
 fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRequest) -> Value {
     match alias.action_kind.as_str() {
         "phase_completion" => phase_completion_parameters_schema(request),
+        "persistence_review_complete" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+        }),
         "agentpm_tool" => agentpm_tool_parameters_schema(alias, request),
         "external_mcp_tool" => json!({
             "type": "object",
@@ -857,6 +862,7 @@ fn semantic_action_from_json(value: &Value) -> Result<SemanticAction, ModelRunti
         .and_then(Value::as_str)
         .ok_or_else(|| ModelRuntimeFailure::new("provider action is missing type"))?;
     match action_type {
+        "persistence_review_complete" => Ok(SemanticAction::PersistenceReviewComplete),
         "phase_completion" => Ok(SemanticAction::PhaseCompletion {
             outcome: value
                 .get("outcome")
@@ -957,6 +963,7 @@ fn semantic_action_from_provider_call(
             ))
         })?;
     match alias.action_kind.as_str() {
+        "persistence_review_complete" => Ok(SemanticAction::PersistenceReviewComplete),
         "phase_completion" => Ok(SemanticAction::PhaseCompletion {
             outcome: call
                 .arguments
@@ -1556,6 +1563,28 @@ mod tests {
     }
 
     #[test]
+    fn provider_response_normalizes_persistence_review_complete_action() {
+        let response = ProviderResponse {
+            text: json!({
+                "actions": [
+                    { "type": "persistence_review_complete" }
+                ]
+            })
+            .to_string(),
+            action_calls: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            metadata: BTreeMap::new(),
+        };
+        let turn = normalize_provider_response(response, &[]).unwrap();
+        assert_eq!(turn.actions.len(), 1);
+        assert!(matches!(
+            turn.actions[0].action,
+            SemanticAction::PersistenceReviewComplete
+        ));
+    }
+
+    #[test]
     fn provider_response_normalizes_native_action_calls_through_aliases() {
         let response = ProviderResponse {
             text: "I am completing this phase.".into(),
@@ -1583,6 +1612,31 @@ mod tests {
                 outcome: Some(outcome),
                 ..
             } if outcome == "ready"
+        ));
+    }
+
+    #[test]
+    fn provider_response_normalizes_native_persistence_review_complete_alias() {
+        let response = ProviderResponse {
+            text: "review complete".into(),
+            action_calls: vec![ProviderActionCall {
+                alias: "action_1".into(),
+                arguments: json!({}),
+            }],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            metadata: BTreeMap::new(),
+        };
+        let aliases = vec![ActionAlias {
+            alias: "action_1".into(),
+            action_kind: "persistence_review_complete".into(),
+            identity: "harness/persistence_review".into(),
+        }];
+        let turn = normalize_provider_response(response, &aliases).unwrap();
+        assert_eq!(turn.actions.len(), 1);
+        assert!(matches!(
+            turn.actions[0].action,
+            SemanticAction::PersistenceReviewComplete
         ));
     }
 

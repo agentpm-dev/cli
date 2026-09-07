@@ -64,6 +64,7 @@ fn rejects_starting_second_run_while_pending_approval_without_mutating_active_ru
         HarnessEngineOptions {
             runtime_limits: limits(),
             retain_active_on_approval_required: true,
+            memory_write_review_points: Vec::new(),
         },
     );
     let mut session = HarnessSession::new();
@@ -479,6 +480,70 @@ fn multi_turn_phase_processes_multiple_ordered_actions() {
     );
     assert_eq!(model.requests.len(), 4);
     assert!(model.requests[1].transcript.len() > model.requests[0].transcript.len());
+}
+
+#[test]
+fn persistence_review_complete_is_rejected_in_normal_phase_before_dispatch() {
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let mut session = session_with_tool_and_skill();
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "review-complete-outside-review",
+                SemanticAction::PersistenceReviewComplete,
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("a", "execute"),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.repair_count, 1);
+    assert_eq!(result.report.usage.accepted_semantic_actions, 3);
+    assert!(dispatcher.dispatched.is_empty());
+    assert!(handle.events().iter().any(|event| {
+        if event.event_type != HarnessEventType::SemanticActionRejected {
+            return false;
+        }
+        let HarnessEventPayload::Action {
+            action_kind,
+            status,
+            fields,
+            ..
+        } = &event.payload
+        else {
+            return false;
+        };
+        action_kind == "persistence_review_complete"
+            && status == "invalid_arguments"
+            && fields
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|error| error.contains("only valid during Memory write review"))
+    }));
 }
 
 #[test]
@@ -1526,6 +1591,7 @@ fn authored_abort_and_cancellation_have_distinct_terminal_statuses() {
         HarnessEngineOptions {
             runtime_limits: limits(),
             retain_active_on_approval_required: true,
+            memory_write_review_points: Vec::new(),
         },
     );
     let mut session = HarnessSession::new();

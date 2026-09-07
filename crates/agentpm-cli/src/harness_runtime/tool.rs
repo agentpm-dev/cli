@@ -250,6 +250,9 @@ impl ActionDispatcher for AgentPmActionDispatcher {
             SemanticAction::PhaseCompletion { .. } => {
                 ActionDispatchResult::failure("Phase completion is handled by the Harness Engine")
             }
+            SemanticAction::PersistenceReviewComplete => ActionDispatchResult::failure(
+                "Persistence review completion is handled by the Harness Engine",
+            ),
         }
     }
 }

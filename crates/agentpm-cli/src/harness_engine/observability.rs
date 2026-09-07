@@ -256,6 +256,7 @@ pub(super) fn action_trace_fields(action: &SemanticAction) -> BTreeMap<String, V
             }
             fields
         }
+        SemanticAction::PersistenceReviewComplete => BTreeMap::new(),
     }
 }
 
@@ -315,6 +316,7 @@ pub(super) fn action_dispatch_event_type(action: &SemanticAction, ok: bool) -> H
             }
         }
         SemanticAction::PhaseCompletion { .. } => HarnessEventType::SemanticActionCompleted,
+        SemanticAction::PersistenceReviewComplete => HarnessEventType::SemanticActionCompleted,
     }
 }
 

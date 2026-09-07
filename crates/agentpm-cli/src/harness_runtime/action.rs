@@ -101,6 +101,7 @@ pub enum SemanticAction {
         outcome: Option<String>,
         output: Option<Value>,
     },
+    PersistenceReviewComplete,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +147,7 @@ impl SemanticAction {
             Self::MemoryRead { .. } => "memory_read",
             Self::MemoryWrite { .. } => "memory_write",
             Self::PhaseCompletion { .. } => "phase_completion",
+            Self::PersistenceReviewComplete => "persistence_review_complete",
         }
     }
 
@@ -161,6 +163,7 @@ impl SemanticAction {
             Self::PhaseCompletion { outcome, .. } => {
                 outcome.clone().unwrap_or_else(|| "complete".to_string())
             }
+            Self::PersistenceReviewComplete => "harness/persistence_review".into(),
         }
     }
 

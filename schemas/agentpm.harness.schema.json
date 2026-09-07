@@ -299,10 +299,27 @@
         "semantic": { "$ref": "#/$defs/memorySemanticConfig" }
       }
     },
+    "memoryWriteReviewConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["points"],
+      "properties": {
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["phase_end", "run_end"]
+          }
+        }
+      }
+    },
     "memoryConfig": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "write_review": { "$ref": "#/$defs/memoryWriteReviewConfig" },
         "local": { "$ref": "#/$defs/memoryLocalConfig" },
         "runtimes": {
           "type": "object",

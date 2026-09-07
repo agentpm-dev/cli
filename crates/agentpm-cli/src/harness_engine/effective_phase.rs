@@ -658,9 +658,9 @@ impl EffectivePhase {
             SemanticAction::KnowledgeRequest { .. } => self.knowledge_allowed != Some(false),
             SemanticAction::MemoryRead { .. } => self.memory_read_allowed != Some(false),
             SemanticAction::MemoryWrite { .. } => self.memory_write_allowed != Some(false),
-            SemanticAction::SkillResourceRead { .. } | SemanticAction::PhaseCompletion { .. } => {
-                true
-            }
+            SemanticAction::SkillResourceRead { .. }
+            | SemanticAction::PhaseCompletion { .. }
+            | SemanticAction::PersistenceReviewComplete => true,
         }
     }
 }

@@ -2178,6 +2178,7 @@ fn minimal_run_report(run_id: &str) -> RunReport {
         mcp_summaries: Vec::new(),
         knowledge_summaries: Vec::new(),
         memory_summaries: Vec::new(),
+        memory_write_review_summaries: Vec::new(),
         usage: RunUsage::default(),
         retry_count: 0,
         repair_count: 0,

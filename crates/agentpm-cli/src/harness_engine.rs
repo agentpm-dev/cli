@@ -1,11 +1,12 @@
 #![allow(dead_code)]
 
-use crate::harness_config::{HarnessHookId, HarnessRuntimeLimits};
+use crate::harness_config::{HarnessHookId, HarnessMemoryWriteReviewPoint, HarnessRuntimeLimits};
 use crate::harness_observability::{
     ActionReportSummary, CheckpointReportSummary, HARNESS_REPORT_SCHEMA_VERSION,
     HarnessEventBuilder, HarnessEventEmitter, HarnessEventPayload, HarnessEventType,
-    HarnessTerminalStatus, OperationReportSummary, PhaseReportSummary, ReportPackageIdentity,
-    RunReport, RunUsage, SessionUsage, allocate_harness_run_id, allocate_harness_session_id,
+    HarnessTerminalStatus, MemoryWriteReviewReportSummary, OperationReportSummary,
+    PhaseReportSummary, ReportPackageIdentity, RunReport, RunUsage, SessionUsage,
+    allocate_harness_run_id, allocate_harness_session_id,
 };
 use crate::harness_plan::{PreflightDiagnostic, PreflightStatus};
 use crate::harness_runtime::action::{ActionFailureCategory, MemoryReadMode, MemoryWriteOperation};
@@ -23,6 +24,7 @@ use crate::harness_runtime::memory::{
     custom_memory_read_request_from_local, custom_memory_write_request_from_local,
 };
 use crate::harness_runtime::model::ModelTurn;
+use crate::harness_runtime::model::PromptAssemblyPurpose;
 use crate::harness_runtime::model::{CONSUMER_RUN_CONTEXT_SECTION_TITLE, CompletionContract};
 use crate::harness_runtime::{
     ActionDispatchResult, ActionDispatcher, ApprovalController, ApprovalDecision,
@@ -53,6 +55,7 @@ mod knowledge_actions;
 mod lifecycle;
 mod memory_actions;
 mod observability;
+mod persistence_review;
 mod validation;
 
 #[cfg(test)]
@@ -141,6 +144,7 @@ pub struct RunState {
     phase_results: Vec<PhaseResult>,
     phase_summaries: Vec<PhaseReportSummary>,
     action_summaries: Vec<ActionReportSummary>,
+    memory_write_review_summaries: Vec<MemoryWriteReviewReportSummary>,
     checkpoint_summaries: Vec<CheckpointReportSummary>,
     operation_summaries: Vec<OperationReportSummary>,
     pending_approval: Option<PendingApprovalState>,
@@ -278,6 +282,7 @@ impl HarnessSession {
             phase_results: Vec::new(),
             phase_summaries: Vec::new(),
             action_summaries: Vec::new(),
+            memory_write_review_summaries: Vec::new(),
             checkpoint_summaries: Vec::new(),
             operation_summaries: Vec::new(),
             pending_approval: None,
@@ -392,6 +397,7 @@ impl Default for HarnessSession {
 pub struct HarnessEngineOptions {
     pub runtime_limits: HarnessRuntimeLimits,
     pub retain_active_on_approval_required: bool,
+    pub memory_write_review_points: Vec<HarnessMemoryWriteReviewPoint>,
 }
 
 impl HarnessEngineOptions {
@@ -399,7 +405,16 @@ impl HarnessEngineOptions {
         Self {
             runtime_limits,
             retain_active_on_approval_required: false,
+            memory_write_review_points: Vec::new(),
         }
+    }
+
+    pub fn with_memory_write_review_points(
+        mut self,
+        points: Vec<HarnessMemoryWriteReviewPoint>,
+    ) -> Self {
+        self.memory_write_review_points = points;
+        self
     }
 }
 
@@ -1239,6 +1254,7 @@ impl HarnessEngine {
                 return self.limit_phase(session, &phase_execution_id, "max_model_calls_per_phase");
             }
             let prompt = assemble_logical_prompt(PromptAssemblyInput {
+                purpose: PromptAssemblyPurpose::Phase,
                 phase_id: &phase.id,
                 phase_objective: &phase.objective,
                 explicit_outcomes: &explicit_outcomes,
@@ -1662,6 +1678,21 @@ impl HarnessEngine {
                         phase_execution_id: Some(phase_execution_id.clone()),
                         ..HarnessEventBuilder::default()
                     },
+                )?;
+                let target = self.transition_target(&phase.id, &selected)?;
+                self.run_memory_write_review_if_configured(
+                    session,
+                    phase,
+                    &phase_execution_id,
+                    &selected,
+                    &target,
+                    &effective_phase,
+                    &state,
+                    model,
+                    memory,
+                    embedding_provider,
+                    hooks,
+                    service_events,
                 )?;
                 return self.phase_result(
                     session,

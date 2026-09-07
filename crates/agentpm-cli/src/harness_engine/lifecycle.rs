@@ -273,6 +273,7 @@ impl HarnessEngine {
                 "knowledge_request",
             ),
             memory_summaries: memory_summaries_for_actions(&run.action_summaries),
+            memory_write_review_summaries: run.memory_write_review_summaries.clone(),
             usage: run.usage.clone(),
             retry_count: run.retry_count,
             repair_count: run.repair_count,

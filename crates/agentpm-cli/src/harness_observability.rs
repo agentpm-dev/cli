@@ -116,6 +116,10 @@ pub enum HarnessEventType {
     MemoryWriteStarted,
     MemoryWriteCompleted,
     MemoryWriteFailed,
+    MemoryWriteReviewStarted,
+    MemoryWriteReviewCompleted,
+    MemoryWriteReviewSkipped,
+    MemoryWriteReviewFailed,
     MemoryTriggerEvaluated,
     MemoryOperationEligible,
     MemoryOperationStarted,
@@ -683,6 +687,19 @@ pub struct OperationReportSummary {
     pub count: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryWriteReviewReportSummary {
+    pub point: String,
+    pub phase_execution_id: String,
+    pub status: String,
+    pub reason: String,
+    pub model_calls: u64,
+    pub memory_reads_attempted: u64,
+    pub memory_reads_completed: u64,
+    pub memory_writes_attempted: u64,
+    pub memory_writes_completed: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunReport {
     pub report_version: u8,
@@ -712,6 +729,8 @@ pub struct RunReport {
     pub mcp_summaries: Vec<OperationReportSummary>,
     pub knowledge_summaries: Vec<OperationReportSummary>,
     pub memory_summaries: Vec<OperationReportSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory_write_review_summaries: Vec<MemoryWriteReviewReportSummary>,
     pub usage: RunUsage,
     pub retry_count: u64,
     pub repair_count: u64,
@@ -909,6 +928,7 @@ impl SyntheticHarnessRun {
             mcp_summaries: Vec::new(),
             knowledge_summaries: Vec::new(),
             memory_summaries: Vec::new(),
+            memory_write_review_summaries: Vec::new(),
             usage: self.usage,
             retry_count: 0,
             repair_count: 0,
@@ -1613,6 +1633,7 @@ mod tests {
             mcp_summaries: Vec::new(),
             knowledge_summaries: Vec::new(),
             memory_summaries: Vec::new(),
+            memory_write_review_summaries: Vec::new(),
             usage: RunUsage::default(),
             retry_count: 0,
             repair_count: 0,

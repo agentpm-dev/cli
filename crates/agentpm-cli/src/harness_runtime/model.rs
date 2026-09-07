@@ -15,6 +15,7 @@ use std::path::PathBuf;
 pub const CONSUMER_RUN_CONTEXT_SECTION_TITLE: &str = "CONSUMER / RUN CONTEXT";
 pub const EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE: &str = "EFFECTIVE CAPABILITY CATALOG";
 pub(crate) const SUCCESSFUL_ACTION_RESULT_CONTROL: &str = "If the phase-local transcript already contains successful ActionResults for all requested executable actions, do not propose any of those actions again; propose phase_completion next. For repeated actions, compare action kind, identity, and arguments.";
+pub(crate) const SUCCESSFUL_REVIEW_ACTION_RESULT_CONTROL: &str = "If the review transcript already contains successful ActionResults for all requested Memory actions, do not propose any of those actions again; propose persistence_review_complete next. For repeated actions, compare action kind, identity, and arguments.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -355,6 +356,7 @@ impl Default for LogicalPromptRenderOptions {
 }
 
 pub struct PromptAssemblyInput<'a> {
+    pub purpose: PromptAssemblyPurpose<'a>,
     pub phase_id: &'a str,
     pub phase_objective: &'a str,
     pub explicit_outcomes: &'a [String],
@@ -364,6 +366,15 @@ pub struct PromptAssemblyInput<'a> {
     pub effective_phase: &'a EffectivePhase,
     pub transcript: &'a [TranscriptEntry],
     pub repair_feedback: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptAssemblyPurpose<'a> {
+    Phase,
+    MemoryWriteReview {
+        point: &'a str,
+        pending_outcome: &'a str,
+    },
 }
 
 pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt {
@@ -386,13 +397,20 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         })
         .collect::<Vec<_>>();
 
-    let outcome_contract = if implicit_complete {
-        "This phase has implicit outcome `complete`; final assistant text with no action may complete the phase.".to_string()
-    } else {
-        format!(
+    let outcome_contract = match input.purpose {
+        PromptAssemblyPurpose::Phase if implicit_complete => {
+            "This phase has implicit outcome `complete`; final assistant text with no action may complete the phase.".to_string()
+        }
+        PromptAssemblyPurpose::Phase => format!(
             "This phase must complete with exactly one authored outcome: {}.",
             input.explicit_outcomes.join(", ")
-        )
+        ),
+        PromptAssemblyPurpose::MemoryWriteReview {
+            point,
+            pending_outcome,
+        } => format!(
+            "This is a bounded Memory write review at `{point}` for pending phase outcome `{pending_outcome}`. Use only authorized Memory actions if useful, then propose persistence_review_complete. Do not propose phase_completion."
+        ),
     };
     let mut control = format!(
         "Harness authority: propose semantic actions only; Harness validates and executes them.\nCurrent phase: {}\n{}",
@@ -403,7 +421,12 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
     }
     if transcript_has_successful_action_result(input.transcript) {
         control.push('\n');
-        control.push_str(SUCCESSFUL_ACTION_RESULT_CONTROL);
+        match input.purpose {
+            PromptAssemblyPurpose::Phase => control.push_str(SUCCESSFUL_ACTION_RESULT_CONTROL),
+            PromptAssemblyPurpose::MemoryWriteReview { .. } => {
+                control.push_str(SUCCESSFUL_REVIEW_ACTION_RESULT_CONTROL)
+            }
+        }
     }
 
     let mut authored = format!("Phase objective:\n  {}", input.phase_objective);
