@@ -5,14 +5,14 @@ use crate::harness_plan::{
 use crate::harness_runtime::{
     ActionDispatcher, AgentPmActionDispatcher, ApprovalController, BuiltInModelRuntime,
     CompositeKnowledgeRuntime, ConfiguredApprovalController, ConfiguredHookRuntime,
-    ConsumerContextSnapshot, CustomKnowledgeRuntime, HookRuntime, HostServiceInvoker,
-    KnowledgeEmbeddingSnapshot, KnowledgeRuntime, KnowledgeRuntimeSnapshot, LocalKnowledgeRuntime,
-    MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelCapabilityAdvertisement,
-    ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure,
-    ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProcessModelRuntime,
-    RoutingEmbeddingProvider, RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceEmbeddingProvider,
-    ServiceLifecycleEmitter, ServiceLifecycleEvents, ServiceReadinessSnapshot,
-    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    ConsumerContextSnapshot, CustomKnowledgeRuntime, CustomMemoryRuntime, HookRuntime,
+    HostServiceInvoker, KnowledgeEmbeddingSnapshot, KnowledgeRuntime, KnowledgeRuntimeSnapshot,
+    LocalKnowledgeRuntime, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
+    ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
+    ModelRuntimeFailure, ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot,
+    ProcessModelRuntime, RoutingEmbeddingProvider, RuntimeCapabilitySnapshot, RuntimeSnapshot,
+    ServiceEmbeddingProvider, ServiceLifecycleEmitter, ServiceLifecycleEvents,
+    ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::manifest::{
     AgentManifest, AgentMemoryBinding, MemoryManifest, MemoryRetrievalMode, load_manifest_value,
@@ -358,6 +358,13 @@ fn execute_machine_run(
         Some(&service_events),
     );
     apply_custom_knowledge_activation_to_runtime(&mut runtime, &custom_knowledge);
+    let custom_memory = activate_custom_memory_runtime_for_plan(
+        plan,
+        &runtime,
+        Some(bridge.clone()),
+        Some(&service_events),
+    );
+    apply_custom_memory_activation_to_runtime(&mut runtime, &custom_memory);
     let mut dispatcher = AgentPmActionDispatcher::from_runtime(&runtime)?
         .with_cancellation_token(bridge.cancellation_token());
     let mut knowledge = knowledge_runtime_for_machine_plan(
@@ -411,6 +418,7 @@ fn execute_machine_run(
         model: model.as_mut(),
         dispatcher: &mut dispatcher,
         knowledge: knowledge.as_mut(),
+        memory: custom_memory.runtime,
         embedding_provider: memory_embedding_provider,
         approvals: approvals.as_mut(),
         hooks: &mut hooks,
@@ -1110,10 +1118,13 @@ fn register_host_service(
         })?
         .to_string();
     let service = HostServiceRegistration { role, registry_id };
-    let capabilities = payload
-        .get("capabilities")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let capabilities = payload.get("capabilities").cloned().unwrap_or_else(|| {
+        if service.role == "memory" {
+            payload.clone()
+        } else {
+            json!({})
+        }
+    });
     validate_host_service_readiness(&service, payload)?;
     if !configured_host_services(plan).contains(&service) {
         if service.role == "hook" {
@@ -1161,11 +1172,7 @@ fn host_service_activation_status(
     service: &HostServiceRegistration,
 ) -> (bool, Option<&'static str>) {
     match service.role.as_str() {
-        "embedding" | "knowledge" => (true, None),
-        "memory" => (
-            false,
-            Some("MemoryRuntime host dispatch is reserved until Milestone 14"),
-        ),
+        "embedding" | "knowledge" | "memory" => (true, None),
         _ => (true, None),
     }
 }
@@ -1211,6 +1218,20 @@ fn validate_configured_host_service_registration(
                 &service.registry_id,
                 &mapped_packages,
             )
+            .map_err(|err| err.to_string())
+        }
+        "memory" => {
+            let routes = custom_memory_routes(plan);
+            let mapped_spaces = memory_snapshots_from_plan(plan)
+                .into_iter()
+                .filter(|space| routes.get(&space.package) == Some(&service.registry_id))
+                .collect::<Vec<_>>();
+            crate::harness_runtime::memory::validate_memory_runtime_capabilities(
+                payload,
+                &service.registry_id,
+                &mapped_spaces,
+            )
+            .map(|_| ())
             .map_err(|err| err.to_string())
         }
         "approval" if service.registry_id == "controller" => {
@@ -1351,6 +1372,7 @@ fn required_host_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistra
     }
     services.extend(required_host_embedding_services(plan));
     services.extend(required_host_knowledge_services(plan));
+    services.extend(required_host_memory_services(plan));
     dedupe_host_services(services)
 }
 
@@ -1398,6 +1420,26 @@ fn required_host_knowledge_services(plan: &ResolvedHarnessPlan) -> Vec<HostServi
             )
             .then(|| HostServiceRegistration {
                 role: "knowledge".into(),
+                registry_id: mapping.runtime.clone(),
+            })
+        })
+        .collect()
+}
+
+fn required_host_memory_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
+    plan.config
+        .config
+        .memory
+        .packages
+        .values()
+        .filter_map(|mapping| {
+            let entry = plan.config.config.memory.runtimes.get(&mapping.runtime)?;
+            matches!(
+                entry.implementation,
+                crate::harness_config::HarnessImplementation::Host { .. }
+            )
+            .then(|| HostServiceRegistration {
+                role: "memory".into(),
                 registry_id: mapping.runtime.clone(),
             })
         })
@@ -1858,6 +1900,11 @@ fn execute_headless_plan_with_hooks(
         activate_custom_knowledge_runtime_for_plan(plan, &runtime, None, service_events_ref)
     };
     apply_custom_knowledge_activation_to_runtime(&mut runtime, &custom_knowledge);
+    let custom_memory = {
+        let service_events_ref = service_events.as_deref();
+        activate_custom_memory_runtime_for_plan(plan, &runtime, None, service_events_ref)
+    };
+    apply_custom_memory_activation_to_runtime(&mut runtime, &custom_memory);
     let mut knowledge = {
         let service_events_ref = service_events.as_deref();
         knowledge_runtime_for_headless_plan(
@@ -1875,6 +1922,7 @@ fn execute_headless_plan_with_hooks(
         model,
         dispatcher,
         knowledge: knowledge.as_mut(),
+        memory: custom_memory.runtime,
         embedding_provider: memory_embedding_provider,
         approvals: approvals.as_mut(),
         hooks,
@@ -2122,6 +2170,250 @@ fn custom_knowledge_routes(plan: &ResolvedHarnessPlan) -> BTreeMap<String, Strin
     plan.config
         .config
         .knowledge
+        .packages
+        .iter()
+        .map(|(package, mapping)| (package.clone(), mapping.runtime.clone()))
+        .collect()
+}
+
+struct CustomMemoryRuntimeActivation {
+    runtime: Option<CustomMemoryRuntime>,
+    unavailable_packages: BTreeMap<String, String>,
+    unavailable_spaces: BTreeMap<(String, String), String>,
+    capabilities:
+        BTreeMap<String, crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor>,
+}
+
+fn activate_custom_memory_runtime_for_plan(
+    plan: &ResolvedHarnessPlan,
+    runtime: &RuntimeSnapshot,
+    host_bridge: Option<MachineHostBridgeHandle>,
+    service_events: Option<&ServiceLifecycleEvents>,
+) -> CustomMemoryRuntimeActivation {
+    let routes = custom_memory_routes(plan);
+    if routes.is_empty() {
+        return CustomMemoryRuntimeActivation {
+            runtime: None,
+            unavailable_packages: BTreeMap::new(),
+            unavailable_spaces: BTreeMap::new(),
+            capabilities: BTreeMap::new(),
+        };
+    }
+    let mapped_available_spaces = runtime
+        .memory
+        .iter()
+        .filter(|space| routes.contains_key(&space.package) && space.state == "available")
+        .cloned()
+        .collect::<Vec<_>>();
+    if mapped_available_spaces.is_empty() {
+        return CustomMemoryRuntimeActivation {
+            runtime: None,
+            unavailable_packages: BTreeMap::new(),
+            unavailable_spaces: BTreeMap::new(),
+            capabilities: BTreeMap::new(),
+        };
+    }
+    let mut active_spaces = Vec::new();
+    let mut unavailable_packages = BTreeMap::new();
+    let mut unavailable_spaces = BTreeMap::new();
+    let mut capabilities_by_runtime = BTreeMap::new();
+    let mut runtimes = HashMap::new();
+    for runtime_id in routes.values().cloned().collect::<BTreeSet<_>>() {
+        let mapped_spaces = mapped_available_spaces
+            .iter()
+            .filter(|space| routes.get(&space.package) == Some(&runtime_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if mapped_spaces.is_empty() {
+            continue;
+        }
+        let Some(entry) = plan.config.config.memory.runtimes.get(&runtime_id) else {
+            mark_custom_memory_runtime_unavailable(
+                &mut unavailable_packages,
+                &mapped_spaces,
+                format!("memory.packages references undefined MemoryRuntime `{runtime_id}`"),
+            );
+            continue;
+        };
+        let activation = match &entry.implementation {
+            crate::harness_config::HarnessImplementation::Process { .. } => {
+                crate::harness_runtime::memory::process_memory_runtime_service(
+                    &plan.workspace_root,
+                    &runtime_id,
+                    entry,
+                    &mapped_spaces,
+                    service_events.map(ServiceLifecycleEvents::emitter),
+                )
+                .map_err(|err| {
+                    anyhow!("configured MemoryRuntime `{runtime_id}` could not start: {err}")
+                })
+            }
+            crate::harness_config::HarnessImplementation::Host { request_timeout_ms } => {
+                let bridge = host_bridge.clone().ok_or_else(|| {
+                    let message = format!(
+                        "configured MemoryRuntime `{runtime_id}` requires a machine host service"
+                    );
+                    crate::harness_runtime::memory::emit_memory_host_service_failure(
+                        service_events.map(ServiceLifecycleEvents::emitter).as_ref(),
+                        &runtime_id,
+                        message.clone(),
+                    );
+                    anyhow!(message)
+                });
+                bridge.and_then(|bridge| {
+                    let capabilities = bridge
+                        .host_service_capabilities("memory", &runtime_id)
+                        .ok_or_else(|| {
+                            let message = format!(
+                                "configured MemoryRuntime `{runtime_id}` host service is not registered"
+                            );
+                            crate::harness_runtime::memory::emit_memory_host_service_failure(
+                                service_events.map(ServiceLifecycleEvents::emitter).as_ref(),
+                                &runtime_id,
+                                message.clone(),
+                            );
+                            anyhow!(message)
+                        })?;
+                    Ok((
+                        crate::harness_runtime::knowledge::ServiceRuntime::host(
+                            Box::new(bridge),
+                            *request_timeout_ms,
+                        ),
+                        capabilities,
+                    ))
+                })
+            }
+        };
+        let (service_runtime, capabilities) = match activation {
+            Ok(activation) => activation,
+            Err(err) => {
+                mark_custom_memory_runtime_unavailable(
+                    &mut unavailable_packages,
+                    &mapped_spaces,
+                    err.to_string(),
+                );
+                continue;
+            }
+        };
+        let descriptor = match crate::harness_runtime::memory::validate_memory_runtime_capabilities(
+            &capabilities,
+            &runtime_id,
+            &mapped_spaces,
+        ) {
+            Ok(descriptor) => descriptor,
+            Err(err) => {
+                if matches!(
+                    entry.implementation,
+                    crate::harness_config::HarnessImplementation::Host { .. }
+                ) {
+                    crate::harness_runtime::memory::emit_memory_host_service_failure(
+                        service_events.map(ServiceLifecycleEvents::emitter).as_ref(),
+                        &runtime_id,
+                        err.to_string(),
+                    );
+                }
+                mark_custom_memory_runtime_unavailable(
+                    &mut unavailable_packages,
+                    &mapped_spaces,
+                    format!("configured MemoryRuntime `{runtime_id}` is not ready: {err}"),
+                );
+                continue;
+            }
+        };
+        for space in mapped_spaces {
+            if let Some(reason) = custom_memory_space_unrealizable_reason(&space, &descriptor) {
+                unavailable_spaces.insert(
+                    (space.package.clone(), space.space.clone()),
+                    format!("configured MemoryRuntime `{runtime_id}` cannot realize: {reason}"),
+                );
+            } else {
+                active_spaces.push(space);
+            }
+        }
+        capabilities_by_runtime.insert(runtime_id.clone(), descriptor);
+        runtimes.insert(runtime_id, service_runtime);
+    }
+    let runtime = (!active_spaces.is_empty()).then(|| {
+        CustomMemoryRuntime::with_lifecycle(
+            active_spaces,
+            runtimes,
+            service_events.map(ServiceLifecycleEvents::emitter),
+        )
+    });
+    CustomMemoryRuntimeActivation {
+        runtime,
+        unavailable_packages,
+        unavailable_spaces,
+        capabilities: capabilities_by_runtime,
+    }
+}
+
+fn mark_custom_memory_runtime_unavailable(
+    unavailable_packages: &mut BTreeMap<String, String>,
+    spaces: &[MemorySpaceRuntimeSnapshot],
+    reason: String,
+) {
+    for space in spaces {
+        unavailable_packages.insert(space.package.clone(), reason.clone());
+    }
+}
+
+fn custom_memory_space_unrealizable_reason(
+    space: &MemorySpaceRuntimeSnapshot,
+    capabilities: &crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor,
+) -> Option<String> {
+    let root = space.root.as_ref()?;
+    let manifest_path = root.join("agent.json");
+    let manifest = load_manifest_value(&manifest_path)
+        .and_then(|(value, _)| parse_memory_manifest(&value))
+        .ok()?;
+    crate::harness_runtime::memory::unrealizable_memory_spaces(&manifest, capabilities)
+        .into_iter()
+        .find(|diagnostic| diagnostic.space == space.space)
+        .map(|diagnostic| diagnostic.reason)
+}
+
+fn apply_custom_memory_activation_to_runtime(
+    runtime: &mut RuntimeSnapshot,
+    activation: &CustomMemoryRuntimeActivation,
+) {
+    for space in &mut runtime.memory {
+        if let Some(reason) = activation.unavailable_packages.get(&space.package) {
+            space.state = "unavailable".into();
+            space.readiness_reason = Some(reason.clone());
+            space.record_types.clear();
+            continue;
+        }
+        if let Some(reason) = activation
+            .unavailable_spaces
+            .get(&(space.package.clone(), space.space.clone()))
+        {
+            space.state = "unavailable".into();
+            space.readiness_reason = Some(reason.clone());
+            space.record_types.clear();
+            continue;
+        }
+        let Some(runtime_capabilities) = activation.capabilities.get(&space.runtime) else {
+            continue;
+        };
+        space.retrieval_modes = space
+            .retrieval_modes
+            .iter()
+            .filter(|mode| runtime_capabilities.retrieval_modes.contains(mode))
+            .cloned()
+            .collect();
+        if space.retrieval_modes.is_empty() {
+            space.state = "unavailable".into();
+            space.readiness_reason = Some("Memory space has no supported retrieval modes".into());
+            space.record_types.clear();
+        }
+    }
+}
+
+fn custom_memory_routes(plan: &ResolvedHarnessPlan) -> BTreeMap<String, String> {
+    plan.config
+        .config
+        .memory
         .packages
         .iter()
         .map(|(package, mapping)| (package.clone(), mapping.runtime.clone()))
@@ -2542,10 +2834,10 @@ fn memory_binding_snapshots_from_plan(
                 memory_runtime_readiness(plan, &package_name);
             let (semantic, semantic_unavailable_reason) =
                 memory_semantic_snapshot_for_plan(plan, space);
-            let capabilities = if semantic.is_some() {
-                crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor::local_sqlite_with_semantic()
-            } else {
+            let capabilities = if runtime == "local" && semantic.is_none() {
                 crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor::local_sqlite()
+            } else {
+                crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor::local_sqlite_with_semantic()
             };
             let unrealizable = crate::harness_runtime::memory::unrealizable_memory_spaces(
                 &manifest,
@@ -2566,6 +2858,7 @@ fn memory_binding_snapshots_from_plan(
             if state == "available" && retrieval_modes.is_empty() {
                 state = "unavailable".into();
                 readiness_reason = semantic_unavailable_reason
+                    .clone()
                     .or_else(|| Some("Memory space has no supported retrieval modes".into()));
             }
             let record_types = if state == "available" {
@@ -2686,14 +2979,7 @@ fn memory_runtime_readiness(
     package_name: &str,
 ) -> (String, String, Option<String>) {
     if let Some(mapping) = plan.config.config.memory.packages.get(package_name) {
-        return (
-            mapping.runtime.clone(),
-            "unavailable".into(),
-            Some(format!(
-                "configured MemoryRuntime `{}` activation is deferred to Milestone 14e",
-                mapping.runtime
-            )),
-        );
+        return (mapping.runtime.clone(), "available".into(), None);
     }
     ("local".into(), "available".into(), None)
 }
@@ -3385,6 +3671,544 @@ mod tests {
     }
 
     #[test]
+    fn host_service_requirements_include_mapped_memory_runtime() {
+        let root = temp_dir("host-memory-service-requirements");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key", "semantic"]));
+        plan.config.config.memory.runtimes.insert(
+            "remote-memory".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "semantic-memory-test".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-memory".into(),
+            },
+        );
+
+        let required = required_host_services(&plan);
+        assert!(required.contains(&host_service("memory", "remote-memory")));
+    }
+
+    #[test]
+    fn custom_memory_activation_failure_suppresses_mapped_space_without_local_fallback() {
+        let root = temp_dir("custom-memory-activation-failure");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key"]));
+        plan.config.config.memory.runtimes.insert(
+            "remote-memory".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Process {
+                    command: "missing-agentpm-memory-runtime".into(),
+                    args: Vec::new(),
+                    cwd: None,
+                    env: Vec::new(),
+                    startup_timeout_ms: 100,
+                    request_timeout_ms: 100,
+                    restart: Default::default(),
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "semantic-memory-test".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-memory".into(),
+            },
+        );
+
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        assert_eq!(runtime.memory[0].runtime, "remote-memory");
+        assert_eq!(runtime.memory[0].state, "available");
+
+        let activation = activate_custom_memory_runtime_for_plan(&plan, &runtime, None, None);
+        assert!(activation.runtime.is_none());
+        apply_custom_memory_activation_to_runtime(&mut runtime, &activation);
+
+        assert_eq!(runtime.memory[0].runtime, "remote-memory");
+        assert_eq!(runtime.memory[0].state, "unavailable");
+        assert!(
+            runtime.memory[0]
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("configured MemoryRuntime `remote-memory` could not start")
+        );
+    }
+
+    #[test]
+    fn custom_memory_activation_filters_retrieval_modes_from_runtime_capabilities() {
+        let root = temp_dir("custom-memory-retrieval-filter");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key", "semantic"]));
+        plan.config.config.memory.runtimes.insert(
+            "remote-memory".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "semantic-memory-test".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-memory".into(),
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        bridge.register_host_service(
+            &host_service("memory", "remote-memory"),
+            custom_memory_capabilities("semantic-memory-test", "0.1.0", json!(["key"])),
+        );
+
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        let activation =
+            activate_custom_memory_runtime_for_plan(&plan, &runtime, Some(bridge), None);
+        assert!(activation.runtime.is_some());
+        apply_custom_memory_activation_to_runtime(&mut runtime, &activation);
+
+        assert_eq!(runtime.memory[0].state, "available");
+        assert_eq!(
+            runtime.memory[0].retrieval_modes,
+            vec![MemoryRetrievalMode::Key]
+        );
+    }
+
+    #[test]
+    fn custom_memory_activation_rejects_package_version_mismatch() {
+        let root = temp_dir("custom-memory-package-version-mismatch");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key"]));
+        plan.config.config.memory.runtimes.insert(
+            "remote-memory".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "semantic-memory-test".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-memory".into(),
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        bridge.register_host_service(
+            &host_service("memory", "remote-memory"),
+            custom_memory_capabilities("semantic-memory-test", "9.9.9", json!(["key"])),
+        );
+
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        let activation =
+            activate_custom_memory_runtime_for_plan(&plan, &runtime, Some(bridge), None);
+        assert!(activation.runtime.is_none());
+        apply_custom_memory_activation_to_runtime(&mut runtime, &activation);
+
+        assert_eq!(runtime.memory[0].runtime, "remote-memory");
+        assert_eq!(runtime.memory[0].state, "unavailable");
+        assert!(
+            runtime.memory[0]
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("does not attest semantic-memory-test@0.1.0 as ready")
+        );
+    }
+
+    #[test]
+    fn custom_memory_activation_suppresses_blueprint_space_mismatch() {
+        let root = temp_dir("custom-memory-blueprint-space-mismatch");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key"]));
+        plan.config.config.memory.runtimes.insert(
+            "remote-memory".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "semantic-memory-test".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-memory".into(),
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        let mut capabilities =
+            custom_memory_capabilities("semantic-memory-test", "0.1.0", json!(["key"]));
+        capabilities["space_models"] = json!(["document"]);
+        bridge.register_host_service(&host_service("memory", "remote-memory"), capabilities);
+
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        let activation =
+            activate_custom_memory_runtime_for_plan(&plan, &runtime, Some(bridge), None);
+        assert!(activation.runtime.is_none());
+        apply_custom_memory_activation_to_runtime(&mut runtime, &activation);
+
+        assert_eq!(runtime.memory[0].runtime, "remote-memory");
+        assert_eq!(runtime.memory[0].state, "unavailable");
+        assert!(
+            runtime.memory[0]
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("space model")
+        );
+    }
+
+    #[test]
+    fn custom_memory_lifecycle_only_capability_gaps_do_not_suppress_direct_access() {
+        let root = temp_dir("custom-memory-lifecycle-only-gaps");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key"]));
+        plan.config.config.memory.runtimes.insert(
+            "remote-memory".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "semantic-memory-test".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-memory".into(),
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        bridge.register_host_service(
+            &host_service("memory", "remote-memory"),
+            custom_memory_capabilities("semantic-memory-test", "0.1.0", json!(["key"])),
+        );
+
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        let activation =
+            activate_custom_memory_runtime_for_plan(&plan, &runtime, Some(bridge), None);
+        assert!(activation.runtime.is_some());
+        apply_custom_memory_activation_to_runtime(&mut runtime, &activation);
+
+        assert_eq!(runtime.memory[0].runtime, "remote-memory");
+        assert_eq!(runtime.memory[0].state, "available");
+        assert_eq!(
+            runtime.memory[0].retrieval_modes,
+            vec![MemoryRetrievalMode::Key]
+        );
+        let descriptor = activation.capabilities.get("remote-memory").unwrap();
+        assert!(!descriptor.durable_trigger_state);
+        assert!(!descriptor.atomic_batches);
+    }
+
+    #[test]
+    fn custom_memory_one_bad_runtime_does_not_disable_healthy_sibling() {
+        let root = temp_dir("custom-memory-one-bad-runtime");
+        let mut plan = minimal_plan(&root);
+        write_multi_memory_agent(&root, &["healthy-memory", "broken-memory"]);
+        write_key_memory_package(&root, &mut plan, "healthy-memory");
+        write_key_memory_package(&root, &mut plan, "broken-memory");
+        plan.config.config.memory.runtimes.insert(
+            "healthy-runtime".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.memory.runtimes.insert(
+            "broken-runtime".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "healthy-memory".into(),
+            HarnessRuntimeMapping {
+                runtime: "healthy-runtime".into(),
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "broken-memory".into(),
+            HarnessRuntimeMapping {
+                runtime: "broken-runtime".into(),
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        bridge.register_host_service(
+            &host_service("memory", "healthy-runtime"),
+            custom_memory_capabilities("healthy-memory", "0.1.0", json!(["key"])),
+        );
+
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        let activation =
+            activate_custom_memory_runtime_for_plan(&plan, &runtime, Some(bridge), None);
+        assert!(activation.runtime.is_some());
+        apply_custom_memory_activation_to_runtime(&mut runtime, &activation);
+
+        let healthy = runtime
+            .memory
+            .iter()
+            .find(|space| space.package == "healthy-memory")
+            .unwrap();
+        assert_eq!(healthy.runtime, "healthy-runtime");
+        assert_eq!(healthy.state, "available");
+        assert!(healthy.readiness_reason.is_none());
+
+        let broken = runtime
+            .memory
+            .iter()
+            .find(|space| space.package == "broken-memory")
+            .unwrap();
+        assert_eq!(broken.runtime, "broken-runtime");
+        assert_eq!(broken.state, "unavailable");
+        assert!(
+            broken
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("host service is not registered")
+        );
+    }
+
+    #[test]
+    fn custom_memory_host_registration_failure_emits_service_events() {
+        let root = temp_dir("custom-memory-host-registration-events");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key"]));
+        plan.config.config.memory.runtimes.insert(
+            "remote-memory".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "semantic-memory-test".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-memory".into(),
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        let mut service_events = ServiceLifecycleEvents::new();
+
+        let activation = activate_custom_memory_runtime_for_plan(
+            &plan,
+            &runtime,
+            Some(bridge),
+            Some(&service_events),
+        );
+        assert!(activation.runtime.is_none());
+        apply_custom_memory_activation_to_runtime(&mut runtime, &activation);
+        assert_eq!(runtime.memory[0].state, "unavailable");
+        assert!(
+            runtime.memory[0]
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("host service is not registered")
+        );
+
+        let events = service_events.drain();
+        assert!(events.iter().any(|event| {
+            event.event_type == crate::harness_observability::HarnessEventType::ServiceUnhealthy
+                && event.service == "memory"
+                && event.registry_id == "remote-memory"
+                && event.message.contains("host service is not registered")
+        }));
+        assert!(events.iter().any(|event| {
+            event.event_type == crate::harness_observability::HarnessEventType::ServiceFailed
+                && event.service == "memory"
+                && event.registry_id == "remote-memory"
+                && event.message.contains("host service is not registered")
+        }));
+    }
+
+    #[test]
+    fn custom_memory_host_capability_failure_emits_service_events() {
+        let root = temp_dir("custom-memory-host-capability-events");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key"]));
+        plan.config.config.memory.runtimes.insert(
+            "remote-memory".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "semantic-memory-test".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-memory".into(),
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        bridge.register_host_service(
+            &host_service("memory", "remote-memory"),
+            json!({
+                "ready": false,
+                "capabilities": {
+                    "space_models": ["collection"],
+                    "retrieval_modes": ["key"],
+                    "retention_actions": [],
+                    "constraints": [],
+                    "capacity": false,
+                    "durable_trigger_state": false,
+                    "atomic_batches": false
+                }
+            }),
+        );
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        let mut service_events = ServiceLifecycleEvents::new();
+
+        let activation = activate_custom_memory_runtime_for_plan(
+            &plan,
+            &runtime,
+            Some(bridge),
+            Some(&service_events),
+        );
+        assert!(activation.runtime.is_none());
+        apply_custom_memory_activation_to_runtime(&mut runtime, &activation);
+        assert_eq!(runtime.memory[0].state, "unavailable");
+        assert!(
+            runtime.memory[0]
+                .readiness_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("ready=false")
+        );
+
+        let events = service_events.drain();
+        assert!(events.iter().any(|event| {
+            event.event_type == crate::harness_observability::HarnessEventType::ServiceUnhealthy
+                && event.service == "memory"
+                && event.registry_id == "remote-memory"
+                && event.message.contains("ready=false")
+        }));
+        assert!(events.iter().any(|event| {
+            event.event_type == crate::harness_observability::HarnessEventType::ServiceFailed
+                && event.service == "memory"
+                && event.registry_id == "remote-memory"
+                && event.message.contains("ready=false")
+        }));
+    }
+
+    #[test]
+    fn memory_host_registration_accepts_root_level_capability_descriptor() {
+        let root = temp_dir("memory-host-root-capabilities");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key"]));
+        plan.config.config.memory.runtimes.insert(
+            "remote-memory".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Host {
+                    request_timeout_ms: 1_000,
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "semantic-memory-test".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-memory".into(),
+            },
+        );
+        let (bridge, _, _) = buffered_machine_bridge();
+        let mut payload =
+            custom_memory_capabilities("semantic-memory-test", "0.1.0", json!(["key"]));
+        payload["role"] = json!("memory");
+        payload["registry_id"] = json!("remote-memory");
+
+        let service = register_host_service(&plan, &bridge, &payload).unwrap();
+        assert_eq!(service, host_service("memory", "remote-memory"));
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        let activation =
+            activate_custom_memory_runtime_for_plan(&plan, &runtime, Some(bridge), None);
+        assert!(activation.runtime.is_some());
+        apply_custom_memory_activation_to_runtime(&mut runtime, &activation);
+        assert_eq!(runtime.memory[0].state, "available");
+    }
+
+    #[test]
+    fn custom_memory_process_activation_accepts_ready_descriptor() {
+        let root = temp_dir("custom-memory-process-ready");
+        let mut plan = minimal_plan(&root);
+        write_semantic_memory_fixture_with_modes(&root, &mut plan, json!(["key"]));
+        let script = root.join("memory_service.py");
+        fs::write(
+            &script,
+            r#"
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    assert msg["service"] == "memory"
+    assert msg["payload"]["role"] == "memory"
+    assert msg["payload"]["registry_id"] == "remote-memory"
+    result = {
+        "ready": True,
+        "registry_id": "remote-memory",
+        "protocol_version": 1,
+        "capabilities": {
+            "space_models": ["collection"],
+            "retrieval_modes": ["key"],
+            "retention_actions": [],
+            "constraints": [],
+            "capacity": False,
+            "durable_trigger_state": False,
+            "atomic_batches": False,
+            "packages": [
+                { "package": "semantic-memory-test", "version": "0.1.0", "ready": True }
+            ]
+        }
+    }
+    print(json.dumps({
+        "protocol": "agentpm-service",
+        "version": 1,
+        "kind": "initialized",
+        "id": msg.get("id"),
+        "service": "memory",
+        "result": result
+    }), flush=True)
+"#,
+        )
+        .unwrap();
+        plan.config.config.memory.runtimes.insert(
+            "remote-memory".into(),
+            HarnessImplementationEntry {
+                implementation: HarnessImplementation::Process {
+                    command: "python3".into(),
+                    args: vec![script.display().to_string()],
+                    cwd: None,
+                    env: Vec::new(),
+                    startup_timeout_ms: 1_000,
+                    request_timeout_ms: 1_000,
+                    restart: Default::default(),
+                },
+            },
+        );
+        plan.config.config.memory.packages.insert(
+            "semantic-memory-test".into(),
+            HarnessRuntimeMapping {
+                runtime: "remote-memory".into(),
+            },
+        );
+
+        let mut runtime = runtime_snapshot_from_plan(&plan);
+        let activation = activate_custom_memory_runtime_for_plan(&plan, &runtime, None, None);
+        assert!(activation.runtime.is_some());
+        apply_custom_memory_activation_to_runtime(&mut runtime, &activation);
+
+        assert_eq!(runtime.memory[0].state, "available");
+        assert_eq!(runtime.memory[0].runtime, "remote-memory");
+    }
+
+    #[test]
     fn mapped_knowledge_runtime_readiness_requires_realizable_runtime() {
         let root = temp_dir("mapped-knowledge-runtime-readiness");
         let knowledge_root = root.join(".agentpm/knowledge/@zack/guide/0.1.0");
@@ -3893,7 +4717,7 @@ mod tests {
     }
 
     #[test]
-    fn host_registration_response_marks_milestone_twelve_roles_active() {
+    fn host_registration_response_marks_runtime_roles_active() {
         let embedding = host_service_registration_response(&host_service("embedding", "embedder"));
         assert_eq!(embedding["registered"], json!(true));
         assert_eq!(embedding["active"], json!(true));
@@ -3904,8 +4728,8 @@ mod tests {
         assert!(knowledge["reason"].is_null());
 
         let memory = host_service_registration_response(&host_service("memory", "store"));
-        assert_eq!(memory["active"], json!(false));
-        assert!(memory["reason"].as_str().unwrap().contains("Milestone 14"));
+        assert_eq!(memory["active"], json!(true));
+        assert!(memory["reason"].is_null());
 
         let model = host_service_registration_response(&host_service("model", "host-model"));
         assert_eq!(model["active"], json!(true));
@@ -4829,6 +5653,96 @@ mod tests {
         write_semantic_memory_fixture_with_modes(root, plan, json!(["semantic"]));
     }
 
+    fn write_multi_memory_agent(root: &Path, packages: &[&str]) {
+        write_json(
+            &root.join("agent.json"),
+            json!({
+                "kind": "agent",
+                "name": "@zack/test-agent",
+                "version": "0.1.0",
+                "memory": packages
+                    .iter()
+                    .map(|package| format!("{package}@0.1.0"))
+                    .collect::<Vec<_>>(),
+                "bindings": {
+                    "global": {
+                        "memory": packages
+                            .iter()
+                            .map(|package| json!({
+                                "package": format!("{package}@0.1.0"),
+                                "spaces": ["notes"]
+                            }))
+                            .collect::<Vec<_>>()
+                    }
+                }
+            }),
+        );
+    }
+
+    fn write_key_memory_package(root: &Path, plan: &mut ResolvedHarnessPlan, package_name: &str) {
+        let memory_root = root
+            .join(".agentpm/memory")
+            .join(package_name)
+            .join("0.1.0");
+        write_json(
+            &memory_root.join("agent.json"),
+            json!({
+                "kind": "memory",
+                "name": package_name,
+                "version": "0.1.0",
+                "description": "Key Memory test package.",
+                "memory": {
+                    "scopes": {
+                        "user": { "description": "User scope." }
+                    },
+                    "record_types": {
+                        "note": {
+                            "version": "1.0.0",
+                            "description": "Note.",
+                            "schema": "schemas/note.schema.json"
+                        }
+                    },
+                    "spaces": {
+                        "notes": {
+                            "description": "Notes.",
+                            "model": "collection",
+                            "record_types": ["note"],
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["key"] }
+                        }
+                    }
+                }
+            }),
+        );
+        write_json(
+            &memory_root.join("schemas/note.schema.json"),
+            json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "body": { "type": "string", "minLength": 1 }
+                },
+                "required": ["body"],
+                "additionalProperties": false
+            }),
+        );
+        crate::commands::memory::execute_memory_build(
+            &memory_root.join("agent.json"),
+            crate::commands::memory::MemoryBuildMode::Write,
+        )
+        .unwrap();
+        plan.package_graph.insert(
+            format!("memory:{package_name}@0.1.0"),
+            ResolvedPackageInfo {
+                key: format!("memory:{package_name}@0.1.0"),
+                kind: PackageKind::Memory,
+                name: package_name.into(),
+                version: "0.1.0".into(),
+                root: memory_root,
+            },
+        );
+    }
+
     fn write_semantic_memory_fixture_with_modes(
         root: &Path,
         plan: &mut ResolvedHarnessPlan,
@@ -4928,6 +5842,25 @@ mod tests {
             "structured_output": true,
             "multimodal_input": false,
             "usage_reporting": true
+        })
+    }
+
+    fn custom_memory_capabilities(package: &str, version: &str, retrieval_modes: Value) -> Value {
+        json!({
+            "space_models": ["collection"],
+            "retrieval_modes": retrieval_modes,
+            "retention_actions": [],
+            "constraints": [],
+            "capacity": false,
+            "durable_trigger_state": false,
+            "atomic_batches": false,
+            "packages": [
+                {
+                    "package": package,
+                    "version": version,
+                    "ready": true
+                }
+            ]
         })
     }
 

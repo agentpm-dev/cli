@@ -19,17 +19,18 @@ use crate::harness_runtime::hook::{
 use crate::harness_runtime::memory::{
     LocalMemoryActionError, LocalMemoryReadMode, LocalMemoryReadRequest, LocalMemorySemanticConfig,
     LocalMemoryWriteOperation, LocalMemoryWriteRequest, LocalSqliteMemoryRuntime,
-    MemoryContractCache,
+    MemoryContractCache, custom_memory_action_error_from_output,
+    custom_memory_read_request_from_local, custom_memory_write_request_from_local,
 };
 use crate::harness_runtime::model::ModelTurn;
 use crate::harness_runtime::model::{CONSUMER_RUN_CONTEXT_SECTION_TITLE, CompletionContract};
 use crate::harness_runtime::{
     ActionDispatchResult, ActionDispatcher, ApprovalController, ApprovalDecision,
-    BeforeToolCallHook, CapabilityDescriptor, HookRuntime, MemorySpaceRuntimeSnapshot,
-    ModelRequest, ModelRuntime, NoopHookRuntime, ProfileSnapshot, PromptAssemblyInput,
-    RuntimeCapabilitySnapshot, RuntimeSnapshot, SemanticAction, ServiceLifecycleEvents,
-    SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind,
-    assemble_logical_prompt,
+    BeforeToolCallHook, CapabilityDescriptor, CustomMemoryRuntime, HookRuntime,
+    MemorySpaceRuntimeSnapshot, ModelRequest, ModelRuntime, NoopHookRuntime, ProfileSnapshot,
+    PromptAssemblyInput, RuntimeCapabilitySnapshot, RuntimeSnapshot, SemanticAction,
+    ServiceLifecycleEvents, SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry,
+    TranscriptEntryKind, assemble_logical_prompt,
 };
 use crate::harness_runtime::{KnowledgeRuntime, KnowledgeRuntimeSnapshot, NoopKnowledgeRuntime};
 use crate::manifest::{
@@ -408,6 +409,7 @@ pub struct HarnessRuntimeServices<'a> {
     pub model: &'a mut dyn ModelRuntime,
     pub dispatcher: &'a mut dyn ActionDispatcher,
     pub knowledge: &'a mut dyn KnowledgeRuntime,
+    pub memory: Option<CustomMemoryRuntime>,
     pub embedding_provider: Option<Box<dyn crate::harness_runtime::EmbeddingProvider>>,
     pub approvals: &'a mut dyn ApprovalController,
     pub hooks: &'a mut dyn HookRuntime,
@@ -445,6 +447,7 @@ impl HarnessEngine {
             model,
             dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals,
             hooks: &mut hooks,
@@ -543,6 +546,7 @@ impl HarnessEngine {
                 services.model,
                 services.dispatcher,
                 services.knowledge,
+                &mut services.memory,
                 &mut services.embedding_provider,
                 services.hooks,
                 &mut services.service_events,
@@ -769,6 +773,7 @@ impl HarnessEngine {
         model: &mut dyn ModelRuntime,
         dispatcher: &mut dyn ActionDispatcher,
         knowledge: &mut dyn KnowledgeRuntime,
+        memory: &mut Option<CustomMemoryRuntime>,
         embedding_provider: &mut Option<Box<dyn crate::harness_runtime::EmbeddingProvider>>,
         hooks: &mut dyn HookRuntime,
         service_events: &mut Option<&mut ServiceLifecycleEvents>,
@@ -2183,6 +2188,7 @@ impl HarnessEngine {
                         session,
                         &effective_phase,
                         &action,
+                        memory,
                         embedding_provider,
                         action_source.as_deref(),
                         &phase_execution_id,

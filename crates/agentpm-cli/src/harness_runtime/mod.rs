@@ -21,6 +21,7 @@ pub use knowledge::{
     KnowledgeRuntime, LocalKnowledgeRuntime, NoopKnowledgeRuntime, RoutingEmbeddingProvider,
     ServiceEmbeddingProvider,
 };
+pub use memory::CustomMemoryRuntime;
 pub use model::{
     CapabilityDescriptor, ConsumerContextSnapshot, KnowledgeEmbeddingSnapshot,
     KnowledgeRuntimeSnapshot, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,

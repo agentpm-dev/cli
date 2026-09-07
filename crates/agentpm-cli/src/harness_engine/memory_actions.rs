@@ -214,6 +214,7 @@ impl HarnessEngine {
         session: &mut HarnessSession,
         phase: &EffectivePhase,
         action: &SemanticAction,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         embedding_provider: &mut Option<Box<dyn EmbeddingProvider>>,
         action_source: Option<&str>,
         phase_execution_id: &str,
@@ -245,6 +246,7 @@ impl HarnessEngine {
             action,
             &run_id,
             phase_execution_id,
+            custom_memory_runtime,
             embedding_provider,
             action_source,
         ) {
@@ -334,6 +336,7 @@ impl HarnessEngine {
         action: &SemanticAction,
         run_id: &str,
         phase_execution_id: &str,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         embedding_provider: &mut Option<Box<dyn EmbeddingProvider>>,
         action_source: Option<&str>,
     ) -> Result<Value> {
@@ -345,19 +348,6 @@ impl HarnessEngine {
         let memory = active_memory_space(phase, package, space)
             .ok_or_else(|| anyhow!("Memory space `{space}` is not active"))?
             .clone();
-        if memory.runtime != "local" {
-            return Ok(json!({
-                "ok": false,
-                "package": memory.package,
-                "package_version": memory.package_version,
-                "space": memory.space,
-                "runtime": memory.runtime,
-                "error": {
-                    "code": "memory_runtime_unavailable",
-                    "message": memory.readiness_reason.unwrap_or_else(|| "configured MemoryRuntime is unavailable".into())
-                }
-            }));
-        }
         let root = memory
             .root
             .as_ref()
@@ -394,6 +384,17 @@ impl HarnessEngine {
                     limit: *limit,
                     now,
                 };
+                if memory.runtime != "local" {
+                    let custom_request = custom_memory_read_request_from_local(&request)?;
+                    let Some(custom_runtime) = custom_memory_runtime.as_mut() else {
+                        return Ok(custom_memory_runtime_unavailable_output(&memory));
+                    };
+                    let result = custom_runtime.dispatch_read(custom_request);
+                    if let Some(error) = custom_memory_action_error_from_output(&result.output) {
+                        return Err(error.into());
+                    }
+                    return Ok(result.output);
+                }
                 let (records, usage, embedding_request_duration_ms, output_metadata) =
                     if matches!(read_mode, LocalMemoryReadMode::Semantic) {
                         let semantic = memory_semantic_config(session, &memory)?;
@@ -479,6 +480,17 @@ impl HarnessEngine {
                     provenance,
                     now,
                 };
+                if memory.runtime != "local" {
+                    let custom_request = custom_memory_write_request_from_local(&request)?;
+                    let Some(custom_runtime) = custom_memory_runtime.as_mut() else {
+                        return Ok(custom_memory_runtime_unavailable_output(&memory));
+                    };
+                    let result = custom_runtime.dispatch_write(custom_request);
+                    if let Some(error) = custom_memory_action_error_from_output(&result.output) {
+                        return Err(error.into());
+                    }
+                    return Ok(result.output);
+                }
                 let semantic_config = memory_semantic_config(session, &memory).ok();
                 let write_result = if let (Some(semantic), Some(provider)) =
                     (semantic_config.as_ref(), embedding_provider.as_deref_mut())
@@ -543,6 +555,22 @@ fn memory_write_provenance(
     let mut provenance = serde_json::Map::new();
     provenance.insert("harness".into(), Value::Object(harness));
     Value::Object(provenance)
+}
+
+fn custom_memory_runtime_unavailable_output(memory: &MemorySpaceRuntimeSnapshot) -> Value {
+    json!({
+        "ok": false,
+        "package": memory.package,
+        "package_version": memory.package_version,
+        "space": memory.space,
+        "runtime": memory.runtime,
+        "error": {
+            "code": "memory_runtime_unavailable",
+            "message": memory.readiness_reason.clone().unwrap_or_else(|| {
+                format!("configured MemoryRuntime `{}` is unavailable", memory.runtime)
+            })
+        }
+    })
 }
 
 fn local_memory_action_failure_category(error: &anyhow::Error) -> Option<ActionFailureCategory> {

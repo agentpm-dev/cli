@@ -10,19 +10,22 @@ use crate::harness_runtime::hook::{
     BeforeModelRequestDecision, BeforeModelRequestHook, BeforeToolCallDecision,
     BeforeToolSelectionDecision, BeforeToolSelectionHook, HookRuntimeFailure,
 };
-use crate::harness_runtime::knowledge::{EmbeddingProvider, KnowledgeRuntimeFailure};
+use crate::harness_runtime::knowledge::{
+    EmbeddingProvider, KnowledgeRuntimeFailure, ServiceRuntime,
+};
 use crate::harness_runtime::model::{
     KnowledgeEmbeddingSnapshot, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
     ModelProviderSelection, ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot,
     SUCCESSFUL_ACTION_RESULT_CONTROL, ScriptedModelRuntime, SkillResourceSnapshot,
     SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
+use crate::harness_runtime::service::HostServiceInvoker;
 use crate::manifest::{
     LoopAccessMemory, LoopCheckpoint, LoopErrorPolicy, LoopLimits, LoopMetadata, LoopOutcome,
     LoopPhaseAccess, LoopPhaseFailurePolicy, LoopToolFailurePolicy, LoopTransition,
     MemoryRetrievalMode, MemorySpaceModel,
 };
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 #[derive(Debug, Default)]
@@ -1007,6 +1010,7 @@ fn semantic_memory_read_reports_embedding_usage_and_events() {
         model: &mut model,
         dispatcher: &mut dispatcher,
         knowledge: &mut knowledge,
+        memory: None,
         embedding_provider: Some(Box::new(TestMemoryEmbeddingProvider::default())),
         approvals: &mut approvals,
         hooks: &mut hooks,
@@ -1729,6 +1733,123 @@ fn missing_memory_write_target_requests_repair_after_runtime_lookup() {
 }
 
 #[test]
+fn custom_memory_not_found_requests_repair_after_runtime_lookup() {
+    #[derive(Clone)]
+    struct NotFoundMemoryRuntime;
+
+    impl HostServiceInvoker for NotFoundMemoryRuntime {
+        fn invoke_host_service(
+            &mut self,
+            _role: &str,
+            _registry_id: &str,
+            _method: &str,
+            _payload: Value,
+            _timeout_ms: u64,
+        ) -> Result<Value> {
+            Ok(json!({
+                "ok": false,
+                "package": "m14c-memory-test",
+                "package_version": "0.1.0",
+                "space": "notes",
+                "error": {
+                    "code": "not_found",
+                    "message": "Memory record `mem_missing` was not found"
+                }
+            }))
+        }
+    }
+
+    let temp = temp_workspace_dir("m14e-custom-memory-not-found-repair");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let mut runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    runtime.memory[0].runtime = "remote-memory".into();
+    let custom_memory = CustomMemoryRuntime::new(
+        runtime.memory.clone(),
+        HashMap::from([(
+            "remote-memory".into(),
+            ServiceRuntime::host(Box::new(NotFoundMemoryRuntime), 1_000),
+        )]),
+    );
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "missing-update",
+                SemanticAction::MemoryWrite {
+                    package: "m14c-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Update,
+                    record_type: "note".into(),
+                    record_id: Some("mem_missing".into()),
+                    content: Some(json!({ "body": "updated body" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut hooks = NoopHookRuntime;
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: Some(custom_memory),
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            allocate_harness_run_id(),
+            "missing custom memory target",
+            &mut services,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.memory_requests, 1);
+    assert_eq!(result.report.repair_count, 1);
+    assert!(dispatcher.dispatched.is_empty());
+    assert!(handle.events().iter().any(|event| {
+        if event.event_type != HarnessEventType::SemanticActionRejected {
+            return false;
+        }
+        let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+            return false;
+        };
+        fields
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| error.contains("Memory record `mem_missing` was not found"))
+    }));
+    assert!(
+        model.requests[1]
+            .prompt
+            .render_text()
+            .contains("Memory record `mem_missing` was not found")
+    );
+}
+
+#[test]
 fn memory_write_target_record_type_mismatch_requests_repair_after_runtime_lookup() {
     let temp = temp_workspace_dir("m14c-memory-target-type-repair");
     let package_root = temp.join("memory-package");
@@ -2091,6 +2212,7 @@ fn before_tool_selection_hook_subsets_model_visible_tool_catalog() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2181,6 +2303,7 @@ fn before_tool_selection_invalid_patch_still_reports_queued_nonfatal_failures() 
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2254,6 +2377,7 @@ fn before_tool_call_hook_patches_arguments_and_revalidates() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2322,6 +2446,7 @@ fn before_tool_call_continue_failure_is_reported_before_completed() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2391,6 +2516,7 @@ fn before_tool_call_hook_revalidates_patched_arguments_before_dispatch() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2456,6 +2582,7 @@ fn before_tool_call_hook_rejection_blocks_dispatch_and_emits_rejected() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2507,6 +2634,7 @@ fn before_tool_call_rejection_still_reports_queued_nonfatal_failures() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2569,6 +2697,7 @@ fn before_tool_call_hook_failure_emits_failed_not_rejected() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2640,6 +2769,7 @@ fn before_knowledge_request_hook_shapes_request_before_dispatch() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2723,6 +2853,7 @@ fn before_model_request_hook_appends_context_and_merges_provider_options() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2812,6 +2943,7 @@ fn before_model_request_hook_fails_closed_before_model_runtime() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -2869,6 +3001,7 @@ fn before_model_request_invalid_patch_still_reports_queued_nonfatal_failures() {
             model: &mut model,
             dispatcher: &mut dispatcher,
             knowledge: &mut knowledge,
+            memory: None,
             embedding_provider: None,
             approvals: &mut approvals,
             hooks: &mut hooks,
@@ -3823,6 +3956,7 @@ fn knowledge_backend_failure_is_returned_to_phase_transcript() {
         model: &mut model,
         dispatcher: &mut dispatcher,
         knowledge: &mut knowledge,
+        memory: None,
         embedding_provider: None,
         approvals: &mut approvals,
         hooks: &mut hooks,
@@ -4878,6 +5012,7 @@ fn knowledge_dispatch_usage_is_reported_and_rolled_up() {
         model: &mut model,
         dispatcher: &mut dispatcher,
         knowledge: &mut knowledge,
+        memory: None,
         embedding_provider: None,
         approvals: &mut approvals,
         hooks: &mut hooks,
@@ -4997,6 +5132,7 @@ fn embedding_provider_failures_emit_embedding_failed_event() {
         model: &mut model,
         dispatcher: &mut dispatcher,
         knowledge: &mut knowledge,
+        memory: None,
         embedding_provider: None,
         approvals: &mut approvals,
         hooks: &mut hooks,
