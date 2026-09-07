@@ -808,6 +808,17 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 - [x] Include persistence-review summaries in `RunReport`/usage data sufficiently to distinguish Harness-initiated review Memory activity from Memory actions the model chose naturally during ordinary phase execution.
 - [x] Add tests for omitted `write_review` preserving existing behavior, `phase_end` review before transition, `run_end` review before `$end`, `$handoff`, and `$abort`, `run_end` superseding `phase_end` at terminal boundaries, one review per pending completion with no recursive re-entry, review skipped with no writable Memory, readable+writable review performing read -> write -> complete, writable-only review without unauthorized reads, narrowed catalog rejecting Tool/Knowledge/Skill-resource/normal-`PhaseCompletion` actions before accept/count/execute, original `PhaseCompletion`/outcome/transition remaining unchanged, review working transcript not changing `PhaseResult` or later-phase hidden context, normal Memory Hooks and durable-projection governance applying to review writes, custom MemoryRuntime routing/no fallback during review, review model/action accounting without additional Loop steps, review limit exhaustion, review `ModelRuntime`/Memory failure behavior, committed writes surviving a later nonfatal review failure, persistence-review lifecycle events/report summaries, and behavior parity across built-in SQLite and fake process/host MemoryRuntime fixtures.
 
+## Milestone 14h: Memory Repair Feedback and Persistence-Review Failure Visibility
+> Scope note: close the observed reliability gap where a model selects an unauthorized Memory space/record-type combination, exhausts the structured-output repair budget, and causes an optional persistence review to fail silently while the enclosing Run still ends successfully. Existing validation already rejects these proposals safely before mutation, so this milestone improves bounded recovery and user-visible reporting only. Provider-facing alias hardening is Milestone 16a. Canonical Harness identity, EffectivePhase authority, schemas, validation, dispatch, MemoryRuntime routing, Hooks, and persistence governance remain unchanged.
+- [ ] Improve structured repair feedback for semantic action target mismatches. For Memory space/record-type mismatches, name the selected invalid space and record type and, when deterministically discoverable from the current authorized action catalog, identify the authorized alternative space/action(s) where that record type is valid.
+- [ ] Keep repair feedback constrained to currently authorized/ready semantic actions; never recommend an unbound, suppressed, Loop-prohibited, or otherwise unavailable surface merely because its schema would accept the proposed arguments.
+- [ ] Ensure corrected repair attempts re-enter the normal ModelRuntime -> semantic-action validation path and remain bounded by the existing structured-output repair budget; do not create a special Memory retry path.
+- [ ] Preserve exhaustion behavior when the model does not recover: no invalid Memory mutation occurs, persistence review remains nonfatal to the already-valid pending PhaseCompletion, and the review records its failed status/reason.
+- [ ] Surface non-completed persistence-review outcomes in normal user-facing execution output, not only in trace/report/event data. A Run may still end successfully when optional persistence review fails, but CLI/TUI users must receive a visible warning that persistence review did not complete and that intended Memory may not have been written.
+- [ ] Include useful nonfatal review-failure summary data in human/TUI presentation, including the failure reason and attempted/completed Memory-write counts when available, without exposing trace-restricted content.
+- [ ] Keep machine/SDK/event/RunReport behavior backward-compatible with the existing structured persistence-review status/reason/count data; the new human/TUI surfacing is an intentional observability improvement rather than a terminal-state change.
+- [ ] Add tests covering improved Memory mismatch repair feedback, authorized-alternative filtering in repair suggestions, wrong -> repaired -> correct semantic action convergence within the default repair budget including the representative `conversation_state` + `record_type: note` -> `notes` correction path, repair exhaustion remaining safe/non-mutating, and a visible CLI/TUI warning when persistence review fails while the enclosing Run still ends successfully.
+
 ## Milestone 15: Memory Lifecycle Operations, Durable Trigger State, and External Invocation
 > Scope note: complete the canonical Harness interpretation of Memory Blueprint lifecycle operations and automatic/external triggers. Harness owns participation, trigger meaning, model-assisted transform/consolidate semantics, source handling, provenance, and external invocation; MemoryRuntime supplies primitive durable operations, trigger state, and atomic batches.
 - [ ] Resolve participating global/phase Memory operation bindings separately from direct space bindings; global operations participate for the Run and phase-bound operations only while that phase execution is active.
@@ -862,9 +873,41 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 - [ ] Add mocked provider contract tests plus optional live integration suites gated by environment.
 - [ ] Add one cross-backend conformance suite exercising the same representative Blueprint direct-access + lifecycle semantics against SQLite and external provider fixtures, allowing expected unsupported-capability skips only when the provider advertises them honestly.
 
+## Milestone 16a: Provider-Facing Semantic Action Alias and Description Hardening
+> Scope note: reduce model confusion when multiple structured Harness semantic actions are authorized in the same phase or persistence review, by making provider-facing action names and descriptions self-disambiguating. Milestone 14h already improved bounded recovery and failure visibility for mis-selected Memory actions; this milestone reduces how often that recovery path is needed. Canonical Harness identity, EffectivePhase authority, schemas, validation, dispatch, MemoryRuntime routing, Hooks, and persistence governance remain unchanged.
+- [ ] Replace positional provider-facing aliases such as `action_1` with deterministic semantic aliases derived only from descriptor-fixed Harness action identity.
+- [ ] Standardize generated AgentPM provider aliases on a provider-safe ASCII subset compatible with the supported native function/tool APIs and a maximum 64-character budget.
+- [ ] Preserve the most discriminating fixed target information under the alias length budget. For Memory actions, prioritize:
+  1. semantic action kind,
+  2. space,
+  3. record type, but only when the space declares exactly one permitted record type and it is therefore descriptor-fixed,
+  4. concise package signal when space remains,
+  5. deterministic identity-derived suffix when needed for uniqueness/stability.
+- [ ] Do not encode model-selected arguments into aliases. When a space declares multiple permitted record types, `record_type` is a model-selected argument enum and must not appear in the alias; encoding one permitted value would misdescribe what the action accepts. Likewise keep `phase_complete` when outcome remains an argument enum rather than generating aliases per possible outcome.
+- [ ] Sanitize AgentPM package/resource identities for provider function-name constraints without changing canonical AgentPM identity.
+- [ ] Use deterministic identity-derived collision/truncation suffixes rather than catalog-position suffixes so provider-facing aliases remain stable when unrelated EffectivePhase actions are added or removed.
+- [ ] Preserve the existing alias -> canonical semantic action mapping as the authoritative reverse lookup; provider aliases remain transport/presentation metadata and never become capability identity or authority.
+
+- [ ] Improve provider-facing structured action descriptions when multiple actions of the same semantic kind are simultaneously available. Clearly identify the fixed target surface and distinguish nearby alternatives without duplicating detailed action schemas into ordinary prompt prose.
+- [ ] Add persistence-review Harness-control guidance telling the model to choose the Memory action whose fixed package/space/record-type semantics match the intended durable target exactly and to use `persistence_review_complete` when no further Memory work is needed.
+- [ ] Preserve the M14c.1 invariant that native structured-action providers receive semantic action declarations through their structured tool/function API rather than a duplicated Effective Capability Catalog in ordinary prompt text.
+
+- [ ] Treat provider-facing alias changes as intentional trace-visible output changes. Preserve canonical AgentPM semantic identity alongside aliases in ModelRuntime request snapshots, verbose trace/debug rendering, machine/SDK-observable diagnostics, and RunReport data wherever aliases are exposed.
+
+- [ ] Add tests covering:
+  - provider-facing aliases across AgentPM Tool, MCP Tool, Skill-resource, Knowledge, Memory, PhaseCompletion, and persistence-review control actions,
+  - provider-safe character normalization and 64-character length enforcement,
+  - Memory alias truncation priority preserving space and, where descriptor-fixed, record-type signals,
+  - record type omitted from aliases for spaces declaring multiple permitted record types,
+  - deterministic collision/truncation stability when unrelated EffectivePhase actions are added or removed,
+  - alias -> canonical identity round trips,
+  - multi-surface Memory action selection in ordinary phases and persistence review,
+  - no native-provider prose-catalog regression,
+  - and intentional trace-visible alias changes preserving canonical identity alongside aliases.
+
 ## Release Band 6: Memory Runtime and Reference Providers
-Covered milestones: 14-16.
-This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semantics, generated-contract enforcement, trusted scopes, retention/capacity, semantic retrieval, lifecycle operations, durable trigger state, and PostgreSQL/pgvector plus Redis reference providers. This band should be treated as a major runtime subsystem release because it introduces durable local state.
+Covered milestones: 14-16a.
+This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semantics, generated-contract enforcement, trusted scopes, retention/capacity, semantic retrieval, lifecycle operations, durable trigger state, and PostgreSQL/pgvector plus Redis reference providers, plus the Memory repair-feedback/persistence-review visibility and provider-facing semantic action selection hardening passes. This band should be treated as a major runtime subsystem release because it introduces durable local state.
 
 ## Milestone 17: MCP Export and `agentpm serve --mcp` Machine Lifecycle
 > Scope note: realize Agent-authored `bindings.mcp` as outward AgentPM MCP server surfaces. Preserve the existing shared-runner MCP implementation while adding a stable machine lifecycle/event contract and Session-owned Harness management. Outward MCP remains independent of active Run phase semantics.
