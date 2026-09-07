@@ -542,6 +542,17 @@ pub(super) fn memory_read_mode_label(mode: MemoryReadMode) -> &'static str {
     }
 }
 
+pub(super) fn memory_read_mode_from_label(label: &str) -> Option<MemoryReadMode> {
+    match label {
+        "key" => Some(MemoryReadMode::Key),
+        "filter" => Some(MemoryReadMode::Filter),
+        "chronological" => Some(MemoryReadMode::Chronological),
+        "full_text" => Some(MemoryReadMode::FullText),
+        "semantic" => Some(MemoryReadMode::Semantic),
+        _ => None,
+    }
+}
+
 pub(super) fn memory_write_operation_label(operation: MemoryWriteOperation) -> &'static str {
     match operation {
         MemoryWriteOperation::Create => "create",

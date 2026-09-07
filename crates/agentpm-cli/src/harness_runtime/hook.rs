@@ -158,6 +158,10 @@ pub struct BeforeMemoryReadHook {
     pub space: String,
     pub scope: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<Value>,
@@ -165,6 +169,7 @@ pub struct BeforeMemoryReadHook {
     pub limit: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    pub retrieval_modes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -185,7 +190,10 @@ pub struct BeforeMemoryWriteHook {
     pub phase_id: String,
     pub package: String,
     pub space: String,
+    pub operation: String,
     pub record_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_id: Option<String>,
     pub scope: Value,
     pub content: Value,
 }

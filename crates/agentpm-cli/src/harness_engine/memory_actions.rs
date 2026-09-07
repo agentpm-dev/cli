@@ -1,5 +1,6 @@
 use super::effective_phase::{
-    active_memory_space, memory_read_mode_label, memory_write_operation_label,
+    active_memory_space, memory_read_mode_from_label, memory_read_mode_label,
+    memory_write_operation_label,
 };
 use super::*;
 use crate::harness_runtime::{EmbeddingProvider, ModelProviderSelection};
@@ -24,6 +25,82 @@ pub(super) fn local_memory_write_operation(
         MemoryWriteOperation::Delete => LocalMemoryWriteOperation::Delete,
         MemoryWriteOperation::Archive => LocalMemoryWriteOperation::Archive,
     }
+}
+
+pub(super) fn memory_retrieval_mode_label(mode: &MemoryRetrievalMode) -> &'static str {
+    match mode {
+        MemoryRetrievalMode::Key => "key",
+        MemoryRetrievalMode::Filter => "filter",
+        MemoryRetrievalMode::Chronological => "chronological",
+        MemoryRetrievalMode::FullText => "full_text",
+        MemoryRetrievalMode::Semantic => "semantic",
+    }
+}
+
+pub(super) fn apply_before_memory_read_decision_to_action(
+    action: &SemanticAction,
+    decision: crate::harness_runtime::hook::BeforeMemoryReadDecision,
+) -> std::result::Result<SemanticAction, String> {
+    let SemanticAction::MemoryRead {
+        package,
+        space,
+        mode,
+        record_id,
+        record_type,
+        filter,
+        query,
+        limit,
+    } = action
+    else {
+        return Err("before_memory_read hook can only patch Memory read actions".into());
+    };
+    let mode = if let Some(label) = decision.mode {
+        memory_read_mode_from_label(&label)
+            .ok_or_else(|| format!("before_memory_read hook returned unknown mode `{label}`"))?
+    } else {
+        *mode
+    };
+    let filter = if let Some(filter) = decision.filter {
+        serde_json::from_value::<BTreeMap<String, Value>>(filter)
+            .map_err(|err| format!("before_memory_read hook returned invalid filter: {err}"))?
+    } else {
+        filter.clone()
+    };
+    Ok(SemanticAction::MemoryRead {
+        package: package.clone(),
+        space: space.clone(),
+        mode,
+        record_id: record_id.clone(),
+        record_type: record_type.clone(),
+        filter,
+        query: decision.query.or_else(|| query.clone()),
+        limit: decision.limit.or(*limit),
+    })
+}
+
+pub(super) fn apply_before_memory_write_decision_to_action(
+    action: &SemanticAction,
+    decision: crate::harness_runtime::hook::BeforeMemoryWriteDecision,
+) -> std::result::Result<SemanticAction, String> {
+    let SemanticAction::MemoryWrite {
+        package,
+        space,
+        operation,
+        record_type,
+        record_id,
+        content,
+    } = action
+    else {
+        return Err("before_memory_write hook can only patch Memory write actions".into());
+    };
+    Ok(SemanticAction::MemoryWrite {
+        package: package.clone(),
+        space: space.clone(),
+        operation: *operation,
+        record_type: record_type.clone(),
+        record_id: record_id.clone(),
+        content: decision.content.or_else(|| content.clone()),
+    })
 }
 
 pub(super) fn memory_runtime_failure_output(

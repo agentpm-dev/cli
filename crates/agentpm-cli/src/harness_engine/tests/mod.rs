@@ -6,9 +6,11 @@ use crate::harness_runtime::action::{
 };
 use crate::harness_runtime::approval::ScriptedApprovalController;
 use crate::harness_runtime::hook::{
-    BeforeKnowledgeRequestDecision, BeforeKnowledgeRequestHook, BeforeModelRequestContextSection,
-    BeforeModelRequestDecision, BeforeModelRequestHook, BeforeToolCallDecision,
-    BeforeToolSelectionDecision, BeforeToolSelectionHook, HookRuntimeFailure,
+    BeforeKnowledgeRequestDecision, BeforeKnowledgeRequestHook, BeforeMemoryReadDecision,
+    BeforeMemoryReadHook, BeforeMemoryWriteDecision, BeforeMemoryWriteHook,
+    BeforeModelRequestContextSection, BeforeModelRequestDecision, BeforeModelRequestHook,
+    BeforeToolCallDecision, BeforeToolSelectionDecision, BeforeToolSelectionHook,
+    HookRuntimeFailure,
 };
 use crate::harness_runtime::knowledge::{
     EmbeddingProvider, KnowledgeRuntimeFailure, ServiceRuntime,
@@ -815,8 +817,18 @@ struct TestHookRuntime {
     tool_call_hooks: Vec<BeforeToolCallHook>,
     knowledge_request: Option<BeforeKnowledgeRequestDecision>,
     knowledge_request_hooks: Vec<BeforeKnowledgeRequestHook>,
+    memory_read: Option<BeforeMemoryReadDecision>,
+    memory_read_hooks: Vec<BeforeMemoryReadHook>,
+    memory_write: Option<BeforeMemoryWriteDecision>,
+    memory_write_hooks: Vec<BeforeMemoryWriteHook>,
     fail_before_tool_call: Option<String>,
     reject_before_tool_call: Option<String>,
+    fail_before_memory_read: Option<String>,
+    reject_before_memory_read: Option<String>,
+    nonfatal_before_memory_read: Option<String>,
+    fail_before_memory_write: Option<String>,
+    reject_before_memory_write: Option<String>,
+    nonfatal_before_memory_write: Option<String>,
     nonfatal_before_tool_call: Option<String>,
     nonfatal_failures: Vec<HookRuntimeFailure>,
     fail_before_model: Option<String>,
@@ -898,6 +910,58 @@ impl HookRuntime for TestHookRuntime {
     ) -> std::result::Result<BeforeKnowledgeRequestDecision, HookRuntimeFailure> {
         self.knowledge_request_hooks.push(hook);
         Ok(self.knowledge_request.clone().unwrap_or_default())
+    }
+
+    fn before_memory_read(
+        &mut self,
+        hook: BeforeMemoryReadHook,
+    ) -> std::result::Result<BeforeMemoryReadDecision, HookRuntimeFailure> {
+        self.memory_read_hooks.push(hook);
+        if let Some(message) = &self.nonfatal_before_memory_read {
+            self.nonfatal_failures.push(HookRuntimeFailure::new(
+                crate::harness_config::HarnessHookId::BeforeMemoryRead,
+                message.clone(),
+            ));
+        }
+        if let Some(message) = &self.reject_before_memory_read {
+            return Err(HookRuntimeFailure::rejection(
+                crate::harness_config::HarnessHookId::BeforeMemoryRead,
+                message.clone(),
+            ));
+        }
+        if let Some(message) = &self.fail_before_memory_read {
+            return Err(HookRuntimeFailure::new(
+                crate::harness_config::HarnessHookId::BeforeMemoryRead,
+                message.clone(),
+            ));
+        }
+        Ok(self.memory_read.clone().unwrap_or_default())
+    }
+
+    fn before_memory_write(
+        &mut self,
+        hook: BeforeMemoryWriteHook,
+    ) -> std::result::Result<BeforeMemoryWriteDecision, HookRuntimeFailure> {
+        self.memory_write_hooks.push(hook);
+        if let Some(message) = &self.nonfatal_before_memory_write {
+            self.nonfatal_failures.push(HookRuntimeFailure::new(
+                crate::harness_config::HarnessHookId::BeforeMemoryWrite,
+                message.clone(),
+            ));
+        }
+        if let Some(message) = &self.reject_before_memory_write {
+            return Err(HookRuntimeFailure::rejection(
+                crate::harness_config::HarnessHookId::BeforeMemoryWrite,
+                message.clone(),
+            ));
+        }
+        if let Some(message) = &self.fail_before_memory_write {
+            return Err(HookRuntimeFailure::new(
+                crate::harness_config::HarnessHookId::BeforeMemoryWrite,
+                message.clone(),
+            ));
+        }
+        Ok(self.memory_write.clone().unwrap_or_default())
     }
 
     fn drain_nonfatal_failures(&mut self) -> Vec<HookRuntimeFailure> {

@@ -10,11 +10,11 @@ use crate::harness_observability::{
 use crate::harness_plan::{PreflightDiagnostic, PreflightStatus};
 use crate::harness_runtime::action::{ActionFailureCategory, MemoryReadMode, MemoryWriteOperation};
 use crate::harness_runtime::hook::{
-    after_knowledge_retrieval_hook_from_result, apply_after_knowledge_retrieval_decision,
-    apply_before_knowledge_request_decision, apply_before_model_request_decision,
-    apply_before_tool_call_decision, apply_before_tool_selection_decision,
-    before_knowledge_request_hook_from_action, before_model_request_hook_from_request,
-    before_tool_selection_hook_from_phase,
+    BeforeMemoryReadHook, BeforeMemoryWriteHook, after_knowledge_retrieval_hook_from_result,
+    apply_after_knowledge_retrieval_decision, apply_before_knowledge_request_decision,
+    apply_before_model_request_decision, apply_before_tool_call_decision,
+    apply_before_tool_selection_decision, before_knowledge_request_hook_from_action,
+    before_model_request_hook_from_request, before_tool_selection_hook_from_phase,
 };
 use crate::harness_runtime::memory::{
     LocalMemoryActionError, LocalMemoryReadMode, LocalMemoryReadRequest, LocalMemorySemanticConfig,
@@ -59,7 +59,10 @@ mod validation;
 mod tests;
 
 pub use effective_phase::EffectivePhase;
-use effective_phase::memory_action_identity;
+use effective_phase::{
+    active_memory_space, memory_action_identity, memory_read_mode_label,
+    memory_write_operation_label,
+};
 use observability::*;
 use validation::*;
 
@@ -2148,6 +2151,439 @@ impl HarnessEngine {
                                 None,
                             );
                         }
+                    };
+                    self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
+                    action
+                } else if matches!(
+                    proposal.action,
+                    SemanticAction::MemoryRead { .. } | SemanticAction::MemoryWrite { .. }
+                ) {
+                    let (before_memory_hook, before_memory_binding_count) = match &proposal.action {
+                        SemanticAction::MemoryRead { .. } => {
+                            let hook = HarnessHookId::BeforeMemoryRead;
+                            let count = hooks.binding_count(&hook);
+                            (hook, count)
+                        }
+                        SemanticAction::MemoryWrite { .. } => {
+                            let hook = HarnessHookId::BeforeMemoryWrite;
+                            let count = hooks.binding_count(&hook);
+                            (hook, count)
+                        }
+                        _ => unreachable!(),
+                    };
+                    let before_memory_enabled = before_memory_binding_count > 0;
+                    if before_memory_enabled {
+                        self.emit_hook_started(
+                            session,
+                            HookEventContext {
+                                run_id: &run_id,
+                                phase_id: &phase.id,
+                                phase_execution_id: &phase_execution_id,
+                                hook: &before_memory_hook,
+                                binding_count: before_memory_binding_count,
+                            },
+                            action_trace_fields(&proposal.action),
+                        )?;
+                    }
+                    let action = match &proposal.action {
+                        SemanticAction::MemoryRead {
+                            package,
+                            space,
+                            mode,
+                            record_id,
+                            record_type,
+                            filter,
+                            query,
+                            limit,
+                        } => {
+                            let Some(memory) =
+                                active_memory_space(&effective_phase, package, space)
+                            else {
+                                let err = format!(
+                                    "Memory space `{}` for package `{package}` is not available in the current EffectivePhase.",
+                                    space
+                                );
+                                repair_feedback = Some(err);
+                                self.request_repair(
+                                    session,
+                                    &mut state,
+                                    &phase_execution_id,
+                                    repair_feedback.clone(),
+                                )?;
+                                continue;
+                            };
+                            let scope = match memory_actions::resolved_memory_scope(
+                                memory,
+                                &session.runtime_snapshot.runtime_scopes,
+                            ) {
+                                Ok(scope) => scope,
+                                Err(err) => {
+                                    return self.fail_phase(
+                                        session,
+                                        &phase.id,
+                                        &phase_execution_id,
+                                        err.to_string(),
+                                        None,
+                                    );
+                                }
+                            };
+                            match hooks.before_memory_read(BeforeMemoryReadHook {
+                                phase_id: phase.id.clone(),
+                                package: package.clone(),
+                                space: space.clone(),
+                                scope: json!(scope),
+                                record_id: record_id.clone(),
+                                record_type: record_type.clone(),
+                                query: query.clone(),
+                                filter: (!filter.is_empty()).then(|| json!(filter)),
+                                limit: *limit,
+                                mode: Some(memory_read_mode_label(*mode).into()),
+                                retrieval_modes: memory
+                                    .retrieval_modes
+                                    .iter()
+                                    .map(memory_actions::memory_retrieval_mode_label)
+                                    .map(str::to_string)
+                                    .collect(),
+                            }) {
+                                Ok(decision) => {
+                                    let patched = decision.query.is_some()
+                                        || decision.filter.is_some()
+                                        || decision.limit.is_some()
+                                        || decision.mode.is_some();
+                                    let patched_action = match memory_actions::apply_before_memory_read_decision_to_action(&proposal.action, decision) {
+                                        Ok(action) => action,
+                                        Err(err) => {
+                                            self.emit_nonfatal_hook_failures(
+                                                session,
+                                                &run_id,
+                                                &phase.id,
+                                                &phase_execution_id,
+                                                hooks,
+                                            )?;
+                                            session.emitter.emit(
+                                                HarnessEventType::HookFailed,
+                                                HarnessEventPayload::Lifecycle {
+                                                    message: err.clone(),
+                                                    fields: hook_event_fields(
+                                                        &before_memory_hook,
+                                                        &phase.id,
+                                                        before_memory_binding_count,
+                                                        action_trace_fields(&proposal.action),
+                                                    ),
+                                                },
+                                                HarnessEventBuilder {
+                                                    run_id: Some(run_id.clone()),
+                                                    phase_execution_id: Some(phase_execution_id.clone()),
+                                                    ..HarnessEventBuilder::default()
+                                                },
+                                            )?;
+                                            return self.fail_phase(
+                                                session,
+                                                &phase.id,
+                                                &phase_execution_id,
+                                                format!("before_memory_read hook returned invalid patch: {err}"),
+                                                None,
+                                            );
+                                        }
+                                    };
+                                    if let Err(err) =
+                                        validate_semantic_action(&patched_action, &effective_phase)
+                                    {
+                                        self.emit_nonfatal_hook_failures(
+                                            session,
+                                            &run_id,
+                                            &phase.id,
+                                            &phase_execution_id,
+                                            hooks,
+                                        )?;
+                                        session.emitter.emit(
+                                            HarnessEventType::HookFailed,
+                                            HarnessEventPayload::Lifecycle {
+                                                message: err.clone(),
+                                                fields: hook_event_fields(
+                                                    &before_memory_hook,
+                                                    &phase.id,
+                                                    before_memory_binding_count,
+                                                    action_trace_fields(&proposal.action),
+                                                ),
+                                            },
+                                            HarnessEventBuilder {
+                                                run_id: Some(run_id.clone()),
+                                                phase_execution_id: Some(
+                                                    phase_execution_id.clone(),
+                                                ),
+                                                ..HarnessEventBuilder::default()
+                                            },
+                                        )?;
+                                        return self.fail_phase(
+                                            session,
+                                            &phase.id,
+                                            &phase_execution_id,
+                                            format!("before_memory_read hook produced invalid action: {err}"),
+                                            None,
+                                        );
+                                    }
+                                    if before_memory_enabled {
+                                        self.emit_nonfatal_hook_failures(
+                                            session,
+                                            &run_id,
+                                            &phase.id,
+                                            &phase_execution_id,
+                                            hooks,
+                                        )?;
+                                        let mut fields = action_trace_fields(&patched_action);
+                                        fields.insert("patched".into(), json!(patched));
+                                        self.emit_hook_completed(
+                                            session,
+                                            HookEventContext {
+                                                run_id: &run_id,
+                                                phase_id: &phase.id,
+                                                phase_execution_id: &phase_execution_id,
+                                                hook: &before_memory_hook,
+                                                binding_count: before_memory_binding_count,
+                                            },
+                                            fields,
+                                        )?;
+                                    }
+                                    patched_action
+                                }
+                                Err(err) => {
+                                    let is_rejection = err.is_rejection();
+                                    self.emit_nonfatal_hook_failures(
+                                        session,
+                                        &run_id,
+                                        &phase.id,
+                                        &phase_execution_id,
+                                        hooks,
+                                    )?;
+                                    session.emitter.emit(
+                                        if is_rejection {
+                                            HarnessEventType::HookRejected
+                                        } else {
+                                            HarnessEventType::HookFailed
+                                        },
+                                        HarnessEventPayload::Lifecycle {
+                                            message: err.message.clone(),
+                                            fields: hook_event_fields(
+                                                &before_memory_hook,
+                                                &phase.id,
+                                                before_memory_binding_count,
+                                                action_trace_fields(&proposal.action),
+                                            ),
+                                        },
+                                        HarnessEventBuilder {
+                                            run_id: Some(run_id.clone()),
+                                            phase_execution_id: Some(phase_execution_id.clone()),
+                                            ..HarnessEventBuilder::default()
+                                        },
+                                    )?;
+                                    return self.fail_phase(
+                                        session,
+                                        &phase.id,
+                                        &phase_execution_id,
+                                        format!(
+                                            "before_memory_read hook {} action: {}",
+                                            if is_rejection { "rejected" } else { "failed" },
+                                            err.message
+                                        ),
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                        SemanticAction::MemoryWrite {
+                            package,
+                            space,
+                            operation,
+                            record_type,
+                            record_id,
+                            content,
+                        } => {
+                            let Some(memory) =
+                                active_memory_space(&effective_phase, package, space)
+                            else {
+                                let err = format!(
+                                    "Memory space `{}` for package `{package}` is not available in the current EffectivePhase.",
+                                    space
+                                );
+                                repair_feedback = Some(err);
+                                self.request_repair(
+                                    session,
+                                    &mut state,
+                                    &phase_execution_id,
+                                    repair_feedback.clone(),
+                                )?;
+                                continue;
+                            };
+                            let scope = match memory_actions::resolved_memory_scope(
+                                memory,
+                                &session.runtime_snapshot.runtime_scopes,
+                            ) {
+                                Ok(scope) => scope,
+                                Err(err) => {
+                                    return self.fail_phase(
+                                        session,
+                                        &phase.id,
+                                        &phase_execution_id,
+                                        err.to_string(),
+                                        None,
+                                    );
+                                }
+                            };
+                            match hooks.before_memory_write(BeforeMemoryWriteHook {
+                                phase_id: phase.id.clone(),
+                                package: package.clone(),
+                                space: space.clone(),
+                                operation: memory_write_operation_label(*operation).into(),
+                                record_type: record_type.clone(),
+                                record_id: record_id.clone(),
+                                scope: json!(scope),
+                                content: content.clone().unwrap_or(Value::Null),
+                            }) {
+                                Ok(decision) => {
+                                    let patched = decision.content.is_some();
+                                    let patched_action = match memory_actions::apply_before_memory_write_decision_to_action(&proposal.action, decision) {
+                                        Ok(action) => action,
+                                        Err(err) => {
+                                            self.emit_nonfatal_hook_failures(
+                                                session,
+                                                &run_id,
+                                                &phase.id,
+                                                &phase_execution_id,
+                                                hooks,
+                                            )?;
+                                            session.emitter.emit(
+                                                HarnessEventType::HookFailed,
+                                                HarnessEventPayload::Lifecycle {
+                                                    message: err.clone(),
+                                                    fields: hook_event_fields(
+                                                        &before_memory_hook,
+                                                        &phase.id,
+                                                        before_memory_binding_count,
+                                                        action_trace_fields(&proposal.action),
+                                                    ),
+                                                },
+                                                HarnessEventBuilder {
+                                                    run_id: Some(run_id.clone()),
+                                                    phase_execution_id: Some(phase_execution_id.clone()),
+                                                    ..HarnessEventBuilder::default()
+                                                },
+                                            )?;
+                                            return self.fail_phase(
+                                                session,
+                                                &phase.id,
+                                                &phase_execution_id,
+                                                format!("before_memory_write hook returned invalid patch: {err}"),
+                                                None,
+                                            );
+                                        }
+                                    };
+                                    if let Err(err) =
+                                        validate_semantic_action(&patched_action, &effective_phase)
+                                    {
+                                        self.emit_nonfatal_hook_failures(
+                                            session,
+                                            &run_id,
+                                            &phase.id,
+                                            &phase_execution_id,
+                                            hooks,
+                                        )?;
+                                        session.emitter.emit(
+                                            HarnessEventType::HookFailed,
+                                            HarnessEventPayload::Lifecycle {
+                                                message: err.clone(),
+                                                fields: hook_event_fields(
+                                                    &before_memory_hook,
+                                                    &phase.id,
+                                                    before_memory_binding_count,
+                                                    action_trace_fields(&proposal.action),
+                                                ),
+                                            },
+                                            HarnessEventBuilder {
+                                                run_id: Some(run_id.clone()),
+                                                phase_execution_id: Some(
+                                                    phase_execution_id.clone(),
+                                                ),
+                                                ..HarnessEventBuilder::default()
+                                            },
+                                        )?;
+                                        return self.fail_phase(
+                                            session,
+                                            &phase.id,
+                                            &phase_execution_id,
+                                            format!("before_memory_write hook produced invalid action: {err}"),
+                                            None,
+                                        );
+                                    }
+                                    if before_memory_enabled {
+                                        self.emit_nonfatal_hook_failures(
+                                            session,
+                                            &run_id,
+                                            &phase.id,
+                                            &phase_execution_id,
+                                            hooks,
+                                        )?;
+                                        let mut fields = action_trace_fields(&patched_action);
+                                        fields.insert("patched".into(), json!(patched));
+                                        self.emit_hook_completed(
+                                            session,
+                                            HookEventContext {
+                                                run_id: &run_id,
+                                                phase_id: &phase.id,
+                                                phase_execution_id: &phase_execution_id,
+                                                hook: &before_memory_hook,
+                                                binding_count: before_memory_binding_count,
+                                            },
+                                            fields,
+                                        )?;
+                                    }
+                                    patched_action
+                                }
+                                Err(err) => {
+                                    let is_rejection = err.is_rejection();
+                                    self.emit_nonfatal_hook_failures(
+                                        session,
+                                        &run_id,
+                                        &phase.id,
+                                        &phase_execution_id,
+                                        hooks,
+                                    )?;
+                                    session.emitter.emit(
+                                        if is_rejection {
+                                            HarnessEventType::HookRejected
+                                        } else {
+                                            HarnessEventType::HookFailed
+                                        },
+                                        HarnessEventPayload::Lifecycle {
+                                            message: err.message.clone(),
+                                            fields: hook_event_fields(
+                                                &before_memory_hook,
+                                                &phase.id,
+                                                before_memory_binding_count,
+                                                action_trace_fields(&proposal.action),
+                                            ),
+                                        },
+                                        HarnessEventBuilder {
+                                            run_id: Some(run_id.clone()),
+                                            phase_execution_id: Some(phase_execution_id.clone()),
+                                            ..HarnessEventBuilder::default()
+                                        },
+                                    )?;
+                                    return self.fail_phase(
+                                        session,
+                                        &phase.id,
+                                        &phase_execution_id,
+                                        format!(
+                                            "before_memory_write hook {} action: {}",
+                                            if is_rejection { "rejected" } else { "failed" },
+                                            err.message
+                                        ),
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
                     };
                     self.emit_service_lifecycle_events(session, Some(&run_id), service_events)?;
                     action

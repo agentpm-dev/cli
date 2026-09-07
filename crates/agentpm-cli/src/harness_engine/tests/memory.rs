@@ -1,5 +1,354 @@
 use super::*;
 
+fn write_m14f_projected_memory_package(root: &std::path::Path) -> MemoryRecordTypeRuntimeSnapshot {
+    std::fs::create_dir_all(root.join("schemas")).unwrap();
+    std::fs::write(
+        root.join("agent.json"),
+        r#"{
+  "kind": "memory",
+  "name": "m14f-projected-memory-test",
+  "version": "0.1.0",
+  "description": "M14f hook projection test package.",
+  "memory": {
+    "scopes": {
+      "user": { "description": "User scope." }
+    },
+    "record_types": {
+      "note": {
+        "version": "1.0.0",
+        "description": "Durable note.",
+        "schema": "schemas/note.schema.json"
+      }
+    },
+    "spaces": {
+      "notes": {
+        "description": "Direct notes.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key", "filter", "chronological"] }
+      }
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("schemas/note.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "body": { "type": "string", "minLength": 1 },
+    "scratch": {
+      "type": "object",
+      "properties": {
+        "public": { "type": "string" },
+        "private": {
+          "type": "string",
+          "x-agentpm-persist": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["body"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
+    crate::commands::memory::execute_memory_build(
+        &root.join("agent.json"),
+        crate::commands::memory::MemoryBuildMode::Write,
+    )
+    .unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(root).unwrap();
+    MemoryRecordTypeRuntimeSnapshot {
+        name: "note".into(),
+        schema_version: "1.0.0".into(),
+        content_schema: crate::harness_runtime::memory::generated_memory_content_schema(
+            &contracts, "notes", "note",
+        )
+        .unwrap(),
+    }
+}
+
+fn runtime_with_m14f_projected_memory(
+    workspace: &std::path::Path,
+    package_root: &std::path::Path,
+    memory_runtime: &str,
+) -> RuntimeSnapshot {
+    let record_type = write_m14f_projected_memory_package(package_root);
+    let mut runtime = RuntimeSnapshot::empty("session-test".into());
+    runtime.workspace_root = workspace.to_path_buf();
+    runtime.state_dir = workspace.join(".agentpm-state");
+    runtime
+        .runtime_scopes
+        .insert("user".into(), "user-123".into());
+    runtime.memory.push(MemorySpaceRuntimeSnapshot {
+        package: "m14f-projected-memory-test".into(),
+        package_version: "0.1.0".into(),
+        space: "notes".into(),
+        model: MemorySpaceModel::Collection,
+        description: "Direct notes.".into(),
+        root: Some(package_root.to_path_buf()),
+        runtime: memory_runtime.into(),
+        source: "agent_binding".into(),
+        state: "available".into(),
+        readiness_reason: None,
+        binding_scope: "global".into(),
+        scope_keys: vec!["user".into()],
+        retrieval_modes: vec![
+            MemoryRetrievalMode::Key,
+            MemoryRetrievalMode::Filter,
+            MemoryRetrievalMode::Chronological,
+        ],
+        semantic: None,
+        append_only: false,
+        record_types: vec![record_type],
+    });
+    runtime
+}
+
+fn write_m14f_engine_memory_package(
+    root: &std::path::Path,
+) -> Vec<MemoryRecordTypeRuntimeSnapshot> {
+    std::fs::create_dir_all(root.join("schemas")).unwrap();
+    std::fs::write(
+        root.join("agent.json"),
+        r#"{
+  "kind": "memory",
+  "name": "m14f-engine-memory-test",
+  "version": "0.1.0",
+  "description": "M14f Engine integration Memory test package.",
+  "memory": {
+    "scopes": {
+      "user": { "description": "User scope." }
+    },
+    "record_types": {
+      "note": {
+        "version": "1.0.0",
+        "description": "Durable note.",
+        "schema": "schemas/note.schema.json"
+      },
+      "profile": {
+        "version": "1.0.0",
+        "description": "Current profile.",
+        "schema": "schemas/profile.schema.json"
+      },
+      "event": {
+        "version": "1.0.0",
+        "description": "Timeline event.",
+        "schema": "schemas/event.schema.json"
+      }
+    },
+    "spaces": {
+      "notes": {
+        "description": "Direct notes.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key", "filter", "chronological", "full_text"] }
+      },
+      "profile": {
+        "description": "Current profile.",
+        "model": "document",
+        "record_types": ["profile"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key"] }
+      },
+      "timeline": {
+        "description": "Ordered timeline.",
+        "model": "sequence",
+        "record_types": ["event"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key", "chronological"] }
+      }
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("schemas/note.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "body": { "type": "string", "minLength": 1 }
+  },
+  "required": ["body"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("schemas/profile.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": { "type": "string", "minLength": 1 }
+  },
+  "required": ["name"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("schemas/event.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "body": { "type": "string", "minLength": 1 }
+  },
+  "required": ["body"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
+    crate::commands::memory::execute_memory_build(
+        &root.join("agent.json"),
+        crate::commands::memory::MemoryBuildMode::Write,
+    )
+    .unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(root).unwrap();
+    ["note", "profile", "event"]
+        .into_iter()
+        .map(|record_type| MemoryRecordTypeRuntimeSnapshot {
+            name: record_type.into(),
+            schema_version: "1.0.0".into(),
+            content_schema: crate::harness_runtime::memory::generated_memory_content_schema(
+                &contracts,
+                match record_type {
+                    "profile" => "profile",
+                    "event" => "timeline",
+                    _ => "notes",
+                },
+                record_type,
+            )
+            .unwrap(),
+        })
+        .collect()
+}
+
+fn runtime_with_m14f_engine_memory(
+    workspace: &std::path::Path,
+    package_root: &std::path::Path,
+) -> RuntimeSnapshot {
+    let mut record_types = write_m14f_engine_memory_package(package_root)
+        .into_iter()
+        .map(|record_type| (record_type.name.clone(), record_type))
+        .collect::<BTreeMap<_, _>>();
+    let mut runtime = RuntimeSnapshot::empty("session-test".into());
+    runtime.workspace_root = workspace.to_path_buf();
+    runtime.state_dir = workspace.join(".agentpm-state");
+    runtime
+        .runtime_scopes
+        .insert("user".into(), "user-123".into());
+    runtime.memory = vec![
+        MemorySpaceRuntimeSnapshot {
+            package: "m14f-engine-memory-test".into(),
+            package_version: "0.1.0".into(),
+            space: "notes".into(),
+            model: MemorySpaceModel::Collection,
+            description: "Direct notes.".into(),
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![
+                MemoryRetrievalMode::Key,
+                MemoryRetrievalMode::Filter,
+                MemoryRetrievalMode::Chronological,
+                MemoryRetrievalMode::FullText,
+            ],
+            semantic: None,
+            append_only: false,
+            record_types: vec![record_types.remove("note").unwrap()],
+        },
+        MemorySpaceRuntimeSnapshot {
+            package: "m14f-engine-memory-test".into(),
+            package_version: "0.1.0".into(),
+            space: "profile".into(),
+            model: MemorySpaceModel::Document,
+            description: "Current profile.".into(),
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![MemoryRetrievalMode::Key],
+            semantic: None,
+            append_only: false,
+            record_types: vec![record_types.remove("profile").unwrap()],
+        },
+        MemorySpaceRuntimeSnapshot {
+            package: "m14f-engine-memory-test".into(),
+            package_version: "0.1.0".into(),
+            space: "timeline".into(),
+            model: MemorySpaceModel::Sequence,
+            description: "Ordered timeline.".into(),
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![MemoryRetrievalMode::Key, MemoryRetrievalMode::Chronological],
+            semantic: None,
+            append_only: false,
+            record_types: vec![record_types.remove("event").unwrap()],
+        },
+    ];
+    runtime
+}
+
+fn snapshot_file_tree(root: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
+    fn visit(
+        base: &std::path::Path,
+        path: &std::path::Path,
+        snapshot: &mut BTreeMap<String, Vec<u8>>,
+    ) {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let file_type = entry.file_type().unwrap();
+            if file_type.is_dir() {
+                visit(base, &path, snapshot);
+            } else if file_type.is_file() {
+                let relative = path
+                    .strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                snapshot.insert(relative, std::fs::read(&path).unwrap());
+            }
+        }
+    }
+
+    let mut snapshot = BTreeMap::new();
+    if root.exists() {
+        visit(root, root, &mut snapshot);
+    }
+    snapshot
+}
+
 #[test]
 fn memory_descriptors_require_bound_ready_space_and_trusted_scope() {
     let temp = temp_workspace_dir("m14c-descriptors");
@@ -316,6 +665,1391 @@ fn direct_memory_actions_route_to_local_runtime_and_phase_transcript() {
     assert_eq!(provenance["action_kind"], json!("memory_write"));
     assert_eq!(provenance["operation"], json!("create"));
     assert_eq!(provenance["source"], json!("agent_binding"));
+}
+
+#[test]
+fn engine_memory_persists_across_session_restart_and_readback() {
+    let temp = temp_workspace_dir("m14f-engine-restart-readback");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14f_engine_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut write_model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "write",
+                SemanticAction::MemoryWrite {
+                    package: "m14f-engine-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "Persistent note across restart" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let write_result = engine
+        .execute_run(
+            &mut session,
+            "write persistent memory",
+            &mut write_model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(write_result) = write_result else {
+        panic!("expected terminal write result");
+    };
+    assert_eq!(
+        write_result.report.terminal_status,
+        HarnessTerminalStatus::Ended
+    );
+
+    let restarted_runtime = runtime_with_m14f_engine_memory(&temp, &package_root);
+    let mut restarted_session = HarnessSession::with_runtime_snapshot(restarted_runtime);
+    let mut read_model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "read",
+                SemanticAction::MemoryRead {
+                    package: "m14f-engine-memory-test".into(),
+                    space: "notes".into(),
+                    mode: MemoryReadMode::Filter,
+                    record_id: None,
+                    record_type: Some("note".into()),
+                    filter: BTreeMap::from([(
+                        "body".into(),
+                        json!("Persistent note across restart"),
+                    )]),
+                    query: None,
+                    limit: Some(1),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let read_result = engine
+        .execute_run(
+            &mut restarted_session,
+            "read persistent memory",
+            &mut read_model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(read_result) = read_result else {
+        panic!("expected terminal read result");
+    };
+    assert_eq!(
+        read_result.report.terminal_status,
+        HarnessTerminalStatus::Ended
+    );
+    assert_eq!(read_result.report.usage.memory_requests, 1);
+    assert!(
+        read_model.requests[1]
+            .prompt
+            .render_text()
+            .contains("Persistent note across restart")
+    );
+}
+
+#[test]
+fn engine_memory_run_keeps_installed_agentpm_package_tree_immutable() {
+    let temp = temp_workspace_dir("m14f-engine-agentpm-immutability");
+    let package_root = temp
+        .join(".agentpm")
+        .join("memory")
+        .join("m14f-engine-memory-test")
+        .join("0.1.0");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14f_engine_memory(&temp, &package_root);
+    let installed_package_snapshot = snapshot_file_tree(&temp.join(".agentpm"));
+    assert!(
+        installed_package_snapshot.contains_key("memory/m14f-engine-memory-test/0.1.0/agent.json")
+    );
+
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "write",
+                SemanticAction::MemoryWrite {
+                    package: "m14f-engine-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "State belongs outside installed packages" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "read",
+                SemanticAction::MemoryRead {
+                    package: "m14f-engine-memory-test".into(),
+                    space: "notes".into(),
+                    mode: MemoryReadMode::Filter,
+                    record_id: None,
+                    record_type: Some("note".into()),
+                    filter: BTreeMap::from([(
+                        "body".into(),
+                        json!("State belongs outside installed packages"),
+                    )]),
+                    query: None,
+                    limit: Some(1),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write and read installed memory package",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.memory_requests, 2);
+    assert_eq!(
+        snapshot_file_tree(&temp.join(".agentpm")),
+        installed_package_snapshot
+    );
+    assert!(temp.join(".agentpm-state").join("memory.sqlite3").exists());
+    assert!(
+        !snapshot_file_tree(&temp.join(".agentpm"))
+            .keys()
+            .any(|path| path.ends_with("memory.sqlite3"))
+    );
+}
+
+#[test]
+fn engine_memory_document_and_sequence_spaces_preserve_semantics() {
+    let temp = temp_workspace_dir("m14f-engine-document-sequence");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14f_engine_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![
+                SemanticActionProposal::new(
+                    "profile-initial",
+                    SemanticAction::MemoryWrite {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "profile".into(),
+                        operation: MemoryWriteOperation::Upsert,
+                        record_type: "profile".into(),
+                        record_id: None,
+                        content: Some(json!({ "name": "Initial profile" })),
+                    },
+                ),
+                SemanticActionProposal::new(
+                    "profile-replacement",
+                    SemanticAction::MemoryWrite {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "profile".into(),
+                        operation: MemoryWriteOperation::Upsert,
+                        record_type: "profile".into(),
+                        record_id: None,
+                        content: Some(json!({ "name": "Replacement profile" })),
+                    },
+                ),
+                SemanticActionProposal::new(
+                    "profile-read",
+                    SemanticAction::MemoryRead {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "profile".into(),
+                        mode: MemoryReadMode::Key,
+                        record_id: None,
+                        record_type: Some("profile".into()),
+                        filter: BTreeMap::new(),
+                        query: None,
+                        limit: None,
+                    },
+                ),
+                SemanticActionProposal::new(
+                    "timeline-a",
+                    SemanticAction::MemoryWrite {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "timeline".into(),
+                        operation: MemoryWriteOperation::Create,
+                        record_type: "event".into(),
+                        record_id: None,
+                        content: Some(json!({ "body": "Timeline A" })),
+                    },
+                ),
+                SemanticActionProposal::new(
+                    "timeline-b",
+                    SemanticAction::MemoryWrite {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "timeline".into(),
+                        operation: MemoryWriteOperation::Create,
+                        record_type: "event".into(),
+                        record_id: None,
+                        content: Some(json!({ "body": "Timeline B" })),
+                    },
+                ),
+                SemanticActionProposal::new(
+                    "timeline-read",
+                    SemanticAction::MemoryRead {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "timeline".into(),
+                        mode: MemoryReadMode::Chronological,
+                        record_id: None,
+                        record_type: Some("event".into()),
+                        filter: BTreeMap::new(),
+                        query: None,
+                        limit: Some(2),
+                    },
+                ),
+            ],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "exercise document and sequence memory",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.memory_requests, 6);
+    assert!(dispatcher.dispatched.is_empty());
+
+    let events = handle.events();
+    let profile_read = events
+        .iter()
+        .find(|event| {
+            if event.event_type != HarnessEventType::MemoryReadCompleted {
+                return false;
+            }
+            let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+                return false;
+            };
+            fields.get("space").and_then(Value::as_str) == Some("profile")
+        })
+        .expect("profile read completed");
+    let HarnessEventPayload::Action { fields, .. } = &profile_read.payload else {
+        panic!("expected profile read action payload");
+    };
+    assert_eq!(
+        fields["result"]["records"][0]["content"]["name"],
+        json!("Replacement profile")
+    );
+
+    let timeline_read = events
+        .iter()
+        .find(|event| {
+            if event.event_type != HarnessEventType::MemoryReadCompleted {
+                return false;
+            }
+            let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+                return false;
+            };
+            fields.get("space").and_then(Value::as_str) == Some("timeline")
+        })
+        .expect("timeline read completed");
+    let HarnessEventPayload::Action { fields, .. } = &timeline_read.payload else {
+        panic!("expected timeline read action payload");
+    };
+    assert_eq!(
+        fields["result"]["records"][0]["content"]["body"],
+        json!("Timeline A")
+    );
+    assert_eq!(
+        fields["result"]["records"][1]["content"]["body"],
+        json!("Timeline B")
+    );
+}
+
+#[test]
+fn engine_memory_archive_and_delete_remove_records_from_active_reads() {
+    let temp = temp_workspace_dir("m14f-engine-archive-delete");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14f_engine_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut create_model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![
+                SemanticActionProposal::new(
+                    "archive-target",
+                    SemanticAction::MemoryWrite {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "notes".into(),
+                        operation: MemoryWriteOperation::Create,
+                        record_type: "note".into(),
+                        record_id: None,
+                        content: Some(json!({ "body": "Archive target" })),
+                    },
+                ),
+                SemanticActionProposal::new(
+                    "delete-target",
+                    SemanticAction::MemoryWrite {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "notes".into(),
+                        operation: MemoryWriteOperation::Create,
+                        record_type: "note".into(),
+                        record_id: None,
+                        content: Some(json!({ "body": "Delete target" })),
+                    },
+                ),
+            ],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let create_result = engine
+        .execute_run(
+            &mut session,
+            "create lifecycle targets",
+            &mut create_model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(create_result) = create_result else {
+        panic!("expected terminal create result");
+    };
+    assert_eq!(
+        create_result.report.terminal_status,
+        HarnessTerminalStatus::Ended
+    );
+
+    let created_ids = handle
+        .events()
+        .iter()
+        .filter(|event| event.event_type == HarnessEventType::MemoryWriteCompleted)
+        .map(|event| {
+            let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+                panic!("expected memory write action payload");
+            };
+            fields["result"]["record_id"]
+                .as_str()
+                .expect("record_id")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(created_ids.len(), 2);
+
+    let mut lifecycle_model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![
+                SemanticActionProposal::new(
+                    "archive",
+                    SemanticAction::MemoryWrite {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "notes".into(),
+                        operation: MemoryWriteOperation::Archive,
+                        record_type: "note".into(),
+                        record_id: Some(created_ids[0].clone()),
+                        content: None,
+                    },
+                ),
+                SemanticActionProposal::new(
+                    "delete",
+                    SemanticAction::MemoryWrite {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "notes".into(),
+                        operation: MemoryWriteOperation::Delete,
+                        record_type: "note".into(),
+                        record_id: Some(created_ids[1].clone()),
+                        content: None,
+                    },
+                ),
+                SemanticActionProposal::new(
+                    "read-active",
+                    SemanticAction::MemoryRead {
+                        package: "m14f-engine-memory-test".into(),
+                        space: "notes".into(),
+                        mode: MemoryReadMode::Chronological,
+                        record_id: None,
+                        record_type: Some("note".into()),
+                        filter: BTreeMap::new(),
+                        query: None,
+                        limit: Some(5),
+                    },
+                ),
+            ],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let lifecycle_result = engine
+        .execute_run(
+            &mut session,
+            "archive delete and read active memory",
+            &mut lifecycle_model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(lifecycle_result) = lifecycle_result else {
+        panic!("expected terminal lifecycle result");
+    };
+    assert_eq!(
+        lifecycle_result.report.terminal_status,
+        HarnessTerminalStatus::Ended
+    );
+    assert_eq!(lifecycle_result.report.usage.memory_requests, 3);
+
+    let events = handle.events();
+    assert!(events.iter().any(|event| {
+        if event.event_type != HarnessEventType::MemoryWriteCompleted {
+            return false;
+        }
+        let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+            return false;
+        };
+        fields["operation"] == "archive"
+    }));
+    assert!(events.iter().any(|event| {
+        if event.event_type != HarnessEventType::MemoryWriteCompleted {
+            return false;
+        }
+        let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+            return false;
+        };
+        fields["operation"] == "delete"
+    }));
+    let active_read = events
+        .iter()
+        .rev()
+        .find(|event| event.event_type == HarnessEventType::MemoryReadCompleted)
+        .expect("active read completed");
+    let HarnessEventPayload::Action { fields, .. } = &active_read.payload else {
+        panic!("expected active read action payload");
+    };
+    assert_eq!(fields["result"]["count"], json!(0));
+    assert_eq!(
+        fields["result"]["records"]
+            .as_array()
+            .expect("records")
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn before_memory_write_hook_patches_content_before_runtime_dispatch() {
+    let temp = temp_workspace_dir("m14f-before-memory-write");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "write",
+                SemanticAction::MemoryWrite {
+                    package: "m14c-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "Original note" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "read",
+                SemanticAction::MemoryRead {
+                    package: "m14c-memory-test".into(),
+                    space: "notes".into(),
+                    mode: MemoryReadMode::Filter,
+                    record_id: None,
+                    record_type: Some("note".into()),
+                    filter: BTreeMap::from([("body".into(), json!("Hooked note"))]),
+                    query: None,
+                    limit: Some(1),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryWrite],
+        memory_write: Some(BeforeMemoryWriteDecision {
+            content: Some(json!({ "body": "Hooked note", "labels": ["m14f"] })),
+        }),
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m14f-write-hook".into(),
+            "write memory",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(hooks.memory_write_hooks.len(), 1);
+    let hook_input = &hooks.memory_write_hooks[0];
+    assert_eq!(hook_input.operation, "create");
+    assert_eq!(hook_input.record_type, "note");
+    assert_eq!(hook_input.scope["user"], json!("user-123"));
+    assert_eq!(hook_input.content["body"], json!("Original note"));
+    assert!(
+        model.requests[2]
+            .prompt
+            .render_text()
+            .contains("Hooked note")
+    );
+    let events = handle.events();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::HookStarted)
+    );
+    assert!(events.iter().any(|event| {
+        if event.event_type != HarnessEventType::HookCompleted {
+            return false;
+        }
+        let HarnessEventPayload::Lifecycle { fields, .. } = &event.payload else {
+            return false;
+        };
+        fields.get("hook").and_then(Value::as_str) == Some("before_memory_write")
+            && fields.get("patched").and_then(Value::as_bool) == Some(true)
+    }));
+}
+
+#[test]
+fn before_memory_write_hook_patch_is_projected_before_custom_runtime_dispatch() {
+    #[derive(Clone)]
+    struct RecordingMemoryRuntime {
+        requests: std::rc::Rc<std::cell::RefCell<Vec<Value>>>,
+    }
+
+    impl HostServiceInvoker for RecordingMemoryRuntime {
+        fn invoke_host_service(
+            &mut self,
+            _role: &str,
+            _registry_id: &str,
+            _method: &str,
+            payload: Value,
+            _timeout_ms: u64,
+        ) -> Result<Value> {
+            self.requests.borrow_mut().push(payload.clone());
+            Ok(json!({
+                "ok": true,
+                "package": payload["request"]["package"].clone(),
+                "package_version": payload["request"]["package_version"].clone(),
+                "space": payload["request"]["space"].clone(),
+                "operation": payload["request"]["operation"].clone(),
+                "record_id": "remote-1"
+            }))
+        }
+    }
+
+    let temp = temp_workspace_dir("m14f-memory-hook-custom-runtime-projection");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14f_projected_memory(&temp, &package_root, "remote-memory");
+    let requests = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let custom_memory = CustomMemoryRuntime::new(
+        runtime.memory.clone(),
+        HashMap::from([(
+            "remote-memory".into(),
+            ServiceRuntime::host(
+                Box::new(RecordingMemoryRuntime {
+                    requests: requests.clone(),
+                }),
+                1_000,
+            ),
+        )]),
+    );
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "write",
+                SemanticAction::MemoryWrite {
+                    package: "m14f-projected-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({
+                        "body": "Original note",
+                        "scratch": {
+                            "public": "original public scratch",
+                            "private": "original private scratch"
+                        }
+                    })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryWrite],
+        memory_write: Some(BeforeMemoryWriteDecision {
+            content: Some(json!({
+                "body": "Hooked note",
+                "scratch": {
+                    "public": "hook public scratch",
+                    "private": "hook private scratch"
+                }
+            })),
+        }),
+        ..TestHookRuntime::default()
+    };
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: Some(custom_memory),
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m14f-memory-hook-custom-runtime-projection".into(),
+            "write memory",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(hooks.memory_write_hooks.len(), 1);
+    assert_eq!(
+        hooks.memory_write_hooks[0].content["scratch"]["private"],
+        json!("original private scratch")
+    );
+
+    let requests = requests.borrow();
+    assert_eq!(requests.len(), 1);
+    let request_content = &requests[0]["request"]["content"];
+    assert_eq!(request_content["body"], json!("Hooked note"));
+    assert_eq!(
+        request_content["scratch"]["public"],
+        json!("hook public scratch")
+    );
+    assert!(request_content["scratch"].get("private").is_none());
+    assert!(requests[0].to_string().contains("Hooked note"));
+    assert!(!requests[0].to_string().contains("hook private scratch"));
+    assert!(!requests[0].to_string().contains("original private scratch"));
+}
+
+#[test]
+fn before_memory_read_hook_patches_request_within_active_space() {
+    let temp = temp_workspace_dir("m14f-before-memory-read");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "write-beta",
+                SemanticAction::MemoryWrite {
+                    package: "m14c-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "Beta note" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "read",
+                SemanticAction::MemoryRead {
+                    package: "m14c-memory-test".into(),
+                    space: "notes".into(),
+                    mode: MemoryReadMode::Chronological,
+                    record_id: None,
+                    record_type: Some("note".into()),
+                    filter: BTreeMap::new(),
+                    query: None,
+                    limit: Some(2),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryRead],
+        memory_read: Some(BeforeMemoryReadDecision {
+            mode: Some("filter".into()),
+            filter: Some(json!({ "body": "Beta note" })),
+            limit: Some(1),
+            ..BeforeMemoryReadDecision::default()
+        }),
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m14f-read-hook".into(),
+            "read memory",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(hooks.memory_read_hooks.len(), 1);
+    let hook_input = &hooks.memory_read_hooks[0];
+    assert_eq!(hook_input.mode.as_deref(), Some("chronological"));
+    assert_eq!(
+        hook_input.retrieval_modes,
+        vec!["key", "filter", "chronological", "full_text"]
+    );
+    let prompt = model.requests[2].prompt.render_text();
+    assert!(prompt.contains("Beta note"));
+}
+
+#[test]
+fn before_memory_read_hook_rejection_fails_closed_before_runtime_dispatch() {
+    let temp = temp_workspace_dir("m14f-memory-read-hook-reject");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "read",
+            SemanticAction::MemoryRead {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                mode: MemoryReadMode::Filter,
+                record_id: None,
+                record_type: Some("note".into()),
+                filter: BTreeMap::from([("body".into(), json!("Must not read"))]),
+                query: None,
+                limit: Some(1),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryRead],
+        reject_before_memory_read: Some("policy denied memory read".into()),
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m14f-read-hook-reject".into(),
+            "read memory",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Failed);
+    assert_eq!(hooks.memory_read_hooks.len(), 1);
+    let events = handle.events();
+    assert!(events.iter().any(|event| {
+        if event.event_type != HarnessEventType::HookRejected {
+            return false;
+        }
+        let HarnessEventPayload::Lifecycle { fields, message } = &event.payload else {
+            return false;
+        };
+        fields.get("hook").and_then(Value::as_str) == Some("before_memory_read")
+            && message == "policy denied memory read"
+    }));
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::MemoryReadStarted)
+    );
+}
+
+#[test]
+fn before_memory_read_hook_rejection_emits_queued_nonfatal_failure_first() {
+    let temp = temp_workspace_dir("m14f-memory-read-hook-nonfatal-before-reject");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "read",
+            SemanticAction::MemoryRead {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                mode: MemoryReadMode::Filter,
+                record_id: None,
+                record_type: Some("note".into()),
+                filter: BTreeMap::from([("body".into(), json!("Must not read"))]),
+                query: None,
+                limit: Some(1),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryRead],
+        nonfatal_before_memory_read: Some("nonfatal memory read hook warning".into()),
+        reject_before_memory_read: Some("policy denied memory read".into()),
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m14f-read-hook-nonfatal-before-reject".into(),
+            "read memory",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Failed);
+    let events = handle.events();
+    let event_types = events
+        .iter()
+        .map(|event| event.event_type)
+        .collect::<Vec<_>>();
+    let hook_failed_position = event_types
+        .iter()
+        .position(|event_type| *event_type == HarnessEventType::HookFailed)
+        .expect("queued nonfatal hook failed event");
+    let hook_rejected_position = event_types
+        .iter()
+        .position(|event_type| *event_type == HarnessEventType::HookRejected)
+        .expect("terminal hook rejected event");
+    assert!(hook_failed_position < hook_rejected_position);
+    assert_eq!(
+        hook_event_fields_for(&events, HarnessEventType::HookFailed, "before_memory_read")["nonfatal"],
+        json!(true)
+    );
+    assert!(
+        !event_types
+            .iter()
+            .any(|event_type| *event_type == HarnessEventType::MemoryReadStarted)
+    );
+}
+
+#[test]
+fn before_memory_read_hook_undeclared_mode_patch_is_revalidated_before_dispatch() {
+    let temp = temp_workspace_dir("m14f-memory-read-hook-mode-revalidation");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "read",
+            SemanticAction::MemoryRead {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                mode: MemoryReadMode::Chronological,
+                record_id: None,
+                record_type: Some("note".into()),
+                filter: BTreeMap::new(),
+                query: None,
+                limit: Some(1),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryRead],
+        memory_read: Some(BeforeMemoryReadDecision {
+            mode: Some("semantic".into()),
+            query: Some("alpha semantic".into()),
+            limit: Some(1),
+            ..BeforeMemoryReadDecision::default()
+        }),
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m14f-read-hook-mode-revalidation".into(),
+            "read memory",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Failed);
+    assert_eq!(hooks.memory_read_hooks.len(), 1);
+    let events = handle.events();
+    assert!(events.iter().any(|event| {
+        if event.event_type != HarnessEventType::HookFailed {
+            return false;
+        }
+        let HarnessEventPayload::Lifecycle { message, .. } = &event.payload else {
+            return false;
+        };
+        message.contains("semantic")
+    }));
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::MemoryReadStarted)
+    );
+}
+
+#[test]
+fn before_memory_read_hook_malformed_filter_patch_fails_before_dispatch() {
+    let temp = temp_workspace_dir("m14f-memory-read-hook-filter-revalidation");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "read",
+            SemanticAction::MemoryRead {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                mode: MemoryReadMode::Chronological,
+                record_id: None,
+                record_type: Some("note".into()),
+                filter: BTreeMap::new(),
+                query: None,
+                limit: Some(1),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryRead],
+        memory_read: Some(BeforeMemoryReadDecision {
+            mode: Some("filter".into()),
+            filter: Some(json!("not an object")),
+            limit: Some(1),
+            ..BeforeMemoryReadDecision::default()
+        }),
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m14f-read-hook-filter-revalidation".into(),
+            "read memory",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Failed);
+    assert_eq!(hooks.memory_read_hooks.len(), 1);
+    let events = handle.events();
+    assert!(events.iter().any(|event| {
+        if event.event_type != HarnessEventType::HookFailed {
+            return false;
+        }
+        let HarnessEventPayload::Lifecycle { message, .. } = &event.payload else {
+            return false;
+        };
+        message.contains("invalid filter")
+    }));
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::MemoryReadStarted)
+    );
+}
+
+#[test]
+fn before_memory_write_hook_rejection_fails_closed_before_mutation() {
+    let temp = temp_workspace_dir("m14f-memory-hook-reject");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "write",
+            SemanticAction::MemoryWrite {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                operation: MemoryWriteOperation::Create,
+                record_type: "note".into(),
+                record_id: None,
+                content: Some(json!({ "body": "Must not persist" })),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryWrite],
+        reject_before_memory_write: Some("policy denied memory write".into()),
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m14f-hook-reject".into(),
+            "write memory",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Failed);
+    let events = handle.events();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::HookRejected)
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::MemoryWriteStarted)
+    );
+}
+
+#[test]
+fn before_memory_write_hook_patch_is_revalidated_before_mutation() {
+    let temp = temp_workspace_dir("m14f-memory-hook-revalidation");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "write",
+            SemanticAction::MemoryWrite {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                operation: MemoryWriteOperation::Create,
+                record_type: "note".into(),
+                record_id: None,
+                content: Some(json!({ "body": "Valid before hook" })),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryWrite],
+        memory_write: Some(BeforeMemoryWriteDecision {
+            content: Some(json!({ "labels": ["missing required body"] })),
+        }),
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m14f-hook-revalidate".into(),
+            "write memory",
+            &mut services,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Failed);
+    let events = handle.events();
+    assert!(events.iter().any(|event| {
+        if event.event_type != HarnessEventType::HookFailed {
+            return false;
+        }
+        let HarnessEventPayload::Lifecycle { message, .. } = &event.payload else {
+            return false;
+        };
+        message.contains("Memory content")
+    }));
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::MemoryWriteStarted)
+    );
 }
 
 #[test]

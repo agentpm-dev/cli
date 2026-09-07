@@ -454,7 +454,10 @@ fn is_content_key(key: &str) -> bool {
             | "arguments"
             | "argument"
             | "query"
+            | "filter"
+            | "scope"
             | "result"
+            | "provenance"
             | "vector"
             | "vectors"
             | "embedding_vector"
@@ -1331,6 +1334,52 @@ mod tests {
         assert!(none["payload"]["fields"].get("vector").is_none());
         assert!(none["payload"]["fields"].get("embedding_vector").is_none());
         assert_eq!(none["payload"]["fields"]["provider"], "manual");
+    }
+
+    #[test]
+    fn content_policy_redacts_memory_action_and_hook_content_fields() {
+        let event = HarnessEventEnvelope {
+            schema_version: HARNESS_EVENT_SCHEMA_VERSION,
+            event_id: "evt-1".into(),
+            session_id: "session-1".into(),
+            run_id: Some("run-1".into()),
+            session_sequence: 1,
+            run_sequence: Some(1),
+            timestamp: Utc::now(),
+            event_type: HarnessEventType::HookStarted,
+            phase_execution_id: Some("phase-exec-1".into()),
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Lifecycle {
+                message: "Hook `before_memory_write` started.".into(),
+                fields: BTreeMap::from([
+                    ("hook".into(), json!("before_memory_write")),
+                    ("package".into(), json!("@zack/memory")),
+                    ("space".into(), json!("notes")),
+                    ("query".into(), json!("secret query text")),
+                    ("filter".into(), json!({"body": "secret filter text"})),
+                    ("scope".into(), json!({"tenant": "secret-tenant"})),
+                    ("content".into(), json!({"body": "secret memory body"})),
+                    (
+                        "provenance".into(),
+                        json!({"provider": {"details": "secret provenance"}}),
+                    ),
+                ]),
+            },
+        };
+
+        let redacted = serde_json::to_value(
+            apply_content_policy(&event, &HarnessTraceContent::Redacted).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(redacted["payload"]["fields"]["hook"], "before_memory_write");
+        assert_eq!(redacted["payload"]["fields"]["package"], "@zack/memory");
+        assert_eq!(redacted["payload"]["fields"]["space"], "notes");
+        assert_eq!(redacted["payload"]["fields"]["query"], "[redacted]");
+        assert_eq!(redacted["payload"]["fields"]["filter"], "[redacted]");
+        assert_eq!(redacted["payload"]["fields"]["scope"], "[redacted]");
+        assert_eq!(redacted["payload"]["fields"]["content"], "[redacted]");
+        assert_eq!(redacted["payload"]["fields"]["provenance"], "[redacted]");
     }
 
     #[test]
