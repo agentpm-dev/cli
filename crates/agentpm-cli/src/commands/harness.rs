@@ -28,8 +28,8 @@ use crate::{
     },
     harness_observability::{
         HarnessEventEnvelope, HarnessEventSink, HarnessTerminalStatus, JsonlTraceSink,
-        RunOutputPaths, allocate_harness_run_id, apply_content_policy,
-        apply_content_policy_to_value,
+        MemoryWriteReviewReportSummary, RunOutputPaths, RunReport, allocate_harness_run_id,
+        apply_content_policy, apply_content_policy_to_value,
     },
     harness_runtime::SdkHostHookRegistration,
 };
@@ -1144,6 +1144,7 @@ fn run_headless_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Resul
         &mut hooks,
         Some(&mut service_events),
     )?;
+    print_memory_write_review_warnings(&terminal);
     match terminal.status {
         crate::harness_observability::HarnessTerminalStatus::Ended
         | crate::harness_observability::HarnessTerminalStatus::HandedOff => {
@@ -1370,6 +1371,36 @@ fn print_terminal_output(terminal: &RuntimeTerminalResult) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(output)?);
     }
     Ok(())
+}
+
+fn print_memory_write_review_warnings(terminal: &RuntimeTerminalResult) {
+    for warning in terminal_memory_write_review_warning_lines(terminal) {
+        eprintln!("{warning}");
+    }
+}
+
+fn terminal_memory_write_review_warning_lines(terminal: &RuntimeTerminalResult) -> Vec<String> {
+    memory_write_review_warning_lines(&terminal.report)
+}
+
+fn memory_write_review_warning_lines(report: &RunReport) -> Vec<String> {
+    report
+        .memory_write_review_summaries
+        .iter()
+        .filter(|summary| summary.status == "failed")
+        .map(memory_write_review_warning_line)
+        .collect()
+}
+
+fn memory_write_review_warning_line(summary: &MemoryWriteReviewReportSummary) -> String {
+    format!(
+        "Warning: Memory write review at {} {}: {}. Memory writes attempted/completed: {}/{}. Intended Memory may not have been written.",
+        summary.point,
+        summary.status,
+        summary.reason,
+        summary.memory_writes_attempted,
+        summary.memory_writes_completed
+    )
 }
 
 fn terminal_status_error_message(

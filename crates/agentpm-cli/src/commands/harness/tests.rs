@@ -6,7 +6,8 @@ use crate::harness_config::{
     HarnessTraceLevel, ResolvedHarnessConfig,
 };
 use crate::harness_observability::{
-    HarnessTerminalStatus, ReportPackageIdentity, RunReport, RunUsage,
+    HarnessTerminalStatus, MemoryWriteReviewReportSummary, ReportPackageIdentity, RunReport,
+    RunUsage,
 };
 use crate::harness_runtime::SemanticAction;
 use crate::harness_runtime::action::ScriptedActionDispatcher;
@@ -84,6 +85,136 @@ fn verbose_static_capability_details_list_available_and_pending_identities() {
         vec![
             "  - available: knowledge `@zack/manual-vector` (scopes: global, sources: agent_binding)",
             "  - pending runtime activation: embedding_provider `toy-embedder` (scopes: session, sources: harness_config)",
+        ]
+    );
+}
+
+#[test]
+fn memory_write_review_failures_render_human_warning_lines() {
+    let mut report = minimal_run_report("run-review-warning");
+    report.memory_write_review_summaries = vec![
+        MemoryWriteReviewReportSummary {
+            point: "run_end".into(),
+            phase_execution_id: "phase-exec-1".into(),
+            status: "failed".into(),
+            reason: "structured_output_repair_limit".into(),
+            model_calls: 4,
+            memory_reads_attempted: 0,
+            memory_reads_completed: 0,
+            memory_writes_attempted: 0,
+            memory_writes_completed: 0,
+        },
+        MemoryWriteReviewReportSummary {
+            point: "phase_end".into(),
+            phase_execution_id: "phase-exec-2".into(),
+            status: "completed".into(),
+            reason: "completed".into(),
+            model_calls: 2,
+            memory_reads_attempted: 0,
+            memory_reads_completed: 0,
+            memory_writes_attempted: 1,
+            memory_writes_completed: 1,
+        },
+    ];
+
+    assert_eq!(
+        memory_write_review_warning_lines(&report),
+        vec![
+            "Warning: Memory write review at run_end failed: structured_output_repair_limit. Memory writes attempted/completed: 0/0. Intended Memory may not have been written."
+        ]
+    );
+}
+
+#[test]
+fn memory_write_review_skipped_summaries_do_not_render_human_warning_lines() {
+    let mut report = minimal_run_report("run-review-skipped-warning");
+    report.memory_write_review_summaries = vec![MemoryWriteReviewReportSummary {
+        point: "phase_end".into(),
+        phase_execution_id: "phase-exec-3".into(),
+        status: "skipped".into(),
+        reason: "no_writable_memory_surface".into(),
+        model_calls: 0,
+        memory_reads_attempted: 0,
+        memory_reads_completed: 0,
+        memory_writes_attempted: 0,
+        memory_writes_completed: 0,
+    }];
+
+    assert!(memory_write_review_warning_lines(&report).is_empty());
+}
+
+#[test]
+fn memory_write_review_failed_warning_lines_are_available_for_aborted_terminals() {
+    let mut report = minimal_run_report("run-review-aborted-warning");
+    report.terminal_status = HarnessTerminalStatus::Aborted;
+    report.memory_write_review_summaries = vec![MemoryWriteReviewReportSummary {
+        point: "run_end".into(),
+        phase_execution_id: "phase-exec-1".into(),
+        status: "failed".into(),
+        reason: "structured_output_repair_limit".into(),
+        model_calls: 4,
+        memory_reads_attempted: 0,
+        memory_reads_completed: 0,
+        memory_writes_attempted: 0,
+        memory_writes_completed: 0,
+    }];
+    let terminal = RuntimeTerminalResult {
+        status: HarnessTerminalStatus::Aborted,
+        output: Some(json!({ "summary": "authored abort" })),
+        report,
+    };
+
+    assert_eq!(
+        terminal_memory_write_review_warning_lines(&terminal),
+        vec![
+            "Warning: Memory write review at run_end failed: structured_output_repair_limit. Memory writes attempted/completed: 0/0. Intended Memory may not have been written."
+        ]
+    );
+}
+
+#[test]
+fn memory_write_review_mixed_summaries_warn_only_for_failures() {
+    let mut report = minimal_run_report("run-review-mixed-warning");
+    report.memory_write_review_summaries = vec![
+        MemoryWriteReviewReportSummary {
+            point: "run_end".into(),
+            phase_execution_id: "phase-exec-1".into(),
+            status: "failed".into(),
+            reason: "structured_output_repair_limit".into(),
+            model_calls: 4,
+            memory_reads_attempted: 0,
+            memory_reads_completed: 0,
+            memory_writes_attempted: 0,
+            memory_writes_completed: 0,
+        },
+        MemoryWriteReviewReportSummary {
+            point: "phase_end".into(),
+            phase_execution_id: "phase-exec-2".into(),
+            status: "completed".into(),
+            reason: "completed".into(),
+            model_calls: 2,
+            memory_reads_attempted: 0,
+            memory_reads_completed: 0,
+            memory_writes_attempted: 1,
+            memory_writes_completed: 1,
+        },
+        MemoryWriteReviewReportSummary {
+            point: "phase_end".into(),
+            phase_execution_id: "phase-exec-3".into(),
+            status: "skipped".into(),
+            reason: "no_writable_memory_surface".into(),
+            model_calls: 0,
+            memory_reads_attempted: 0,
+            memory_reads_completed: 0,
+            memory_writes_attempted: 0,
+            memory_writes_completed: 0,
+        },
+    ];
+
+    assert_eq!(
+        memory_write_review_warning_lines(&report),
+        vec![
+            "Warning: Memory write review at run_end failed: structured_output_repair_limit. Memory writes attempted/completed: 0/0. Intended Memory may not have been written."
         ]
     );
 }

@@ -155,8 +155,12 @@ pub(super) fn validate_semantic_action(
                     .iter()
                     .any(|candidate| candidate.name == *record_type)
             {
-                return Err(format!(
-                    "Memory record type `{record_type}` is not declared for space `{space}`."
+                return Err(memory_record_type_mismatch_feedback(
+                    phase,
+                    "memory_read",
+                    package,
+                    space,
+                    record_type,
                 ));
             }
             if limit == &Some(0) {
@@ -234,8 +238,12 @@ pub(super) fn validate_semantic_action(
                 .iter()
                 .find(|candidate| candidate.name == *record_type)
             else {
-                return Err(format!(
-                    "Memory record type `{record_type}` is not declared for space `{space}`."
+                return Err(memory_record_type_mismatch_feedback(
+                    phase,
+                    "memory_write",
+                    package,
+                    space,
+                    record_type,
                 ));
             };
             if memory.append_only
@@ -285,6 +293,58 @@ pub(super) fn validate_semantic_action(
         }
         _ => Ok(()),
     }
+}
+
+fn memory_record_type_mismatch_feedback(
+    phase: &EffectivePhase,
+    action_kind: &str,
+    package: &str,
+    selected_space: &str,
+    record_type: &str,
+) -> String {
+    let mut message = format!(
+        "Memory record type `{record_type}` is not declared for selected Memory space `{selected_space}` in package `{package}`."
+    );
+    let mut alternatives = phase
+        .active_memory
+        .iter()
+        .filter(|memory| {
+            memory.package == package
+                && memory.space != selected_space
+                && memory
+                    .record_types
+                    .iter()
+                    .any(|candidate| candidate.name == record_type)
+        })
+        .filter_map(|memory| {
+            let identity = format!("{}/{}", memory.package, memory.space);
+            phase
+                .capability_catalog
+                .iter()
+                .any(|descriptor| {
+                    descriptor.action_kind == action_kind && descriptor.identity == identity
+                })
+                .then_some(identity)
+        })
+        .collect::<Vec<_>>();
+    alternatives.sort();
+    alternatives.dedup();
+    if !alternatives.is_empty() {
+        message.push_str(&format!(
+            " Authorized alternative Memory {} action(s) for record type `{record_type}`: {}.",
+            if action_kind == "memory_read" {
+                "read"
+            } else {
+                "write"
+            },
+            alternatives
+                .iter()
+                .map(|identity| format!("`{identity}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    message
 }
 
 pub(super) fn validate_memory_write_content(

@@ -3181,6 +3181,26 @@ fn review_write_turn_for_package(package: &str, body: &str) -> ModelTurn {
     }
 }
 
+fn review_write_turn_for_space(space: &str, body: &str) -> ModelTurn {
+    ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "review-write",
+            SemanticAction::MemoryWrite {
+                package: "m14c-memory-test".into(),
+                space: space.into(),
+                operation: MemoryWriteOperation::Create,
+                record_type: "note".into(),
+                record_id: None,
+                content: Some(json!({ "body": body })),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
 fn review_read_by_body_turn(body: &str) -> ModelTurn {
     ModelTurn {
         assistant_content: None,
@@ -3201,6 +3221,26 @@ fn review_read_by_body_turn(body: &str) -> ModelTurn {
         finish_reason: Some("tool_calls".into()),
         provider_metadata: BTreeMap::new(),
     }
+}
+
+fn add_conversation_state_memory_surface(
+    runtime: &mut RuntimeSnapshot,
+    package_root: &std::path::Path,
+) {
+    let mut conversation_state = runtime.memory[0].clone();
+    conversation_state.space = "conversation_state".into();
+    conversation_state.model = MemorySpaceModel::Document;
+    conversation_state.description = "Conversation state.".into();
+    conversation_state.retrieval_modes = vec![MemoryRetrievalMode::Key];
+    conversation_state.record_types =
+        vec![m14c_profile_record_type_snapshot(package_root, "profile_a")];
+    runtime.memory.insert(0, conversation_state);
+
+    let mut hidden_notes = runtime.memory[1].clone();
+    hidden_notes.space = "hidden_notes".into();
+    hidden_notes.description = "Hidden notes.".into();
+    hidden_notes.binding_scope = "phase:other".into();
+    runtime.memory.push(hidden_notes);
 }
 
 fn review_update_turn(record_id: &str, body: &str) -> ModelTurn {
@@ -3811,6 +3851,184 @@ fn memory_write_review_failure_preserves_pending_completion() {
             .events()
             .iter()
             .any(|event| event.event_type == HarnessEventType::RunCompleted)
+    );
+}
+
+#[test]
+fn memory_write_review_mismatch_feedback_suggests_authorized_record_type_surface() {
+    let temp = temp_workspace_dir("m14h-review-mismatch-repair");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let mut runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    add_conversation_state_memory_surface(&mut runtime, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("done", "done"),
+        review_write_turn_for_space("conversation_state", "wrong target"),
+        review_write_turn("corrected target"),
+        review_complete_turn(),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "review target mismatch recovery",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.repair_count, 1);
+    assert_eq!(result.report.usage.memory_requests, 1);
+    assert_eq!(result.report.memory_write_review_summaries.len(), 1);
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].status,
+        "completed"
+    );
+    assert_eq!(
+        result.report.memory_write_review_summaries[0].memory_writes_completed,
+        1
+    );
+
+    let expected = "Memory record type `note` is not declared for selected Memory space `conversation_state` in package `m14c-memory-test`. Authorized alternative Memory write action(s) for record type `note`: `m14c-memory-test/notes`.";
+    assert!(handle.events().iter().any(|event| {
+        if event.event_type != HarnessEventType::SemanticActionRejected {
+            return false;
+        }
+        let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+            return false;
+        };
+        fields
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| error == expected)
+    }));
+    let repair_prompt = model.requests[2].prompt.render_text();
+    assert!(repair_prompt.contains(expected));
+    assert!(!repair_prompt.contains("m14c-memory-test/hidden_notes"));
+    let post_write_prompt = model.requests[3].prompt.render_text();
+    assert!(post_write_prompt.contains("ActionResult [memory_write m14c-memory-test/notes]"));
+    assert!(post_write_prompt.contains("corrected target"));
+
+    assert!(handle.events().iter().any(|event| {
+        if event.event_type != HarnessEventType::SemanticActionProposed {
+            return false;
+        }
+        let HarnessEventPayload::Action {
+            identity, fields, ..
+        } = &event.payload
+        else {
+            return false;
+        };
+        identity == "m14c-memory-test/notes"
+            && fields.get("status").is_none()
+            && fields.get("space") == Some(&json!("notes"))
+            && fields.get("record_type") == Some(&json!("note"))
+            && fields
+                .get("content")
+                .and_then(|content| content.get("body"))
+                == Some(&json!("corrected target"))
+    }));
+    assert!(handle.events().iter().any(|event| {
+        if event.event_type != HarnessEventType::MemoryWriteCompleted {
+            return false;
+        }
+        let HarnessEventPayload::Action {
+            identity, fields, ..
+        } = &event.payload
+        else {
+            return false;
+        };
+        identity == "m14c-memory-test/notes"
+            && fields.get("space") == Some(&json!("notes"))
+            && fields
+                .get("result")
+                .and_then(|result| result.get("record"))
+                .and_then(|record| record.get("content"))
+                .and_then(|content| content.get("body"))
+                == Some(&json!("corrected target"))
+    }));
+}
+
+#[test]
+fn memory_write_review_mismatch_repair_exhaustion_stays_nonfatal_and_nonmutating() {
+    let temp = temp_workspace_dir("m14h-review-mismatch-exhaustion");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let mut runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    add_conversation_state_memory_surface(&mut runtime, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("done", "done"),
+        review_write_turn_for_space("conversation_state", "wrong target 1"),
+        review_write_turn_for_space("conversation_state", "wrong target 2"),
+        review_write_turn_for_space("conversation_state", "wrong target 3"),
+        review_write_turn_for_space("conversation_state", "wrong target 4"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "review target mismatch exhaustion",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.terminal_status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.usage.memory_requests, 0);
+    assert_eq!(result.report.memory_write_review_summaries.len(), 1);
+    let summary = &result.report.memory_write_review_summaries[0];
+    assert_eq!(summary.status, "failed");
+    assert_eq!(summary.reason, "structured_output_repair_limit");
+    assert_eq!(summary.memory_writes_attempted, 0);
+    assert_eq!(summary.memory_writes_completed, 0);
+    assert!(
+        handle
+            .events()
+            .iter()
+            .any(|event| { event.event_type == HarnessEventType::MemoryWriteReviewFailed })
+    );
+    assert!(
+        handle
+            .events()
+            .iter()
+            .any(|event| { event.event_type == HarnessEventType::PhaseResultReady })
+    );
+    assert!(
+        handle
+            .events()
+            .iter()
+            .any(|event| { event.event_type == HarnessEventType::RunCompleted })
     );
 }
 
