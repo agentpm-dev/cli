@@ -1523,6 +1523,491 @@ Rules:
 - the Engine continues the inner loop until valid PhaseCompletion/implicit completion, phase failure, cancellation, approval/runtime terminal, or a safety limit is reached;
 - phase-local raw transcripts are discarded from automatic cross-phase context after PhaseResult creation, though they may remain in trace/report according to content policy.
 
+### Agentic Turn Progression and Action-Result Feedback
+
+A phase-local agentic loop is not merely a sequence of model calls. Each accepted semantic action creates authoritative Harness execution history that must be returned to the model before the model decides what to do next.
+
+The canonical progression is:
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│                    Current Phase Context                     │
+│                                                              │
+│ Harness control                                              │
+│ Authored behavior                                            │
+│ Run context / prior PhaseResults                             │
+│ Effective semantic actions                                   │
+│ Current phase-local transcript                               │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+                        ModelRuntime
+                               │
+                               ▼
+                          ModelTurn
+                               │
+                ┌──────────────┴──────────────┐
+                │                             │
+                ▼                             ▼
+        Assistant content             Semantic action
+                                            proposal
+                                             │
+                                             ▼
+                                  Harness validates action
+                                             │
+                                             ▼
+                                      Runtime / Harness
+                                          executes
+                                             │
+                                             ▼
+                                   Semantic ActionResult
+                                             │
+                                             ▼
+                            append authoritative result to
+                               phase-local transcript
+                                             │
+                                             ▼
+                                  next ModelRequest
+                                             │
+                                             └───────────────┐
+                                                             │
+                                                             ▼
+                                                   next ModelTurn
+```
+
+The model does not execute an action merely by proposing it. Harness remains authoritative for:
+
+* capability availability;
+* argument/schema validation;
+* Hooks;
+* runtime dispatch;
+* retries;
+* persistence governance;
+* action result status;
+* and RunState mutation.
+
+The next model turn must therefore treat the Harness-provided `ActionResult` as the authoritative outcome of the prior proposal.
+
+#### Capability availability does not imply unfinished work
+
+Semantic actions normally remain available after successful use unless `EffectivePhase` or runtime readiness actually changes.
+
+For example:
+
+```text
+Available actions:
+
+memory_write__notes__note
+knowledge_search__runbooks
+tool__csv_query
+phase_complete
+```
+
+After:
+
+```text
+MemoryWrite(notes/note)
+        ↓
+completed successfully
+```
+
+the model may still see:
+
+```text
+memory_write__notes__note
+```
+
+in the next request.
+
+Its continued presence means:
+
+> this action remains authorized.
+
+It does **not** mean:
+
+> this action still needs to be performed.
+
+Harness control guidance must make this distinction explicit.
+
+The expected progression is:
+
+```text
+action needed
+    ↓
+model proposes action
+    ↓
+Harness executes action
+    ↓
+model receives authoritative ActionResult
+    ↓
+model evaluates new state
+    ├── more distinct work needed ──> propose next action
+    └── objective satisfied ────────> PhaseCompletion
+```
+
+Harness must not remove otherwise-valid capabilities merely to force progression.
+
+#### Action results are execution state, not incidental output
+
+A normalized `ActionResult` should make the outcome of an accepted action unambiguous to the next model turn.
+
+At minimum, the model-facing semantic result should communicate:
+
+```text
+what action completed?
+what authorized target did it operate on?
+did it succeed, fail, or succeed with no matches?
+what structured result did Harness produce?
+is there a stable identity needed for later authorized work?
+```
+
+Conceptually:
+
+```text
+ActionResult
+
+kind:
+  memory_write
+
+target:
+  package: @acme/conversation-memory
+  space: notes
+  record_type: note
+
+status:
+  success
+
+result:
+  operation: create
+  record_id: mem_123
+```
+
+This is preferable to requiring the model to infer completion from backend-oriented output such as:
+
+```json
+{"ok": true}
+```
+
+Type-specific payloads remain available, but all semantic action results should expose a consistent high-level completion meaning.
+
+A successful action returning no data is also distinct from failure:
+
+```text
+MemoryRead
+status: success
+matches: 0
+```
+
+not:
+
+```text
+MemoryRead
+status: unknown/error-like empty payload
+```
+
+#### The phase-local transcript is authoritative working history
+
+The current phase-local transcript answers:
+
+> What has already happened during this phase, and what did Harness say happened?
+
+For example:
+
+```text
+Assistant:
+  I should check the current incident notes.
+
+Semantic Action:
+  MemoryRead(notes, query="latency")
+
+Harness ActionResult:
+  success
+  1 matching record returned
+
+Assistant:
+  The existing note is outdated. I should update it.
+
+Semantic Action:
+  MemoryWrite(notes/note, update mem_123)
+
+Harness ActionResult:
+  success
+  record mem_123 updated
+```
+
+The next model request includes that working history.
+
+Harness control instructions should explicitly direct the model to consult prior ActionResults before selecting another action.
+
+The transcript remains phase-local. It does not become implicit Session history and does not automatically cross Run boundaries.
+
+#### Legitimate repetition remains allowed
+
+Harness must not infer that an exact or similar repeated action is inherently incorrect.
+
+Repeated actions may be valid for reasons such as:
+
+* changed arguments;
+* changed runtime state;
+* pagination or continuation;
+* verification after a mutation;
+* retry policy;
+* another independently required write;
+* or repeated retrieval after new information becomes available.
+
+For example:
+
+```text
+MemoryWrite(note)
+        ↓
+success
+        ↓
+MemoryRead(note)
+```
+
+may be a legitimate verification pattern.
+
+Likewise:
+
+```text
+KnowledgeRequest(query A)
+KnowledgeRequest(query B)
+```
+
+is not duplicate work merely because both use the same semantic action descriptor.
+
+Phase 7B therefore does not automatically suppress repeated actions, hash/block duplicate arguments, or let Harness decide that a semantic operation is "already done."
+
+Pathological repetition remains bounded through existing:
+
+* model-call limits;
+* semantic-action limits;
+* Tool-call limits;
+* structured repair limits;
+* persistence-review limits;
+* and Loop-step limits.
+
+#### Completion is a first-class semantic choice
+
+For ordinary phase execution, the model's high-level decision is:
+
+```text
+more authorized work is required
+              │
+              ▼
+       semantic action
+
+              OR
+
+phase objective is satisfied
+              │
+              ▼
+        PhaseCompletion
+```
+
+`PhaseCompletion` should be presented to the model as the normal terminal action for a satisfied phase objective.
+
+Its provider-facing description should make clear that the continued availability of other capabilities is not evidence that they must be invoked again.
+
+The normal flow should therefore look like:
+
+```text
+Model
+  │
+  ├── ToolCall
+  │      ↓
+  │   ToolResult success
+  │
+  ├── KnowledgeRequest
+  │      ↓
+  │   KnowledgeResult success
+  │
+  └── PhaseCompletion
+         ↓
+      PhaseResult
+         ↓
+      Loop transition
+```
+
+rather than:
+
+```text
+Model
+  ↓
+successful action
+  ↓
+same successful action
+  ↓
+same successful action
+  ↓
+limit exhaustion
+```
+
+#### Persistence review uses the same progression semantics
+
+The optional Memory persistence-review loop follows the same action/result model but with a deliberately narrowed action catalog:
+
+```text
+┌────────────────────────────────────┐
+│        Persistence Review          │
+│                                    │
+│ MemoryRead                         │
+│ MemoryWrite                        │
+│ persistence_review_complete        │
+└─────────────────┬──────────────────┘
+                  │
+                  ▼
+                Model
+                  │
+                  ▼
+             MemoryRead
+                  │
+                  ▼
+           Memory ActionResult
+                  │
+                  ▼
+                Model
+                  │
+                  ▼
+             MemoryWrite
+                  │
+                  ▼
+           Memory ActionResult
+                  │
+                  ▼
+                Model
+                  │
+                  ▼
+     persistence_review_complete
+```
+
+A successful review-time Memory action remains in the review transcript and is authoritative on the next review turn.
+
+The review guidance should explicitly instruct the model:
+
+* do not repeat a successful Memory action merely because it remains available;
+* read Memory again when genuinely useful for deduplication, verification, or correct update targeting;
+* and use `persistence_review_complete` when no additional persistence work is needed.
+
+#### Provider transport must preserve action/result causality
+
+The canonical Harness transcript is provider-neutral, but `ModelRuntime` must preserve the strongest action/result correlation supported by the selected provider.
+
+Phase 7B's initial provider transport did not do this. `ProviderRequest` carried a single rendered prompt string plus structured tool declarations, and every built-in transport sent exactly one user message per turn, so accepted semantic actions and their results reached the provider only as flattened transcript prose. From the provider's perspective the model had issued no calls and received no results, which is a plausible contributor to models re-proposing actions they had already completed successfully. The requirements below describe the intended behavior, not the original implementation.
+
+Conceptually:
+
+```text
+Canonical Harness
+
+SemanticAction(call-id)
+        ↓
+ActionResult(call-id)
+```
+
+may serialize as:
+
+```text
+OpenAI
+function_call
+     ↓
+function_call_output
+```
+
+or:
+
+```text
+Anthropic
+tool_use
+     ↓
+tool_result
+```
+
+or an equivalent provider-native mechanism.
+
+Provider serialization must not:
+
+* omit an accepted ActionResult;
+* reorder it relative to its action;
+* associate it with the wrong provider-native call identity;
+* or reduce a clearly successful semantic result to an ambiguous provider-visible representation.
+
+The logical Harness trace may render the complete semantic sequence for diagnostics even when the provider request uses structured native action/result fields rather than equivalent prose.
+
+#### Each logical component gets exactly one wire representation
+
+The canonical `ModelRequest` is provider-neutral. Each transport turns it into a serialization plan in which every logical component appears exactly once:
+
+```text
+CANONICAL MODEL REQUEST                 PROVIDER SERIALIZATION
+
+Harness control                    ->   system / instruction material
+authored behavior                  ->   system / instruction material
+Consumer Context                   ->   context material
+prior PhaseResults                 ->   context material
+Run input                          ->   leading native user turn
+Section 5 capability descriptors   ->   structured action declarations
+Section 6 phase transcript         ->   ordered native assistant /
+                                        action-call / action-result turns
+```
+
+A component carried by a native mechanism is omitted from the provider's text rendering. A component with no native representation stays in text. Nothing appears twice.
+
+This generalizes the rule the Effective Capability Catalog already follows, and it applies in both directions: emitting Run input as the leading user turn means Section 3's provider text no longer repeats it, while Consumer Context and other contextual material remain there.
+
+The full logical render — all six sections — remains available for traces, reports, debugging, and tests regardless of any provider's plan.
+
+#### Native turns replace the transcript section, they do not accompany it
+
+When a provider carries execution history as native action/result turns, the Section 6 phase-local transcript prose is omitted from that provider's request text.
+
+Sending both is worse than sending either. The two representations do not say the same thing:
+
+```text
+native turns          "you called this, and this came back"
+Section 6 prose       "here is a list of things that happened"
+```
+
+A model given both can read the prose as history *in addition to* its own turns and double-count completed work — the opposite of the problem native correlation exists to solve.
+
+Every transcript entry must map onto a native turn so the switch drops nothing:
+
+```text
+run/user input     ->  leading user turn
+assistant content  ->  assistant turn
+semantic action    ->  native action call (with provider call identity)
+action result      ->  correlated native action result
+repair feedback    ->  model-visible turn
+```
+
+Repair feedback has exactly one model-visible representation per request. It is currently both a transcript entry and appended to Harness control text, so when native turns carry it, the control-text injection is dropped; when native turns are unavailable, the control-text fallback is retained. Mapping it to a turn without removing the prose injection would reproduce the double-history problem these rules exist to eliminate. Repair semantics and repair-budget accounting are unaffected either way.
+
+The decision to omit Section 6 must be derived from the transport's chosen representation strategy, not by inspecting rendered prompt text. Where a provider or model cannot carry native action/result turns, the prose transcript is retained and the degraded strategy is recorded.
+
+#### Responsibility boundary
+
+The progression model can be summarized as:
+
+```text
+Section 5 / structured action catalog
+    "What am I currently allowed to do?"
+
+Section 6 prose / native action-result turns
+    "What have I already done, and what happened?"
+
+Harness control
+    "How should I decide whether to act again or finish?"
+
+Model
+    "What should happen next?"
+
+HarnessEngine
+    "Is that proposed next action authorized and valid?"
+```
+
+Harness improves clarity at these boundaries but does not replace model judgment with hidden semantic deduplication.
+
+
 ## Profiles
 
 Profiles are resolved model-facing behavioral inputs; there is no ProfileRuntime.
