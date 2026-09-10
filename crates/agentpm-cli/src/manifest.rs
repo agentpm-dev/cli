@@ -1143,7 +1143,7 @@ fn validate_memory_manifest_semantics(
             MemoryOperation::Consolidate {
                 inputs,
                 output,
-                source_handling: _,
+                source_handling,
                 preserve_provenance: _,
                 trigger,
                 ..
@@ -1169,6 +1169,14 @@ fn validate_memory_manifest_semantics(
                     output,
                     &manifest.memory.spaces,
                     &format!("/memory/operations/{operation_key}/output"),
+                    &mut issues,
+                );
+                validate_retain_until_expiration_sources(
+                    file_label,
+                    operation_key,
+                    source_handling,
+                    inputs,
+                    &manifest.memory.spaces,
                     &mut issues,
                 );
                 validate_memory_trigger(
@@ -1245,6 +1253,14 @@ fn validate_memory_manifest_semantics(
                     &format!("/memory/operations/{operation_key}/output"),
                     &mut issues,
                 );
+                validate_retain_until_expiration_sources(
+                    file_label,
+                    operation_key,
+                    source_handling,
+                    inputs,
+                    &manifest.memory.spaces,
+                    &mut issues,
+                );
                 validate_memory_trigger(
                     file_label,
                     operation_key,
@@ -1309,6 +1325,35 @@ fn validate_memory_manifest_semantics(
     }
 
     issues
+}
+
+fn validate_retain_until_expiration_sources(
+    file_label: &str,
+    operation_key: &str,
+    source_handling: &MemorySourceHandling,
+    inputs: &[MemoryOperationRef],
+    spaces: &HashMap<String, MemorySpace>,
+    issues: &mut Vec<LintIssue>,
+) {
+    if !matches!(source_handling, MemorySourceHandling::RetainUntilExpiration) {
+        return;
+    }
+    for (idx, input) in inputs.iter().enumerate() {
+        let Some(space) = spaces.get(&input.space) else {
+            continue;
+        };
+        if space.retention.is_none() {
+            push_manifest_error(
+                file_label,
+                &format!("/memory/operations/{operation_key}/inputs/{idx}/space"),
+                format!(
+                    "operation `{operation_key}` with source_handling `retain_until_expiration` requires input space `{}` to declare retention",
+                    input.space
+                ),
+                issues,
+            );
+        }
+    }
 }
 
 fn validate_profile_manifest_semantics(
@@ -2733,16 +2778,14 @@ fn is_valid_memory_key(key: &str) -> bool {
     chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
-fn is_supported_positive_iso8601_duration(value: &str) -> bool {
-    if !value.starts_with('P') {
-        return false;
-    }
-    let body = &value[1..];
+pub(crate) fn parse_supported_positive_iso8601_duration(value: &str) -> Option<chrono::Duration> {
+    let body = value.strip_prefix('P')?;
     if body.is_empty() {
-        return false;
+        return None;
     }
     if let Some(weeks) = body.strip_suffix('W') {
-        return is_positive_integer(weeks);
+        let weeks = parse_positive_duration_component(weeks)?;
+        return Some(chrono::Duration::weeks(weeks));
     }
 
     let (date_part, time_part) = match body.split_once('T') {
@@ -2753,38 +2796,41 @@ fn is_supported_positive_iso8601_duration(value: &str) -> bool {
     let mut seen_any = false;
     let mut seen_positive = false;
 
-    if !date_part.is_empty()
-        && !consume_duration_section(date_part, &['D'], &mut seen_any, &mut seen_positive)
-    {
-        return false;
+    let mut duration = chrono::Duration::zero();
+
+    if !date_part.is_empty() {
+        duration += parse_duration_section(date_part, &['D'], &mut seen_any, &mut seen_positive)?;
     }
 
     if let Some(time_part) = time_part {
         if time_part.is_empty() {
-            return false;
+            return None;
         }
-        if !consume_duration_section(
+        duration += parse_duration_section(
             time_part,
             &['H', 'M', 'S'],
             &mut seen_any,
             &mut seen_positive,
-        ) {
-            return false;
-        }
+        )?;
     }
 
-    seen_any && seen_positive
+    (seen_any && seen_positive).then_some(duration)
 }
 
-fn consume_duration_section(
+fn is_supported_positive_iso8601_duration(value: &str) -> bool {
+    parse_supported_positive_iso8601_duration(value).is_some()
+}
+
+fn parse_duration_section(
     section: &str,
     allowed_units: &[char],
     seen_any: &mut bool,
     seen_positive: &mut bool,
-) -> bool {
+) -> Option<chrono::Duration> {
     let mut idx = 0usize;
     let bytes = section.as_bytes();
     let mut used_units = HashSet::new();
+    let mut duration = chrono::Duration::zero();
 
     while idx < bytes.len() {
         let start = idx;
@@ -2792,7 +2838,7 @@ fn consume_duration_section(
             idx += 1;
         }
         if start == idx || idx >= bytes.len() {
-            return false;
+            return None;
         }
 
         let value = &section[start..idx];
@@ -2800,24 +2846,26 @@ fn consume_duration_section(
         idx += 1;
 
         if !allowed_units.contains(&unit) || !used_units.insert(unit) {
-            return false;
+            return None;
         }
+        let amount = parse_positive_duration_component(value)?;
         *seen_any = true;
-        if !is_positive_integer(value) {
-            return false;
-        }
-        if value != "0" {
-            *seen_positive = true;
-        }
+        *seen_positive = true;
+        duration += match unit {
+            'D' => chrono::Duration::days(amount),
+            'H' => chrono::Duration::hours(amount),
+            'M' => chrono::Duration::minutes(amount),
+            'S' => chrono::Duration::seconds(amount),
+            _ => unreachable!("unit already validated"),
+        };
     }
 
-    true
+    Some(duration)
 }
 
-fn is_positive_integer(value: &str) -> bool {
-    !value.is_empty()
-        && value.chars().all(|ch| ch.is_ascii_digit())
-        && value.parse::<u64>().map(|num| num > 0).unwrap_or(false)
+fn parse_positive_duration_component(value: &str) -> Option<i64> {
+    let parsed = value.parse::<i64>().ok()?;
+    (parsed > 0).then_some(parsed)
 }
 
 fn canonical_interpreter(cmd: &str) -> String {
@@ -3244,6 +3292,14 @@ mod tests {
                 "preserve_provenance": true
             }
         });
+    }
+
+    fn memory_operation_trigger(operation: &MemoryOperation) -> &MemoryTrigger {
+        match operation {
+            MemoryOperation::Consolidate { trigger, .. }
+            | MemoryOperation::Transform { trigger, .. }
+            | MemoryOperation::Delete { trigger, .. } => trigger,
+        }
     }
 
     fn base_loop_manifest() -> Value {
@@ -5872,6 +5928,33 @@ mod tests {
     }
 
     #[test]
+    fn memory_duration_parser_matches_lint_contract() {
+        let valid = [
+            ("P1D", chrono::Duration::days(1)),
+            ("PT5M", chrono::Duration::minutes(5)),
+            ("P2W", chrono::Duration::weeks(2)),
+            (
+                "P1DT2H",
+                chrono::Duration::days(1) + chrono::Duration::hours(2),
+            ),
+        ];
+        for (value, expected) in valid {
+            assert_eq!(
+                parse_supported_positive_iso8601_duration(value),
+                Some(expected),
+                "expected supported ISO 8601 duration `{value}`"
+            );
+        }
+
+        for value in ["5m", "30s", "2h", "7d", "P1M", "PT0S", "P0D", "P1Y"] {
+            assert!(
+                parse_supported_positive_iso8601_duration(value).is_none(),
+                "expected unsupported duration `{value}` to be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn memory_semantics_reject_record_count_trigger_zero_threshold() {
         let dir = temp_dir("memory-zero-record-count-threshold");
         let mut manifest = base_memory_manifest();
@@ -7837,6 +7920,188 @@ mod tests {
                 issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
             }),
             "expected invalid trigger type failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_accepts_all_trigger_property_shapes() {
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["spaces"]["profile"]["capacity"] = json!({ "max_records": 5 });
+        manifest["memory"]["operations"] = json!({
+            "refresh_profile": {
+                "type": "transform",
+                "description": "Refresh the current profile.",
+                "trigger": { "type": "external" },
+                "inputs": [{ "space": "profile", "record_type": "user_preference" }],
+                "output": { "space": "profile", "record_type": "user_preference" },
+                "source_handling": "retain",
+                "preserve_provenance": true
+            },
+            "count_delete": {
+                "type": "delete",
+                "description": "Delete when profile count reaches a threshold.",
+                "trigger": { "type": "record_count", "space": "profile", "threshold": 1 },
+                "targets": [{ "space": "profile" }],
+                "cascade_derived_records": false
+            },
+            "capacity_delete": {
+                "type": "delete",
+                "description": "Delete when profile space reaches capacity.",
+                "trigger": { "type": "capacity", "space": "profile" },
+                "targets": [{ "space": "profile" }],
+                "cascade_derived_records": false
+            },
+            "interval_delete": {
+                "type": "delete",
+                "description": "Delete on interval.",
+                "trigger": { "type": "interval", "every": "PT1S" },
+                "targets": [{ "space": "profile" }],
+                "cascade_derived_records": false
+            }
+        });
+
+        assert_manifest_ok(manifest.clone());
+        let parsed = parse_memory_manifest(&manifest).unwrap();
+        assert!(matches!(
+            parsed
+                .memory
+                .operations
+                .get("refresh_profile")
+                .map(memory_operation_trigger),
+            Some(MemoryTrigger::External)
+        ));
+        assert!(matches!(
+            parsed
+                .memory
+                .operations
+                .get("count_delete")
+                .map(memory_operation_trigger),
+            Some(MemoryTrigger::RecordCount { threshold: 1, .. })
+        ));
+        assert!(matches!(
+            parsed
+                .memory
+                .operations
+                .get("capacity_delete")
+                .map(memory_operation_trigger),
+            Some(MemoryTrigger::Capacity { .. })
+        ));
+        assert!(matches!(
+            parsed
+                .memory
+                .operations
+                .get("interval_delete")
+                .map(memory_operation_trigger),
+            Some(MemoryTrigger::Interval { every }) if every == "PT1S"
+        ));
+    }
+
+    #[test]
+    fn memory_manifest_rejects_trigger_property_mismatches() {
+        for trigger in [
+            json!({ "type": "external", "space": "profile" }),
+            json!({ "type": "record_count", "space": "profile" }),
+            json!({ "type": "capacity", "space": "profile", "threshold": 1 }),
+            json!({ "type": "interval", "every": "PT1S", "space": "profile" }),
+        ] {
+            let mut manifest = base_memory_manifest();
+            add_refresh_profile_operation(&mut manifest);
+            manifest["memory"]["operations"]["refresh_profile"]["trigger"] = trigger;
+
+            let issues = assert_manifest_invalid(manifest);
+            assert!(
+                issues.iter().any(|issue| {
+                    issue.instance_path == "/memory"
+                        && issue.schema_path == "/properties/memory/oneOf"
+                }),
+                "expected trigger property mismatch rejection, got: {issues:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn memory_manifest_rejects_operation_type_property_mismatches() {
+        let mut transform_missing_required = base_memory_manifest();
+        add_refresh_profile_operation(&mut transform_missing_required);
+        transform_missing_required["memory"]["operations"]["refresh_profile"]
+            .as_object_mut()
+            .unwrap()
+            .remove("preserve_provenance");
+        let issues = assert_manifest_invalid(transform_missing_required);
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory" && issue.schema_path == "/properties/memory/oneOf"
+            }),
+            "expected transform required property rejection, got: {issues:#?}"
+        );
+
+        let mut consolidate_forbidden = base_memory_manifest();
+        consolidate_forbidden["memory"]["operations"] = json!({
+            "rollup_profile": {
+                "type": "consolidate",
+                "description": "Roll up profile records.",
+                "trigger": { "type": "external" },
+                "inputs": [{ "space": "profile", "record_type": "user_preference" }],
+                "output": { "space": "profile", "record_type": "user_preference" },
+                "source_handling": "retain",
+                "preserve_provenance": true,
+                "cascade_derived_records": false
+            }
+        });
+        let issues = assert_manifest_invalid(consolidate_forbidden);
+        assert!(
+            issues.iter().any(|issue| issue
+                .message
+                .contains("must not declare `cascade_derived_records`")),
+            "expected consolidate forbidden property rejection, got: {issues:#?}"
+        );
+
+        let mut delete_forbidden = base_memory_manifest();
+        delete_forbidden["memory"]["operations"] = json!({
+            "delete_profile": {
+                "type": "delete",
+                "description": "Delete profile records.",
+                "trigger": { "type": "external" },
+                "targets": [{ "space": "profile" }],
+                "cascade_derived_records": false,
+                "output": { "space": "profile", "record_type": "user_preference" },
+                "source_handling": "retain"
+            }
+        });
+        let issues = assert_manifest_invalid(delete_forbidden);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.message.contains("must not declare `output`")),
+            "expected delete forbidden property rejection, got: {issues:#?}"
+        );
+    }
+
+    #[test]
+    fn memory_manifest_rejects_retain_until_expiration_without_source_retention() {
+        let mut manifest = base_memory_manifest();
+        manifest["memory"]["operations"] = json!({
+            "summarize_profile": {
+                "type": "transform",
+                "description": "Summarize profile records.",
+                "trigger": { "type": "external" },
+                "inputs": [{ "space": "profile", "record_type": "user_preference" }],
+                "output": { "space": "profile", "record_type": "user_preference" },
+                "source_handling": "retain_until_expiration",
+                "output_mode": "create",
+                "preserve_provenance": true
+            }
+        });
+
+        let issues = assert_manifest_invalid(manifest);
+        assert!(
+            issues.iter().any(|issue| {
+                issue.instance_path == "/memory/operations/summarize_profile/inputs/0/space"
+                    && issue
+                        .message
+                        .contains("requires input space `profile` to declare retention")
+            }),
+            "expected retain_until_expiration source-retention rejection, got: {issues:#?}"
         );
     }
 

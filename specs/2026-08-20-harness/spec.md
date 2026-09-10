@@ -2284,13 +2284,15 @@ Sequence ordinal allocation starts at `0`. Appending reserves the current `next_
 - `armed INTEGER NOT NULL` (`0 | 1`)
 - `baseline_at TEXT NULL`
 - `last_completed_at TEXT NULL`
+- `last_failed_at TEXT NULL`
 - `next_eligible_at TEXT NULL`
 - `last_observed_value INTEGER NULL`
+- `last_failure_json TEXT NULL`
 - `watermark_json TEXT NULL`
 - `updated_at TEXT NOT NULL`
 - primary key: `(package, package_version, operation, scope_hash)`
 
-`watermark_json` is reserved for trigger-specific durable state that cannot be represented by the scalar columns. Harness owns its typed contents; models/hooks never write it directly.
+`last_failure_json` stores the last Harness-owned lifecycle failure code/message for diagnostics and retry control. `watermark_json` is reserved for trigger-specific durable state that cannot be represented by the scalar columns. Harness owns both typed contents; models/hooks never write them directly.
 
 #### `memory_vectors`
 
@@ -2357,6 +2359,12 @@ Omitted value defaults to `create` for backward compatibility.
 
 `replace_input` means the transformed output updates/replaces the originating source record and is valid only when output space/record type matches the single input space/record type **and** `source_handling` is `retain`. It is explicit lifecycle authority even if the space is append-only for direct writes. `delete_after_success` or `retain_until_expiration` with `replace_input` is invalid because the transformed record is the retained source identity itself.
 
+`source_handling` policies are:
+
+- `retain`: do not mutate source records after a successful lifecycle operation.
+- `retain_until_expiration`: do not mutate source records after success, but require every source input space to declare retention and every selected source record to have a runtime-owned `expires_at`; the source remains active only until normal Memory retention removes it.
+- `delete_after_success`: delete source records in the same atomic lifecycle commit that writes the derived output.
+
 Update the flagship `refresh_saved_note` example to declare `output_mode: "replace_input"`.
 
 ### Trigger semantics
@@ -2366,9 +2374,11 @@ Trigger state is persistent MemoryRuntime state.
 - `external`: never automatic; invoked only through the canonical Harness external-operation invocation path.
 - `record_count`: edge-trigger when active scoped count moves from below threshold to threshold-or-higher; disarm after firing and re-arm once count falls below threshold.
 - `capacity`: edge-trigger when active scoped count reaches capacity; re-arm once count falls below capacity. A write that would exceed a hard capacity may first run an eligible participating capacity operation; if capacity is not freed, reject the write.
-- `interval`: dormant until relevant scoped input/target state first exists. First baseline starts when that state first exists. After successful execution, next eligibility is successful completion time plus `every`. If no relevant state exists, remain dormant.
+- `interval`: dormant until relevant scoped input/target state first exists. First baseline starts when that state first exists. After successful execution, next eligibility is successful completion time plus `every`. If no relevant state exists, remain dormant. Runtime uses the same supported positive ISO 8601 duration subset for `every` as manifest lint/build validation; shorthand values such as `5m` or `30s` are rejected.
 
 Automatic trigger eligibility is evaluated at relevant state changes, including mid-phase immediately after Memory writes.
+
+When an automatic lifecycle operation fails after becoming eligible, Harness records `last_failed_at`, `last_failure_json`, the current trigger observation, and a bounded `next_eligible_at` failure cooldown in `memory_operation_state`. The default cooldown is 30 seconds. While the cooldown is in the future, the trigger remains armed but is not eligible, so repeated Memory writes do not immediately re-run the same failing operation or consume additional lifecycle model calls. Once the cooldown expires, the operation may retry if the trigger condition is still true; if the condition falls below threshold/capacity first, normal re-arm semantics take over.
 
 ### External operation invocation
 
@@ -2379,6 +2389,10 @@ invoke_memory_operation(package, operation, current_resolved_scope)
 ```
 
 Harness validates that the operation exists, is bound/participating in the current scope, has `trigger.type = external`, has resolved scopes, and has a ready backend before execution.
+
+External operation controls are serviced by the active Run owner only at explicit HarnessEngine yield points. They must not interrupt an in-flight model turn, Tool/Knowledge/Memory dispatch, direct Memory transaction, lifecycle commit, or other non-yielding Engine section. A Session accepts at most one active-or-pending external Memory-operation control; additional controls are rejected with a stable `memory_operation_busy` error. Pending controls are flushed with stable cancellation or run-ended errors if the active Run is cancelled or reaches terminal before the control is serviced.
+
+Machine/SDK clients forward `memory_operation` requests into this Engine-owned ingress and return the resulting success payload or typed control error. The TUI must reuse the same ingress when it later exposes external Memory-operation controls; it must preserve the single-active-Run invariant, pass only trusted resolved scope values, and render the same events, report summaries, usage accounting, and typed success/error outcomes rather than implementing separate lifecycle semantics.
 
 The phase model does not automatically receive authority to invoke external Memory operations.
 
@@ -3181,7 +3195,7 @@ Keep failures semantically distinct:
 - ToolRuntime invocation failure -> Loop `tool_failure` policy;
 - phase cannot complete after repairs/service failures -> Loop `phase_failure` policy/default;
 - Knowledge/Memory backend request failure -> structured service failure returned to phase; not automatically Tool failure;
-- Memory lifecycle operation failure -> first-class Memory operation failure; may cause originating write/phase failure when required;
+- Memory lifecycle operation failure -> first-class Memory operation failure. Capacity-relief operation failure or insufficient relief falls through to the originating Memory write, which returns the normal typed `capacity_exceeded` structured failure to the phase; lifecycle machinery/infrastructure failures that prevent safe dispatch may still fail the phase.
 - Hook failure -> fail closed by default unless explicit continue policy;
 - approval transport/timeout -> runtime/control failure, not rejection;
 - Harness infrastructure/service protocol failure -> runtime `failed`;

@@ -54,6 +54,7 @@ mod effective_phase;
 mod knowledge_actions;
 mod lifecycle;
 mod memory_actions;
+mod memory_lifecycle;
 mod observability;
 mod persistence_review;
 mod validation;
@@ -66,6 +67,7 @@ use effective_phase::{
     active_memory_space, memory_action_identity, memory_read_mode_label,
     memory_write_operation_label,
 };
+pub use memory_lifecycle::{MemoryOperationControlError, MemoryOperationInvocationResult};
 use observability::*;
 use validation::*;
 
@@ -422,6 +424,7 @@ pub struct HarnessEngine {
     loop_manifest: LoopManifest,
     options: HarnessEngineOptions,
     phase_executions: u64,
+    control_ingress: Option<Box<dyn EngineControlIngress>>,
 }
 
 pub struct HarnessRuntimeServices<'a> {
@@ -433,6 +436,18 @@ pub struct HarnessRuntimeServices<'a> {
     pub approvals: &'a mut dyn ApprovalController,
     pub hooks: &'a mut dyn HookRuntime,
     pub service_events: Option<&'a mut ServiceLifecycleEvents>,
+}
+
+pub trait EngineControlIngress {
+    fn service_memory_operation_controls(
+        &mut self,
+        engine: &mut HarnessEngine,
+        session: &mut HarnessSession,
+        model: &mut dyn ModelRuntime,
+        hooks: &mut dyn HookRuntime,
+    ) -> Result<()>;
+
+    fn flush_memory_operation_controls(&mut self, code: &str, message: &str) -> Result<()>;
 }
 
 struct HookEventContext<'a> {
@@ -449,7 +464,12 @@ impl HarnessEngine {
             loop_manifest,
             options,
             phase_executions: 0,
+            control_ingress: None,
         }
+    }
+
+    pub fn set_control_ingress(&mut self, control_ingress: Box<dyn EngineControlIngress>) {
+        self.control_ingress = Some(control_ingress);
     }
 
     pub fn execute_run(
@@ -473,6 +493,29 @@ impl HarnessEngine {
             service_events: None,
         };
         self.execute_run_with_id(session, allocate_harness_run_id(), input, &mut services)
+    }
+
+    fn service_memory_operation_controls(
+        &mut self,
+        session: &mut HarnessSession,
+        model: &mut dyn ModelRuntime,
+        hooks: &mut dyn HookRuntime,
+    ) -> Result<()> {
+        let Some(mut control_ingress) = self.control_ingress.take() else {
+            return Ok(());
+        };
+        let result = control_ingress.service_memory_operation_controls(self, session, model, hooks);
+        self.control_ingress = Some(control_ingress);
+        result
+    }
+
+    fn flush_memory_operation_controls(&mut self, code: &str, message: &str) -> Result<()> {
+        let Some(mut control_ingress) = self.control_ingress.take() else {
+            return Ok(());
+        };
+        let result = control_ingress.flush_memory_operation_controls(code, message);
+        self.control_ingress = Some(control_ingress);
+        result
     }
 
     pub fn execute_run_with_id(
@@ -1160,6 +1203,39 @@ impl HarnessEngine {
                 },
             )?;
         }
+        for operation in &effective_phase.active_memory_operations {
+            session.emitter.emit(
+                HarnessEventType::MemoryOperationEligible,
+                HarnessEventPayload::Lifecycle {
+                    message: "Memory lifecycle operation is participating in this phase.".into(),
+                    fields: BTreeMap::from([
+                        ("source".into(), json!(operation.source.clone())),
+                        ("runtime".into(), json!(operation.runtime.clone())),
+                        ("package".into(), json!(operation.package.clone())),
+                        (
+                            "package_version".into(),
+                            json!(operation.package_version.clone()),
+                        ),
+                        ("operation".into(), json!(operation.operation.clone())),
+                        (
+                            "operation_type".into(),
+                            json!(operation.operation_type.clone()),
+                        ),
+                        ("trigger".into(), operation.trigger.clone()),
+                        ("scope_keys".into(), json!(operation.scope_keys.clone())),
+                        (
+                            "referenced_spaces".into(),
+                            json!(operation.referenced_spaces.clone()),
+                        ),
+                    ]),
+                },
+                HarnessEventBuilder {
+                    run_id: Some(run_id.clone()),
+                    phase_execution_id: Some(phase_execution_id.clone()),
+                    ..HarnessEventBuilder::default()
+                },
+            )?;
+        }
         for memory in effective_phase
             .suppressed_capabilities
             .iter()
@@ -1176,6 +1252,28 @@ impl HarnessEngine {
                     fields: BTreeMap::from([
                         ("source".into(), json!(memory.source.clone())),
                         ("reason".into(), json!(memory.reason.clone())),
+                    ]),
+                },
+                HarnessEventBuilder {
+                    run_id: Some(run_id.clone()),
+                    phase_execution_id: Some(phase_execution_id.clone()),
+                    ..HarnessEventBuilder::default()
+                },
+            )?;
+        }
+        for operation in effective_phase
+            .suppressed_capabilities
+            .iter()
+            .filter(|capability| capability.kind == "memory_operation")
+        {
+            session.emitter.emit(
+                HarnessEventType::MemoryOperationFailed,
+                HarnessEventPayload::Lifecycle {
+                    message: "Memory lifecycle operation is unavailable.".into(),
+                    fields: BTreeMap::from([
+                        ("source".into(), json!(operation.source.clone())),
+                        ("identity".into(), json!(operation.identity.clone())),
+                        ("reason".into(), json!(operation.reason.clone())),
                     ]),
                 },
                 HarnessEventBuilder {
@@ -1247,6 +1345,7 @@ impl HarnessEngine {
         let mut repair_feedback = None;
 
         loop {
+            self.service_memory_operation_controls(session, model, hooks)?;
             // Each model turn sees the immutable run input, prior completed
             // phases, this phase's transcript, the current EffectivePhase, and
             // optional repair feedback from the previous malformed proposal.
@@ -2652,6 +2751,30 @@ impl HarnessEngine {
                     action,
                     SemanticAction::MemoryRead { .. } | SemanticAction::MemoryWrite { .. }
                 ) {
+                    if matches!(action, SemanticAction::MemoryWrite { .. }) {
+                        match self.relieve_memory_capacity_before_write(
+                            session,
+                            &effective_phase,
+                            &mut state,
+                            phase,
+                            model,
+                            hooks,
+                            &action,
+                        ) {
+                            Ok(memory_lifecycle::MemoryCapacityReliefResult::Proceed)
+                            | Ok(memory_lifecycle::MemoryCapacityReliefResult::StillAtCapacity) => {
+                            }
+                            Err(err) => {
+                                return self.fail_phase(
+                                    session,
+                                    &phase.id,
+                                    &phase_execution_id,
+                                    err.to_string(),
+                                    None,
+                                );
+                            }
+                        }
+                    }
                     self.dispatch_memory(
                         session,
                         &effective_phase,
@@ -2797,6 +2920,21 @@ impl HarnessEngine {
                         action_succeeded: Some(false),
                     });
                     continue;
+                }
+                if let SemanticAction::MemoryWrite { package, space, .. } = &action {
+                    self.evaluate_memory_lifecycle_after_write(
+                        session,
+                        &effective_phase,
+                        &mut state,
+                        phase,
+                        model,
+                        hooks,
+                        memory_lifecycle::MemoryChangeContext {
+                            package: package.clone(),
+                            space: space.clone(),
+                            capacity_relief: false,
+                        },
+                    )?;
                 }
                 state.transcript.push(TranscriptEntry {
                     kind: TranscriptEntryKind::ActionResult,

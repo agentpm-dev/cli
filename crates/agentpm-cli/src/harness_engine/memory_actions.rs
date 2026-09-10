@@ -286,6 +286,7 @@ fn emit_memory_embedding_events(
 }
 
 impl HarnessEngine {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn dispatch_memory(
         &self,
         session: &mut HarnessSession,

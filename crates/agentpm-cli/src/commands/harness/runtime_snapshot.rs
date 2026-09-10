@@ -51,6 +51,7 @@ pub(super) fn runtime_snapshot_from_plan(plan: &ResolvedHarnessPlan) -> RuntimeS
         skills: skill_snapshots_from_plan(plan),
         knowledge: knowledge_snapshots_from_plan(plan),
         memory: memory_snapshots_from_plan(plan),
+        memory_operations: memory_operation_snapshots_from_plan(plan),
         capability_candidates: plan
             .capabilities
             .iter()
@@ -240,6 +241,318 @@ pub(super) fn memory_snapshots_from_plan(
         }
     }
     snapshots
+}
+
+pub(super) fn memory_operation_snapshots_from_plan(
+    plan: &ResolvedHarnessPlan,
+) -> Vec<MemoryOperationRuntimeSnapshot> {
+    let Some(agent) = &plan.selected_agent else {
+        return Vec::new();
+    };
+    let agent_manifest = load_manifest_value(&agent.manifest_path)
+        .and_then(|(value, _)| serde_json::from_value::<AgentManifest>(value).map_err(Into::into))
+        .ok();
+    let Some(agent_manifest) = agent_manifest else {
+        return Vec::new();
+    };
+
+    let mut snapshots = Vec::new();
+    if let Some(bindings) = agent_manifest.bindings.as_ref() {
+        if let Some(global) = bindings.global.as_ref() {
+            snapshots.extend(memory_operation_binding_snapshots_from_plan(
+                plan,
+                &global.memory,
+                "global",
+            ));
+        }
+        let mut phase_bindings = bindings.phases.iter().collect::<Vec<_>>();
+        phase_bindings.sort_by_key(|(phase_id, _)| *phase_id);
+        for (phase_id, scope) in phase_bindings {
+            snapshots.extend(memory_operation_binding_snapshots_from_plan(
+                plan,
+                &scope.memory,
+                &format!("phase:{phase_id}"),
+            ));
+        }
+    }
+    snapshots
+}
+
+fn memory_operation_binding_snapshots_from_plan(
+    plan: &ResolvedHarnessPlan,
+    bindings: &[AgentMemoryBinding],
+    binding_scope: &str,
+) -> Vec<MemoryOperationRuntimeSnapshot> {
+    let mut snapshots = Vec::new();
+    for binding in bindings {
+        let package_name = package_identity_for_harness_runtime(&binding.package);
+        let Some(package) = plan
+            .package_graph
+            .values()
+            .find(|package| package.kind == PackageKind::Memory && package.name == package_name)
+        else {
+            continue;
+        };
+        let manifest_path = package.root.join("agent.json");
+        let manifest = load_manifest_value(&manifest_path)
+            .and_then(|(value, _)| parse_memory_manifest(&value))
+            .ok();
+        let Some(manifest) = manifest else {
+            continue;
+        };
+        let (runtime, runtime_state, runtime_readiness_reason) =
+            memory_runtime_readiness(plan, &package_name);
+        let capabilities =
+            crate::harness_runtime::memory::MemoryRuntimeCapabilityDescriptor::local_sqlite();
+        let unrealizable =
+            crate::harness_runtime::memory::unrealizable_memory_spaces(&manifest, &capabilities)
+                .into_iter()
+                .map(|diagnostic| (diagnostic.space, diagnostic.reason))
+                .collect::<BTreeMap<_, _>>();
+
+        for operation_name in &binding.operations {
+            let Some(operation) = manifest.memory.operations.get(operation_name) else {
+                continue;
+            };
+            let mut state = runtime_state.clone();
+            let mut readiness_reason = runtime_readiness_reason.clone();
+            let referenced_spaces = memory_operation_referenced_spaces(operation);
+            if state == "available" && runtime != "local" {
+                state = "unavailable".into();
+                readiness_reason = Some(
+                    "Memory lifecycle operations currently require the local MemoryRuntime".into(),
+                );
+            }
+            if state == "available"
+                && let Some((space, reason)) = referenced_spaces
+                    .iter()
+                    .find_map(|space| unrealizable.get(space).map(|reason| (space, reason)))
+            {
+                state = "unavailable".into();
+                readiness_reason = Some(format!(
+                    "referenced Memory space `{space}` is unavailable: {reason}"
+                ));
+            }
+            if state == "available" && !capabilities.durable_trigger_state {
+                state = "unavailable".into();
+                readiness_reason =
+                    Some("Memory lifecycle operations require durable trigger state".into());
+            }
+            if state == "available" && !capabilities.atomic_batches {
+                state = "unavailable".into();
+                readiness_reason =
+                    Some("Memory lifecycle operations require atomic batch support".into());
+            }
+            let scope_keys = operation_scope_keys(&manifest, &referenced_spaces);
+            snapshots.push(memory_operation_snapshot(
+                package,
+                operation_name,
+                operation,
+                referenced_spaces,
+                scope_keys,
+                runtime.clone(),
+                state,
+                readiness_reason,
+                binding_scope,
+            ));
+        }
+    }
+    snapshots
+}
+
+#[allow(clippy::too_many_arguments)]
+fn memory_operation_snapshot(
+    package: &ResolvedPackageInfo,
+    operation_name: &str,
+    operation: &MemoryOperation,
+    referenced_spaces: Vec<String>,
+    scope_keys: Vec<String>,
+    runtime: String,
+    state: String,
+    readiness_reason: Option<String>,
+    binding_scope: &str,
+) -> MemoryOperationRuntimeSnapshot {
+    let trigger = serde_json::to_value(memory_operation_trigger(operation)).unwrap_or(Value::Null);
+    match operation {
+        MemoryOperation::Transform {
+            description,
+            inputs,
+            output,
+            source_handling,
+            output_mode,
+            preserve_provenance,
+            ..
+        } => MemoryOperationRuntimeSnapshot {
+            package: package.name.clone(),
+            package_version: package.version.clone(),
+            operation: operation_name.to_string(),
+            operation_type: "transform".into(),
+            description: description.clone(),
+            trigger,
+            inputs: inputs.iter().map(operation_ref_snapshot).collect(),
+            output: Some(operation_ref_snapshot(output)),
+            targets: Vec::new(),
+            source_handling: Some(memory_source_handling_label(source_handling).into()),
+            output_mode: Some(memory_transform_output_mode_label(output_mode).into()),
+            preserve_provenance: Some(*preserve_provenance),
+            cascade_derived_records: None,
+            referenced_spaces,
+            root: Some(package.root.clone()),
+            runtime,
+            source: "agent_binding".into(),
+            state,
+            readiness_reason,
+            binding_scope: binding_scope.to_string(),
+            scope_keys,
+        },
+        MemoryOperation::Consolidate {
+            description,
+            inputs,
+            output,
+            source_handling,
+            preserve_provenance,
+            ..
+        } => MemoryOperationRuntimeSnapshot {
+            package: package.name.clone(),
+            package_version: package.version.clone(),
+            operation: operation_name.to_string(),
+            operation_type: "consolidate".into(),
+            description: description.clone(),
+            trigger,
+            inputs: inputs.iter().map(operation_ref_snapshot).collect(),
+            output: Some(operation_ref_snapshot(output)),
+            targets: Vec::new(),
+            source_handling: Some(memory_source_handling_label(source_handling).into()),
+            output_mode: None,
+            preserve_provenance: Some(*preserve_provenance),
+            cascade_derived_records: None,
+            referenced_spaces,
+            root: Some(package.root.clone()),
+            runtime,
+            source: "agent_binding".into(),
+            state,
+            readiness_reason,
+            binding_scope: binding_scope.to_string(),
+            scope_keys,
+        },
+        MemoryOperation::Delete {
+            description,
+            targets,
+            cascade_derived_records,
+            ..
+        } => MemoryOperationRuntimeSnapshot {
+            package: package.name.clone(),
+            package_version: package.version.clone(),
+            operation: operation_name.to_string(),
+            operation_type: "delete".into(),
+            description: description.clone(),
+            trigger,
+            inputs: Vec::new(),
+            output: None,
+            targets: targets.iter().map(operation_target_snapshot).collect(),
+            source_handling: None,
+            output_mode: None,
+            preserve_provenance: None,
+            cascade_derived_records: Some(*cascade_derived_records),
+            referenced_spaces,
+            root: Some(package.root.clone()),
+            runtime,
+            source: "agent_binding".into(),
+            state,
+            readiness_reason,
+            binding_scope: binding_scope.to_string(),
+            scope_keys,
+        },
+    }
+}
+
+fn operation_ref_snapshot(reference: &MemoryOperationRef) -> MemoryOperationRefRuntimeSnapshot {
+    MemoryOperationRefRuntimeSnapshot {
+        space: reference.space.clone(),
+        record_type: Some(reference.record_type.clone()),
+    }
+}
+
+fn operation_target_snapshot(target: &MemoryOperationTarget) -> MemoryOperationRefRuntimeSnapshot {
+    MemoryOperationRefRuntimeSnapshot {
+        space: target.space.clone(),
+        record_type: None,
+    }
+}
+
+fn memory_operation_trigger(operation: &MemoryOperation) -> &MemoryTrigger {
+    match operation {
+        MemoryOperation::Transform { trigger, .. }
+        | MemoryOperation::Consolidate { trigger, .. }
+        | MemoryOperation::Delete { trigger, .. } => trigger,
+    }
+}
+
+fn memory_operation_referenced_spaces(operation: &MemoryOperation) -> Vec<String> {
+    let mut spaces = BTreeSet::new();
+    match operation {
+        MemoryOperation::Transform {
+            trigger,
+            inputs,
+            output,
+            ..
+        }
+        | MemoryOperation::Consolidate {
+            trigger,
+            inputs,
+            output,
+            ..
+        } => {
+            spaces.extend(inputs.iter().map(|input| input.space.clone()));
+            spaces.insert(output.space.clone());
+            if let Some(space) = memory_trigger_space(trigger) {
+                spaces.insert(space.to_string());
+            }
+        }
+        MemoryOperation::Delete {
+            trigger, targets, ..
+        } => {
+            spaces.extend(targets.iter().map(|target| target.space.clone()));
+            if let Some(space) = memory_trigger_space(trigger) {
+                spaces.insert(space.to_string());
+            }
+        }
+    }
+    spaces.into_iter().collect()
+}
+
+fn memory_trigger_space(trigger: &MemoryTrigger) -> Option<&str> {
+    match trigger {
+        MemoryTrigger::RecordCount { space, .. } | MemoryTrigger::Capacity { space } => {
+            Some(space.as_str())
+        }
+        MemoryTrigger::External | MemoryTrigger::Interval { .. } => None,
+    }
+}
+
+fn operation_scope_keys(manifest: &MemoryManifest, referenced_spaces: &[String]) -> Vec<String> {
+    let mut scope_keys = BTreeSet::new();
+    for space in referenced_spaces {
+        if let Some(space) = manifest.memory.spaces.get(space) {
+            scope_keys.extend(space.scope.iter().cloned());
+        }
+    }
+    scope_keys.into_iter().collect()
+}
+
+fn memory_source_handling_label(source_handling: &MemorySourceHandling) -> &'static str {
+    match source_handling {
+        MemorySourceHandling::Retain => "retain",
+        MemorySourceHandling::RetainUntilExpiration => "retain_until_expiration",
+        MemorySourceHandling::DeleteAfterSuccess => "delete_after_success",
+    }
+}
+
+fn memory_transform_output_mode_label(output_mode: &MemoryTransformOutputMode) -> &'static str {
+    match output_mode {
+        MemoryTransformOutputMode::Create => "create",
+        MemoryTransformOutputMode::ReplaceInput => "replace_input",
+    }
 }
 
 fn memory_binding_snapshots_from_plan(

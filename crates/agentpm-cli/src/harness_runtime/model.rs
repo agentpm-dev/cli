@@ -195,6 +195,48 @@ pub struct MemorySpaceRuntimeSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryOperationRefRuntimeSnapshot {
+    pub space: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_type: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryOperationRuntimeSnapshot {
+    pub package: String,
+    pub package_version: String,
+    pub operation: String,
+    pub operation_type: String,
+    pub description: String,
+    pub trigger: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<MemoryOperationRefRuntimeSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<MemoryOperationRefRuntimeSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<MemoryOperationRefRuntimeSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_handling: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preserve_provenance: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cascade_derived_records: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referenced_spaces: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
+    pub runtime: String,
+    pub source: String,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness_reason: Option<String>,
+    pub binding_scope: String,
+    pub scope_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeCapabilitySnapshot {
     pub kind: String,
     pub identity: String,
@@ -239,6 +281,8 @@ pub struct RuntimeSnapshot {
     pub knowledge: Vec<KnowledgeRuntimeSnapshot>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory: Vec<MemorySpaceRuntimeSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory_operations: Vec<MemoryOperationRuntimeSnapshot>,
     pub capability_candidates: Vec<RuntimeCapabilitySnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelProviderSelection>,
@@ -264,6 +308,7 @@ impl RuntimeSnapshot {
             skills: Vec::new(),
             knowledge: Vec::new(),
             memory: Vec::new(),
+            memory_operations: Vec::new(),
             capability_candidates: Vec::new(),
             model: None,
         }

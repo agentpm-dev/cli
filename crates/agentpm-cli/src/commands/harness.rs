@@ -7,24 +7,27 @@ use crate::harness_runtime::{
     CompositeKnowledgeRuntime, ConfiguredApprovalController, ConfiguredHookRuntime,
     ConsumerContextSnapshot, CustomKnowledgeRuntime, CustomMemoryRuntime, HookRuntime,
     HostServiceInvoker, KnowledgeEmbeddingSnapshot, KnowledgeRuntime, KnowledgeRuntimeSnapshot,
-    LocalKnowledgeRuntime, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
-    ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
-    ModelRuntimeFailure, ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot,
-    ProcessModelRuntime, RoutingEmbeddingProvider, RuntimeCapabilitySnapshot, RuntimeSnapshot,
-    ServiceEmbeddingProvider, ServiceLifecycleEmitter, ServiceLifecycleEvents,
-    ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    LocalKnowledgeRuntime, MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
+    MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelCapabilityAdvertisement,
+    ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure,
+    ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProcessModelRuntime,
+    RoutingEmbeddingProvider, RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceEmbeddingProvider,
+    ServiceLifecycleEmitter, ServiceLifecycleEvents, ServiceReadinessSnapshot,
+    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::manifest::{
-    AgentManifest, AgentMemoryBinding, MemoryManifest, MemoryRetrievalMode, load_manifest_value,
-    parse_knowledge_manifest, parse_loop_manifest, parse_memory_manifest, parse_skill_manifest,
-    parse_tool_manifest,
+    AgentManifest, AgentMemoryBinding, MemoryManifest, MemoryOperation, MemoryOperationRef,
+    MemoryOperationTarget, MemoryRetrievalMode, MemorySourceHandling, MemoryTransformOutputMode,
+    MemoryTrigger, load_manifest_value, parse_knowledge_manifest, parse_loop_manifest,
+    parse_memory_manifest, parse_skill_manifest, parse_tool_manifest,
 };
 use crate::prelude::*;
 use crate::{
     harness_config::{HarnessHookId, HarnessTraceLevel},
     harness_engine::{
-        HarnessEngine, HarnessEngineOptions, HarnessRunResult, HarnessRuntimeServices,
-        HarnessSession, RuntimeTerminalResult,
+        EngineControlIngress, HarnessEngine, HarnessEngineOptions, HarnessRunResult,
+        HarnessRuntimeServices, HarnessSession, MemoryOperationControlError,
+        MemoryOperationInvocationResult, RuntimeTerminalResult,
     },
     harness_observability::{
         HarnessEventEnvelope, HarnessEventSink, HarnessTerminalStatus, JsonlTraceSink,
@@ -33,7 +36,7 @@ use crate::{
     },
     harness_runtime::SdkHostHookRegistration,
 };
-use anyhow::{anyhow, bail};
+use anyhow::{Context, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -333,8 +336,8 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
             "memory_operation" => {
                 bridge.write_error(
                     id.as_deref(),
-                    "memory_operation_unavailable",
-                    "external Memory-operation control requests are reserved until the Memory runtime milestone",
+                    "memory_operation_no_active_run",
+                    "external Memory-operation control requires an active Harness Run",
                 )?;
             }
             "shutdown" => {
@@ -426,6 +429,7 @@ fn execute_machine_run(
     };
     let engine_options = harness_engine_options_from_plan(plan);
     let mut engine = HarnessEngine::new(loop_manifest, engine_options);
+    engine.set_control_ingress(Box::new(bridge.clone()));
     let memory_embedding_provider =
         embedding_provider_for_plan(plan, Some(bridge.clone()), Some(&service_events));
     let mut services = HarnessRuntimeServices {
@@ -489,6 +493,14 @@ struct MachineError {
     message: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct MachineMemoryOperationRequest {
+    package: String,
+    operation: String,
+    #[serde(default)]
+    current_resolved_scope: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct HostServiceRegistration {
     role: String,
@@ -517,6 +529,8 @@ struct MachineHostBridge {
     host_service_lifecycle: Option<ServiceLifecycleEmitter>,
     sdk_host_hooks: Vec<SdkHostHookRegistration>,
     sdk_approval_controller: bool,
+    pending_memory_operation_control: Option<MachineEnvelope>,
+    memory_operation_control_in_flight: bool,
     request_counter: u64,
     active_run: Arc<AtomicBool>,
     cancellation_requested: Arc<AtomicBool>,
@@ -539,6 +553,8 @@ impl MachineHostBridgeHandle {
                 host_service_lifecycle: None,
                 sdk_host_hooks: Vec::new(),
                 sdk_approval_controller: false,
+                pending_memory_operation_control: None,
+                memory_operation_control_in_flight: false,
                 request_counter: 0,
                 active_run,
                 cancellation_requested,
@@ -674,6 +690,31 @@ impl MachineHostBridgeHandle {
             .writer
             .clone()
     }
+
+    fn take_memory_operation_control(&self) -> Result<Option<MachineEnvelope>> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .take_memory_operation_control()
+    }
+
+    fn complete_memory_operation_control(
+        &self,
+        id: Option<&str>,
+        result: Result<MemoryOperationInvocationResult>,
+    ) -> Result<()> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .complete_memory_operation_control(id, result)
+    }
+
+    fn flush_memory_operation_controls(&self, code: &str, message: &str) -> Result<()> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .flush_memory_operation_controls(code, message)
+    }
 }
 
 impl HostServiceInvoker for MachineHostBridgeHandle {
@@ -700,6 +741,42 @@ impl HostServiceInvoker for MachineHostBridgeHandle {
     }
 }
 
+impl EngineControlIngress for MachineHostBridgeHandle {
+    fn service_memory_operation_controls(
+        &mut self,
+        engine: &mut HarnessEngine,
+        session: &mut HarnessSession,
+        model: &mut dyn ModelRuntime,
+        hooks: &mut dyn HookRuntime,
+    ) -> Result<()> {
+        while let Some(frame) = self.take_memory_operation_control()? {
+            let result = match serde_json::from_value::<MachineMemoryOperationRequest>(
+                frame.payload.clone(),
+            ) {
+                Ok(request) => engine.invoke_memory_operation(
+                    session,
+                    &request.package,
+                    &request.operation,
+                    request.current_resolved_scope,
+                    model,
+                    hooks,
+                ),
+                Err(err) => Err(MemoryOperationControlError {
+                    code: "memory_operation_invalid_request",
+                    message: format!("invalid memory_operation request payload: {err}"),
+                }
+                .into()),
+            };
+            self.complete_memory_operation_control(frame.id.as_deref(), result)?;
+        }
+        Ok(())
+    }
+
+    fn flush_memory_operation_controls(&mut self, code: &str, message: &str) -> Result<()> {
+        MachineHostBridgeHandle::flush_memory_operation_controls(self, code, message)
+    }
+}
+
 impl MachineHostBridge {
     fn recv_control_request(&mut self) -> Result<Option<MachineEnvelope>> {
         loop {
@@ -713,6 +790,87 @@ impl MachineHostBridge {
                 continue;
             }
             return Ok(Some(frame));
+        }
+    }
+
+    fn take_memory_operation_control(&mut self) -> Result<Option<MachineEnvelope>> {
+        if self.pending_memory_operation_control.is_none() {
+            self.collect_available_active_control_frames()?;
+        }
+        if self.memory_operation_control_in_flight {
+            return Ok(None);
+        }
+        let Some(frame) = self.pending_memory_operation_control.take() else {
+            return Ok(None);
+        };
+        self.memory_operation_control_in_flight = true;
+        Ok(Some(frame))
+    }
+
+    fn complete_memory_operation_control(
+        &mut self,
+        id: Option<&str>,
+        result: Result<MemoryOperationInvocationResult>,
+    ) -> Result<()> {
+        self.memory_operation_control_in_flight = false;
+        match result {
+            Ok(result) => self.writer.write_response(id, json!(result)),
+            Err(err) => {
+                if self.cancellation_requested.load(Ordering::SeqCst) {
+                    return self.writer.write_error(
+                        id,
+                        "memory_operation_cancelled",
+                        "external Memory operation was cancelled with the active Run",
+                    );
+                }
+                if let Some(control_error) = err.downcast_ref::<MemoryOperationControlError>() {
+                    self.writer
+                        .write_error(id, control_error.code, control_error.message.clone())
+                } else {
+                    self.writer.write_error(
+                        id,
+                        "memory_operation_failed",
+                        format!("external Memory operation failed: {err}"),
+                    )
+                }
+            }
+        }
+    }
+
+    fn flush_memory_operation_controls(&mut self, code: &str, message: &str) -> Result<()> {
+        if let Some(frame) = self.pending_memory_operation_control.take() {
+            self.writer
+                .write_error(frame.id.as_deref(), code, message)?;
+        }
+        if self.memory_operation_control_in_flight
+            && self.cancellation_requested.load(Ordering::SeqCst)
+        {
+            self.memory_operation_control_in_flight = false;
+        }
+        Ok(())
+    }
+
+    fn collect_available_active_control_frames(&mut self) -> Result<()> {
+        loop {
+            let frame = match self.receiver.try_recv() {
+                Ok(Ok(frame)) => frame,
+                Ok(Err(message)) => {
+                    self.writer.write_error(None, "malformed_json", message)?;
+                    continue;
+                }
+                Err(mpsc::TryRecvError::Empty) => return Ok(()),
+                Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            };
+            if let Err(err) = validate_machine_frame_base(&frame) {
+                self.writer
+                    .write_error(frame.id.as_deref(), "protocol_error", err)?;
+                continue;
+            }
+            if frame.kind == MachineFrameKind::Request && self.active_run.load(Ordering::SeqCst) {
+                self.handle_control_request_during_active_run(frame)?;
+            } else {
+                self.pending.push_back(frame);
+            }
         }
     }
 
@@ -829,6 +987,10 @@ impl MachineHostBridge {
         match frame.method.as_deref().unwrap_or_default() {
             "cancel_run" => {
                 self.cancellation_requested.store(true, Ordering::SeqCst);
+                self.flush_memory_operation_controls(
+                    "memory_operation_cancelled",
+                    "external Memory operation was cancelled with the active Run",
+                )?;
                 self.writer.write_response(
                     id.as_deref(),
                     json!({
@@ -851,6 +1013,9 @@ impl MachineHostBridge {
                     "preflight control is unavailable while a Run is active",
                 )?;
             }
+            "memory_operation" => {
+                self.enqueue_memory_operation_control(frame)?;
+            }
             other => {
                 self.writer.write_error(
                     id.as_deref(),
@@ -859,6 +1024,20 @@ impl MachineHostBridge {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    fn enqueue_memory_operation_control(&mut self, frame: MachineEnvelope) -> Result<()> {
+        if self.memory_operation_control_in_flight
+            || self.pending_memory_operation_control.is_some()
+        {
+            return self.writer.write_error(
+                frame.id.as_deref(),
+                "memory_operation_busy",
+                "another external Memory operation is already pending or running in this Session",
+            );
+        }
+        self.pending_memory_operation_control = Some(frame);
         Ok(())
     }
 

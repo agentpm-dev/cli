@@ -151,6 +151,10 @@ impl HarnessEngine {
         status: HarnessTerminalStatus,
         output: Option<Value>,
     ) -> Result<HarnessRunResult> {
+        self.flush_memory_operation_controls(
+            "memory_operation_run_ended",
+            "external Memory operation was not serviced before the active Run ended",
+        )?;
         let mut run = session
             .active_run
             .take()
@@ -266,13 +270,27 @@ impl HarnessEngine {
             phase_summaries: run.phase_summaries.clone(),
             checkpoint_summaries: run.checkpoint_summaries.clone(),
             action_summaries: run.action_summaries.clone(),
-            tool_summaries: run.operation_summaries.clone(),
+            tool_summaries: run
+                .operation_summaries
+                .iter()
+                .filter(|summary| summary.operation_kind != "memory_operation")
+                .cloned()
+                .collect(),
             mcp_summaries: Vec::new(),
             knowledge_summaries: operation_summaries_for_action_kind(
                 &run.action_summaries,
                 "knowledge_request",
             ),
-            memory_summaries: memory_summaries_for_actions(&run.action_summaries),
+            memory_summaries: {
+                let mut summaries = memory_summaries_for_actions(&run.action_summaries);
+                summaries.extend(
+                    run.operation_summaries
+                        .iter()
+                        .filter(|summary| summary.operation_kind == "memory_operation")
+                        .cloned(),
+                );
+                summaries
+            },
             memory_write_review_summaries: run.memory_write_review_summaries.clone(),
             usage: run.usage.clone(),
             retry_count: run.retry_count,

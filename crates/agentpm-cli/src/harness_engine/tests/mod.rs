@@ -6,20 +6,20 @@ use crate::harness_runtime::action::{
 };
 use crate::harness_runtime::approval::ScriptedApprovalController;
 use crate::harness_runtime::hook::{
-    BeforeKnowledgeRequestDecision, BeforeKnowledgeRequestHook, BeforeMemoryReadDecision,
-    BeforeMemoryReadHook, BeforeMemoryWriteDecision, BeforeMemoryWriteHook,
-    BeforeModelRequestContextSection, BeforeModelRequestDecision, BeforeModelRequestHook,
-    BeforeToolCallDecision, BeforeToolSelectionDecision, BeforeToolSelectionHook,
-    HookRuntimeFailure,
+    BeforeKnowledgeRequestDecision, BeforeKnowledgeRequestHook, BeforeMemoryOperationDecision,
+    BeforeMemoryOperationHook, BeforeMemoryReadDecision, BeforeMemoryReadHook,
+    BeforeMemoryWriteDecision, BeforeMemoryWriteHook, BeforeModelRequestContextSection,
+    BeforeModelRequestDecision, BeforeModelRequestHook, BeforeToolCallDecision,
+    BeforeToolSelectionDecision, BeforeToolSelectionHook, HookRuntimeFailure,
 };
 use crate::harness_runtime::knowledge::{
     EmbeddingProvider, KnowledgeRuntimeFailure, ServiceRuntime,
 };
 use crate::harness_runtime::model::{
-    KnowledgeEmbeddingSnapshot, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
-    ModelProviderSelection, ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot,
-    SUCCESSFUL_ACTION_RESULT_CONTROL, ScriptedModelRuntime, SkillResourceSnapshot,
-    SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    KnowledgeEmbeddingSnapshot, MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
+    MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelProviderSelection,
+    ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot, SUCCESSFUL_ACTION_RESULT_CONTROL,
+    ScriptedModelRuntime, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::harness_runtime::service::HostServiceInvoker;
 use crate::manifest::{
@@ -821,6 +821,8 @@ struct TestHookRuntime {
     memory_read_hooks: Vec<BeforeMemoryReadHook>,
     memory_write: Option<BeforeMemoryWriteDecision>,
     memory_write_hooks: Vec<BeforeMemoryWriteHook>,
+    memory_operation: Option<BeforeMemoryOperationDecision>,
+    memory_operation_hooks: Vec<BeforeMemoryOperationHook>,
     fail_before_tool_call: Option<String>,
     reject_before_tool_call: Option<String>,
     fail_before_memory_read: Option<String>,
@@ -828,6 +830,8 @@ struct TestHookRuntime {
     nonfatal_before_memory_read: Option<String>,
     fail_before_memory_write: Option<String>,
     reject_before_memory_write: Option<String>,
+    fail_before_memory_operation: Option<String>,
+    reject_before_memory_operation: Option<String>,
     nonfatal_before_memory_write: Option<String>,
     nonfatal_before_tool_call: Option<String>,
     nonfatal_failures: Vec<HookRuntimeFailure>,
@@ -962,6 +966,26 @@ impl HookRuntime for TestHookRuntime {
             ));
         }
         Ok(self.memory_write.clone().unwrap_or_default())
+    }
+
+    fn before_memory_operation(
+        &mut self,
+        hook: BeforeMemoryOperationHook,
+    ) -> std::result::Result<BeforeMemoryOperationDecision, HookRuntimeFailure> {
+        self.memory_operation_hooks.push(hook);
+        if let Some(message) = &self.reject_before_memory_operation {
+            return Err(HookRuntimeFailure::rejection(
+                crate::harness_config::HarnessHookId::BeforeMemoryOperation,
+                message.clone(),
+            ));
+        }
+        if let Some(message) = &self.fail_before_memory_operation {
+            return Err(HookRuntimeFailure::new(
+                crate::harness_config::HarnessHookId::BeforeMemoryOperation,
+                message.clone(),
+            ));
+        }
+        Ok(self.memory_operation.clone().unwrap_or_default())
     }
 
     fn drain_nonfatal_failures(&mut self) -> Vec<HookRuntimeFailure> {

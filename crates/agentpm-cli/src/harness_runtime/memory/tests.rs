@@ -90,8 +90,10 @@ fn test_operation_state() -> LocalMemoryOperationStateRow {
         armed: true,
         baseline_at: None,
         last_completed_at: None,
+        last_failed_at: None,
         next_eligible_at: None,
         last_observed_value: Some(1),
+        last_failure: None,
         watermark: Some(json!({ "cursor": "rec-1" })),
         updated_at: Utc::now(),
     }
@@ -629,11 +631,14 @@ fn vector_row(runtime: &LocalSqliteMemoryRuntime, record_id: &str) -> (String, V
 }
 
 #[test]
-fn sqlite_memory_store_initializes_schema_version_one() {
+fn sqlite_memory_store_initializes_current_schema_version() {
     let dir = temp_dir("schema");
     let runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
 
-    assert_eq!(runtime.schema_version().unwrap(), 1);
+    assert_eq!(
+        runtime.schema_version().unwrap(),
+        LOCAL_MEMORY_SCHEMA_VERSION
+    );
     assert_eq!(
         runtime.database_path(),
         dir.join(".agentpm-state").join("memory.sqlite3")
@@ -703,7 +708,7 @@ fn sqlite_memory_store_migrates_schema_zero_to_current_version() {
     assert!(
         table_columns(&runtime, "memory_operation_state")
             .iter()
-            .any(|(name, _pk)| name == "watermark_json")
+            .any(|(name, _pk)| name == "last_failure_json")
     );
 
     fs::remove_dir_all(dir).unwrap();
@@ -744,8 +749,10 @@ fn sqlite_memory_schema_uses_spec_primary_keys_and_columns() {
         "armed",
         "baseline_at",
         "last_completed_at",
+        "last_failed_at",
         "next_eligible_at",
         "last_observed_value",
+        "last_failure_json",
         "watermark_json",
     ] {
         assert!(operation_columns.contains(&expected.to_string()));
@@ -1025,6 +1032,397 @@ fn sqlite_memory_atomic_batch_rolls_back_all_primitive_mutations() {
             .unwrap(),
         0
     );
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn sqlite_lifecycle_commit_rejects_sources_changed_archived_or_deleted_after_staging() {
+    for conflict in ["changed", "archived", "deleted"] {
+        let dir = temp_dir(&format!("lifecycle-stale-source-{conflict}"));
+        let package_root = dir.join("memory");
+        fs::create_dir_all(&package_root).unwrap();
+        let (manifest, contracts) = write_m14b_memory_package(&package_root);
+        let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+        let mut source_write = m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({
+                "body": "source before staging"
+            })),
+        );
+        source_write.now = Utc::now();
+        let source = runtime.write_record(source_write).unwrap().record.unwrap();
+        let expected_source = runtime.source_snapshot_for_lifecycle(&source).unwrap();
+
+        match conflict {
+            "changed" => {
+                let mut update = m14b_write_request(
+                    &manifest,
+                    &contracts,
+                    "notes",
+                    "note",
+                    Some(json!({
+                        "body": "source changed after staging"
+                    })),
+                );
+                update.operation = LocalMemoryWriteOperation::Update;
+                update.record_id = Some(source.id.clone());
+                runtime.write_record_for_lifecycle(update).unwrap();
+            }
+            "archived" => {
+                let mut archive = m14b_write_request(&manifest, &contracts, "notes", "note", None);
+                archive.operation = LocalMemoryWriteOperation::Archive;
+                archive.record_id = Some(source.id.clone());
+                runtime.write_record_for_lifecycle(archive).unwrap();
+            }
+            "deleted" => {
+                let mut delete = m14b_write_request(&manifest, &contracts, "notes", "note", None);
+                delete.operation = LocalMemoryWriteOperation::Delete;
+                delete.record_id = Some(source.id.clone());
+                runtime.write_record_for_lifecycle(delete).unwrap();
+            }
+            other => panic!("unexpected conflict case {other}"),
+        }
+
+        let output = m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({
+                "body": "output that must not commit"
+            })),
+        );
+        let mut operation_state = test_operation_state();
+        operation_state.updated_at = Utc::now();
+        let err = runtime
+            .commit_lifecycle_operation(LocalMemoryLifecycleCommitRequest {
+                trigger_precondition: None,
+                expected_sources: vec![expected_source],
+                output_writes: vec![output],
+                source_mutations: Vec::new(),
+                operation_state,
+            })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("changed before commit"));
+        let notes = runtime
+            .read_records(m14b_read_request(
+                &manifest,
+                "notes",
+                LocalMemoryReadMode::Filter,
+            ))
+            .unwrap();
+        assert!(
+            notes
+                .iter()
+                .all(|record| record.content != json!({ "body": "output that must not commit" }))
+        );
+        assert!(
+            runtime
+                .load_operation_state("@zack/memory", "0.1.0", "rollup", &scope())
+                .unwrap()
+                .is_none()
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn sqlite_lifecycle_commit_revalidates_trigger_and_leaves_state_unchanged_on_conflict() {
+    let dir = temp_dir("lifecycle-trigger-precondition");
+    let package_root = dir.join("memory");
+    fs::create_dir_all(&package_root).unwrap();
+    let (manifest, contracts) = write_m14b_memory_package(&package_root);
+    let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+    let source = runtime
+        .write_record(m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({ "body": "source" })),
+        ))
+        .unwrap()
+        .record
+        .unwrap();
+    let expected_source = runtime.source_snapshot_for_lifecycle(&source).unwrap();
+    let mut existing_state = test_operation_state();
+    existing_state.last_observed_value = Some(0);
+    runtime.store_operation_state(&existing_state).unwrap();
+
+    let output = m14b_write_request(
+        &manifest,
+        &contracts,
+        "notes",
+        "note",
+        Some(json!({ "body": "output that must not commit" })),
+    );
+    let mut completed_state = test_operation_state();
+    completed_state.armed = false;
+    completed_state.last_completed_at = Some(Utc::now());
+    completed_state.last_observed_value = Some(2);
+    completed_state.updated_at = Utc::now();
+    let err = runtime
+        .commit_lifecycle_operation(LocalMemoryLifecycleCommitRequest {
+            trigger_precondition: Some(
+                LocalMemoryLifecycleTriggerPrecondition::ActiveCountAtLeast {
+                    package: "@zack/memory".into(),
+                    package_version: "0.1.0".into(),
+                    space: "notes".into(),
+                    scope: scope(),
+                    threshold: 2,
+                },
+            ),
+            expected_sources: vec![expected_source],
+            output_writes: vec![output],
+            source_mutations: Vec::new(),
+            operation_state: completed_state,
+        })
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("no longer has active_count >= threshold 2")
+    );
+    let notes = runtime
+        .read_records(m14b_read_request(
+            &manifest,
+            "notes",
+            LocalMemoryReadMode::Filter,
+        ))
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].id, source.id);
+    let state = runtime
+        .load_operation_state("@zack/memory", "0.1.0", "rollup", &scope())
+        .unwrap()
+        .unwrap();
+    assert!(state.armed);
+    assert!(state.last_completed_at.is_none());
+    assert_eq!(state.last_observed_value, Some(0));
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn sqlite_lifecycle_commit_failure_rolls_back_output_source_vector_and_trigger_state() {
+    let dir = temp_dir("lifecycle-atomic-commit-rollback");
+    let package_root = dir.join("memory");
+    fs::create_dir_all(&package_root).unwrap();
+    let (manifest, contracts) = write_m14b_memory_package(&package_root);
+    let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+    let source = runtime
+        .write_record(m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({ "body": "source" })),
+        ))
+        .unwrap()
+        .record
+        .unwrap();
+    insert_fake_vector(&runtime, &source);
+    let expected_source = runtime.source_snapshot_for_lifecycle(&source).unwrap();
+
+    let output = m14b_write_request(
+        &manifest,
+        &contracts,
+        "notes",
+        "note",
+        Some(json!({ "body": "output that must roll back" })),
+    );
+    let mut delete_source = m14b_write_request(&manifest, &contracts, "notes", "note", None);
+    delete_source.operation = LocalMemoryWriteOperation::Delete;
+    delete_source.record_id = Some(source.id.clone());
+    let mut delete_missing = m14b_write_request(&manifest, &contracts, "notes", "note", None);
+    delete_missing.operation = LocalMemoryWriteOperation::Delete;
+    delete_missing.record_id = Some("missing-record".into());
+
+    let mut operation_state = test_operation_state();
+    operation_state.armed = false;
+    operation_state.last_completed_at = Some(Utc::now());
+    operation_state.updated_at = Utc::now();
+    let err = runtime
+        .commit_lifecycle_operation(LocalMemoryLifecycleCommitRequest {
+            trigger_precondition: Some(
+                LocalMemoryLifecycleTriggerPrecondition::ActiveCountAtLeast {
+                    package: "@zack/memory".into(),
+                    package_version: "0.1.0".into(),
+                    space: "notes".into(),
+                    scope: scope(),
+                    threshold: 1,
+                },
+            ),
+            expected_sources: vec![expected_source],
+            output_writes: vec![output],
+            source_mutations: vec![delete_source, delete_missing],
+            operation_state,
+        })
+        .unwrap_err();
+
+    assert!(local_memory_error_code(&err).is_some());
+    let notes = runtime
+        .read_records(m14b_read_request(
+            &manifest,
+            "notes",
+            LocalMemoryReadMode::Filter,
+        ))
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].id, source.id);
+    assert_eq!(vector_count(&runtime, &source.id), 1);
+    assert!(
+        runtime
+            .load_operation_state("@zack/memory", "0.1.0", "rollup", &scope())
+            .unwrap()
+            .is_none()
+    );
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn sqlite_lifecycle_staged_embedding_failure_leaves_no_durable_mutation() {
+    let dir = temp_dir("lifecycle-staged-embedding-failure");
+    let package_root = dir.join("memory");
+    fs::create_dir_all(&package_root).unwrap();
+    let (mut manifest, contracts) = write_m14b_memory_package(&package_root);
+    enable_semantic_notes(&mut manifest);
+    let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+    let source = runtime
+        .write_record(m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({ "body": "source before failed staging" })),
+        ))
+        .unwrap()
+        .record
+        .unwrap();
+    let expected_source = runtime.source_snapshot_for_lifecycle(&source).unwrap();
+    let existing_state = test_operation_state();
+    runtime.store_operation_state(&existing_state).unwrap();
+
+    let output = m14b_write_request(
+        &manifest,
+        &contracts,
+        "notes",
+        "note",
+        Some(json!({ "body": "output that must not commit" })),
+    );
+    let mut staged_state = test_operation_state();
+    staged_state.armed = false;
+    staged_state.last_completed_at = Some(Utc::now());
+    staged_state.updated_at = Utc::now();
+    assert_eq!(expected_source.record_id, source.id);
+    assert_eq!(
+        output.content.as_ref(),
+        Some(&json!({ "body": "output that must not commit" }))
+    );
+    assert!(!staged_state.armed);
+
+    let mut failing_embedder = FailingEmbeddingProvider;
+    let semantic = semantic_config();
+    let embedding_space = semantic.embedding_space();
+    let err = failing_embedder
+        .embed(&embedding_space, "output that must not commit")
+        .unwrap_err();
+    assert_eq!(err.code, "embedding_provider_failed");
+
+    let notes = runtime
+        .read_records(m14b_read_request(
+            &manifest,
+            "notes",
+            LocalMemoryReadMode::Filter,
+        ))
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].id, source.id);
+    assert_eq!(
+        notes[0].content,
+        json!({ "body": "source before failed staging" })
+    );
+    assert_eq!(total_vector_count(&runtime), 0);
+    let state = runtime
+        .load_operation_state("@zack/memory", "0.1.0", "rollup", &scope())
+        .unwrap()
+        .unwrap();
+    assert!(state.armed);
+    assert!(state.last_completed_at.is_none());
+    assert_eq!(state.last_observed_value, Some(1));
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn sqlite_lifecycle_staging_without_commit_leaves_no_durable_trace_after_restart() {
+    let dir = temp_dir("lifecycle-staging-no-commit-restart");
+    let package_root = dir.join("memory");
+    fs::create_dir_all(&package_root).unwrap();
+    let (manifest, contracts) = write_m14b_memory_package(&package_root);
+    let mut runtime = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+    let source = runtime
+        .write_record(m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({ "body": "source before staged crash" })),
+        ))
+        .unwrap()
+        .record
+        .unwrap();
+
+    {
+        let expected_source = runtime.source_snapshot_for_lifecycle(&source).unwrap();
+        let output = m14b_write_request(
+            &manifest,
+            &contracts,
+            "notes",
+            "note",
+            Some(json!({ "body": "output staged before crash" })),
+        );
+        let mut operation_state = test_operation_state();
+        operation_state.armed = false;
+        operation_state.last_completed_at = Some(Utc::now());
+        operation_state.updated_at = Utc::now();
+        assert_eq!(expected_source.record_id, source.id);
+        assert_eq!(
+            output.content.as_ref(),
+            Some(&json!({ "body": "output staged before crash" }))
+        );
+        assert!(!operation_state.armed);
+    }
+
+    drop(runtime);
+    let mut restarted = LocalSqliteMemoryRuntime::open(&dir, None).unwrap();
+    let notes = restarted
+        .read_records(m14b_read_request(
+            &manifest,
+            "notes",
+            LocalMemoryReadMode::Filter,
+        ))
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].id, source.id);
+    assert_eq!(
+        notes[0].content,
+        json!({ "body": "source before staged crash" })
+    );
+    assert!(
+        restarted
+            .load_operation_state("@zack/memory", "0.1.0", "rollup", &scope())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(total_vector_count(&restarted), 0);
 
     fs::remove_dir_all(dir).unwrap();
 }
@@ -2327,9 +2725,11 @@ fn custom_memory_capability_validation_rejects_not_ready_or_malformed_descriptor
 
 #[test]
 fn custom_memory_runtime_dispatches_read_to_routed_service() {
+    type RecordingInvokerCalls = Arc<Mutex<Vec<(String, String, String, Value)>>>;
+
     #[derive(Clone)]
     struct RecordingInvoker {
-        calls: Arc<Mutex<Vec<(String, String, String, Value)>>>,
+        calls: RecordingInvokerCalls,
     }
 
     impl HostServiceInvoker for RecordingInvoker {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::harness_runtime::MemoryOperationRuntimeSnapshot;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EffectivePhase {
@@ -13,6 +14,7 @@ pub struct EffectivePhase {
     pub active_skills: Vec<SkillRuntimeSnapshot>,
     pub active_knowledge: Vec<KnowledgeRuntimeSnapshot>,
     pub active_memory: Vec<MemorySpaceRuntimeSnapshot>,
+    pub active_memory_operations: Vec<MemoryOperationRuntimeSnapshot>,
     pub capability_catalog: Vec<CapabilityDescriptor>,
     pub suppressed_capabilities: Vec<SuppressedCapability>,
 }
@@ -30,6 +32,7 @@ pub(super) fn runtime_capability_descriptors(
     active_skills: &mut Vec<SkillRuntimeSnapshot>,
     active_knowledge: &mut Vec<KnowledgeRuntimeSnapshot>,
     active_memory: &mut Vec<MemorySpaceRuntimeSnapshot>,
+    active_memory_operations: &mut Vec<MemoryOperationRuntimeSnapshot>,
 ) -> Vec<CapabilityDescriptor> {
     let mut descriptors = Vec::new();
     let mut seen_tools = BTreeSet::new();
@@ -267,11 +270,62 @@ pub(super) fn runtime_capability_descriptors(
             });
         }
     }
+    for operation in runtime
+        .memory_operations
+        .iter()
+        .filter(|operation| candidate_scope_matches_phase(&operation.binding_scope, &phase.id))
+    {
+        let identity = memory_operation_identity(&operation.package, &operation.operation);
+        if operation.state != "available" {
+            suppressed_capabilities.push(SuppressedCapability {
+                kind: "memory_operation".into(),
+                identity,
+                source: operation.source.clone(),
+                reason: operation.readiness_reason.clone().unwrap_or_else(|| {
+                    format!("Memory operation readiness state is {}", operation.state)
+                }),
+            });
+            continue;
+        }
+        let missing_scope_keys = operation
+            .scope_keys
+            .iter()
+            .filter(|key| {
+                runtime
+                    .runtime_scopes
+                    .get(*key)
+                    .is_none_or(|value| value.is_empty())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_scope_keys.is_empty() {
+            suppressed_capabilities.push(SuppressedCapability {
+                kind: "memory_operation".into(),
+                identity,
+                source: operation.source.clone(),
+                reason: format!(
+                    "unresolved Memory scope keys for operation `{}`: {}",
+                    operation.operation,
+                    missing_scope_keys.join(", ")
+                ),
+            });
+            continue;
+        }
+        if !active_memory_operations.iter().any(|active| {
+            active.package == operation.package && active.operation == operation.operation
+        }) {
+            active_memory_operations.push(operation.clone());
+        }
+    }
     descriptors
 }
 
 pub(super) fn memory_action_identity(package: &str, space: &str) -> String {
     format!("{package}/{space}")
+}
+
+pub(super) fn memory_operation_identity(package: &str, operation: &str) -> String {
+    format!("{package}/operations/{operation}")
 }
 
 pub(super) fn candidate_scope_matches_phase(scope: &str, phase_id: &str) -> bool {
@@ -611,6 +665,7 @@ impl EffectivePhase {
         let mut active_skills = Vec::new();
         let mut active_knowledge = Vec::new();
         let mut active_memory = Vec::new();
+        let mut active_memory_operations = Vec::new();
         let mut capability_catalog = phase_completion_descriptors(phase);
         capability_catalog.extend(runtime_capability_descriptors(
             phase,
@@ -628,6 +683,7 @@ impl EffectivePhase {
             &mut active_skills,
             &mut active_knowledge,
             &mut active_memory,
+            &mut active_memory_operations,
         ));
         Self {
             phase_id: phase.id.clone(),
@@ -645,6 +701,7 @@ impl EffectivePhase {
             active_skills,
             active_knowledge,
             active_memory,
+            active_memory_operations,
             capability_catalog,
             suppressed_capabilities,
         }

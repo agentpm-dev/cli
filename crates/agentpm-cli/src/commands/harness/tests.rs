@@ -10,8 +10,9 @@ use crate::harness_observability::{
     RunUsage,
 };
 use crate::harness_runtime::SemanticAction;
-use crate::harness_runtime::action::ScriptedActionDispatcher;
-use crate::harness_runtime::action::SemanticActionProposal;
+use crate::harness_runtime::action::{
+    MemoryWriteOperation, ScriptedActionDispatcher, SemanticActionProposal,
+};
 use crate::harness_runtime::model::{
     ModelCapabilityAdvertisement, ModelRuntimeFailure, ModelTurn, ScriptedModelRuntime,
 };
@@ -1325,6 +1326,52 @@ fn memory_semantic_retrieval_degrades_to_supported_modes_without_embedding_provi
 }
 
 #[test]
+fn memory_operation_snapshot_includes_trigger_monitor_space_in_scope_tuple() {
+    let root = temp_dir("memory-operation-trigger-scope-tuple");
+    let mut plan = minimal_plan(&root);
+    write_trigger_scoped_memory_operation_fixture(&root, &mut plan);
+
+    let runtime = runtime_snapshot_from_plan(&plan);
+    let operation = runtime
+        .memory_operations
+        .iter()
+        .find(|operation| operation.operation == "summarize_when_monitored")
+        .unwrap();
+    assert_eq!(
+        operation.referenced_spaces,
+        vec![
+            "monitors".to_string(),
+            "notes".to_string(),
+            "summaries".to_string()
+        ]
+    );
+    assert_eq!(
+        operation.scope_keys,
+        vec![
+            "conversation".to_string(),
+            "tenant".to_string(),
+            "user".to_string()
+        ]
+    );
+    assert_eq!(operation.state, "available");
+
+    let capacity_operation = runtime
+        .memory_operations
+        .iter()
+        .find(|operation| operation.operation == "delete_when_monitor_capacity")
+        .unwrap();
+    assert_eq!(
+        capacity_operation.referenced_spaces,
+        vec!["monitors".to_string(), "notes".to_string()]
+    );
+    assert_eq!(
+        capacity_operation.scope_keys,
+        vec!["tenant".to_string(), "user".to_string()]
+    );
+    assert_eq!(capacity_operation.state, "available");
+}
+
+#[test]
 fn knowledge_snapshot_uses_resolved_package_identity_for_scoped_installs() {
     let root = temp_dir("knowledge-snapshot-scoped-installed-package");
     let knowledge_root = root.join(".agentpm/knowledge/zack/guide/0.1.0");
@@ -1804,6 +1851,323 @@ fn machine_bridge_rejects_start_run_while_active_without_blocking_host_service_r
         frame["id"] == "start-while-active"
             && frame["kind"] == "error"
             && frame["error"]["code"] == "session_busy"
+    }));
+}
+
+#[test]
+fn machine_bridge_queues_memory_operation_while_active_without_blocking_host_service_response() {
+    let (bridge, sender, output) = buffered_machine_bridge();
+    bridge.register_host_service(
+        &host_service("model", "host-model"),
+        host_model_capabilities(),
+    );
+    bridge.set_active_run(true);
+    let mut bridge_for_thread = bridge.clone();
+    let waiter = std::thread::spawn(move || {
+        bridge_for_thread.invoke_host_service(
+            "model",
+            "host-model",
+            "generate",
+            json!({ "input": "visible" }),
+            1_000,
+        )
+    });
+
+    sender
+        .send(Ok(machine_request(
+            "memory-operation-while-active",
+            "memory_operation",
+            json!({
+                "package": "m15-lifecycle-memory-test",
+                "operation": "external_delete_notes",
+                "current_resolved_scope": { "user": "user-123" }
+            }),
+        )))
+        .unwrap();
+    sender
+        .send(Ok(machine_request(
+            "memory-operation-busy",
+            "memory_operation",
+            json!({
+                "package": "m15-lifecycle-memory-test",
+                "operation": "external_delete_notes",
+                "current_resolved_scope": { "user": "user-123" }
+            }),
+        )))
+        .unwrap();
+    sender
+        .send(Ok(machine_response(
+            "host-model-host-model-1",
+            json!({ "ok": true }),
+        )))
+        .unwrap();
+
+    assert_eq!(waiter.join().unwrap().unwrap(), json!({ "ok": true }));
+    let frames = machine_frames_from_buffer(&output);
+    assert!(frames.iter().any(|frame| {
+        frame["id"] == "memory-operation-busy"
+            && frame["kind"] == "error"
+            && frame["error"]["code"] == "memory_operation_busy"
+    }));
+
+    let queued = bridge.take_memory_operation_control().unwrap().unwrap();
+    assert_eq!(queued.id.as_deref(), Some("memory-operation-while-active"));
+    bridge
+        .complete_memory_operation_control(
+            queued.id.as_deref(),
+            Err(MemoryOperationControlError {
+                code: "memory_operation_no_active_run",
+                message: "test completed queued operation".into(),
+            }
+            .into()),
+        )
+        .unwrap();
+}
+
+#[test]
+fn machine_memory_operation_control_runs_through_engine_yield_point() {
+    let root = temp_dir("machine-memory-operation-engine-ingress");
+    let mut plan = minimal_plan(&root);
+    write_single_phase_loop_fixture(&root, &mut plan);
+    write_external_delete_memory_operation_fixture(&root, &mut plan);
+    plan.runtime_scopes.insert("user".into(), "user-123".into());
+    plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+        provider: "host-model".into(),
+        model: "model-1".into(),
+        options: json!({}),
+    });
+    plan.config.config.providers.models.insert(
+        "host-model".into(),
+        HarnessImplementationEntry {
+            implementation: HarnessImplementation::Host {
+                request_timeout_ms: 1_000,
+            },
+        },
+    );
+
+    let (bridge, sender, output) = buffered_machine_bridge();
+    bridge.register_host_service(
+        &host_service("model", "host-model"),
+        host_model_capabilities(),
+    );
+    bridge.set_active_run(true);
+    let run_bridge = bridge.clone();
+    let run = std::thread::spawn(move || {
+        let result = execute_machine_run(&plan, "run input".into(), &run_bridge);
+        run_bridge.set_active_run(false);
+        result
+    });
+    wait_for_machine_frame(&output, |frame| {
+        frame["id"] == "host-model-host-model-1"
+            && frame["kind"] == "request"
+            && frame["method"] == "host_service"
+    });
+
+    sender
+        .send(Ok(machine_request(
+            "delete-notes",
+            "memory_operation",
+            json!({
+                "package": "machine-memory-test",
+                "operation": "external_delete_notes",
+                "current_resolved_scope": { "user": "user-123" }
+            }),
+        )))
+        .unwrap();
+    sender
+        .send(Ok(machine_response(
+            "host-model-host-model-1",
+            serde_json::to_value(ModelTurn {
+                assistant_content: None,
+                actions: vec![SemanticActionProposal::new(
+                    "write-note",
+                    SemanticAction::MemoryWrite {
+                        package: "machine-memory-test".into(),
+                        space: "notes".into(),
+                        operation: MemoryWriteOperation::Create,
+                        record_type: "note".into(),
+                        record_id: None,
+                        content: Some(json!({ "body": "queued target" })),
+                    },
+                )],
+                usage: RunUsage::default(),
+                finish_reason: Some("tool_calls".into()),
+                provider_metadata: BTreeMap::new(),
+            })
+            .unwrap(),
+        )))
+        .unwrap();
+    sender
+        .send(Ok(machine_response(
+            "host-model-host-model-2",
+            serde_json::to_value(phase_completion_turn(
+                Some("complete"),
+                Some(json!({ "summary": "done" })),
+            ))
+            .unwrap(),
+        )))
+        .unwrap();
+
+    let terminal = run.join().unwrap().unwrap();
+    assert_eq!(terminal.status, HarnessTerminalStatus::Ended);
+    assert_eq!(terminal.output, Some(json!({ "summary": "done" })));
+    assert!(terminal.report.memory_summaries.iter().any(|summary| {
+        summary.operation_kind == "memory_operation"
+            && summary.identity == "machine-memory-test/operations/external_delete_notes"
+            && summary.status == "completed"
+            && summary.count == 1
+    }));
+
+    let frames = machine_frames_from_buffer(&output);
+    assert!(frames.iter().any(|frame| {
+        frame["id"] == "delete-notes"
+            && frame["kind"] == "response"
+            && frame["payload"]["identity"]
+                == "machine-memory-test/operations/external_delete_notes"
+            && frame["payload"]["count"] == 1
+    }));
+}
+
+#[test]
+fn machine_memory_operation_control_returns_engine_scope_mismatch_error() {
+    let root = temp_dir("machine-memory-operation-scope-error");
+    let mut plan = minimal_plan(&root);
+    write_single_phase_loop_fixture(&root, &mut plan);
+    write_external_delete_memory_operation_fixture(&root, &mut plan);
+    plan.runtime_scopes.insert("user".into(), "user-123".into());
+    plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+        provider: "host-model".into(),
+        model: "model-1".into(),
+        options: json!({}),
+    });
+    plan.config.config.providers.models.insert(
+        "host-model".into(),
+        HarnessImplementationEntry {
+            implementation: HarnessImplementation::Host {
+                request_timeout_ms: 1_000,
+            },
+        },
+    );
+
+    let (bridge, sender, output) = buffered_machine_bridge();
+    bridge.register_host_service(
+        &host_service("model", "host-model"),
+        host_model_capabilities(),
+    );
+    bridge.set_active_run(true);
+    let run_bridge = bridge.clone();
+    let run = std::thread::spawn(move || {
+        let result = execute_machine_run(&plan, "run input".into(), &run_bridge);
+        run_bridge.set_active_run(false);
+        result
+    });
+    wait_for_machine_frame(&output, |frame| {
+        frame["id"] == "host-model-host-model-1"
+            && frame["kind"] == "request"
+            && frame["method"] == "host_service"
+    });
+
+    sender
+        .send(Ok(machine_request(
+            "delete-notes-wrong-scope",
+            "memory_operation",
+            json!({
+                "package": "machine-memory-test",
+                "operation": "external_delete_notes",
+                "current_resolved_scope": { "user": "other-user" }
+            }),
+        )))
+        .unwrap();
+    sender
+        .send(Ok(machine_response(
+            "host-model-host-model-1",
+            serde_json::to_value(ModelTurn {
+                assistant_content: None,
+                actions: vec![SemanticActionProposal::new(
+                    "write-note",
+                    SemanticAction::MemoryWrite {
+                        package: "machine-memory-test".into(),
+                        space: "notes".into(),
+                        operation: MemoryWriteOperation::Create,
+                        record_type: "note".into(),
+                        record_id: None,
+                        content: Some(json!({ "body": "queued target" })),
+                    },
+                )],
+                usage: RunUsage::default(),
+                finish_reason: Some("tool_calls".into()),
+                provider_metadata: BTreeMap::new(),
+            })
+            .unwrap(),
+        )))
+        .unwrap();
+    sender
+        .send(Ok(machine_response(
+            "host-model-host-model-2",
+            serde_json::to_value(phase_completion_turn(
+                Some("complete"),
+                Some(json!({ "summary": "done" })),
+            ))
+            .unwrap(),
+        )))
+        .unwrap();
+
+    let terminal = run.join().unwrap().unwrap();
+    assert_eq!(terminal.status, HarnessTerminalStatus::Ended);
+    let frames = machine_frames_from_buffer(&output);
+    assert!(frames.iter().any(|frame| {
+        frame["id"] == "delete-notes-wrong-scope"
+            && frame["kind"] == "error"
+            && frame["error"]["code"] == "memory_operation_scope_mismatch"
+    }));
+}
+
+#[test]
+fn machine_bridge_cancel_run_flushes_pending_memory_operation_control() {
+    let (bridge, sender, output) = buffered_machine_bridge();
+    bridge.register_host_service(
+        &host_service("model", "host-model"),
+        host_model_capabilities(),
+    );
+    bridge.set_active_run(true);
+    let mut bridge_for_thread = bridge.clone();
+    let waiter = std::thread::spawn(move || {
+        bridge_for_thread.invoke_host_service(
+            "model",
+            "host-model",
+            "generate",
+            json!({ "input": "visible" }),
+            1_000,
+        )
+    });
+
+    sender
+        .send(Ok(machine_request(
+            "memory-operation-while-active",
+            "memory_operation",
+            json!({
+                "package": "m15-lifecycle-memory-test",
+                "operation": "external_delete_notes",
+                "current_resolved_scope": { "user": "user-123" }
+            }),
+        )))
+        .unwrap();
+    sender
+        .send(Ok(machine_request("cancel-1", "cancel_run", json!({}))))
+        .unwrap();
+
+    let err = waiter.join().unwrap().unwrap_err();
+    assert!(err.to_string().contains("run cancellation requested"));
+    let frames = machine_frames_from_buffer(&output);
+    assert!(frames.iter().any(|frame| {
+        frame["id"] == "memory-operation-while-active"
+            && frame["kind"] == "error"
+            && frame["error"]["code"] == "memory_operation_cancelled"
+    }));
+    assert!(frames.iter().any(|frame| {
+        frame["id"] == "cancel-1"
+            && frame["kind"] == "response"
+            && frame["payload"]["accepted"] == true
     }));
 }
 
@@ -2407,6 +2771,130 @@ fn write_multi_memory_agent(root: &Path, packages: &[&str]) {
     );
 }
 
+fn write_single_phase_loop_fixture(root: &Path, plan: &mut ResolvedHarnessPlan) {
+    let loop_root = root.join(".agentpm/loops/zack/review-loop/0.1.0");
+    write_json(
+        &loop_root.join("agent.json"),
+        json!({
+            "kind": "loop",
+            "name": "@zack/review-loop",
+            "version": "0.1.0",
+            "loop": {
+                "entry_phase": "respond",
+                "phases": [
+                    {
+                        "id": "respond",
+                        "objective": "Respond to the request.",
+                        "outcomes": [
+                            { "id": "complete", "description": "Complete the run." }
+                        ]
+                    }
+                ],
+                "transitions": [
+                    { "from": "respond", "on": "complete", "to": "$end" }
+                ]
+            }
+        }),
+    );
+    plan.loop_package = Some(ResolvedPackageInfo {
+        key: "loop:@zack/review-loop@0.1.0".into(),
+        kind: PackageKind::Loop,
+        name: "@zack/review-loop".into(),
+        version: "0.1.0".into(),
+        root: loop_root,
+    });
+}
+
+fn write_external_delete_memory_operation_fixture(root: &Path, plan: &mut ResolvedHarnessPlan) {
+    let memory_root = root.join(".agentpm/memory/machine-memory-test/0.1.0");
+    write_json(
+        &root.join("agent.json"),
+        json!({
+            "kind": "agent",
+            "name": "@zack/test-agent",
+            "version": "0.1.0",
+            "memory": ["machine-memory-test@0.1.0"],
+            "bindings": {
+                "global": {
+                    "memory": [
+                        {
+                            "package": "machine-memory-test@0.1.0",
+                            "spaces": ["notes"],
+                            "operations": ["external_delete_notes"]
+                        }
+                    ]
+                }
+            }
+        }),
+    );
+    write_json(
+        &memory_root.join("agent.json"),
+        json!({
+            "kind": "memory",
+            "name": "machine-memory-test",
+            "version": "0.1.0",
+            "description": "Machine Memory operation fixture.",
+            "memory": {
+                "scopes": {
+                    "user": { "description": "User scope." }
+                },
+                "record_types": {
+                    "note": {
+                        "version": "1.0.0",
+                        "description": "Note.",
+                        "schema": "schemas/note.schema.json"
+                    }
+                },
+                "spaces": {
+                    "notes": {
+                        "description": "Notes.",
+                        "model": "collection",
+                        "record_types": ["note"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["key", "filter", "chronological"] }
+                    }
+                },
+                "operations": {
+                    "external_delete_notes": {
+                        "type": "delete",
+                        "description": "Delete notes on external request.",
+                        "trigger": { "type": "external" },
+                        "targets": [{ "space": "notes" }],
+                        "cascade_derived_records": false
+                    }
+                }
+            }
+        }),
+    );
+    write_json(
+        &memory_root.join("schemas/note.schema.json"),
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "body": { "type": "string", "minLength": 1 }
+            },
+            "required": ["body"],
+            "additionalProperties": false
+        }),
+    );
+    crate::commands::memory::execute_memory_build(
+        &memory_root.join("agent.json"),
+        crate::commands::memory::MemoryBuildMode::Write,
+    )
+    .unwrap();
+    plan.package_graph.insert(
+        "memory:machine-memory-test@0.1.0".into(),
+        ResolvedPackageInfo {
+            key: "memory:machine-memory-test@0.1.0".into(),
+            kind: PackageKind::Memory,
+            name: "machine-memory-test".into(),
+            version: "0.1.0".into(),
+            root: memory_root,
+        },
+    );
+}
+
 fn write_key_memory_package(root: &Path, plan: &mut ResolvedHarnessPlan, package_name: &str) {
     let memory_root = root
         .join(".agentpm/memory")
@@ -2465,6 +2953,137 @@ fn write_key_memory_package(root: &Path, plan: &mut ResolvedHarnessPlan, package
             key: format!("memory:{package_name}@0.1.0"),
             kind: PackageKind::Memory,
             name: package_name.into(),
+            version: "0.1.0".into(),
+            root: memory_root,
+        },
+    );
+}
+
+fn write_trigger_scoped_memory_operation_fixture(root: &Path, plan: &mut ResolvedHarnessPlan) {
+    let memory_root = root.join(".agentpm/memory/scope-memory-test/0.1.0");
+    write_json(
+        &root.join("agent.json"),
+        json!({
+            "kind": "agent",
+            "name": "@zack/test-agent",
+            "version": "0.1.0",
+            "memory": ["scope-memory-test@0.1.0"],
+            "bindings": {
+                "global": {
+                    "memory": [
+                        {
+                            "package": "scope-memory-test@0.1.0",
+                            "operations": [
+                                "summarize_when_monitored",
+                                "delete_when_monitor_capacity"
+                            ]
+                        }
+                    ]
+                }
+            }
+        }),
+    );
+    write_json(
+        &memory_root.join("agent.json"),
+        json!({
+            "kind": "memory",
+            "name": "scope-memory-test",
+            "version": "0.1.0",
+            "description": "Memory operation scope fixture.",
+            "memory": {
+                "scopes": {
+                    "conversation": { "description": "Conversation scope." },
+                    "tenant": { "description": "Tenant scope." },
+                    "user": { "description": "User scope." }
+                },
+                "record_types": {
+                    "note": {
+                        "version": "1.0.0",
+                        "description": "Note.",
+                        "schema": "schemas/note.schema.json"
+                    },
+                    "summary": {
+                        "version": "1.0.0",
+                        "description": "Summary.",
+                        "schema": "schemas/summary.schema.json"
+                    },
+                    "monitor": {
+                        "version": "1.0.0",
+                        "description": "Monitor.",
+                        "schema": "schemas/monitor.schema.json"
+                    }
+                },
+                "spaces": {
+                    "notes": {
+                        "description": "Notes.",
+                        "model": "collection",
+                        "record_types": ["note"],
+                        "scope": ["user"],
+                        "retrieval": { "modes": ["key", "chronological"] }
+                    },
+                    "summaries": {
+                        "description": "Summaries.",
+                        "model": "collection",
+                        "record_types": ["summary"],
+                        "scope": ["user", "conversation"],
+                        "retrieval": { "modes": ["key", "chronological"] }
+                    },
+                    "monitors": {
+                        "description": "Monitor records.",
+                        "model": "collection",
+                        "record_types": ["monitor"],
+                        "scope": ["tenant"],
+                        "retrieval": { "modes": ["key", "chronological"] },
+                        "capacity": { "max_records": 10 }
+                    }
+                },
+                "operations": {
+                    "summarize_when_monitored": {
+                        "type": "transform",
+                        "description": "Summarize notes when monitor records cross threshold.",
+                        "trigger": { "type": "record_count", "space": "monitors", "threshold": 1 },
+                        "inputs": [{ "space": "notes", "record_type": "note" }],
+                        "output": { "space": "summaries", "record_type": "summary" },
+                        "source_handling": "retain",
+                        "output_mode": "create",
+                        "preserve_provenance": false
+                    },
+                    "delete_when_monitor_capacity": {
+                        "type": "delete",
+                        "description": "Delete notes when monitor records reach capacity.",
+                        "trigger": { "type": "capacity", "space": "monitors" },
+                        "targets": [{ "space": "notes" }],
+                        "cascade_derived_records": false
+                    }
+                }
+            }
+        }),
+    );
+    for (name, required) in [("note", "body"), ("summary", "summary"), ("monitor", "key")] {
+        write_json(
+            &memory_root.join(format!("schemas/{name}.schema.json")),
+            json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    required: { "type": "string", "minLength": 1 }
+                },
+                "required": [required],
+                "additionalProperties": false
+            }),
+        );
+    }
+    crate::commands::memory::execute_memory_build(
+        &memory_root.join("agent.json"),
+        crate::commands::memory::MemoryBuildMode::Write,
+    )
+    .unwrap();
+    plan.package_graph.insert(
+        "memory:scope-memory-test@0.1.0".into(),
+        ResolvedPackageInfo {
+            key: "memory:scope-memory-test@0.1.0".into(),
+            kind: PackageKind::Memory,
+            name: "scope-memory-test".into(),
             version: "0.1.0".into(),
             root: memory_root,
         },
@@ -2657,6 +3276,26 @@ fn machine_frames_from_buffer(output: &Arc<Mutex<Vec<u8>>>) -> Vec<Value> {
         .collect()
 }
 
+fn wait_for_machine_frame(
+    output: &Arc<Mutex<Vec<u8>>>,
+    predicate: impl Fn(&Value) -> bool,
+) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(frame) = machine_frames_from_buffer(output)
+            .into_iter()
+            .find(|frame| predicate(frame))
+        {
+            return frame;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for machine protocol frame"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn empty_model_request(selection: ModelProviderSelection) -> ModelRequest {
     ModelRequest {
         runtime: RuntimeSnapshot::empty("session-1".into()),
@@ -2690,6 +3329,7 @@ fn empty_model_request(selection: ModelProviderSelection) -> ModelRequest {
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory: Vec::new(),
+            active_memory_operations: Vec::new(),
             capability_catalog: Vec::new(),
             suppressed_capabilities: Vec::new(),
         },

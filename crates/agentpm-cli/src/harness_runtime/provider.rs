@@ -2649,6 +2649,7 @@ for line in sys.stdin:
                 active_skills: Vec::new(),
                 active_knowledge: Vec::new(),
                 active_memory: Vec::new(),
+                active_memory_operations: Vec::new(),
                 capability_catalog: vec![capability],
                 suppressed_capabilities: Vec::new(),
             },

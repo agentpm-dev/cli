@@ -1901,6 +1901,7 @@ for line in sys.stdin:
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory: Vec::new(),
+            active_memory_operations: Vec::new(),
             capability_catalog: vec![
                 descriptor("phase_completion", "classify/completion"),
                 descriptor("agentpm_tool", "@zack/a"),
@@ -2124,6 +2125,7 @@ for line in sys.stdin:
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory: Vec::new(),
+            active_memory_operations: Vec::new(),
             capability_catalog: vec![
                 descriptor("phase_completion", "classify/completion"),
                 descriptor("agentpm_tool", "@zack/a"),
@@ -2156,6 +2158,7 @@ for line in sys.stdin:
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory: Vec::new(),
+            active_memory_operations: Vec::new(),
             capability_catalog: vec![descriptor("agentpm_tool", "@zack/a")],
             suppressed_capabilities: Vec::new(),
         };
@@ -2278,6 +2281,7 @@ for line in sys.stdin:
                 skills: Vec::new(),
                 knowledge: Vec::new(),
                 memory: Vec::new(),
+                memory_operations: Vec::new(),
                 capability_candidates: Vec::new(),
                 model: Some(selection.clone()),
             },
@@ -2322,6 +2326,7 @@ for line in sys.stdin:
                 active_skills: Vec::new(),
                 active_knowledge: Vec::new(),
                 active_memory: Vec::new(),
+                active_memory_operations: Vec::new(),
                 capability_catalog: Vec::new(),
                 suppressed_capabilities: Vec::new(),
             },

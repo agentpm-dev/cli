@@ -1,4 +1,10 @@
 use super::*;
+use crate::harness_engine::memory_lifecycle::MemoryOperationControlError;
+
+fn memory_operation_control_error_code(err: &anyhow::Error) -> Option<&'static str> {
+    err.downcast_ref::<MemoryOperationControlError>()
+        .map(|err| err.code)
+}
 
 fn write_m14f_projected_memory_package(root: &std::path::Path) -> MemoryRecordTypeRuntimeSnapshot {
     std::fs::create_dir_all(root.join("schemas")).unwrap();
@@ -107,7 +113,7 @@ fn runtime_with_m14f_projected_memory(
             MemoryRetrievalMode::Chronological,
         ],
         semantic: None,
-        append_only: false,
+        append_only: true,
         record_types: vec![record_type],
     });
     runtime
@@ -316,6 +322,772 @@ fn runtime_with_m14f_engine_memory(
             record_types: vec![record_types.remove("event").unwrap()],
         },
     ];
+    runtime
+}
+
+fn write_m15_lifecycle_memory_package(
+    root: &std::path::Path,
+) -> Vec<MemoryRecordTypeRuntimeSnapshot> {
+    std::fs::create_dir_all(root.join("schemas")).unwrap();
+    std::fs::write(
+        root.join("agent.json"),
+        r#"{
+  "kind": "memory",
+  "name": "m15-lifecycle-memory-test",
+  "version": "0.1.0",
+  "description": "M15 lifecycle operation test package.",
+  "memory": {
+    "scopes": {
+      "user": { "description": "User scope." }
+    },
+    "record_types": {
+      "note": {
+        "version": "1.0.0",
+        "description": "Durable note.",
+        "schema": "schemas/note.schema.json"
+      },
+      "summary": {
+        "version": "1.0.0",
+        "description": "Derived summary.",
+        "schema": "schemas/summary.schema.json"
+      }
+    },
+    "spaces": {
+      "notes": {
+        "description": "Direct notes.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key", "filter", "chronological"] },
+        "retention": { "ttl": "P1D", "on_expire": "delete" },
+        "constraints": { "append_only": true }
+      },
+      "summaries": {
+        "description": "Internal summaries.",
+        "model": "collection",
+        "record_types": ["summary"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key", "filter", "chronological"] }
+      }
+    },
+    "operations": {
+      "summarize_notes": {
+        "type": "transform",
+        "description": "Summarize new note records.",
+        "trigger": { "type": "record_count", "space": "notes", "threshold": 1 },
+        "inputs": [{ "space": "notes", "record_type": "note" }],
+        "output": { "space": "summaries", "record_type": "summary" },
+        "source_handling": "retain",
+        "output_mode": "create",
+        "preserve_provenance": false
+      },
+      "summarize_notes_until_expiration": {
+        "type": "transform",
+        "description": "Summarize note records and let sources expire naturally.",
+        "trigger": { "type": "record_count", "space": "notes", "threshold": 1 },
+        "inputs": [{ "space": "notes", "record_type": "note" }],
+        "output": { "space": "summaries", "record_type": "summary" },
+        "source_handling": "retain_until_expiration",
+        "output_mode": "create",
+        "preserve_provenance": true
+      },
+      "delete_notes_cascade": {
+        "type": "delete",
+        "description": "Delete notes and derived records.",
+        "trigger": { "type": "record_count", "space": "notes", "threshold": 1 },
+        "targets": [{ "space": "notes" }],
+        "cascade_derived_records": true
+      },
+      "delete_notes_only": {
+        "type": "delete",
+        "description": "Delete notes without derived records.",
+        "trigger": { "type": "record_count", "space": "notes", "threshold": 1 },
+        "targets": [{ "space": "notes" }],
+        "cascade_derived_records": false
+      },
+      "external_delete_notes": {
+        "type": "delete",
+        "description": "Delete notes on external request.",
+        "trigger": { "type": "external" },
+        "targets": [{ "space": "notes" }],
+        "cascade_derived_records": false
+      },
+      "interval_delete_notes": {
+        "type": "delete",
+        "description": "Delete notes on an interval.",
+        "trigger": { "type": "interval", "every": "PT1S" },
+        "targets": [{ "space": "notes" }],
+        "cascade_derived_records": false
+      },
+      "refresh_note": {
+        "type": "transform",
+        "description": "Refresh note records in place.",
+        "trigger": { "type": "record_count", "space": "notes", "threshold": 1 },
+        "inputs": [{ "space": "notes", "record_type": "note" }],
+        "output": { "space": "notes", "record_type": "note" },
+        "source_handling": "retain",
+        "output_mode": "replace_input",
+        "preserve_provenance": true
+      },
+      "consolidate_notes": {
+        "type": "consolidate",
+        "description": "Consolidate note records.",
+        "trigger": { "type": "record_count", "space": "notes", "threshold": 1 },
+        "inputs": [{ "space": "notes", "record_type": "note" }],
+        "output": { "space": "summaries", "record_type": "summary" },
+        "source_handling": "delete_after_success",
+        "preserve_provenance": true
+      }
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("schemas/note.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "body": { "type": "string", "minLength": 1 }
+  },
+  "required": ["body"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("schemas/summary.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string", "minLength": 1 }
+  },
+  "required": ["summary"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
+    crate::commands::memory::execute_memory_build(
+        &root.join("agent.json"),
+        crate::commands::memory::MemoryBuildMode::Write,
+    )
+    .unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(root).unwrap();
+    [("note", "notes"), ("summary", "summaries")]
+        .into_iter()
+        .map(|(record_type, space)| MemoryRecordTypeRuntimeSnapshot {
+            name: record_type.into(),
+            schema_version: "1.0.0".into(),
+            content_schema: crate::harness_runtime::memory::generated_memory_content_schema(
+                &contracts,
+                space,
+                record_type,
+            )
+            .unwrap(),
+        })
+        .collect()
+}
+
+fn runtime_with_m15_lifecycle_memory(
+    workspace: &std::path::Path,
+    package_root: &std::path::Path,
+) -> RuntimeSnapshot {
+    let mut record_types = write_m15_lifecycle_memory_package(package_root)
+        .into_iter()
+        .map(|record_type| (record_type.name.clone(), record_type))
+        .collect::<BTreeMap<_, _>>();
+    let mut runtime = RuntimeSnapshot::empty("session-test".into());
+    runtime.workspace_root = workspace.to_path_buf();
+    runtime.state_dir = workspace.join(".agentpm-state");
+    runtime
+        .runtime_scopes
+        .insert("user".into(), "user-123".into());
+    runtime.memory.push(MemorySpaceRuntimeSnapshot {
+        package: "m15-lifecycle-memory-test".into(),
+        package_version: "0.1.0".into(),
+        space: "notes".into(),
+        model: MemorySpaceModel::Collection,
+        description: "Direct notes.".into(),
+        root: Some(package_root.to_path_buf()),
+        runtime: "local".into(),
+        source: "agent_binding".into(),
+        state: "available".into(),
+        readiness_reason: None,
+        binding_scope: "global".into(),
+        scope_keys: vec!["user".into()],
+        retrieval_modes: vec![
+            MemoryRetrievalMode::Key,
+            MemoryRetrievalMode::Filter,
+            MemoryRetrievalMode::Chronological,
+        ],
+        semantic: None,
+        append_only: false,
+        record_types: vec![record_types.remove("note").unwrap()],
+    });
+    runtime
+        .memory_operations
+        .push(MemoryOperationRuntimeSnapshot {
+            package: "m15-lifecycle-memory-test".into(),
+            package_version: "0.1.0".into(),
+            operation: "summarize_notes".into(),
+            operation_type: "transform".into(),
+            description: "Summarize new note records.".into(),
+            trigger: json!({ "type": "record_count", "space": "notes", "threshold": 1 }),
+            inputs: vec![MemoryOperationRefRuntimeSnapshot {
+                space: "notes".into(),
+                record_type: Some("note".into()),
+            }],
+            output: Some(MemoryOperationRefRuntimeSnapshot {
+                space: "summaries".into(),
+                record_type: Some("summary".into()),
+            }),
+            targets: Vec::new(),
+            source_handling: Some("retain".into()),
+            output_mode: Some("create".into()),
+            preserve_provenance: Some(false),
+            cascade_derived_records: None,
+            referenced_spaces: vec!["notes".into(), "summaries".into()],
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+        });
+    runtime
+}
+
+fn runtime_with_m15_delete_operation(
+    workspace: &std::path::Path,
+    package_root: &std::path::Path,
+    operation: &str,
+    cascade_derived_records: bool,
+) -> RuntimeSnapshot {
+    let mut runtime = runtime_with_m15_lifecycle_memory(workspace, package_root);
+    runtime.memory_operations.clear();
+    runtime
+        .memory_operations
+        .push(MemoryOperationRuntimeSnapshot {
+            package: "m15-lifecycle-memory-test".into(),
+            package_version: "0.1.0".into(),
+            operation: operation.into(),
+            operation_type: "delete".into(),
+            description: if cascade_derived_records {
+                "Delete notes and derived records.".into()
+            } else {
+                "Delete notes without derived records.".into()
+            },
+            trigger: json!({ "type": "record_count", "space": "notes", "threshold": 1 }),
+            inputs: Vec::new(),
+            output: None,
+            targets: vec![MemoryOperationRefRuntimeSnapshot {
+                space: "notes".into(),
+                record_type: None,
+            }],
+            source_handling: None,
+            output_mode: None,
+            preserve_provenance: None,
+            cascade_derived_records: Some(cascade_derived_records),
+            referenced_spaces: vec!["notes".into()],
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+        });
+    runtime
+}
+
+fn runtime_with_m15_transform_operation(
+    workspace: &std::path::Path,
+    package_root: &std::path::Path,
+    operation: &str,
+    output_space: &str,
+    output_record_type: &str,
+    output_mode: &str,
+    source_handling: &str,
+) -> RuntimeSnapshot {
+    let mut runtime = runtime_with_m15_lifecycle_memory(workspace, package_root);
+    runtime.memory_operations.clear();
+    runtime
+        .memory_operations
+        .push(MemoryOperationRuntimeSnapshot {
+            package: "m15-lifecycle-memory-test".into(),
+            package_version: "0.1.0".into(),
+            operation: operation.into(),
+            operation_type: "transform".into(),
+            description: "Refresh note records in place.".into(),
+            trigger: json!({ "type": "record_count", "space": "notes", "threshold": 1 }),
+            inputs: vec![MemoryOperationRefRuntimeSnapshot {
+                space: "notes".into(),
+                record_type: Some("note".into()),
+            }],
+            output: Some(MemoryOperationRefRuntimeSnapshot {
+                space: output_space.into(),
+                record_type: Some(output_record_type.into()),
+            }),
+            targets: Vec::new(),
+            source_handling: Some(source_handling.into()),
+            output_mode: Some(output_mode.into()),
+            preserve_provenance: Some(true),
+            cascade_derived_records: None,
+            referenced_spaces: if output_space == "notes" {
+                vec!["notes".into()]
+            } else {
+                vec!["notes".into(), output_space.into()]
+            },
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+        });
+    runtime
+}
+
+fn runtime_with_m15_consolidate_operation(
+    workspace: &std::path::Path,
+    package_root: &std::path::Path,
+) -> RuntimeSnapshot {
+    let mut runtime = runtime_with_m15_lifecycle_memory(workspace, package_root);
+    runtime.memory_operations.clear();
+    runtime
+        .memory_operations
+        .push(MemoryOperationRuntimeSnapshot {
+            package: "m15-lifecycle-memory-test".into(),
+            package_version: "0.1.0".into(),
+            operation: "consolidate_notes".into(),
+            operation_type: "consolidate".into(),
+            description: "Consolidate note records.".into(),
+            trigger: json!({ "type": "record_count", "space": "notes", "threshold": 1 }),
+            inputs: vec![MemoryOperationRefRuntimeSnapshot {
+                space: "notes".into(),
+                record_type: Some("note".into()),
+            }],
+            output: Some(MemoryOperationRefRuntimeSnapshot {
+                space: "summaries".into(),
+                record_type: Some("summary".into()),
+            }),
+            targets: Vec::new(),
+            source_handling: Some("delete_after_success".into()),
+            output_mode: None,
+            preserve_provenance: Some(true),
+            cascade_derived_records: None,
+            referenced_spaces: vec!["notes".into(), "summaries".into()],
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+        });
+    runtime
+}
+
+fn runtime_with_m15_external_delete_operation(
+    workspace: &std::path::Path,
+    package_root: &std::path::Path,
+) -> RuntimeSnapshot {
+    let mut runtime = runtime_with_m15_lifecycle_memory(workspace, package_root);
+    runtime.memory_operations.clear();
+    runtime
+        .memory_operations
+        .push(MemoryOperationRuntimeSnapshot {
+            package: "m15-lifecycle-memory-test".into(),
+            package_version: "0.1.0".into(),
+            operation: "external_delete_notes".into(),
+            operation_type: "delete".into(),
+            description: "Delete notes on external request.".into(),
+            trigger: json!({ "type": "external" }),
+            inputs: Vec::new(),
+            output: None,
+            targets: vec![MemoryOperationRefRuntimeSnapshot {
+                space: "notes".into(),
+                record_type: None,
+            }],
+            source_handling: None,
+            output_mode: None,
+            preserve_provenance: None,
+            cascade_derived_records: Some(false),
+            referenced_spaces: vec!["notes".into()],
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+        });
+    runtime
+}
+
+fn runtime_with_m15_interval_delete_operation(
+    workspace: &std::path::Path,
+    package_root: &std::path::Path,
+) -> RuntimeSnapshot {
+    let mut runtime = runtime_with_m15_lifecycle_memory(workspace, package_root);
+    runtime.memory_operations.clear();
+    runtime
+        .memory_operations
+        .push(MemoryOperationRuntimeSnapshot {
+            package: "m15-lifecycle-memory-test".into(),
+            package_version: "0.1.0".into(),
+            operation: "interval_delete_notes".into(),
+            operation_type: "delete".into(),
+            description: "Delete notes on an interval.".into(),
+            trigger: json!({ "type": "interval", "every": "PT1S" }),
+            inputs: Vec::new(),
+            output: None,
+            targets: vec![MemoryOperationRefRuntimeSnapshot {
+                space: "notes".into(),
+                record_type: None,
+            }],
+            source_handling: None,
+            output_mode: None,
+            preserve_provenance: None,
+            cascade_derived_records: Some(false),
+            referenced_spaces: vec!["notes".into()],
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+        });
+    runtime
+}
+
+fn write_m15_capacity_memory_package(root: &std::path::Path) -> MemoryRecordTypeRuntimeSnapshot {
+    std::fs::create_dir_all(root.join("schemas")).unwrap();
+    std::fs::write(
+        root.join("agent.json"),
+        r#"{
+  "kind": "memory",
+  "name": "m15-capacity-memory-test",
+  "version": "0.1.0",
+  "description": "M15 capacity operation test package.",
+  "memory": {
+    "scopes": {
+      "user": { "description": "User scope." }
+    },
+    "record_types": {
+      "note": {
+        "version": "1.0.0",
+        "description": "Durable note.",
+        "schema": "schemas/note.schema.json"
+      }
+    },
+    "spaces": {
+      "notes": {
+        "description": "Direct notes.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key", "filter", "chronological"] },
+        "capacity": { "max_records": 1 }
+      }
+    },
+    "operations": {
+      "prune_notes": {
+        "type": "delete",
+        "description": "Delete notes before capacity overflow.",
+        "trigger": { "type": "capacity", "space": "notes" },
+        "targets": [{ "space": "notes" }],
+        "cascade_derived_records": false
+      }
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("schemas/note.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "body": { "type": "string", "minLength": 1 }
+  },
+  "required": ["body"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
+    crate::commands::memory::execute_memory_build(
+        &root.join("agent.json"),
+        crate::commands::memory::MemoryBuildMode::Write,
+    )
+    .unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(root).unwrap();
+    MemoryRecordTypeRuntimeSnapshot {
+        name: "note".into(),
+        schema_version: "1.0.0".into(),
+        content_schema: crate::harness_runtime::memory::generated_memory_content_schema(
+            &contracts, "notes", "note",
+        )
+        .unwrap(),
+    }
+}
+
+fn write_m15_capacity_transform_memory_package(
+    root: &std::path::Path,
+) -> Vec<MemoryRecordTypeRuntimeSnapshot> {
+    std::fs::create_dir_all(root.join("schemas")).unwrap();
+    std::fs::write(
+        root.join("agent.json"),
+        r#"{
+  "kind": "memory",
+  "name": "m15-capacity-transform-memory-test",
+  "version": "0.1.0",
+  "description": "M15 insufficient capacity relief operation test package.",
+  "memory": {
+    "scopes": {
+      "user": { "description": "User scope." }
+    },
+    "record_types": {
+      "note": {
+        "version": "1.0.0",
+        "description": "Durable note.",
+        "schema": "schemas/note.schema.json"
+      },
+      "summary": {
+        "version": "1.0.0",
+        "description": "Derived summary.",
+        "schema": "schemas/summary.schema.json"
+      }
+    },
+    "spaces": {
+      "notes": {
+        "description": "Direct notes.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key", "filter", "chronological"] },
+        "capacity": { "max_records": 1 }
+      },
+      "summaries": {
+        "description": "Internal summaries.",
+        "model": "collection",
+        "record_types": ["summary"],
+        "scope": ["user"],
+        "retrieval": { "modes": ["key", "filter", "chronological"] }
+      }
+    },
+    "operations": {
+      "summarize_for_capacity": {
+        "type": "transform",
+        "description": "Summarize notes when capacity is reached without deleting sources.",
+        "trigger": { "type": "capacity", "space": "notes" },
+        "inputs": [{ "space": "notes", "record_type": "note" }],
+        "output": { "space": "summaries", "record_type": "summary" },
+        "source_handling": "retain",
+        "output_mode": "create",
+        "preserve_provenance": false
+      }
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("schemas/note.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "body": { "type": "string", "minLength": 1 }
+  },
+  "required": ["body"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("schemas/summary.schema.json"),
+        r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string", "minLength": 1 }
+  },
+  "required": ["summary"],
+  "additionalProperties": false
+}
+"#,
+    )
+    .unwrap();
+    crate::commands::memory::execute_memory_build(
+        &root.join("agent.json"),
+        crate::commands::memory::MemoryBuildMode::Write,
+    )
+    .unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(root).unwrap();
+    [("note", "notes"), ("summary", "summaries")]
+        .into_iter()
+        .map(|(record_type, space)| MemoryRecordTypeRuntimeSnapshot {
+            name: record_type.into(),
+            schema_version: "1.0.0".into(),
+            content_schema: crate::harness_runtime::memory::generated_memory_content_schema(
+                &contracts,
+                space,
+                record_type,
+            )
+            .unwrap(),
+        })
+        .collect()
+}
+
+fn runtime_with_m15_capacity_memory(
+    workspace: &std::path::Path,
+    package_root: &std::path::Path,
+) -> RuntimeSnapshot {
+    let record_type = write_m15_capacity_memory_package(package_root);
+    let mut runtime = RuntimeSnapshot::empty("session-test".into());
+    runtime.workspace_root = workspace.to_path_buf();
+    runtime.state_dir = workspace.join(".agentpm-state");
+    runtime
+        .runtime_scopes
+        .insert("user".into(), "user-123".into());
+    runtime.memory.push(MemorySpaceRuntimeSnapshot {
+        package: "m15-capacity-memory-test".into(),
+        package_version: "0.1.0".into(),
+        space: "notes".into(),
+        model: MemorySpaceModel::Collection,
+        description: "Direct notes.".into(),
+        root: Some(package_root.to_path_buf()),
+        runtime: "local".into(),
+        source: "agent_binding".into(),
+        state: "available".into(),
+        readiness_reason: None,
+        binding_scope: "global".into(),
+        scope_keys: vec!["user".into()],
+        retrieval_modes: vec![
+            MemoryRetrievalMode::Key,
+            MemoryRetrievalMode::Filter,
+            MemoryRetrievalMode::Chronological,
+        ],
+        semantic: None,
+        append_only: false,
+        record_types: vec![record_type],
+    });
+    runtime
+        .memory_operations
+        .push(MemoryOperationRuntimeSnapshot {
+            package: "m15-capacity-memory-test".into(),
+            package_version: "0.1.0".into(),
+            operation: "prune_notes".into(),
+            operation_type: "delete".into(),
+            description: "Delete notes before capacity overflow.".into(),
+            trigger: json!({ "type": "capacity", "space": "notes" }),
+            inputs: Vec::new(),
+            output: None,
+            targets: vec![MemoryOperationRefRuntimeSnapshot {
+                space: "notes".into(),
+                record_type: None,
+            }],
+            source_handling: None,
+            output_mode: None,
+            preserve_provenance: None,
+            cascade_derived_records: Some(false),
+            referenced_spaces: vec!["notes".into()],
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+        });
+    runtime
+}
+
+fn runtime_with_m15_capacity_transform_memory(
+    workspace: &std::path::Path,
+    package_root: &std::path::Path,
+) -> RuntimeSnapshot {
+    let mut record_types = write_m15_capacity_transform_memory_package(package_root)
+        .into_iter()
+        .map(|record_type| (record_type.name.clone(), record_type))
+        .collect::<BTreeMap<_, _>>();
+    let mut runtime = RuntimeSnapshot::empty("session-test".into());
+    runtime.workspace_root = workspace.to_path_buf();
+    runtime.state_dir = workspace.join(".agentpm-state");
+    runtime
+        .runtime_scopes
+        .insert("user".into(), "user-123".into());
+    runtime.memory.push(MemorySpaceRuntimeSnapshot {
+        package: "m15-capacity-transform-memory-test".into(),
+        package_version: "0.1.0".into(),
+        space: "notes".into(),
+        model: MemorySpaceModel::Collection,
+        description: "Direct notes.".into(),
+        root: Some(package_root.to_path_buf()),
+        runtime: "local".into(),
+        source: "agent_binding".into(),
+        state: "available".into(),
+        readiness_reason: None,
+        binding_scope: "global".into(),
+        scope_keys: vec!["user".into()],
+        retrieval_modes: vec![
+            MemoryRetrievalMode::Key,
+            MemoryRetrievalMode::Filter,
+            MemoryRetrievalMode::Chronological,
+        ],
+        semantic: None,
+        append_only: false,
+        record_types: vec![record_types.remove("note").unwrap()],
+    });
+    runtime
+        .memory_operations
+        .push(MemoryOperationRuntimeSnapshot {
+            package: "m15-capacity-transform-memory-test".into(),
+            package_version: "0.1.0".into(),
+            operation: "summarize_for_capacity".into(),
+            operation_type: "transform".into(),
+            description: "Summarize notes when capacity is reached without deleting sources."
+                .into(),
+            trigger: json!({ "type": "capacity", "space": "notes" }),
+            inputs: vec![MemoryOperationRefRuntimeSnapshot {
+                space: "notes".into(),
+                record_type: Some("note".into()),
+            }],
+            output: Some(MemoryOperationRefRuntimeSnapshot {
+                space: "summaries".into(),
+                record_type: Some("summary".into()),
+            }),
+            targets: Vec::new(),
+            source_handling: Some("retain".into()),
+            output_mode: Some("create".into()),
+            preserve_provenance: Some(false),
+            cascade_derived_records: None,
+            referenced_spaces: vec!["notes".into(), "summaries".into()],
+            root: Some(package_root.to_path_buf()),
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+        });
     runtime
 }
 
@@ -1715,11 +2487,7 @@ fn before_memory_read_hook_rejection_emits_queued_nonfatal_failure_first() {
         hook_event_fields_for(&events, HarnessEventType::HookFailed, "before_memory_read")["nonfatal"],
         json!(true)
     );
-    assert!(
-        !event_types
-            .iter()
-            .any(|event_type| *event_type == HarnessEventType::MemoryReadStarted)
-    );
+    assert!(!event_types.contains(&HarnessEventType::MemoryReadStarted));
 }
 
 #[test]
@@ -2775,6 +3543,3149 @@ fn duplicate_document_create_requests_repair_after_runtime_lookup() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].record_type, "profile_a");
     assert_eq!(records[0].content, json!({ "name": "A" }));
+}
+
+#[test]
+fn memory_lifecycle_record_count_transform_writes_internal_output_space() {
+    let temp = temp_workspace_dir("m15-record-count-transform");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_lifecycle_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "source body" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "derived source body" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage {
+                tokens: crate::harness_observability::TokenUsage {
+                    input_tokens: Some(7),
+                    output_tokens: Some(3),
+                    total_tokens: Some(10),
+                },
+                ..RunUsage::default()
+            },
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write note and trigger lifecycle",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(model.requests.len(), 3);
+    let lifecycle_prompt = model.requests[1].prompt.render_text();
+    assert!(lifecycle_prompt.contains("return only JSON content"));
+    assert!(lifecycle_prompt.contains("2. MEMORY OPERATION"));
+    assert!(lifecycle_prompt.contains("3. SOURCE RECORDS"));
+    assert!(!lifecycle_prompt.contains("CONSUMER / RUN CONTEXT"));
+    assert!(!lifecycle_prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
+    assert!(!lifecycle_prompt.contains("CURRENT PHASE-LOCAL TRANSCRIPT"));
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope: BTreeMap::from([("user".into(), "user-123".into())]),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].content,
+        json!({ "summary": "derived source body" })
+    );
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryTriggerEvaluated
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("eligible") == Some(&json!(true))
+            )
+    }));
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryOperationCompleted
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!("summarize_notes"))
+            )
+    }));
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryOperationOutput
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!("summarize_notes"))
+                        && fields
+                            .get("record_ids")
+                            .and_then(Value::as_array)
+                            .is_some_and(|ids| ids.len() == 1)
+            )
+    }));
+    assert!(result.report.memory_summaries.iter().any(|summary| {
+        summary.operation_kind == "memory_operation"
+            && summary.identity == "m15-lifecycle-memory-test/operations/summarize_notes"
+            && summary.status == "completed"
+    }));
+    assert_eq!(result.report.usage.model_calls, 3);
+    assert_eq!(result.report.usage.tokens.total_tokens, Some(10));
+    assert_eq!(result.report.usage.accepted_semantic_actions, 2);
+}
+
+#[test]
+fn memory_lifecycle_before_operation_hook_receives_safe_summary_and_guides_model() {
+    let temp = temp_workspace_dir("m15-before-memory-operation");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_lifecycle_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "source body" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "guided source body" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryOperation],
+        memory_operation: Some(BeforeMemoryOperationDecision {
+            model_guidance: Some("Prefer compact summaries.".into()),
+        }),
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m15-before-memory-operation".into(),
+            "write note and trigger lifecycle",
+            &mut services,
+        )
+        .unwrap();
+    drop(services);
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(hooks.memory_operation_hooks.len(), 1);
+    let hook = &hooks.memory_operation_hooks[0];
+    assert_eq!(hook.package, "m15-lifecycle-memory-test");
+    assert_eq!(hook.operation, "summarize_notes");
+    assert_eq!(hook.scope, json!({ "user": "user-123" }));
+    assert_eq!(
+        hook.source_summary
+            .get("operation")
+            .and_then(|operation| operation.get("operation_type")),
+        Some(&json!("transform"))
+    );
+    assert_eq!(
+        hook.source_summary
+            .get("sources")
+            .and_then(Value::as_array)
+            .and_then(|sources| sources.first())
+            .and_then(|source| source.get("active_count")),
+        Some(&json!(1))
+    );
+    assert!(
+        !serde_json::to_string(&hook.source_summary)
+            .unwrap()
+            .contains("source body")
+    );
+    assert!(
+        model.requests[1]
+            .prompt
+            .render_text()
+            .contains("Additional operation-model guidance: Prefer compact summaries.")
+    );
+}
+
+#[test]
+fn memory_lifecycle_invalid_transform_output_repairs_to_valid_content() {
+    let temp = temp_workspace_dir("m15-transform-output-repair");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_lifecycle_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "source body" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "not_summary": "invalid lifecycle output" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "repaired lifecycle output" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write note and repair lifecycle output",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(model.requests.len(), 4);
+    assert!(
+        model.requests[2]
+            .prompt
+            .render_text()
+            .contains("Repair feedback from previous lifecycle output")
+    );
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope: BTreeMap::from([("user".into(), "user-123".into())]),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].content,
+        json!({ "summary": "repaired lifecycle output" })
+    );
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::ModelRepairRequested
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("repair_kind")
+                        == Some(&json!("memory_operation_output"))
+            )
+    }));
+    assert!(result.report.memory_summaries.iter().any(|summary| {
+        summary.operation_kind == "memory_operation"
+            && summary.identity == "m15-lifecycle-memory-test/operations/summarize_notes"
+            && summary.status == "completed"
+    }));
+}
+
+#[test]
+fn memory_lifecycle_transform_replace_input_updates_source_identity() {
+    let temp = temp_workspace_dir("m15-transform-replace-input");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_transform_operation(
+        &temp,
+        &package_root,
+        "refresh_note",
+        "notes",
+        "note",
+        "replace_input",
+        "retain",
+    );
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "draft" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "body": "refreshed" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write note and refresh lifecycle output",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: BTreeMap::from([("user".into(), "user-123".into())]),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].content, json!({ "body": "refreshed" }));
+    assert!(
+        notes[0]
+            .provenance
+            .pointer("/harness_lifecycle/source_record_ids/0")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+}
+
+#[test]
+fn memory_lifecycle_transform_retain_until_expiration_preserves_sources_and_provenance() {
+    let temp = temp_workspace_dir("m15-transform-retain-until-expiration");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_transform_operation(
+        &temp,
+        &package_root,
+        "summarize_notes_until_expiration",
+        "summaries",
+        "summary",
+        "create",
+        "retain_until_expiration",
+    );
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "durable until ttl" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "retained source summary" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write note and summarize while retaining source until expiration",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert!(
+        notes[0].expires_at.is_some(),
+        "retain_until_expiration source should have a runtime-owned expiration"
+    );
+
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope,
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].content,
+        json!({ "summary": "retained source summary" })
+    );
+    assert_eq!(
+        summaries[0]
+            .provenance
+            .pointer("/harness_lifecycle/source_record_ids/0"),
+        Some(&json!(notes[0].id.clone()))
+    );
+    assert_eq!(
+        summaries[0]
+            .provenance
+            .pointer("/harness_lifecycle/preserved_source_provenance")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    let state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-lifecycle-memory-test",
+            "0.1.0",
+            "summarize_notes_until_expiration",
+            &BTreeMap::from([("user".into(), "user-123".into())]),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        state
+            .watermark
+            .as_ref()
+            .and_then(|watermark| watermark.pointer("/source_ids/0")),
+        Some(&json!(notes[0].id.clone()))
+    );
+    assert_eq!(
+        state
+            .watermark
+            .as_ref()
+            .and_then(|watermark| watermark.pointer("/last_output_record_ids/0")),
+        Some(&json!(summaries[0].id.clone()))
+    );
+    assert_eq!(
+        state
+            .watermark
+            .as_ref()
+            .and_then(|watermark| watermark.pointer("/last_mutated_source_record_ids"))
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+
+    let after_source_expiration =
+        chrono::DateTime::parse_from_rfc3339(notes[0].expires_at.as_deref().unwrap())
+            .unwrap()
+            .with_timezone(&Utc)
+            + chrono::Duration::seconds(1);
+    let expired_notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: BTreeMap::from([("user".into(), "user-123".into())]),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: after_source_expiration,
+        })
+        .unwrap();
+    assert!(
+        expired_notes.is_empty(),
+        "retain_until_expiration source should disappear from active reads after its TTL"
+    );
+}
+
+#[test]
+fn memory_lifecycle_consolidate_writes_one_output_and_deletes_sources() {
+    let temp = temp_workspace_dir("m15-consolidate-delete-sources");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_consolidate_operation(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "source" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "consolidated" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write note and consolidate lifecycle output",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert!(notes.is_empty());
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope,
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].content, json!({ "summary": "consolidated" }));
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryOperationSource
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!("consolidate_notes"))
+            )
+    }));
+}
+
+#[test]
+fn memory_lifecycle_record_count_rearms_after_delete_success_drops_below_threshold() {
+    let temp = temp_workspace_dir("m15-record-count-rearm-after-delete");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_consolidate_operation(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-first-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "first" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "first summary" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-second-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "second" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "second summary" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write, consolidate, re-arm, and consolidate again",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert!(notes.is_empty());
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(summaries.len(), 2);
+    assert_eq!(summaries[0].content, json!({ "summary": "first summary" }));
+    assert_eq!(summaries[1].content, json!({ "summary": "second summary" }));
+    let state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-lifecycle-memory-test",
+            "0.1.0",
+            "consolidate_notes",
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.package, "m15-lifecycle-memory-test");
+    assert_eq!(state.package_version, "0.1.0");
+    assert_eq!(state.operation, "consolidate_notes");
+    assert_eq!(state.scope_json, r#"{"user":"user-123"}"#);
+    assert!(state.armed);
+    assert_eq!(state.last_observed_value, Some(0));
+}
+
+#[test]
+fn memory_lifecycle_consolidate_handles_twelve_mid_phase_writes_deterministically() {
+    let temp = temp_workspace_dir("m15-consolidate-twelve-mid-phase-writes");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_consolidate_operation(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+
+    let mut turns = Vec::new();
+    for index in 0..12 {
+        turns.push(ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                format!("create-note-{index}"),
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": format!("source {index:02}") })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        });
+        turns.push(ModelTurn {
+            assistant_content: Some(format!(r#"{{ "summary": "summary {index:02}" }}"#)),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        });
+    }
+    turns.push(completion("done", "done"));
+    let mut model = ScriptedModelRuntime::new(turns);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut runtime_limits = limits();
+    runtime_limits.max_steps = 32;
+    runtime_limits.max_model_calls_per_phase = 32;
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(runtime_limits),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write twelve notes and consolidate after each direct write",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(model.requests.len(), 25);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert!(notes.is_empty());
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(summaries.len(), 12);
+    for (index, summary) in summaries.iter().enumerate() {
+        assert_eq!(
+            summary.content,
+            json!({ "summary": format!("summary {index:02}") })
+        );
+    }
+    let completed = handle
+        .events()
+        .iter()
+        .filter(|event| {
+            event.event_type == HarnessEventType::MemoryOperationCompleted
+                && matches!(
+                    &event.payload,
+                    HarnessEventPayload::Lifecycle { fields, .. }
+                        if fields.get("operation") == Some(&json!("consolidate_notes"))
+                )
+        })
+        .count();
+    assert_eq!(completed, 12);
+    let state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-lifecycle-memory-test",
+            "0.1.0",
+            "consolidate_notes",
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(state.armed);
+    assert_eq!(state.last_observed_value, Some(0));
+}
+
+struct ConcurrentLifecycleWriteModel {
+    inner: ScriptedModelRuntime,
+    workspace: PathBuf,
+    package_root: PathBuf,
+    wrote_during_lifecycle_generation: bool,
+}
+
+impl ConcurrentLifecycleWriteModel {
+    fn write_concurrent_note(&mut self) -> std::result::Result<(), ModelRuntimeFailure> {
+        let (manifest_value, _) = load_manifest_value(&self.package_root.join("agent.json"))
+            .map_err(|err| ModelRuntimeFailure::new(err.to_string()))?;
+        let manifest = parse_memory_manifest(&manifest_value)
+            .map_err(|err| ModelRuntimeFailure::new(err.to_string()))?;
+        let contracts =
+            crate::harness_runtime::memory::validate_and_load_memory_contracts(&self.package_root)
+                .map_err(|err| ModelRuntimeFailure::new(err.to_string()))?;
+        let mut runtime =
+            crate::harness_runtime::memory::LocalSqliteMemoryRuntime::open(&self.workspace, None)
+                .map_err(|err| ModelRuntimeFailure::new(err.to_string()))?;
+        runtime
+            .write_record(LocalMemoryWriteRequest {
+                package: "m15-lifecycle-memory-test",
+                package_version: "0.1.0",
+                manifest: &manifest,
+                contracts: &contracts,
+                space: "notes",
+                record_type: "note",
+                scope: BTreeMap::from([("user".into(), "user-123".into())]),
+                operation: LocalMemoryWriteOperation::Create,
+                record_id: None,
+                content: Some(json!({ "body": "concurrent during lifecycle model generation" })),
+                provenance: json!({}),
+                now: Utc::now(),
+            })
+            .map_err(|err| ModelRuntimeFailure::new(err.to_string()))?;
+        self.wrote_during_lifecycle_generation = true;
+        Ok(())
+    }
+}
+
+impl crate::harness_runtime::model::ModelRuntime for ConcurrentLifecycleWriteModel {
+    fn inspect_request(
+        &self,
+        request: &crate::harness_runtime::model::ModelRequest,
+    ) -> Option<crate::harness_runtime::model::ModelRuntimeRequestSnapshot> {
+        crate::harness_runtime::model::ModelRuntime::inspect_request(&self.inner, request)
+    }
+
+    fn generate(
+        &mut self,
+        request: crate::harness_runtime::model::ModelRequest,
+    ) -> std::result::Result<ModelTurn, ModelRuntimeFailure> {
+        let prompt = request.prompt.render_text();
+        if !self.wrote_during_lifecycle_generation
+            && prompt.contains("MEMORY OPERATION")
+            && prompt.contains("consolidate_notes")
+        {
+            self.write_concurrent_note()?;
+        }
+        crate::harness_runtime::model::ModelRuntime::generate(&mut self.inner, request)
+    }
+}
+
+#[test]
+fn memory_lifecycle_model_staging_does_not_hold_write_lock_for_concurrent_writer() {
+    let temp = temp_workspace_dir("m15-lifecycle-concurrent-model-window");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_consolidate_operation(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+
+    let mut model = ConcurrentLifecycleWriteModel {
+        inner: ScriptedModelRuntime::new(vec![
+            ModelTurn {
+                assistant_content: None,
+                actions: vec![SemanticActionProposal::new(
+                    "create-note",
+                    SemanticAction::MemoryWrite {
+                        package: "m15-lifecycle-memory-test".into(),
+                        space: "notes".into(),
+                        operation: MemoryWriteOperation::Create,
+                        record_type: "note".into(),
+                        record_id: None,
+                        content: Some(json!({ "body": "source before lifecycle generation" })),
+                    },
+                )],
+                usage: RunUsage::default(),
+                finish_reason: Some("tool_calls".into()),
+                provider_metadata: BTreeMap::new(),
+            },
+            ModelTurn {
+                assistant_content: Some(
+                    r#"{ "summary": "committed after concurrent write" }"#.into(),
+                ),
+                actions: Vec::new(),
+                usage: RunUsage::default(),
+                finish_reason: Some("stop".into()),
+                provider_metadata: BTreeMap::new(),
+            },
+            completion("done", "done"),
+        ]),
+        workspace: temp.clone(),
+        package_root: package_root.clone(),
+        wrote_during_lifecycle_generation: false,
+    };
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write while lifecycle model generation is staging output",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert!(model.wrote_during_lifecycle_generation);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(
+        notes[0].content,
+        json!({ "body": "concurrent during lifecycle model generation" })
+    );
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope,
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].content,
+        json!({ "summary": "committed after concurrent write" })
+    );
+}
+
+#[test]
+fn memory_lifecycle_consolidate_preserves_all_source_provenance_in_deterministic_order() {
+    let temp = temp_workspace_dir("m15-consolidate-provenance-order");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_consolidate_operation(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(&package_root).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    session
+        .local_memory_runtime()
+        .unwrap()
+        .write_record(LocalMemoryWriteRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            contracts: &contracts,
+            space: "notes",
+            record_type: "note",
+            scope: scope.clone(),
+            operation: LocalMemoryWriteOperation::Create,
+            record_id: None,
+            content: Some(json!({ "body": "seeded first" })),
+            provenance: json!({}),
+            now: Utc::now(),
+        })
+        .unwrap();
+
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-second-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "run second" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "two source summary" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write second note and consolidate both sources",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    let source_prompt = model.requests[1].prompt.render_text();
+    let first_pos = source_prompt.find("seeded first").unwrap();
+    let second_pos = source_prompt.find("run second").unwrap();
+    assert!(first_pos < second_pos);
+
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0]
+            .provenance
+            .pointer("/harness_lifecycle/source_record_ids")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        summaries[0]
+            .provenance
+            .pointer("/harness_lifecycle/preserved_source_provenance")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2)
+    );
+}
+
+#[test]
+fn memory_lifecycle_failed_staged_transform_rolls_back_output_source_and_records_failure_state() {
+    let temp = temp_workspace_dir("m15-staged-transform-rollback");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_lifecycle_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "source body" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "not_summary": "invalid lifecycle output" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut runtime_limits = limits();
+    runtime_limits.max_memory_operation_repairs = 0;
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(runtime_limits),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write note and fail lifecycle output",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].content, json!({ "body": "source body" }));
+
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert!(summaries.is_empty());
+    let state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-lifecycle-memory-test",
+            "0.1.0",
+            "summarize_notes",
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(state.armed);
+    assert!(state.last_completed_at.is_none());
+    assert!(state.last_failed_at.is_some());
+    assert_eq!(
+        state
+            .last_failure
+            .as_ref()
+            .and_then(|failure| failure.get("code")),
+        Some(&json!("operation_failed"))
+    );
+    assert!(
+        state
+            .last_failure
+            .as_ref()
+            .and_then(|failure| failure.get("message"))
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("validation failed"))
+    );
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryOperationFailed
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!("summarize_notes"))
+            )
+    }));
+}
+
+#[test]
+fn memory_lifecycle_failure_backoff_prevents_immediate_retry_storm() {
+    let temp = temp_workspace_dir("m15-failure-backoff");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_lifecycle_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-first-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "first source body" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "not_summary": "invalid lifecycle output" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-second-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "second source body" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut runtime_limits = limits();
+    runtime_limits.max_memory_operation_repairs = 0;
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(runtime_limits),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write twice after lifecycle failure",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(model.requests.len(), 4);
+    assert_eq!(
+        handle
+            .events()
+            .iter()
+            .filter(|event| {
+                event.event_type == HarnessEventType::MemoryOperationStarted
+                    && matches!(
+                        &event.payload,
+                        HarnessEventPayload::Lifecycle { fields, .. }
+                            if fields.get("operation") == Some(&json!("summarize_notes"))
+                    )
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        handle
+            .events()
+            .iter()
+            .filter(|event| {
+                event.event_type == HarnessEventType::MemoryOperationFailed
+                    && matches!(
+                        &event.payload,
+                        HarnessEventPayload::Lifecycle { fields, .. }
+                            if fields.get("operation") == Some(&json!("summarize_notes"))
+                    )
+            })
+            .count(),
+        1
+    );
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryTriggerEvaluated
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!("summarize_notes"))
+                        && fields.get("eligible") == Some(&json!(false))
+            )
+    }));
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(notes.len(), 2);
+
+    let state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-lifecycle-memory-test",
+            "0.1.0",
+            "summarize_notes",
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(state.armed);
+    assert_eq!(state.last_observed_value, Some(2));
+    assert!(state.last_failed_at.is_some());
+    assert!(
+        state
+            .next_eligible_at
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.with_timezone(&Utc))
+            .is_some_and(|next| next > Utc::now())
+    );
+}
+
+#[test]
+fn memory_lifecycle_failure_backoff_allows_retry_after_cooldown_expires() {
+    let temp = temp_workspace_dir("m15-failure-backoff-retry");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_lifecycle_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut first_model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-first-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "first source body" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "not_summary": "invalid lifecycle output" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut runtime_limits = limits();
+    runtime_limits.max_memory_operation_repairs = 0;
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(runtime_limits),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "write once and fail lifecycle",
+            &mut first_model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    let failed_state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-lifecycle-memory-test",
+            "0.1.0",
+            "summarize_notes",
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    let parse_time = |value: &Option<String>| {
+        value.as_deref().map(|value| {
+            chrono::DateTime::parse_from_rfc3339(value)
+                .unwrap()
+                .with_timezone(&Utc)
+        })
+    };
+    session
+        .local_memory_runtime()
+        .unwrap()
+        .store_operation_state(
+            &crate::harness_runtime::memory::LocalMemoryOperationStateRow {
+                package: "m15-lifecycle-memory-test".into(),
+                package_version: "0.1.0".into(),
+                operation: "summarize_notes".into(),
+                scope: scope.clone(),
+                trigger_type: failed_state.trigger_type.clone(),
+                armed: failed_state.armed,
+                baseline_at: parse_time(&failed_state.baseline_at),
+                last_completed_at: parse_time(&failed_state.last_completed_at),
+                last_failed_at: parse_time(&failed_state.last_failed_at),
+                next_eligible_at: Some(Utc::now() - chrono::Duration::seconds(1)),
+                last_observed_value: failed_state.last_observed_value,
+                last_failure: failed_state.last_failure.clone(),
+                watermark: failed_state.watermark.clone(),
+                updated_at: Utc::now(),
+            },
+        )
+        .unwrap();
+
+    let mut second_model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-second-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "second source body" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "first after cooldown" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "second after cooldown" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut second_engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = second_engine
+        .execute_run(
+            &mut session,
+            "write after lifecycle cooldown",
+            &mut second_model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(second_model.requests.len(), 4);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(summaries.len(), 2);
+    assert_eq!(
+        summaries
+            .iter()
+            .map(|record| record.content.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            json!({ "summary": "first after cooldown" }),
+            json!({ "summary": "second after cooldown" }),
+        ]
+    );
+
+    let completed_state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-lifecycle-memory-test",
+            "0.1.0",
+            "summarize_notes",
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(!completed_state.armed);
+    assert!(completed_state.last_completed_at.is_some());
+}
+
+#[test]
+fn memory_lifecycle_capacity_relief_runs_before_overflowing_direct_write() {
+    let temp = temp_workspace_dir("m15-capacity-relief");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_capacity_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(&package_root).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    session
+        .local_memory_runtime()
+        .unwrap()
+        .write_record(LocalMemoryWriteRequest {
+            package: "m15-capacity-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            contracts: &contracts,
+            space: "notes",
+            record_type: "note",
+            scope: scope.clone(),
+            operation: LocalMemoryWriteOperation::Create,
+            record_id: None,
+            content: Some(json!({ "body": "old" })),
+            provenance: json!({}),
+            now: Utc::now(),
+        })
+        .unwrap();
+
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-new-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-capacity-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "new" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "replace at capacity",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-capacity-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].content, json!({ "body": "new" }));
+    let state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state("m15-capacity-memory-test", "0.1.0", "prune_notes", &scope)
+        .unwrap()
+        .unwrap();
+    assert!(!state.armed);
+    assert_eq!(state.last_observed_value, Some(1));
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryOperationSource
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!("prune_notes"))
+                        && fields
+                            .get("record_ids")
+                            .and_then(Value::as_array)
+                            .is_some_and(|ids| ids.len() == 1)
+            )
+    }));
+    assert!(result.report.memory_summaries.iter().any(|summary| {
+        summary.operation_kind == "memory_operation"
+            && summary.identity == "m15-capacity-memory-test/operations/prune_notes"
+            && summary.status == "completed"
+    }));
+}
+
+#[test]
+fn memory_lifecycle_capacity_edge_rearms_after_automatic_delete_drops_below_capacity() {
+    let temp = temp_workspace_dir("m15-capacity-edge-rearm");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_capacity_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-first-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-capacity-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "first" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-second-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-capacity-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "second" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "fire capacity operation twice from below capacity",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-capacity-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert!(notes.is_empty());
+    let source_events = handle
+        .events()
+        .iter()
+        .filter(|event| {
+            event.event_type == HarnessEventType::MemoryOperationSource
+                && matches!(
+                    &event.payload,
+                    HarnessEventPayload::Lifecycle { fields, .. }
+                        if fields.get("operation") == Some(&json!("prune_notes"))
+                )
+        })
+        .count();
+    assert_eq!(source_events, 2);
+    let state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state("m15-capacity-memory-test", "0.1.0", "prune_notes", &scope)
+        .unwrap()
+        .unwrap();
+    assert!(state.armed);
+    assert_eq!(state.last_observed_value, Some(0));
+}
+
+#[test]
+fn memory_lifecycle_capacity_relief_hook_rejection_returns_typed_capacity_failure_to_phase() {
+    let temp = temp_workspace_dir("m15-capacity-relief-failure");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_capacity_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(&package_root).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    session
+        .local_memory_runtime()
+        .unwrap()
+        .write_record(LocalMemoryWriteRequest {
+            package: "m15-capacity-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            contracts: &contracts,
+            space: "notes",
+            record_type: "note",
+            scope: scope.clone(),
+            operation: LocalMemoryWriteOperation::Create,
+            record_id: None,
+            content: Some(json!({ "body": "old" })),
+            provenance: json!({}),
+            now: Utc::now(),
+        })
+        .unwrap();
+
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-new-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-capacity-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "new" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-another-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-capacity-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "another" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut knowledge = NoopKnowledgeRuntime;
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryOperation],
+        reject_before_memory_operation: Some("capacity relief denied".into()),
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut services = HarnessRuntimeServices {
+        model: &mut model,
+        dispatcher: &mut dispatcher,
+        knowledge: &mut knowledge,
+        memory: None,
+        embedding_provider: None,
+        approvals: &mut approvals,
+        hooks: &mut hooks,
+        service_events: None,
+    };
+
+    let result = engine
+        .execute_run_with_id(
+            &mut session,
+            "run-m15-capacity-relief-failure".into(),
+            "replace at capacity with rejected relief",
+            &mut services,
+        )
+        .unwrap();
+    drop(services);
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(hooks.memory_operation_hooks.len(), 1);
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-capacity-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].content, json!({ "body": "old" }));
+    assert!(handle.events().iter().any(|event| {
+        if event.event_type != HarnessEventType::MemoryWriteFailed {
+            return false;
+        }
+        let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+            return false;
+        };
+        fields
+            .get("result")
+            .and_then(|result| result.get("error"))
+            .and_then(|error| error.get("code"))
+            .and_then(Value::as_str)
+            == Some("capacity_exceeded")
+    }));
+    assert!(
+        model.requests[2]
+            .prompt
+            .render_text()
+            .contains("\"code\":\"capacity_exceeded\"")
+    );
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryOperationFailed
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!("prune_notes"))
+            )
+    }));
+    let state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state("m15-capacity-memory-test", "0.1.0", "prune_notes", &scope)
+        .unwrap()
+        .unwrap();
+    assert!(state.armed);
+    assert!(state.last_completed_at.is_none());
+    assert!(state.last_failed_at.is_some());
+}
+
+#[test]
+fn memory_lifecycle_capacity_relief_insufficient_after_success_returns_typed_capacity_failure_to_phase()
+ {
+    let temp = temp_workspace_dir("m15-capacity-relief-insufficient");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_capacity_transform_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(&package_root).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    session
+        .local_memory_runtime()
+        .unwrap()
+        .write_record(LocalMemoryWriteRequest {
+            package: "m15-capacity-transform-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            contracts: &contracts,
+            space: "notes",
+            record_type: "note",
+            scope: scope.clone(),
+            operation: LocalMemoryWriteOperation::Create,
+            record_id: None,
+            content: Some(json!({ "body": "old" })),
+            provenance: json!({}),
+            now: Utc::now(),
+        })
+        .unwrap();
+
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-new-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-capacity-transform-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "new" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some(r#"{ "summary": "old retained" }"#.into()),
+            actions: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "replace at capacity after insufficient relief",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-capacity-transform-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].content, json!({ "body": "old" }));
+
+    let summaries = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-capacity-transform-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "summaries",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("summary".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].content, json!({ "summary": "old retained" }));
+
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryOperationCompleted
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!("summarize_for_capacity"))
+            )
+    }));
+    assert!(handle.events().iter().any(|event| {
+        if event.event_type != HarnessEventType::MemoryWriteFailed {
+            return false;
+        }
+        let HarnessEventPayload::Action { fields, .. } = &event.payload else {
+            return false;
+        };
+        fields
+            .get("result")
+            .and_then(|result| result.get("error"))
+            .and_then(|error| error.get("code"))
+            .and_then(Value::as_str)
+            == Some("capacity_exceeded")
+    }));
+    assert!(
+        model.requests[2]
+            .prompt
+            .render_text()
+            .contains("\"code\":\"capacity_exceeded\"")
+    );
+    assert!(result.report.memory_summaries.iter().any(|summary| {
+        summary.operation_kind == "memory_operation"
+            && summary.identity
+                == "m15-capacity-transform-memory-test/operations/summarize_for_capacity"
+            && summary.status == "completed"
+    }));
+
+    let state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-capacity-transform-memory-test",
+            "0.1.0",
+            "summarize_for_capacity",
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(!state.armed);
+    assert!(state.last_completed_at.is_some());
+    assert!(state.last_failed_at.is_none());
+}
+
+#[test]
+fn memory_lifecycle_delete_cascade_true_and_false_follow_lifecycle_provenance() {
+    for (operation, cascade, expected_summaries) in [
+        ("delete_notes_cascade", true, 0_usize),
+        ("delete_notes_only", false, 1_usize),
+    ] {
+        let temp = temp_workspace_dir(&format!("m15-delete-cascade-{cascade}"));
+        let package_root = temp.join("memory-package");
+        std::fs::create_dir_all(&package_root).unwrap();
+        let runtime = runtime_with_m15_delete_operation(&temp, &package_root, operation, cascade);
+        let mut session = HarnessSession::with_runtime_snapshot(runtime);
+        let memory = InMemoryEventSink::default();
+        let handle = memory.clone();
+        session.emitter.add_sink(Box::new(memory));
+
+        let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+        let manifest = parse_memory_manifest(&manifest_value).unwrap();
+        let contracts =
+            crate::harness_runtime::memory::validate_and_load_memory_contracts(&package_root)
+                .unwrap();
+        let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+        let source = session
+            .local_memory_runtime()
+            .unwrap()
+            .write_record(LocalMemoryWriteRequest {
+                package: "m15-lifecycle-memory-test",
+                package_version: "0.1.0",
+                manifest: &manifest,
+                contracts: &contracts,
+                space: "notes",
+                record_type: "note",
+                scope: scope.clone(),
+                operation: LocalMemoryWriteOperation::Create,
+                record_id: None,
+                content: Some(json!({ "body": "source" })),
+                provenance: json!({}),
+                now: Utc::now(),
+            })
+            .unwrap()
+            .record
+            .unwrap();
+        session
+            .local_memory_runtime()
+            .unwrap()
+            .write_record_for_lifecycle(LocalMemoryWriteRequest {
+                package: "m15-lifecycle-memory-test",
+                package_version: "0.1.0",
+                manifest: &manifest,
+                contracts: &contracts,
+                space: "summaries",
+                record_type: "summary",
+                scope: scope.clone(),
+                operation: LocalMemoryWriteOperation::Create,
+                record_id: None,
+                content: Some(json!({ "summary": "derived" })),
+                provenance: json!({
+                    "harness_lifecycle": {
+                        "kind": "harness_memory_lifecycle_operation",
+                        "operation": "seed",
+                        "operation_identity": "m15-lifecycle-memory-test/operations/seed",
+                        "source_record_ids": [source.id.clone()],
+                        "source_records": [{
+                            "package": source.package.clone(),
+                            "package_version": source.package_version.clone(),
+                            "space": source.space.clone(),
+                            "record_type": source.record_type.clone(),
+                            "id": source.id.clone(),
+                            "scope_hash": source.scope_hash.clone()
+                        }]
+                    }
+                }),
+                now: Utc::now(),
+            })
+            .unwrap();
+
+        let mut model = ScriptedModelRuntime::new(vec![
+            ModelTurn {
+                assistant_content: None,
+                actions: vec![SemanticActionProposal::new(
+                    "create-trigger-note",
+                    SemanticAction::MemoryWrite {
+                        package: "m15-lifecycle-memory-test".into(),
+                        space: "notes".into(),
+                        operation: MemoryWriteOperation::Create,
+                        record_type: "note".into(),
+                        record_id: None,
+                        content: Some(json!({ "body": "trigger" })),
+                    },
+                )],
+                usage: RunUsage::default(),
+                finish_reason: Some("tool_calls".into()),
+                provider_metadata: BTreeMap::new(),
+            },
+            completion("done", "done"),
+        ]);
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut approvals = ScriptedApprovalController::default();
+        let mut engine = HarnessEngine::new(
+            one_phase_memory_loop(None),
+            HarnessEngineOptions::new(limits()),
+        );
+        let result = engine
+            .execute_run(
+                &mut session,
+                "trigger delete cascade",
+                &mut model,
+                &mut dispatcher,
+                &mut approvals,
+            )
+            .unwrap();
+        let HarnessRunResult::Terminal(result) = result else {
+            panic!("expected terminal result");
+        };
+        assert_eq!(result.status, HarnessTerminalStatus::Ended);
+
+        let notes = session
+            .local_memory_runtime()
+            .unwrap()
+            .read_records(LocalMemoryReadRequest {
+                package: "m15-lifecycle-memory-test",
+                package_version: "0.1.0",
+                manifest: &manifest,
+                space: "notes",
+                scope: scope.clone(),
+                mode: LocalMemoryReadMode::Chronological,
+                record_id: None,
+                record_type: Some("note".into()),
+                filter: BTreeMap::new(),
+                query: None,
+                limit: None,
+                now: Utc::now(),
+            })
+            .unwrap();
+        assert!(notes.is_empty());
+        let summaries = session
+            .local_memory_runtime()
+            .unwrap()
+            .read_records(LocalMemoryReadRequest {
+                package: "m15-lifecycle-memory-test",
+                package_version: "0.1.0",
+                manifest: &manifest,
+                space: "summaries",
+                scope: scope.clone(),
+                mode: LocalMemoryReadMode::Chronological,
+                record_id: None,
+                record_type: Some("summary".into()),
+                filter: BTreeMap::new(),
+                query: None,
+                limit: None,
+                now: Utc::now(),
+            })
+            .unwrap();
+        assert_eq!(summaries.len(), expected_summaries);
+        assert!(handle.events().iter().any(|event| {
+            event.event_type == HarnessEventType::MemoryOperationSource
+                && matches!(
+                    &event.payload,
+                    HarnessEventPayload::Lifecycle { fields, .. }
+                        if fields.get("operation") == Some(&json!(operation))
+                )
+        }));
+    }
+}
+
+#[test]
+fn memory_lifecycle_interval_baseline_persists_across_session_restart() {
+    let temp = temp_workspace_dir("m15-interval-restart");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_interval_delete_operation(&temp, &package_root);
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+
+    let mut first_session = HarnessSession::with_runtime_snapshot(runtime.clone());
+    let mut first_model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-first-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "first" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut first_dispatcher = ScriptedActionDispatcher::default();
+    let mut first_approvals = ScriptedApprovalController::default();
+    let mut first_engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    first_engine
+        .execute_run(
+            &mut first_session,
+            "establish interval baseline",
+            &mut first_model,
+            &mut first_dispatcher,
+            &mut first_approvals,
+        )
+        .unwrap();
+    let first_state = first_session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-lifecycle-memory-test",
+            "0.1.0",
+            "interval_delete_notes",
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(first_state.last_completed_at.is_none());
+    assert!(first_state.next_eligible_at.is_some());
+    let baseline_at = first_state
+        .baseline_at
+        .as_deref()
+        .map(chrono::DateTime::parse_from_rfc3339)
+        .transpose()
+        .unwrap()
+        .map(|time| time.with_timezone(&Utc));
+    first_session
+        .local_memory_runtime()
+        .unwrap()
+        .store_operation_state(
+            &crate::harness_runtime::memory::LocalMemoryOperationStateRow {
+                package: first_state.package.clone(),
+                package_version: first_state.package_version.clone(),
+                operation: first_state.operation.clone(),
+                scope: scope.clone(),
+                trigger_type: first_state.trigger_type.clone(),
+                armed: first_state.armed,
+                baseline_at,
+                last_completed_at: None,
+                last_failed_at: None,
+                next_eligible_at: Some(Utc::now() - chrono::Duration::seconds(1)),
+                last_observed_value: first_state.last_observed_value,
+                last_failure: None,
+                watermark: first_state.watermark.clone(),
+                updated_at: Utc::now(),
+            },
+        )
+        .unwrap();
+    let first_notes = first_session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(first_notes.len(), 1);
+
+    let mut second_session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut second_model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "create-second-note",
+                SemanticAction::MemoryWrite {
+                    package: "m15-lifecycle-memory-test".into(),
+                    space: "notes".into(),
+                    operation: MemoryWriteOperation::Create,
+                    record_type: "note".into(),
+                    record_id: None,
+                    content: Some(json!({ "body": "second" })),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut second_dispatcher = ScriptedActionDispatcher::default();
+    let mut second_approvals = ScriptedApprovalController::default();
+    let mut second_engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    second_engine
+        .execute_run(
+            &mut second_session,
+            "fire interval after restart",
+            &mut second_model,
+            &mut second_dispatcher,
+            &mut second_approvals,
+        )
+        .unwrap();
+
+    let second_notes = second_session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert!(second_notes.is_empty());
+    let second_state = second_session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-lifecycle-memory-test",
+            "0.1.0",
+            "interval_delete_notes",
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(second_state.last_completed_at.is_some());
+    assert!(second_state.next_eligible_at.is_some());
+}
+
+#[test]
+fn memory_lifecycle_external_invocation_runs_only_external_participating_operation() {
+    let temp = temp_workspace_dir("m15-external-operation");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_external_delete_operation(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(&package_root).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    session
+        .local_memory_runtime()
+        .unwrap()
+        .write_record(LocalMemoryWriteRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            contracts: &contracts,
+            space: "notes",
+            record_type: "note",
+            scope: scope.clone(),
+            operation: LocalMemoryWriteOperation::Create,
+            record_id: None,
+            content: Some(json!({ "body": "external target" })),
+            provenance: json!({}),
+            now: Utc::now(),
+        })
+        .unwrap();
+
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let effective = EffectivePhase::from_phase(
+        &one_phase_memory_loop(None).r#loop.phases[0],
+        &session.runtime_snapshot,
+    );
+    assert!(effective.active_memory_operations.iter().any(|operation| {
+        operation.operation == "external_delete_notes"
+            && operation.trigger.get("type") == Some(&json!("external"))
+    }));
+    assert!(!effective.capability_catalog.iter().any(|descriptor| {
+        descriptor
+            .identity
+            .contains("/operations/external_delete_notes")
+    }));
+    session.start_run("external invocation".into()).unwrap();
+    session.active_run.as_mut().unwrap().current_phase_id = Some("remember".into());
+    let mut model = ScriptedModelRuntime::new(Vec::new());
+    let mut hooks = NoopHookRuntime;
+    let result = engine
+        .invoke_memory_operation(
+            &mut session,
+            "m15-lifecycle-memory-test",
+            "external_delete_notes",
+            scope.clone(),
+            &mut model,
+            &mut hooks,
+        )
+        .unwrap();
+
+    assert_eq!(result.count, 1);
+    assert_eq!(
+        result.identity,
+        "m15-lifecycle-memory-test/operations/external_delete_notes"
+    );
+    let notes = session
+        .local_memory_runtime()
+        .unwrap()
+        .read_records(LocalMemoryReadRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            space: "notes",
+            scope: scope.clone(),
+            mode: LocalMemoryReadMode::Chronological,
+            record_id: None,
+            record_type: Some("note".into()),
+            filter: BTreeMap::new(),
+            query: None,
+            limit: None,
+            now: Utc::now(),
+        })
+        .unwrap();
+    assert!(notes.is_empty());
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryTriggerEvaluated
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("external_invocation") == Some(&json!(true))
+                        && fields.get("eligible") == Some(&json!(true))
+            )
+    }));
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryOperationCompleted
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!("external_delete_notes"))
+                        && fields.get("external_invocation") == Some(&json!(true))
+            )
+    }));
+}
+
+#[test]
+fn memory_lifecycle_external_invocation_failure_returns_error_and_records_state() {
+    let temp = temp_workspace_dir("m15-external-operation-failure");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_external_delete_operation(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+
+    let (manifest_value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&manifest_value).unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(&package_root).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    session
+        .local_memory_runtime()
+        .unwrap()
+        .write_record(LocalMemoryWriteRequest {
+            package: "m15-lifecycle-memory-test",
+            package_version: "0.1.0",
+            manifest: &manifest,
+            contracts: &contracts,
+            space: "notes",
+            record_type: "note",
+            scope: scope.clone(),
+            operation: LocalMemoryWriteOperation::Create,
+            record_id: None,
+            content: Some(json!({ "body": "external target" })),
+            provenance: json!({}),
+            now: Utc::now(),
+        })
+        .unwrap();
+
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    session.start_run("external invocation".into()).unwrap();
+    session.active_run.as_mut().unwrap().current_phase_id = Some("remember".into());
+    let mut model = ScriptedModelRuntime::new(Vec::new());
+    let mut hooks = TestHookRuntime {
+        active_hooks: vec![HarnessHookId::BeforeMemoryOperation],
+        reject_before_memory_operation: Some("external lifecycle denied".into()),
+        ..TestHookRuntime::default()
+    };
+    let err = engine
+        .invoke_memory_operation(
+            &mut session,
+            "m15-lifecycle-memory-test",
+            "external_delete_notes",
+            scope.clone(),
+            &mut model,
+            &mut hooks,
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("external lifecycle denied"));
+    assert!(handle.events().iter().any(|event| {
+        event.event_type == HarnessEventType::MemoryOperationFailed
+            && matches!(
+                &event.payload,
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!("external_delete_notes"))
+            )
+    }));
+    let state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            "m15-lifecycle-memory-test",
+            "0.1.0",
+            "external_delete_notes",
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(state.last_failed_at.is_some());
+    assert_eq!(
+        state
+            .last_failure
+            .as_ref()
+            .and_then(|failure| failure.get("code")),
+        Some(&json!("operation_failed"))
+    );
+}
+
+#[test]
+fn memory_lifecycle_external_invocation_rejects_non_external_operation() {
+    let temp = temp_workspace_dir("m15-external-rejects-non-external");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m15_lifecycle_memory(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    session.start_run("external invocation".into()).unwrap();
+    session.active_run.as_mut().unwrap().current_phase_id = Some("remember".into());
+    let mut model = ScriptedModelRuntime::new(Vec::new());
+    let mut hooks = NoopHookRuntime;
+    let err = engine
+        .invoke_memory_operation(
+            &mut session,
+            "m15-lifecycle-memory-test",
+            "summarize_notes",
+            BTreeMap::from([("user".into(), "user-123".into())]),
+            &mut model,
+            &mut hooks,
+        )
+        .unwrap_err();
+    assert_eq!(
+        memory_operation_control_error_code(&err),
+        Some("memory_operation_not_external")
+    );
+    assert!(
+        err.to_string()
+            .contains("only Memory operations with trigger.type `external`")
+    );
+}
+
+#[test]
+fn memory_lifecycle_external_invocation_rejects_invalid_control_paths() {
+    let temp = temp_workspace_dir("m15-external-invalid-control");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+
+    let mut unbound_session = HarnessSession::with_runtime_snapshot(
+        runtime_with_m15_external_delete_operation(&temp, &package_root),
+    );
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    unbound_session
+        .start_run("external invocation".into())
+        .unwrap();
+    unbound_session
+        .active_run
+        .as_mut()
+        .unwrap()
+        .current_phase_id = Some("remember".into());
+    let mut model = ScriptedModelRuntime::new(Vec::new());
+    let mut hooks = NoopHookRuntime;
+    let unbound = engine
+        .invoke_memory_operation(
+            &mut unbound_session,
+            "m15-lifecycle-memory-test",
+            "missing_external_operation",
+            BTreeMap::from([("user".into(), "user-123".into())]),
+            &mut model,
+            &mut hooks,
+        )
+        .unwrap_err();
+    assert_eq!(
+        memory_operation_control_error_code(&unbound),
+        Some("memory_operation_not_participating")
+    );
+    assert!(unbound.to_string().contains("is not participating"));
+
+    let mut unresolved_runtime = runtime_with_m15_external_delete_operation(&temp, &package_root);
+    unresolved_runtime.runtime_scopes.clear();
+    let unresolved_effective = EffectivePhase::from_phase(
+        &one_phase_memory_loop(None).r#loop.phases[0],
+        &unresolved_runtime,
+    );
+    assert!(
+        unresolved_effective
+            .suppressed_capabilities
+            .iter()
+            .any(|capability| {
+                capability.kind == "memory_operation"
+                    && capability
+                        .reason
+                        .contains("unresolved Memory scope keys for operation")
+            })
+    );
+    let mut unresolved_session = HarnessSession::with_runtime_snapshot(unresolved_runtime);
+    unresolved_session
+        .start_run("external invocation".into())
+        .unwrap();
+    unresolved_session
+        .active_run
+        .as_mut()
+        .unwrap()
+        .current_phase_id = Some("remember".into());
+    let unresolved = engine
+        .invoke_memory_operation(
+            &mut unresolved_session,
+            "m15-lifecycle-memory-test",
+            "external_delete_notes",
+            BTreeMap::new(),
+            &mut model,
+            &mut hooks,
+        )
+        .unwrap_err();
+    assert_eq!(
+        memory_operation_control_error_code(&unresolved),
+        Some("memory_operation_unresolved_scope")
+    );
+    assert!(
+        unresolved
+            .to_string()
+            .contains("Memory scope key `user` is unresolved")
+    );
+
+    let mut unavailable_runtime = runtime_with_m15_external_delete_operation(&temp, &package_root);
+    unavailable_runtime.memory_operations[0].state = "unavailable".into();
+    unavailable_runtime.memory_operations[0].readiness_reason =
+        Some("backend did not advertise atomic_batches".into());
+    let unavailable_effective = EffectivePhase::from_phase(
+        &one_phase_memory_loop(None).r#loop.phases[0],
+        &unavailable_runtime,
+    );
+    assert!(
+        unavailable_effective
+            .suppressed_capabilities
+            .iter()
+            .any(|capability| {
+                capability.kind == "memory_operation"
+                    && capability
+                        .reason
+                        .contains("backend did not advertise atomic_batches")
+            })
+    );
+    let mut unavailable_session = HarnessSession::with_runtime_snapshot(unavailable_runtime);
+    unavailable_session
+        .start_run("external invocation".into())
+        .unwrap();
+    unavailable_session
+        .active_run
+        .as_mut()
+        .unwrap()
+        .current_phase_id = Some("remember".into());
+    let unavailable = engine
+        .invoke_memory_operation(
+            &mut unavailable_session,
+            "m15-lifecycle-memory-test",
+            "external_delete_notes",
+            BTreeMap::from([("user".into(), "user-123".into())]),
+            &mut model,
+            &mut hooks,
+        )
+        .unwrap_err();
+    assert_eq!(
+        memory_operation_control_error_code(&unavailable),
+        Some("memory_operation_backend_unready")
+    );
+    assert!(
+        unavailable
+            .to_string()
+            .contains("backend did not advertise atomic_batches")
+    );
+
+    let mut scoped_session = HarnessSession::with_runtime_snapshot(
+        runtime_with_m15_external_delete_operation(&temp, &package_root),
+    );
+    scoped_session
+        .start_run("external invocation".into())
+        .unwrap();
+    scoped_session.active_run.as_mut().unwrap().current_phase_id = Some("remember".into());
+    let scoped = engine
+        .invoke_memory_operation(
+            &mut scoped_session,
+            "m15-lifecycle-memory-test",
+            "external_delete_notes",
+            BTreeMap::from([("user".into(), "different-user".into())]),
+            &mut model,
+            &mut hooks,
+        )
+        .unwrap_err();
+    assert_eq!(
+        memory_operation_control_error_code(&scoped),
+        Some("memory_operation_scope_mismatch")
+    );
 }
 
 #[test]
@@ -4281,7 +8192,6 @@ fn memory_write_review_write_uses_hooks_and_durable_projection() {
                     "private": "hidden review scratch"
                 }
             })),
-            ..BeforeMemoryWriteDecision::default()
         }),
         ..TestHookRuntime::default()
     };
@@ -4451,9 +8361,12 @@ fn memory_write_review_committed_writes_survive_later_review_failure() {
 
 #[test]
 fn memory_write_review_routes_custom_host_memory_without_fake_dispatch() {
+    type RecordingReviewMemoryCalls =
+        std::sync::Arc<std::sync::Mutex<Vec<(String, String, String, Value)>>>;
+
     #[derive(Clone)]
     struct RecordingReviewMemoryRuntime {
-        calls: std::sync::Arc<std::sync::Mutex<Vec<(String, String, String, Value)>>>,
+        calls: RecordingReviewMemoryCalls,
     }
 
     impl HostServiceInvoker for RecordingReviewMemoryRuntime {

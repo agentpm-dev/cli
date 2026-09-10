@@ -123,6 +123,8 @@ pub enum HarnessEventType {
     MemoryTriggerEvaluated,
     MemoryOperationEligible,
     MemoryOperationStarted,
+    MemoryOperationSource,
+    MemoryOperationOutput,
     MemoryOperationCompleted,
     MemoryOperationFailed,
     HookStarted,

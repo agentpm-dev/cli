@@ -35,14 +35,14 @@ pub(crate) use custom::{
     custom_memory_write_request_from_local, emit_memory_host_service_failure,
     process_memory_runtime_service, validate_memory_runtime_capabilities,
 };
+#[cfg(test)]
+use semantic::encode_f32_le_vector;
 use semantic::{
-    LocalMemoryWriteEmbeddingResult, delete_memory_vectors_for_record,
+    LocalMemoryWriteEmbeddingResult, delete_memory_vectors_for_record, durable_memory_content_hash,
     materialize_memory_vector_best_effort,
 };
-#[cfg(test)]
-use semantic::{durable_memory_content_hash, encode_f32_le_vector};
 
-const LOCAL_MEMORY_SCHEMA_VERSION: u64 = 1;
+const LOCAL_MEMORY_SCHEMA_VERSION: u64 = 2;
 const LOCAL_MEMORY_DB_NAME: &str = "memory.sqlite3";
 const LOCAL_MEMORY_BUSY_TIMEOUT_MS: u64 = 5_000;
 const LOCAL_MEMORY_SEMANTIC_READ_BACKFILL_LIMIT: usize = 32;
@@ -413,10 +413,55 @@ pub struct LocalMemoryOperationStateRow {
     pub armed: bool,
     pub baseline_at: Option<DateTime<Utc>>,
     pub last_completed_at: Option<DateTime<Utc>>,
+    pub last_failed_at: Option<DateTime<Utc>>,
     pub next_eligible_at: Option<DateTime<Utc>>,
     pub last_observed_value: Option<i64>,
+    pub last_failure: Option<Value>,
     pub watermark: Option<Value>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalMemoryLifecycleSourceSnapshot {
+    pub package: String,
+    pub package_version: String,
+    pub space: String,
+    pub scope: BTreeMap<String, String>,
+    pub record_id: String,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalMemoryLifecycleTriggerPrecondition {
+    ActiveCountAtLeast {
+        package: String,
+        package_version: String,
+        space: String,
+        scope: BTreeMap<String, String>,
+        threshold: u64,
+    },
+    ActiveCountAtCapacity {
+        package: String,
+        package_version: String,
+        space: String,
+        scope: BTreeMap<String, String>,
+        max_records: u64,
+    },
+}
+
+#[derive(Debug)]
+pub struct LocalMemoryLifecycleCommitRequest<'a> {
+    pub trigger_precondition: Option<LocalMemoryLifecycleTriggerPrecondition>,
+    pub expected_sources: Vec<LocalMemoryLifecycleSourceSnapshot>,
+    pub output_writes: Vec<LocalMemoryWriteRequest<'a>>,
+    pub source_mutations: Vec<LocalMemoryWriteRequest<'a>>,
+    pub operation_state: LocalMemoryOperationStateRow,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalMemoryLifecycleCommitResult {
+    pub output_record_ids: Vec<String>,
+    pub source_record_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -430,8 +475,10 @@ pub struct StoredMemoryOperationState {
     pub armed: bool,
     pub baseline_at: Option<String>,
     pub last_completed_at: Option<String>,
+    pub last_failed_at: Option<String>,
     pub next_eligible_at: Option<String>,
     pub last_observed_value: Option<i64>,
+    pub last_failure: Option<Value>,
     pub watermark: Option<Value>,
 }
 
@@ -671,7 +718,7 @@ impl LocalSqliteMemoryRuntime {
         &mut self,
         request: LocalMemoryWriteRequest<'_>,
     ) -> Result<LocalMemoryWriteResult> {
-        self.write_record_inner(request, None)
+        self.write_record_inner(request, None, true)
     }
 
     pub fn write_record_with_semantic(
@@ -680,13 +727,126 @@ impl LocalSqliteMemoryRuntime {
         semantic: &LocalMemorySemanticConfig,
         embedder: &mut dyn EmbeddingProvider,
     ) -> Result<LocalMemoryWriteResult> {
-        self.write_record_inner(request, Some((semantic, embedder)))
+        self.write_record_inner(request, Some((semantic, embedder)), true)
+    }
+
+    pub fn write_record_for_lifecycle(
+        &mut self,
+        request: LocalMemoryWriteRequest<'_>,
+    ) -> Result<LocalMemoryWriteResult> {
+        self.write_record_inner(request, None, false)
+    }
+
+    pub fn source_snapshot_for_lifecycle(
+        &self,
+        record: &StoredMemoryRecord,
+    ) -> Result<LocalMemoryLifecycleSourceSnapshot> {
+        let scope: BTreeMap<String, String> = serde_json::from_str(&record.scope_json)
+            .context("parsing Memory source record scope JSON")?;
+        Ok(LocalMemoryLifecycleSourceSnapshot {
+            package: record.package.clone(),
+            package_version: record.package_version.clone(),
+            space: record.space.clone(),
+            scope,
+            record_id: record.id.clone(),
+            content_hash: durable_memory_content_hash(&record.content)?,
+        })
+    }
+
+    pub fn commit_lifecycle_operation(
+        &mut self,
+        request: LocalMemoryLifecycleCommitRequest<'_>,
+    ) -> Result<LocalMemoryLifecycleCommitResult> {
+        self.atomic_batch(|batch| {
+            let mut operation_state = request.operation_state;
+            let mut expired_spaces = BTreeSetLike::new();
+            for write in request
+                .output_writes
+                .iter()
+                .chain(request.source_mutations.iter())
+            {
+                if expired_spaces.insert(format!(
+                    "{}\x1f{}\x1f{}",
+                    write.package, write.package_version, write.space
+                )) {
+                    let space = memory_space(write.manifest, write.space)?;
+                    expire_memory_records_for_space(
+                        &batch.transaction,
+                        write.package,
+                        write.package_version,
+                        write.space,
+                        space,
+                        write.now,
+                    )?;
+                }
+            }
+
+            if let Some(precondition) = &request.trigger_precondition {
+                validate_lifecycle_trigger_precondition(
+                    &batch.transaction,
+                    precondition,
+                    operation_state.updated_at,
+                )?;
+            }
+
+            for source in &request.expected_sources {
+                let current = get_memory_record(
+                    &batch.transaction,
+                    &source.package,
+                    &source.package_version,
+                    &source.space,
+                    &source.scope,
+                    &source.record_id,
+                    operation_state.updated_at,
+                )?
+                .ok_or_else(|| {
+                    LocalMemoryActionError::constraint_violation(format!(
+                        "Memory lifecycle source `{}` changed before commit",
+                        source.record_id
+                    ))
+                })?;
+                let current_hash = durable_memory_content_hash(&current.content)?;
+                if current_hash != source.content_hash {
+                    return Err(LocalMemoryActionError::constraint_violation(format!(
+                        "Memory lifecycle source `{}` changed before commit",
+                        source.record_id
+                    ))
+                    .into());
+                }
+            }
+
+            let mut output_record_ids = Vec::new();
+            for write in request.output_writes {
+                if let Some(record_id) = apply_lifecycle_write_in_transaction(batch, write)? {
+                    output_record_ids.push(record_id);
+                }
+            }
+
+            let mut source_record_ids = Vec::new();
+            for write in request.source_mutations {
+                if let Some(record_id) = apply_lifecycle_write_in_transaction(batch, write)? {
+                    source_record_ids.push(record_id);
+                }
+            }
+
+            operation_state.watermark = Some(lifecycle_watermark_with_commit_records(
+                operation_state.watermark.take(),
+                &output_record_ids,
+                &source_record_ids,
+            ));
+            batch.store_operation_state(&operation_state)?;
+            Ok(LocalMemoryLifecycleCommitResult {
+                output_record_ids,
+                source_record_ids,
+            })
+        })
     }
 
     fn write_record_inner(
         &mut self,
         request: LocalMemoryWriteRequest<'_>,
         mut semantic_write: Option<(&LocalMemorySemanticConfig, &mut dyn EmbeddingProvider)>,
+        enforce_direct_append_only: bool,
     ) -> Result<LocalMemoryWriteResult> {
         validate_memory_scope(request.manifest, request.space, &request.scope)?;
         let space = memory_space(request.manifest, request.space)?;
@@ -701,7 +861,8 @@ impl LocalSqliteMemoryRuntime {
             .into());
         }
 
-        if append_only_enabled(space)
+        if enforce_direct_append_only
+            && append_only_enabled(space)
             && matches!(
                 request.operation,
                 LocalMemoryWriteOperation::Update
@@ -1010,6 +1171,30 @@ impl LocalSqliteMemoryRuntime {
         })
     }
 
+    pub fn read_active_records_for_lifecycle(
+        &mut self,
+        request: LocalMemoryReadRequest<'_>,
+    ) -> Result<Vec<StoredMemoryRecord>> {
+        validate_memory_scope(request.manifest, request.space, &request.scope)?;
+        let space = memory_space(request.manifest, request.space)?;
+        self.atomic_batch(|batch| {
+            expire_memory_records_for_space(
+                &batch.transaction,
+                request.package,
+                request.package_version,
+                request.space,
+                space,
+                request.now,
+            )?;
+            query_active_memory_records(
+                &batch.transaction,
+                &request,
+                "updated_at ASC, created_at ASC, ordinal ASC, id ASC",
+                None,
+            )
+        })
+    }
+
     pub fn allocate_sequence_ordinal(
         &mut self,
         package: &str,
@@ -1109,6 +1294,11 @@ impl LocalSqliteMemoryRuntime {
                     self.create_schema_v1()?;
                     self.set_schema_version(1)?;
                     1
+                }
+                1 => {
+                    self.create_schema_v2()?;
+                    self.set_schema_version(2)?;
+                    2
                 }
                 unsupported => bail!(
                     "no Memory SQLite migration path from schema version {unsupported} to {LOCAL_MEMORY_SCHEMA_VERSION}"
@@ -1220,6 +1410,94 @@ impl LocalSqliteMemoryRuntime {
 
         Ok(())
     }
+
+    fn create_schema_v2(&self) -> Result<()> {
+        self.connection
+            .execute_batch(
+                r#"
+                ALTER TABLE memory_operation_state ADD COLUMN last_failed_at TEXT;
+                ALTER TABLE memory_operation_state ADD COLUMN last_failure_json TEXT;
+                "#,
+            )
+            .context("migrating Memory SQLite schema to v2")
+    }
+}
+
+fn lifecycle_watermark_with_commit_records(
+    watermark: Option<Value>,
+    output_record_ids: &[String],
+    source_record_ids: &[String],
+) -> Value {
+    let mut object = match watermark {
+        Some(Value::Object(object)) => object,
+        Some(value) => serde_json::Map::from_iter([("previous".into(), value)]),
+        None => serde_json::Map::new(),
+    };
+    object.insert(
+        "last_output_record_ids".into(),
+        json!(output_record_ids.to_vec()),
+    );
+    object.insert(
+        "last_mutated_source_record_ids".into(),
+        json!(source_record_ids.to_vec()),
+    );
+    Value::Object(object)
+}
+
+fn validate_lifecycle_trigger_precondition(
+    connection: &Connection,
+    precondition: &LocalMemoryLifecycleTriggerPrecondition,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    match precondition {
+        LocalMemoryLifecycleTriggerPrecondition::ActiveCountAtLeast {
+            package,
+            package_version,
+            space,
+            scope,
+            threshold,
+        } => {
+            let count = active_memory_record_count(
+                connection,
+                package,
+                package_version,
+                space,
+                scope,
+                None,
+                now,
+            )?;
+            if count < *threshold {
+                return Err(LocalMemoryActionError::constraint_violation(format!(
+                    "Memory lifecycle trigger for space `{space}` no longer has active_count >= threshold {threshold} before commit"
+                ))
+                .into());
+            }
+        }
+        LocalMemoryLifecycleTriggerPrecondition::ActiveCountAtCapacity {
+            package,
+            package_version,
+            space,
+            scope,
+            max_records,
+        } => {
+            let count = active_memory_record_count(
+                connection,
+                package,
+                package_version,
+                space,
+                scope,
+                None,
+                now,
+            )?;
+            if count < *max_records {
+                return Err(LocalMemoryActionError::constraint_violation(format!(
+                    "Memory lifecycle capacity trigger for space `{space}` no longer has active_count >= max_records {max_records} before commit"
+                ))
+                .into());
+            }
+        }
+    }
+    Ok(())
 }
 
 impl LocalSqliteMemoryBatch<'_> {
@@ -1293,6 +1571,176 @@ impl LocalSqliteMemoryBatch<'_> {
             operation,
             scope,
         )
+    }
+}
+
+fn apply_lifecycle_write_in_transaction(
+    batch: &mut LocalSqliteMemoryBatch<'_>,
+    request: LocalMemoryWriteRequest<'_>,
+) -> Result<Option<String>> {
+    validate_memory_scope(request.manifest, request.space, &request.scope)?;
+    let space = memory_space(request.manifest, request.space)?;
+    if !space
+        .record_types
+        .contains(&request.record_type.to_string())
+    {
+        return Err(LocalMemoryActionError::contract_violation(format!(
+            "record type `{}` is not permitted in Memory space `{}`",
+            request.record_type, request.space
+        ))
+        .into());
+    }
+    if matches!(
+        request.operation,
+        LocalMemoryWriteOperation::Create | LocalMemoryWriteOperation::Upsert
+    ) && request.record_id.is_some()
+    {
+        return Err(LocalMemoryActionError::constraint_violation(
+            "Memory create/upsert cannot assign an authoritative record id",
+        )
+        .into());
+    }
+
+    let prepared = match request.operation {
+        LocalMemoryWriteOperation::Create | LocalMemoryWriteOperation::Upsert => {
+            Some(prepare_local_memory_record(&request, None)?)
+        }
+        LocalMemoryWriteOperation::Update => {
+            let record_id = request.record_id.as_deref().ok_or_else(|| {
+                LocalMemoryActionError::constraint_violation(
+                    "Memory update requires an existing record id",
+                )
+            })?;
+            Some(prepare_local_memory_record(&request, Some(record_id))?)
+        }
+        LocalMemoryWriteOperation::Delete | LocalMemoryWriteOperation::Archive => None,
+    };
+
+    match request.operation {
+        LocalMemoryWriteOperation::Create | LocalMemoryWriteOperation::Upsert => {
+            let mut record = prepared.expect("record prepared for create/upsert");
+            let existing_id = if matches!(space.model, MemorySpaceModel::Document) {
+                find_current_document_id(
+                    &batch.transaction,
+                    request.package,
+                    request.package_version,
+                    request.space,
+                    &request.scope,
+                    request.now,
+                )?
+            } else {
+                None
+            };
+            if existing_id.is_some()
+                && matches!(request.operation, LocalMemoryWriteOperation::Create)
+            {
+                return Err(LocalMemoryActionError::constraint_violation(format!(
+                    "Memory document create for space `{}` requires no current document for the resolved scope; use upsert to replace the current document",
+                    request.space
+                ))
+                .into());
+            }
+            enforce_memory_capacity(&batch.transaction, &request, space, existing_id.is_none())?;
+            if let Some(existing_id) = existing_id {
+                record.id = existing_id;
+                validate_memory_record_envelope(request.contracts, &record)?;
+                update_memory_record(&batch.transaction, &record)?;
+            } else {
+                if matches!(space.model, MemorySpaceModel::Sequence) {
+                    record.ordinal = Some(batch.allocate_sequence_ordinal(
+                        request.package,
+                        request.package_version,
+                        request.space,
+                        &request.scope,
+                    )?);
+                }
+                validate_memory_record_envelope(request.contracts, &record)?;
+                insert_memory_record(&batch.transaction, &record)?;
+            }
+            delete_memory_vectors_for_record(
+                &batch.transaction,
+                request.package,
+                request.package_version,
+                request.space,
+                &request.scope,
+                &record.id,
+            )?;
+            Ok(Some(record.id))
+        }
+        LocalMemoryWriteOperation::Update => {
+            let mut record = prepared.expect("record prepared for update");
+            let record_id = request.record_id.as_deref().unwrap();
+            let existing = get_memory_record(
+                &batch.transaction,
+                request.package,
+                request.package_version,
+                request.space,
+                &request.scope,
+                record_id,
+                request.now,
+            )?
+            .ok_or_else(|| {
+                LocalMemoryActionError::not_found(format!(
+                    "Memory record `{record_id}` was not found"
+                ))
+            })?;
+            if !matches!(space.model, MemorySpaceModel::Document)
+                && existing.record_type != request.record_type
+            {
+                return Err(LocalMemoryActionError::constraint_violation(format!(
+                    "Memory update target `{record_id}` has record type `{}` not `{}`",
+                    existing.record_type, request.record_type
+                ))
+                .into());
+            }
+            record.id = existing.id;
+            record.created_at = parse_rfc3339_utc(&existing.created_at)?;
+            record.ordinal = existing.ordinal;
+            validate_memory_record_envelope(request.contracts, &record)?;
+            update_memory_record(&batch.transaction, &record)?;
+            delete_memory_vectors_for_record(
+                &batch.transaction,
+                request.package,
+                request.package_version,
+                request.space,
+                &request.scope,
+                &record.id,
+            )?;
+            Ok(Some(record.id))
+        }
+        LocalMemoryWriteOperation::Delete => {
+            let record_id = request.record_id.as_deref().ok_or_else(|| {
+                LocalMemoryActionError::constraint_violation(
+                    "Memory delete requires an existing record id",
+                )
+            })?;
+            delete_memory_record(
+                &batch.transaction,
+                request.package,
+                request.package_version,
+                request.space,
+                &request.scope,
+                record_id,
+            )?;
+            Ok(Some(record_id.to_string()))
+        }
+        LocalMemoryWriteOperation::Archive => {
+            let record_id = request.record_id.as_deref().ok_or_else(|| {
+                LocalMemoryActionError::constraint_violation(
+                    "Memory archive requires an existing record id",
+                )
+            })?;
+            archive_memory_record(
+                &batch.transaction,
+                request.package,
+                request.package_version,
+                request.space,
+                &request.scope,
+                record_id,
+                request.now,
+            )?;
+            Ok(Some(record_id.to_string()))
+        }
     }
 }
 
@@ -1722,6 +2170,9 @@ fn allow_harness_memory_provenance(envelope_schema: &mut Value) {
     provenance_properties
         .entry("harness")
         .or_insert_with(harness_memory_provenance_schema);
+    provenance_properties
+        .entry("harness_lifecycle")
+        .or_insert_with(harness_lifecycle_memory_provenance_schema);
 }
 
 fn harness_memory_provenance_schema() -> Value {
@@ -1771,6 +2222,53 @@ fn harness_memory_provenance_schema() -> Value {
             "model_id": {
                 "type": "string",
                 "minLength": 1
+            }
+        }
+    })
+}
+
+fn harness_lifecycle_memory_provenance_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+            "kind",
+            "operation",
+            "operation_identity",
+            "source_record_ids",
+            "source_records"
+        ],
+        "properties": {
+            "kind": {
+                "const": "harness_memory_lifecycle_operation"
+            },
+            "operation": {
+                "type": "string",
+                "minLength": 1
+            },
+            "operation_identity": {
+                "type": "string",
+                "minLength": 1
+            },
+            "source_record_ids": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 }
+            },
+            "source_records": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "required": ["package", "package_version", "space", "record_type", "id", "scope_hash"],
+                    "properties": {
+                        "package": { "type": "string", "minLength": 1 },
+                        "package_version": { "type": "string", "minLength": 1 },
+                        "space": { "type": "string", "minLength": 1 },
+                        "record_type": { "type": "string", "minLength": 1 },
+                        "id": { "type": "string", "minLength": 1 },
+                        "scope_hash": { "type": "string", "minLength": 1 }
+                    }
+                }
             }
         }
     })
@@ -2498,18 +2996,20 @@ fn store_memory_operation_state(
             r#"
             INSERT INTO memory_operation_state (
                 package, package_version, operation, scope_json, scope_hash,
-                trigger_type, armed, baseline_at, last_completed_at, next_eligible_at,
-                last_observed_value, watermark_json, updated_at
+                trigger_type, armed, baseline_at, last_completed_at, last_failed_at,
+                next_eligible_at, last_observed_value, last_failure_json, watermark_json, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             ON CONFLICT(package, package_version, operation, scope_hash)
             DO UPDATE SET
                 trigger_type = excluded.trigger_type,
                 armed = excluded.armed,
                 baseline_at = excluded.baseline_at,
                 last_completed_at = excluded.last_completed_at,
+                last_failed_at = excluded.last_failed_at,
                 next_eligible_at = excluded.next_eligible_at,
                 last_observed_value = excluded.last_observed_value,
+                last_failure_json = excluded.last_failure_json,
                 watermark_json = excluded.watermark_json,
                 updated_at = excluded.updated_at
             "#,
@@ -2523,8 +3023,14 @@ fn store_memory_operation_state(
                 i64::from(state.armed),
                 state.baseline_at.as_ref().map(DateTime::to_rfc3339),
                 state.last_completed_at.as_ref().map(DateTime::to_rfc3339),
+                state.last_failed_at.as_ref().map(DateTime::to_rfc3339),
                 state.next_eligible_at.as_ref().map(DateTime::to_rfc3339),
                 state.last_observed_value,
+                state
+                    .last_failure
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
                 state
                     .watermark
                     .as_ref()
@@ -2549,14 +3055,15 @@ fn load_memory_operation_state(
         .query_row(
             r#"
             SELECT package, package_version, operation, scope_json, scope_hash,
-                   trigger_type, armed, baseline_at, last_completed_at, next_eligible_at,
-                   last_observed_value, watermark_json
+                   trigger_type, armed, baseline_at, last_completed_at, last_failed_at,
+                   next_eligible_at, last_observed_value, last_failure_json, watermark_json
             FROM memory_operation_state
             WHERE package = ?1 AND package_version = ?2 AND operation = ?3 AND scope_hash = ?4
             "#,
             params![package, package_version, operation, scope_hash],
             |row| {
-                let watermark_json: Option<String> = row.get(11)?;
+                let last_failure_json: Option<String> = row.get(12)?;
+                let watermark_json: Option<String> = row.get(13)?;
                 Ok(StoredMemoryOperationState {
                     package: row.get(0)?,
                     package_version: row.get(1)?,
@@ -2567,13 +3074,25 @@ fn load_memory_operation_state(
                     armed: row.get::<_, i64>(6)? != 0,
                     baseline_at: row.get(7)?,
                     last_completed_at: row.get(8)?,
-                    next_eligible_at: row.get(9)?,
-                    last_observed_value: row.get(10)?,
+                    last_failed_at: row.get(9)?,
+                    next_eligible_at: row.get(10)?,
+                    last_observed_value: row.get(11)?,
+                    last_failure: last_failure_json
+                        .map(|value| {
+                            serde_json::from_str(&value).map_err(|err| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    12,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(err),
+                                )
+                            })
+                        })
+                        .transpose()?,
                     watermark: watermark_json
                         .map(|value| {
                             serde_json::from_str(&value).map_err(|err| {
                                 rusqlite::Error::FromSqlConversionFailure(
-                                    11,
+                                    13,
                                     rusqlite::types::Type::Text,
                                     Box::new(err),
                                 )

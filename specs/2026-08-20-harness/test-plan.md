@@ -81,6 +81,7 @@ At minimum test:
 - approval callback;
 - cancellation;
 - external Memory operation invocation;
+- external Memory operation controls use the canonical machine payload/result/error shape, reject extra pending controls as busy, flush pending controls on cancellation/run end, and do not block unrelated host-service responses;
 - custom model/embedding/Knowledge/Memory host-provider request routing;
 - provider callback errors/timeouts;
 - Pinecone/pgvector/Redis provider helpers where implemented in the SDK;
@@ -391,6 +392,7 @@ Verify:
 - capacity trigger/re-arm and hard-cap write handling;
 - interval baseline begins when relevant scoped state first exists;
 - interval state persists across process restart;
+- interval `every` accepts only the same supported positive ISO 8601 duration subset at lint/build/runtime and rejects shorthand values even if manifest lint was bypassed;
 - external operations never auto-run;
 - global operation participates across phases;
 - phase-bound operation only during active phase;
@@ -400,7 +402,9 @@ Verify:
 - delete mechanical path;
 - model-assisted operation structured repair bound;
 - provenance/source handling correctness;
-- operation failure events and originating write/phase consequences.
+- `retain_until_expiration` requires expiring source spaces and preserves sources only until their runtime-owned expiration;
+- operation failure events, capacity-relief fallback to typed `capacity_exceeded` write failure for both rejected relief and successful-but-insufficient relief, and true phase-failure consequences for lifecycle machinery/atomicity errors.
+- failed automatic lifecycle operation cooldown prevents immediate retry storms and preserves retry eligibility after the cooldown window.
 
 ### External providers
 
