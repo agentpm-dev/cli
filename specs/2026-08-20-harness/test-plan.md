@@ -392,6 +392,8 @@ Verify:
 - capacity trigger/re-arm and hard-cap write handling;
 - interval baseline begins when relevant scoped state first exists;
 - interval state persists across process restart;
+- elapsed interval operations run at the next phase-start boundary even when no direct write touches the referenced spaces in that Run;
+- interval operations do not fire before `next_eligible_at` and Memory reads do not evaluate lifecycle triggers;
 - interval `every` accepts only the same supported positive ISO 8601 duration subset at lint/build/runtime and rejects shorthand values even if manifest lint was bypassed;
 - external operations never auto-run;
 - global operation participates across phases;

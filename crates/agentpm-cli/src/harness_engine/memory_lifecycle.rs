@@ -5,7 +5,7 @@ use crate::harness_runtime::memory::{
     LocalMemoryLifecycleCommitRequest, LocalMemoryLifecycleCommitResult,
     LocalMemoryLifecycleSourceSnapshot, LocalMemoryLifecycleTriggerPrecondition,
     LocalMemoryOperationStateRow, StoredMemoryRecord, ValidatedMemoryContracts,
-    durable_memory_content_projection_for_record,
+    durable_memory_content_projection_for_record, generated_memory_content_schema,
 };
 use crate::harness_runtime::model::{ActionAlias, LogicalPrompt, PromptSection};
 use crate::harness_runtime::{MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot};
@@ -461,6 +461,38 @@ impl HarnessEngine {
         Ok(())
     }
 
+    pub(super) fn evaluate_memory_lifecycle_intervals_at_phase_start(
+        &self,
+        session: &mut HarnessSession,
+        effective_phase: &EffectivePhase,
+        state: &mut PhaseExecutionState,
+        phase: &LoopPhase,
+        model: &mut dyn ModelRuntime,
+        hooks: &mut dyn HookRuntime,
+    ) -> Result<()> {
+        let operations = effective_phase
+            .active_memory_operations
+            .iter()
+            .filter(|operation| {
+                operation.trigger.get("type").and_then(Value::as_str) == Some("interval")
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for operation in operations {
+            self.evaluate_memory_lifecycle_operation(
+                session,
+                effective_phase,
+                state,
+                phase,
+                model,
+                hooks,
+                &operation,
+                None,
+            )?;
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn evaluate_memory_lifecycle_operation(
         &self,
@@ -890,6 +922,17 @@ impl HarnessEngine {
             }
             MemoryTrigger::Interval { every } => {
                 let duration = parse_lifecycle_duration(every)?;
+                if existing.is_none()
+                    && !interval_operation_has_relevant_state(
+                        session,
+                        manifest,
+                        operation_snapshot,
+                        operation,
+                        operation_scope,
+                    )?
+                {
+                    return Ok(false);
+                }
                 let next = existing
                     .as_ref()
                     .and_then(|state| state.next_eligible_at.as_deref())
@@ -1460,6 +1503,8 @@ impl HarnessEngine {
     ) -> Result<Value> {
         let max_repairs = self.options.runtime_limits.max_memory_operation_repairs;
         let mut repair_feedback = None;
+        let output_schema =
+            generated_memory_content_schema(contracts, &output.space, &output.record_type)?;
         for attempt in 0..=max_repairs {
             if state.model_calls >= self.options.runtime_limits.max_model_calls_per_phase {
                 bail!(
@@ -1471,6 +1516,7 @@ impl HarnessEngine {
                 operation,
                 output,
                 sources,
+                &output_schema,
                 model_guidance.clone(),
                 repair_feedback.clone(),
             );
@@ -1488,6 +1534,34 @@ impl HarnessEngine {
                 effective_phase: effective_phase.clone(),
                 repair_feedback: repair_feedback.clone(),
             };
+            session.emitter.emit(
+                HarnessEventType::PromptPrepared,
+                HarnessEventPayload::Lifecycle {
+                    message: "Canonical model prompt prepared.".into(),
+                    fields: BTreeMap::from([
+                        ("phase_id".into(), json!(phase.id.clone())),
+                        (
+                            "memory_operation".into(),
+                            json!(operation.operation.clone()),
+                        ),
+                        (
+                            "operation_type".into(),
+                            json!(operation.operation_type.clone()),
+                        ),
+                        ("sections".into(), json!(request.prompt.sections.len())),
+                        ("prompt".into(), json!(request.prompt.render_text())),
+                        (
+                            "action_descriptors".into(),
+                            json!(request.prompt.action_aliases.len()),
+                        ),
+                    ]),
+                },
+                HarnessEventBuilder {
+                    run_id: Some(self.active_run(session)?.run_id().to_string()),
+                    phase_execution_id: Some(state.phase_execution_id.clone()),
+                    ..HarnessEventBuilder::default()
+                },
+            )?;
             if let Some(snapshot) = model.inspect_request(&request) {
                 session.emitter.emit(
                     HarnessEventType::ModelRuntimeRequestPrepared,
@@ -1675,11 +1749,12 @@ fn lifecycle_logical_prompt(
     operation: &MemoryOperationRuntimeSnapshot,
     output: &MemoryOperationRef,
     sources: &[StoredMemoryRecord],
+    output_schema: &Value,
     model_guidance: Option<String>,
     repair_feedback: Option<String>,
 ) -> LogicalPrompt {
     let mut control = format!(
-        "Harness authority: return only JSON content for Memory lifecycle operation `{}`. Do not include record envelope, provenance, scope, id, timestamps, or semantic actions.",
+        "Harness authority: return exactly one JSON content object for Memory lifecycle operation `{}` matching the output content schema. Do not include record envelope, provenance, scope, id, timestamps, markdown, or semantic actions.",
         operation.operation
     );
     if let Some(model_guidance) = model_guidance {
@@ -1714,6 +1789,12 @@ fn lifecycle_logical_prompt(
                 number: 3,
                 title: "SOURCE RECORDS".into(),
                 content: serde_json::to_string_pretty(&sources).unwrap_or_else(|_| "[]".into()),
+            },
+            PromptSection {
+                number: 4,
+                title: "OUTPUT CONTENT SCHEMA".into(),
+                content: serde_json::to_string_pretty(output_schema)
+                    .unwrap_or_else(|_| "{}".into()),
             },
         ],
         action_aliases: Vec::<ActionAlias>::new(),
@@ -1793,6 +1874,29 @@ fn memory_operation_safe_source_summary(
         "referenced_spaces": operation.referenced_spaces.clone(),
         "sources": sources,
     }))
+}
+
+fn interval_operation_has_relevant_state(
+    session: &mut HarnessSession,
+    manifest: &MemoryManifest,
+    operation: &MemoryOperationRuntimeSnapshot,
+    operation_manifest: &MemoryOperation,
+    operation_scope: &BTreeMap<String, String>,
+) -> Result<bool> {
+    for reference in operation_source_summary_refs(operation_manifest) {
+        let scope = space_scope(manifest, &reference.space, operation_scope)?;
+        let count = session.local_memory_runtime()?.active_record_count(
+            &operation.package,
+            &operation.package_version,
+            &reference.space,
+            &scope,
+            reference.record_type.as_deref(),
+        )?;
+        if count > 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn operation_source_summary_refs(

@@ -1340,6 +1340,14 @@ impl HarnessEngine {
             structured_repairs: 0,
             tool_call_repairs: 0,
         };
+        self.evaluate_memory_lifecycle_intervals_at_phase_start(
+            session,
+            &effective_phase,
+            &mut state,
+            phase,
+            model,
+            hooks,
+        )?;
         // Explicit outcomes must be selected by the model. Phases with no
         // declared outcomes use the implicit `complete` outcome.
         let mut repair_feedback = None;
