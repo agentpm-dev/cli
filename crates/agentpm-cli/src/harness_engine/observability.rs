@@ -2,6 +2,7 @@ use super::effective_phase::{
     memory_action_identity, memory_read_mode_label, memory_write_operation_label,
 };
 use super::*;
+use crate::harness_runtime::SemanticActionProposal;
 
 pub(super) fn operation_summaries_for_action_kind(
     action_summaries: &[ActionReportSummary],
@@ -136,12 +137,28 @@ pub(super) fn capability_source(
         .map(|descriptor| descriptor.source.clone())
 }
 
-pub(super) fn action_result_transcript_content(action: &SemanticAction, result: Value) -> Value {
-    json!({
+pub(super) fn action_result_transcript_content(
+    proposal: &SemanticActionProposal,
+    action: &SemanticAction,
+    result: Value,
+) -> Value {
+    let mut content = json!({
         "action_kind": action.kind(),
         "identity": action.identity(),
         "result": result,
-    })
+    });
+    if let Value::Object(object) = &mut content {
+        if let Some(provider_call_id) = &proposal.provider_call_id {
+            object.insert("provider_call_id".into(), json!(provider_call_id));
+        }
+        if let Some(provider_alias) = &proposal.provider_alias {
+            object.insert("provider_alias".into(), json!(provider_alias));
+        }
+        if let Some(provider_arguments) = &proposal.provider_arguments {
+            object.insert("provider_arguments".into(), provider_arguments.clone());
+        }
+    }
+    content
 }
 
 pub(super) fn action_trace_fields(action: &SemanticAction) -> BTreeMap<String, Value> {

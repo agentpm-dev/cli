@@ -139,7 +139,7 @@ fn model_request_contains_canonical_prompt_sections_and_runtime_snapshot() {
             &mut approvals,
         )
         .unwrap();
-    assert!(matches!(result, HarnessRunResult::Terminal(_)));
+    assert!(matches!(&result, HarnessRunResult::Terminal(_)));
     let request = &model.requests[0];
     let titles: Vec<_> = request
         .prompt
@@ -356,7 +356,7 @@ fn missing_consumer_context_without_resolved_path_is_evented_and_non_fatal() {
         )
         .unwrap();
 
-    assert!(matches!(result, HarnessRunResult::Terminal(_)));
+    assert!(matches!(&result, HarnessRunResult::Terminal(_)));
     assert!(
         model.requests[0]
             .prompt
@@ -480,6 +480,103 @@ fn multi_turn_phase_processes_multiple_ordered_actions() {
     );
     assert_eq!(model.requests.len(), 4);
     assert!(model.requests[1].transcript.len() > model.requests[0].transcript.len());
+}
+
+#[test]
+fn multi_turn_phase_carries_provider_native_call_ids_into_ordered_turns() {
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let mut session = session_with_tool_and_skill();
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: Some("I will search first.".into()),
+            actions: vec![SemanticActionProposal::with_provider_call(
+                "provider-action-1",
+                SemanticAction::AgentPmTool {
+                    tool: "@zack/search".into(),
+                    arguments: json!({ "query": "incident" }),
+                },
+                "call_tool_1",
+                "agentpm_tool_search_abcd1234",
+                json!({ "arguments": { "query": "incident" } }),
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: Some("I will read the skill next.".into()),
+            actions: vec![SemanticActionProposal::with_provider_call(
+                "provider-action-2",
+                SemanticAction::SkillResourceRead {
+                    skill: "@zack/skill".into(),
+                    resource: "entrypoint".into(),
+                },
+                "call_skill_1",
+                "skill_resource_skill_abcd1234",
+                json!({ "resource": "entrypoint" }),
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("a", "execute"),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    assert!(matches!(&result, HarnessRunResult::Terminal(_)));
+    assert_eq!(dispatcher.dispatched.len(), 2);
+    let second_request_turns = &model.requests[1].ordered_turns;
+    assert!(matches!(
+        second_request_turns.as_slice(),
+        [
+            ModelRequestTurn::UserInput { .. },
+            ModelRequestTurn::AssistantContent { .. },
+            ModelRequestTurn::SemanticActionCall {
+                provider_call_id: Some(call_id),
+                provider_alias: Some(alias),
+                action_kind,
+                ..
+            },
+            ModelRequestTurn::SemanticActionResult {
+                provider_call_id: Some(result_call_id),
+                action_kind: result_kind,
+                action_succeeded: Some(true),
+                ..
+            }
+        ] if call_id == "call_tool_1"
+            && alias == "agentpm_tool_search_abcd1234"
+            && action_kind == "agentpm_tool"
+            && result_call_id == "call_tool_1"
+            && result_kind == "agentpm_tool"
+    ));
+    let third_request_turns = &model.requests[2].ordered_turns;
+    assert!(third_request_turns.iter().any(|turn| matches!(
+        turn,
+        ModelRequestTurn::SemanticActionResult {
+            provider_call_id: Some(call_id),
+            action_kind,
+            action_succeeded: Some(true),
+            ..
+        } if call_id == "call_skill_1" && action_kind == "skill_resource_read"
+    )));
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.usage.accepted_semantic_actions, 5);
+    assert_eq!(result.report.tool_summaries.len(), 1);
 }
 
 #[test]

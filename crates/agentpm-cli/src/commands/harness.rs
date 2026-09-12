@@ -1407,6 +1407,8 @@ impl ModelRuntime for HostModelRuntime {
             structured_actions: None,
             capability_catalog_in_prompt: request.prompt.has_capability_catalog_section(),
             action_aliases: request.prompt.action_aliases.clone(),
+            turn_strategy: "canonical_request".into(),
+            ordered_turns: request.ordered_turns.clone(),
             prompt,
         })
     }

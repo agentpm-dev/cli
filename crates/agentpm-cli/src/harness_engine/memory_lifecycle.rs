@@ -1601,6 +1601,7 @@ impl HarnessEngine {
                 runtime: self.active_run(session)?.context.runtime.clone(),
                 model: session.runtime_snapshot.model.clone(),
                 prompt,
+                ordered_turns: model_request_turns(&state.transcript),
                 run_id: self.active_run(session)?.run_id().to_string(),
                 phase_execution_id: state.phase_execution_id.clone(),
                 phase_id: phase.id.clone(),

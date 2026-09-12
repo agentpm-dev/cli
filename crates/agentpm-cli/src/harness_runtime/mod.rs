@@ -10,7 +10,7 @@ pub(crate) mod provider;
 pub(crate) mod service;
 pub(crate) mod tool;
 
-pub use action::{ActionDispatchResult, ActionDispatcher, SemanticAction};
+pub use action::{ActionDispatchResult, ActionDispatcher, SemanticAction, SemanticActionProposal};
 pub use approval::{ApprovalController, ApprovalDecision, ConfiguredApprovalController};
 pub use hook::{
     BeforeToolCallHook, ConfiguredHookRuntime, HookRuntime, NoopHookRuntime,
@@ -30,7 +30,7 @@ pub use model::{
     ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProfileSnapshot, PromptAssemblyInput,
     RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot, SkillResourceSnapshot,
     SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind,
-    assemble_logical_prompt,
+    assemble_logical_prompt, model_request_turns,
 };
 pub use provider::{BuiltInModelRuntime, ProcessModelRuntime};
 pub use service::{HostServiceInvoker, ServiceLifecycleEmitter, ServiceLifecycleEvents};

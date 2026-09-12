@@ -7687,6 +7687,33 @@ fn review_write_turn(body: &str) -> ModelTurn {
     review_write_turn_for_package("m14c-memory-test", body)
 }
 
+fn review_write_turn_with_provider_call(body: &str) -> ModelTurn {
+    ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::with_provider_call(
+            "review-write",
+            SemanticAction::MemoryWrite {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                operation: MemoryWriteOperation::Create,
+                record_type: "note".into(),
+                record_id: None,
+                content: Some(json!({ "body": body })),
+            },
+            "call_review_memory_write_1",
+            "memory_write_notes_note_abcd1234",
+            json!({
+                "operation": "create",
+                "record_type": "note",
+                "content": { "body": body }
+            }),
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
 fn review_write_turn_for_package(package: &str, body: &str) -> ModelTurn {
     ModelTurn {
         assistant_content: None,
@@ -8073,6 +8100,67 @@ fn memory_write_review_run_end_supersedes_phase_end_and_uses_memory_pipeline() {
     assert!(memory_started < review_completed);
     assert!(review_completed < phase_result);
     assert!(phase_result < transition);
+}
+
+#[test]
+fn memory_write_review_carries_provider_native_call_ids_into_ordered_turns() {
+    let temp = temp_workspace_dir("m16b-review-native-turns");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("done", "done"),
+        review_write_turn_with_provider_call("review native turn memory"),
+        review_complete_turn(),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        memory_review_options(vec![
+            crate::harness_config::HarnessMemoryWriteReviewPoint::RunEnd,
+        ]),
+    );
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "review native turns",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    assert!(matches!(result, HarnessRunResult::Terminal(_)));
+    assert_eq!(model.requests.len(), 3);
+    let second_review_request_turns = &model.requests[2].ordered_turns;
+    assert!(second_review_request_turns.iter().any(|turn| matches!(
+        turn,
+        ModelRequestTurn::SemanticActionCall {
+            provider_call_id: Some(call_id),
+            provider_alias: Some(alias),
+            action_kind,
+            identity,
+            ..
+        } if call_id == "call_review_memory_write_1"
+            && alias == "memory_write_notes_note_abcd1234"
+            && action_kind == "memory_write"
+            && identity == "m14c-memory-test/notes"
+    )));
+    assert!(second_review_request_turns.iter().any(|turn| matches!(
+        turn,
+        ModelRequestTurn::SemanticActionResult {
+            provider_call_id: Some(call_id),
+            action_kind,
+            identity,
+            action_succeeded: Some(true),
+            ..
+        } if call_id == "call_review_memory_write_1"
+            && action_kind == "memory_write"
+            && identity == "m14c-memory-test/notes"
+    )));
 }
 
 #[test]

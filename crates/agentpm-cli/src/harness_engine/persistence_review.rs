@@ -123,6 +123,7 @@ impl HarnessEngine {
                 runtime: self.active_run(session)?.context.runtime.clone(),
                 model: self.active_run(session)?.context.runtime.model.clone(),
                 prompt,
+                ordered_turns: model_request_turns(&state.transcript),
                 run_id: run_id.clone(),
                 phase_execution_id: phase_execution_id.to_string(),
                 phase_id: phase.id.clone(),
@@ -530,7 +531,11 @@ impl HarnessEngine {
                 }
                 state.transcript.push(TranscriptEntry {
                     kind: TranscriptEntryKind::ActionResult,
-                    content: action_result_transcript_content(&action, result.output.clone()),
+                    content: action_result_transcript_content(
+                        &proposal,
+                        &action,
+                        result.output.clone(),
+                    ),
                     action_succeeded: Some(action_ok),
                 });
                 self.active_run_mut(session)?

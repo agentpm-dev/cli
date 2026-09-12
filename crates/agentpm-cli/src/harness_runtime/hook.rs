@@ -2307,6 +2307,7 @@ for line in sys.stdin:
                 },
                 diagnostics: Vec::new(),
             },
+            ordered_turns: Vec::new(),
             run_id: "run".into(),
             phase_execution_id: "phase-exec-1".into(),
             phase_id: "assess".into(),

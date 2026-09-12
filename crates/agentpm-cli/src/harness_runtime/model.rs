@@ -8,12 +8,13 @@ use crate::manifest::{
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 
 pub const CONSUMER_RUN_CONTEXT_SECTION_TITLE: &str = "CONSUMER / RUN CONTEXT";
 pub const EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE: &str = "EFFECTIVE CAPABILITY CATALOG";
+pub const CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE: &str = "CURRENT PHASE-LOCAL TRANSCRIPT";
 pub(crate) const SUCCESSFUL_ACTION_RESULT_CONTROL: &str = "If the phase-local transcript already contains successful ActionResults for all requested executable actions, do not propose any of those actions again; propose phase_completion next. For repeated actions, compare action kind, identity, and arguments.";
 pub(crate) const SUCCESSFUL_REVIEW_ACTION_RESULT_CONTROL: &str = "If the review transcript already contains successful ActionResults for all requested Memory actions, do not propose any of those actions again; propose persistence_review_complete next. For repeated actions, compare action kind, identity, and arguments.";
 pub(crate) const PERSISTENCE_REVIEW_TARGET_SELECTION_CONTROL: &str = "Choose the Memory action whose fixed package, space, and record-type semantics match the intended durable target exactly. Use persistence_review_complete when no further Memory work is needed.";
@@ -364,6 +365,19 @@ impl LogicalPrompt {
     pub fn render_provider_text(&self, include_capability_catalog: bool) -> String {
         self.render_text_with_options(LogicalPromptRenderOptions {
             include_capability_catalog,
+            ..LogicalPromptRenderOptions::default()
+        })
+    }
+
+    pub fn render_provider_text_with_native_turns(
+        &self,
+        include_capability_catalog: bool,
+    ) -> String {
+        self.render_text_with_options(LogicalPromptRenderOptions {
+            include_capability_catalog,
+            include_run_input: false,
+            include_transcript: false,
+            include_repair_feedback_control: false,
         })
     }
 
@@ -381,11 +395,16 @@ impl LogicalPrompt {
             {
                 continue;
             }
+            if !options.include_transcript
+                && section.title == CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE
+            {
+                continue;
+            }
             if !rendered.is_empty() {
                 rendered.push_str("\n\n");
             }
             rendered.push_str(&format!("{}. {}\n", section.number, section.title));
-            rendered.push_str(&section.content);
+            rendered.push_str(&render_prompt_section_content(section, options));
         }
         rendered
     }
@@ -394,14 +413,55 @@ impl LogicalPrompt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LogicalPromptRenderOptions {
     include_capability_catalog: bool,
+    include_run_input: bool,
+    include_transcript: bool,
+    include_repair_feedback_control: bool,
 }
 
 impl Default for LogicalPromptRenderOptions {
     fn default() -> Self {
         Self {
             include_capability_catalog: true,
+            include_run_input: true,
+            include_transcript: true,
+            include_repair_feedback_control: true,
         }
     }
+}
+
+fn render_prompt_section_content(
+    section: &PromptSection,
+    options: LogicalPromptRenderOptions,
+) -> String {
+    let mut content = section.content.clone();
+    if section.title == CONSUMER_RUN_CONTEXT_SECTION_TITLE && !options.include_run_input {
+        content = omit_run_input_from_context_section(&content);
+    }
+    if section.title == "HARNESS CONTROL" && !options.include_repair_feedback_control {
+        content = omit_repair_feedback_control(&content);
+    }
+    content
+}
+
+fn omit_run_input_from_context_section(content: &str) -> String {
+    let remaining = content
+        .strip_prefix("Run input:\n")
+        .and_then(|rest| rest.split_once("\n\nConsumer Context snapshot:"))
+        .map(|(_, context)| format!("Consumer Context snapshot:{context}"))
+        .unwrap_or_default();
+    if remaining.trim().is_empty() {
+        "Run input is carried as the leading provider-native user turn.".into()
+    } else {
+        remaining
+    }
+}
+
+fn omit_repair_feedback_control(content: &str) -> String {
+    content
+        .lines()
+        .filter(|line| !line.starts_with("Repair feedback from previous turn: "))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub struct PromptAssemblyInput<'a> {
@@ -579,7 +639,7 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
             },
             PromptSection {
                 number: 6,
-                title: "CURRENT PHASE-LOCAL TRANSCRIPT".into(),
+                title: CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE.into(),
                 content: transcript,
             },
         ],
@@ -587,6 +647,133 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         completion,
         diagnostics,
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModelRequestTurn {
+    UserInput {
+        content: String,
+    },
+    AssistantContent {
+        content: String,
+    },
+    SemanticActionCall {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_call_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_alias: Option<String>,
+        action_kind: String,
+        identity: String,
+        arguments: Value,
+    },
+    SemanticActionResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_call_id: Option<String>,
+        action_kind: String,
+        identity: String,
+        result: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action_succeeded: Option<bool>,
+    },
+    RepairFeedback {
+        content: String,
+    },
+}
+
+pub fn model_request_turns(transcript: &[TranscriptEntry]) -> Vec<ModelRequestTurn> {
+    let mut turns = Vec::new();
+    for entry in transcript {
+        match entry.kind {
+            TranscriptEntryKind::UserInput => {
+                if let Some(content) = entry.content.as_str() {
+                    turns.push(ModelRequestTurn::UserInput {
+                        content: content.to_string(),
+                    });
+                } else {
+                    turns.push(ModelRequestTurn::UserInput {
+                        content: entry.content.to_string(),
+                    });
+                }
+            }
+            TranscriptEntryKind::Assistant => {
+                if let Some(content) = entry.content.as_str() {
+                    turns.push(ModelRequestTurn::AssistantContent {
+                        content: content.to_string(),
+                    });
+                } else {
+                    turns.push(ModelRequestTurn::AssistantContent {
+                        content: entry.content.to_string(),
+                    });
+                }
+            }
+            TranscriptEntryKind::RepairFeedback => {
+                if let Some(content) = entry.content.as_str() {
+                    turns.push(ModelRequestTurn::RepairFeedback {
+                        content: content.to_string(),
+                    });
+                } else {
+                    turns.push(ModelRequestTurn::RepairFeedback {
+                        content: entry.content.to_string(),
+                    });
+                }
+            }
+            TranscriptEntryKind::ActionResult => {
+                let action_kind = entry
+                    .content
+                    .get("action_kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("semantic_action")
+                    .to_string();
+                let identity = entry
+                    .content
+                    .get("identity")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string();
+                let result = entry
+                    .content
+                    .get("result")
+                    .cloned()
+                    .unwrap_or_else(|| entry.content.clone());
+                let provider_call_id = entry
+                    .content
+                    .get("provider_call_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let provider_alias = entry
+                    .content
+                    .get("provider_alias")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let native_call_id = match (provider_call_id, provider_alias) {
+                    (Some(provider_call_id), Some(provider_alias)) => {
+                        turns.push(ModelRequestTurn::SemanticActionCall {
+                            provider_call_id: Some(provider_call_id.clone()),
+                            provider_alias: Some(provider_alias),
+                            action_kind: action_kind.clone(),
+                            identity: identity.clone(),
+                            arguments: entry
+                                .content
+                                .get("provider_arguments")
+                                .cloned()
+                                .unwrap_or_else(|| json!({})),
+                        });
+                        Some(provider_call_id)
+                    }
+                    _ => None,
+                };
+                turns.push(ModelRequestTurn::SemanticActionResult {
+                    provider_call_id: native_call_id,
+                    action_kind,
+                    identity,
+                    result,
+                    action_succeeded: entry.action_succeeded,
+                });
+            }
+        }
+    }
+    turns
 }
 
 pub(crate) fn provider_action_aliases(effective_phase: &EffectivePhase) -> Vec<ActionAlias> {
@@ -1036,6 +1223,8 @@ pub struct ModelRequest {
     pub runtime: RuntimeSnapshot,
     pub model: Option<ModelProviderSelection>,
     pub prompt: LogicalPrompt,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ordered_turns: Vec<ModelRequestTurn>,
     pub run_id: String,
     pub phase_execution_id: String,
     pub phase_id: String,
@@ -1059,6 +1248,9 @@ pub struct ModelRuntimeRequestSnapshot {
     pub capability_catalog_in_prompt: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub action_aliases: Vec<ActionAlias>,
+    pub turn_strategy: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ordered_turns: Vec<ModelRequestTurn>,
     pub prompt: String,
 }
 
@@ -1176,6 +1368,8 @@ impl ModelRuntime for ScriptedModelRuntime {
             structured_actions: None,
             capability_catalog_in_prompt: request.prompt.has_capability_catalog_section(),
             action_aliases: request.prompt.action_aliases.clone(),
+            turn_strategy: "canonical_request".into(),
+            ordered_turns: request.ordered_turns.clone(),
             prompt,
         })
     }
@@ -1488,6 +1682,163 @@ mod tests {
         assert!(alias.len() <= 64);
         assert!(alias.starts_with("memory_write_conversation_state_note_package_signal_"));
         assert!(!alias.contains("package_signal_th"));
+    }
+
+    #[test]
+    fn ordered_turns_preserve_every_transcript_entry_kind_and_call_correlation() {
+        let transcript = vec![
+            TranscriptEntry {
+                kind: TranscriptEntryKind::UserInput,
+                content: json!("write then read"),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::Assistant,
+                content: json!("I will write a note."),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::ActionResult,
+                content: json!({
+                    "action_kind": "memory_write",
+                    "identity": "@zack/memory/notes",
+                    "provider_call_id": "call_1",
+                    "provider_alias": "memory_write_notes_note_abcd1234",
+                    "provider_arguments": {
+                        "operation": "create",
+                        "record_type": "note",
+                        "content": { "body": "launch" }
+                    },
+                    "result": { "ok": true, "record_id": "mem-1" }
+                }),
+                action_succeeded: Some(true),
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::RepairFeedback,
+                content: json!("retry with query"),
+                action_succeeded: None,
+            },
+        ];
+
+        let turns = model_request_turns(&transcript);
+
+        assert!(matches!(
+            &turns[0],
+            ModelRequestTurn::UserInput { content } if content == "write then read"
+        ));
+        assert!(matches!(
+            &turns[1],
+            ModelRequestTurn::AssistantContent { content } if content == "I will write a note."
+        ));
+        assert!(matches!(
+            &turns[2],
+            ModelRequestTurn::SemanticActionCall {
+                provider_call_id: Some(provider_call_id),
+                provider_alias: Some(provider_alias),
+                action_kind,
+                identity,
+                ..
+            } if provider_call_id == "call_1"
+                && provider_alias == "memory_write_notes_note_abcd1234"
+                && action_kind == "memory_write"
+                && identity == "@zack/memory/notes"
+        ));
+        assert!(matches!(
+            &turns[3],
+            ModelRequestTurn::SemanticActionResult {
+                provider_call_id: Some(provider_call_id),
+                action_kind,
+                identity,
+                action_succeeded: Some(true),
+                ..
+            } if provider_call_id == "call_1"
+                && action_kind == "memory_write"
+                && identity == "@zack/memory/notes"
+        ));
+        assert!(matches!(
+            &turns[4],
+            ModelRequestTurn::RepairFeedback { content } if content == "retry with query"
+        ));
+    }
+
+    #[test]
+    fn ordered_turns_do_not_emit_orphaned_native_result_without_provider_alias() {
+        let transcript = vec![TranscriptEntry {
+            kind: TranscriptEntryKind::ActionResult,
+            content: json!({
+                "action_kind": "agentpm_tool",
+                "identity": "@zack/search",
+                "provider_call_id": "call_orphan",
+                "result": { "ok": true }
+            }),
+            action_succeeded: Some(true),
+        }];
+
+        let turns = model_request_turns(&transcript);
+
+        assert_eq!(turns.len(), 1);
+        assert!(matches!(
+            &turns[0],
+            ModelRequestTurn::SemanticActionResult {
+                provider_call_id: None,
+                action_kind,
+                identity,
+                action_succeeded: Some(true),
+                ..
+            } if action_kind == "agentpm_tool" && identity == "@zack/search"
+        ));
+    }
+
+    #[test]
+    fn provider_native_prompt_omits_turn_backed_history_but_diagnostic_render_keeps_it() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "remember/completion")],
+            vec![],
+        );
+        let transcript = vec![
+            TranscriptEntry {
+                kind: TranscriptEntryKind::UserInput,
+                content: json!("multi-line\nrun input"),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::RepairFeedback,
+                content: json!("repair once"),
+                action_succeeded: None,
+            },
+        ];
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &["done".into()],
+            run_input: "multi-line\nrun input",
+            consumer_context: Some(&ConsumerContextSnapshot {
+                state: "NotConfigured".into(),
+                file: None,
+                path: None,
+                content: None,
+                byte_size: None,
+                approximate_tokens: None,
+                sha256: None,
+            }),
+            prior_phase_results: &[],
+            effective_phase: &phase,
+            transcript: &transcript,
+            repair_feedback: Some("repair once"),
+        });
+
+        let diagnostic = prompt.render_text();
+        assert!(diagnostic.contains(CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE));
+        assert!(diagnostic.contains("Run input:\nmulti-line\nrun input"));
+        assert!(diagnostic.contains("Repair feedback from previous turn: repair once"));
+
+        let provider = prompt.render_provider_text_with_native_turns(false);
+        assert!(!provider.contains(CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE));
+        assert!(!provider.contains("Run input:\nmulti-line\nrun input"));
+        assert!(!provider.contains("Repair feedback from previous turn: repair once"));
+        assert!(provider.contains("Consumer Context snapshot:"));
+        assert!(!provider.contains(EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE));
     }
 
     #[test]

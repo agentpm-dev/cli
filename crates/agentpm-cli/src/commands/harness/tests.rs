@@ -3310,6 +3310,7 @@ fn empty_model_request(selection: ModelProviderSelection) -> ModelRequest {
             },
             diagnostics: Vec::new(),
         },
+        ordered_turns: Vec::new(),
         run_id: "run-1".into(),
         phase_execution_id: "phase-exec-1".into(),
         phase_id: "respond".into(),

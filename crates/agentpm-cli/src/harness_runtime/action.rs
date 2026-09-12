@@ -10,6 +10,12 @@ use std::collections::{BTreeMap, VecDeque};
 pub struct SemanticActionProposal {
     pub id: String,
     pub action: SemanticAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_alias: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_arguments: Option<Value>,
 }
 
 impl SemanticActionProposal {
@@ -17,6 +23,25 @@ impl SemanticActionProposal {
         Self {
             id: id.into(),
             action,
+            provider_call_id: None,
+            provider_alias: None,
+            provider_arguments: None,
+        }
+    }
+
+    pub fn with_provider_call(
+        id: impl Into<String>,
+        action: SemanticAction,
+        provider_call_id: impl Into<String>,
+        provider_alias: impl Into<String>,
+        provider_arguments: Value,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            action,
+            provider_call_id: Some(provider_call_id.into()),
+            provider_alias: Some(provider_alias.into()),
+            provider_arguments: Some(provider_arguments),
         }
     }
 }

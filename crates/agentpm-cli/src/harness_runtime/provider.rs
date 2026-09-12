@@ -2,8 +2,8 @@
 
 use super::action::{MemoryReadMode, MemoryWriteOperation, SemanticAction, SemanticActionProposal};
 use super::model::{
-    ActionAlias, ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
-    ModelRuntimeFailure, ModelTurn,
+    ActionAlias, ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest,
+    ModelRequestTurn, ModelRuntime, ModelRuntimeFailure, ModelTurn,
 };
 use super::service::{ProcessServiceClient, ProcessServiceConfig, ServiceLifecycleEmitter};
 use crate::harness_config::HarnessImplementation;
@@ -21,6 +21,9 @@ pub struct ProviderRequest {
     pub selection: ModelProviderSelection,
     pub prompt: String,
     pub include_capability_catalog: bool,
+    pub turn_strategy: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub turns: Vec<ModelRequestTurn>,
     // Provider-safe alias -> canonical Harness identity. Provider adapters use
     // aliases in native tool/function definitions and map calls back here.
     pub action_aliases: BTreeMap<String, String>,
@@ -38,6 +41,8 @@ pub struct ProviderActionTool {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderActionCall {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub alias: String,
     pub arguments: Value,
 }
@@ -150,6 +155,8 @@ impl ModelRuntime for ProcessModelRuntime {
             structured_actions: None,
             capability_catalog_in_prompt: request.prompt.has_capability_catalog_section(),
             action_aliases: request.prompt.action_aliases.clone(),
+            turn_strategy: "canonical_request".into(),
+            ordered_turns: request.ordered_turns.clone(),
             prompt,
         })
     }
@@ -306,6 +313,8 @@ impl ModelRuntime for BuiltInModelRuntime {
             structured_actions: Some(provider_request.actions.len()),
             capability_catalog_in_prompt,
             action_aliases: request.prompt.action_aliases.clone(),
+            turn_strategy: provider_request.turn_strategy,
+            ordered_turns: provider_request.turns,
             prompt: provider_request.prompt,
         })
     }
@@ -330,9 +339,21 @@ impl BuiltInModelRuntime {
             .unwrap_or_else(|| self.selection.clone());
         let actions = provider_action_tools(request);
         let include_capability_catalog = actions.is_empty();
-        let prompt = request
-            .prompt
-            .render_provider_text(include_capability_catalog);
+        let native_turns_available = !actions.is_empty();
+        let turn_strategy = if native_turns_available {
+            "native_action_result_turns"
+        } else {
+            "prompt_text_fallback"
+        };
+        let prompt = if native_turns_available {
+            request
+                .prompt
+                .render_provider_text_with_native_turns(include_capability_catalog)
+        } else {
+            request
+                .prompt
+                .render_provider_text(include_capability_catalog)
+        };
         ProviderRequest {
             selection,
             prompt,
@@ -344,6 +365,18 @@ impl BuiltInModelRuntime {
                 .collect(),
             actions,
             include_capability_catalog,
+            turn_strategy: turn_strategy.into(),
+            turns: if native_turns_available {
+                if request.ordered_turns.is_empty() {
+                    vec![ModelRequestTurn::UserInput {
+                        content: request.run_input.clone(),
+                    }]
+                } else {
+                    request.ordered_turns.clone()
+                }
+            } else {
+                Vec::new()
+            },
         }
     }
 }
@@ -818,10 +851,13 @@ fn normalize_provider_response(
             .iter()
             .enumerate()
             .map(|(index, call)| {
-                Ok(SemanticActionProposal::new(
-                    format!("provider-action-{}", index + 1),
-                    semantic_action_from_provider_call(call, aliases)?,
-                ))
+                let action = semantic_action_from_provider_call(call, aliases)?;
+                let mut proposal =
+                    SemanticActionProposal::new(format!("provider-action-{}", index + 1), action);
+                proposal.provider_call_id.clone_from(&call.id);
+                proposal.provider_alias = Some(call.alias.clone());
+                proposal.provider_arguments = Some(call.arguments.clone());
+                Ok(proposal)
             })
             .collect::<Result<Vec<_>, ModelRuntimeFailure>>()?;
         return Ok(ModelTurn {
@@ -1241,16 +1277,7 @@ impl ModelProviderTransport for OpenAiTransport {
         })?;
         let url = env::var("OPENAI_BASE_URL")
             .unwrap_or_else(|_| "https://api.openai.com/v1/chat/completions".into());
-        let mut body = object_options(&request.selection.options);
-        body.insert("model".into(), json!(request.selection.model));
-        body.insert(
-            "messages".into(),
-            json!([{ "role": "user", "content": request.prompt }]),
-        );
-        if !request.actions.is_empty() {
-            body.insert("tools".into(), openai_tool_definitions(&request.actions));
-            body.entry("tool_choice").or_insert(json!("auto"));
-        }
+        let body = openai_request_body(&request);
         let value: Value = self
             .client
             .post(url)
@@ -1262,6 +1289,80 @@ impl ModelProviderTransport for OpenAiTransport {
             .map_err(|err| ModelRuntimeFailure::new(format!("openai request failed: {err}")))?;
         provider_response_from_openai(value)
     }
+}
+
+fn openai_request_body(request: &ProviderRequest) -> Map<String, Value> {
+    let mut body = object_options(&request.selection.options);
+    body.insert("model".into(), json!(request.selection.model));
+    body.insert("messages".into(), json!(openai_messages(request)));
+    if !request.actions.is_empty() {
+        body.insert("tools".into(), openai_tool_definitions(&request.actions));
+        body.entry("tool_choice").or_insert(json!("auto"));
+    }
+    body
+}
+
+fn openai_messages(request: &ProviderRequest) -> Vec<Value> {
+    if request.turns.is_empty() {
+        return vec![json!({ "role": "user", "content": request.prompt })];
+    }
+    let mut messages = vec![json!({ "role": "system", "content": request.prompt })];
+    for turn in &request.turns {
+        match turn {
+            ModelRequestTurn::UserInput { content } => {
+                messages.push(json!({ "role": "user", "content": content }));
+            }
+            ModelRequestTurn::AssistantContent { content } => {
+                messages.push(json!({ "role": "assistant", "content": content }));
+            }
+            ModelRequestTurn::SemanticActionCall {
+                provider_call_id: Some(provider_call_id),
+                provider_alias: Some(provider_alias),
+                arguments,
+                ..
+            } => {
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": provider_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": provider_alias,
+                            "arguments": arguments.to_string()
+                        }
+                    }]
+                }));
+            }
+            ModelRequestTurn::SemanticActionCall { .. } => {
+                messages.push(json!({
+                    "role": "user",
+                    "content": native_turn_text(turn)
+                }));
+            }
+            ModelRequestTurn::SemanticActionResult {
+                provider_call_id: Some(provider_call_id),
+                result,
+                ..
+            } => {
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": provider_call_id,
+                    "content": result.to_string()
+                }));
+            }
+            ModelRequestTurn::SemanticActionResult { .. } => {
+                messages.push(json!({
+                    "role": "user",
+                    "content": native_turn_text(turn)
+                }));
+            }
+            ModelRequestTurn::RepairFeedback { content } => {
+                messages.push(json!({ "role": "user", "content": repair_feedback_turn(content) }));
+            }
+        }
+    }
+    messages
 }
 
 fn provider_response_from_openai(value: Value) -> Result<ProviderResponse, ModelRuntimeFailure> {
@@ -1312,16 +1413,7 @@ impl ModelProviderTransport for AnthropicTransport {
         })?;
         let url = env::var("ANTHROPIC_BASE_URL")
             .unwrap_or_else(|_| "https://api.anthropic.com/v1/messages".into());
-        let mut body = object_options(&request.selection.options);
-        body.insert("model".into(), json!(request.selection.model));
-        body.entry("max_tokens").or_insert(json!(1024));
-        body.insert(
-            "messages".into(),
-            json!([{ "role": "user", "content": request.prompt }]),
-        );
-        if !request.actions.is_empty() {
-            body.insert("tools".into(), anthropic_tool_definitions(&request.actions));
-        }
+        let body = anthropic_request_body(&request);
         let value: Value = self
             .client
             .post(url)
@@ -1334,6 +1426,81 @@ impl ModelProviderTransport for AnthropicTransport {
             .map_err(|err| ModelRuntimeFailure::new(format!("anthropic request failed: {err}")))?;
         provider_response_from_anthropic(value)
     }
+}
+
+fn anthropic_request_body(request: &ProviderRequest) -> Map<String, Value> {
+    let mut body = object_options(&request.selection.options);
+    body.insert("model".into(), json!(request.selection.model));
+    body.entry("max_tokens").or_insert(json!(1024));
+    body.insert("system".into(), json!(request.prompt));
+    body.insert("messages".into(), json!(anthropic_messages(request)));
+    if !request.actions.is_empty() {
+        body.insert("tools".into(), anthropic_tool_definitions(&request.actions));
+    }
+    body
+}
+
+fn anthropic_messages(request: &ProviderRequest) -> Vec<Value> {
+    if request.turns.is_empty() {
+        return vec![json!({ "role": "user", "content": request.prompt })];
+    }
+    let mut messages = Vec::new();
+    for turn in &request.turns {
+        match turn {
+            ModelRequestTurn::UserInput { content } => {
+                messages.push(json!({ "role": "user", "content": content }));
+            }
+            ModelRequestTurn::AssistantContent { content } => {
+                messages.push(json!({ "role": "assistant", "content": content }));
+            }
+            ModelRequestTurn::SemanticActionCall {
+                provider_call_id: Some(provider_call_id),
+                provider_alias: Some(provider_alias),
+                arguments,
+                ..
+            } => {
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": provider_call_id,
+                        "name": provider_alias,
+                        "input": arguments
+                    }]
+                }));
+            }
+            ModelRequestTurn::SemanticActionCall { .. } => {
+                messages.push(json!({
+                    "role": "user",
+                    "content": native_turn_text(turn)
+                }));
+            }
+            ModelRequestTurn::SemanticActionResult {
+                provider_call_id: Some(provider_call_id),
+                result,
+                ..
+            } => {
+                messages.push(json!({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": provider_call_id,
+                        "content": result.to_string()
+                    }]
+                }));
+            }
+            ModelRequestTurn::SemanticActionResult { .. } => {
+                messages.push(json!({
+                    "role": "user",
+                    "content": native_turn_text(turn)
+                }));
+            }
+            ModelRequestTurn::RepairFeedback { content } => {
+                messages.push(json!({ "role": "user", "content": repair_feedback_turn(content) }));
+            }
+        }
+    }
+    messages
 }
 
 fn provider_response_from_anthropic(value: Value) -> Result<ProviderResponse, ModelRuntimeFailure> {
@@ -1380,16 +1547,7 @@ impl ModelProviderTransport for OllamaTransport {
         let base_url =
             env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".into());
         let url = format!("{}/api/chat", base_url.trim_end_matches('/'));
-        let mut body = object_options(&request.selection.options);
-        body.insert("model".into(), json!(request.selection.model));
-        body.insert("stream".into(), json!(false));
-        body.insert(
-            "messages".into(),
-            json!([{ "role": "user", "content": request.prompt }]),
-        );
-        if !request.actions.is_empty() {
-            body.insert("tools".into(), openai_tool_definitions(&request.actions));
-        }
+        let body = ollama_request_body(&request);
         let value: Value = self
             .client
             .post(url)
@@ -1400,6 +1558,53 @@ impl ModelProviderTransport for OllamaTransport {
             .map_err(|err| ModelRuntimeFailure::new(format!("ollama request failed: {err}")))?;
         provider_response_from_ollama(value)
     }
+}
+
+fn ollama_request_body(request: &ProviderRequest) -> Map<String, Value> {
+    let mut body = object_options(&request.selection.options);
+    body.insert("model".into(), json!(request.selection.model));
+    body.insert("stream".into(), json!(false));
+    body.insert("messages".into(), json!(ollama_messages(request)));
+    if !request.actions.is_empty() {
+        body.insert("tools".into(), openai_tool_definitions(&request.actions));
+    }
+    body
+}
+
+fn ollama_messages(request: &ProviderRequest) -> Vec<Value> {
+    openai_messages(request)
+}
+
+fn native_turn_text(turn: &ModelRequestTurn) -> String {
+    match turn {
+        ModelRequestTurn::SemanticActionCall {
+            action_kind,
+            identity,
+            arguments,
+            ..
+        } => format!(
+            "Previous semantic action call [{action_kind} {identity}]: {}",
+            arguments
+        ),
+        ModelRequestTurn::SemanticActionResult {
+            action_kind,
+            identity,
+            result,
+            action_succeeded,
+            ..
+        } => format!(
+            "Previous semantic action result [{action_kind} {identity}] succeeded={}: {}",
+            action_succeeded
+                .map(|succeeded| succeeded.to_string())
+                .unwrap_or_else(|| "unknown".into()),
+            result
+        ),
+        other => serde_json::to_string(other).unwrap_or_else(|_| format!("{other:?}")),
+    }
+}
+
+fn repair_feedback_turn(content: &str) -> String {
+    format!("Repair feedback from previous turn: {content}")
 }
 
 fn provider_response_from_ollama(value: Value) -> Result<ProviderResponse, ModelRuntimeFailure> {
@@ -1480,11 +1685,16 @@ fn openai_tool_call(value: &Value) -> Result<ProviderActionCall, ModelRuntimeFai
         .map(parse_tool_arguments)
         .transpose()?
         .unwrap_or_else(|| json!({}));
-    Ok(ProviderActionCall { alias, arguments })
+    Ok(ProviderActionCall {
+        id: value.get("id").and_then(Value::as_str).map(str::to_string),
+        alias,
+        arguments,
+    })
 }
 
 fn anthropic_tool_call(value: &Value) -> Result<ProviderActionCall, ModelRuntimeFailure> {
     Ok(ProviderActionCall {
+        id: value.get("id").and_then(Value::as_str).map(str::to_string),
         alias: required_string(value, "name")?,
         arguments: value.get("input").cloned().unwrap_or_else(|| json!({})),
     })
@@ -1500,7 +1710,11 @@ fn ollama_tool_call(value: &Value) -> Result<ProviderActionCall, ModelRuntimeFai
         Some(value) => value.clone(),
         None => json!({}),
     };
-    Ok(ProviderActionCall { alias, arguments })
+    Ok(ProviderActionCall {
+        id: value.get("id").and_then(Value::as_str).map(str::to_string),
+        alias,
+        arguments,
+    })
 }
 
 fn parse_tool_arguments(raw: &str) -> Result<Value, ModelRuntimeFailure> {
@@ -1574,11 +1788,16 @@ impl ModelProviderTransport for MockModelTransport {
 mod tests {
     use super::*;
     use crate::harness_engine::EffectivePhase;
+    use crate::harness_runtime::hook::{
+        BeforeModelRequestContextSection, BeforeModelRequestDecision,
+        apply_before_model_request_decision,
+    };
     use crate::harness_runtime::model::{
         ActionAlias, CapabilityDescriptor, CompletionContract, KnowledgeDocumentSnapshot,
         KnowledgeRetrievalSnapshot, KnowledgeRuntimeSnapshot, LogicalPrompt,
-        MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, PromptSection,
-        RuntimeSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+        MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelRequestTurn,
+        PromptSection, RuntimeSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot,
+        ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind, model_request_turns,
     };
     use crate::manifest::MemorySpaceModel;
     use std::cell::RefCell;
@@ -1645,6 +1864,7 @@ mod tests {
         let response = ProviderResponse {
             text: "I am completing this phase.".into(),
             action_calls: vec![ProviderActionCall {
+                id: Some("call-openai-1".into()),
                 alias: "phase_complete".into(),
                 arguments: json!({
                     "outcome": "ready",
@@ -1669,6 +1889,18 @@ mod tests {
                 ..
             } if outcome == "ready"
         ));
+        assert_eq!(
+            turn.actions[0].provider_call_id.as_deref(),
+            Some("call-openai-1")
+        );
+        assert_eq!(
+            turn.actions[0].provider_alias.as_deref(),
+            Some("phase_complete")
+        );
+        assert_eq!(
+            turn.actions[0].provider_arguments.as_ref().unwrap()["outcome"],
+            json!("ready")
+        );
     }
 
     #[test]
@@ -1676,6 +1908,7 @@ mod tests {
         let response = ProviderResponse {
             text: "review complete".into(),
             action_calls: vec![ProviderActionCall {
+                id: Some("call-review-1".into()),
                 alias: "action_1".into(),
                 arguments: json!({}),
             }],
@@ -2337,6 +2570,7 @@ mod tests {
 
         let action = semantic_action_from_provider_call(
             &ProviderActionCall {
+                id: None,
                 alias: notes_alias.alias.clone(),
                 arguments: json!({
                     "operation": "create",
@@ -2414,6 +2648,289 @@ mod tests {
                 "provider {provider}"
             );
         }
+    }
+
+    #[test]
+    fn native_provider_request_omits_turn_backed_prompt_components() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.prompt.sections = vec![
+            PromptSection {
+                number: 1,
+                title: "HARNESS CONTROL".into(),
+                content: "Harness authority: propose semantic actions only.\nRepair feedback from previous turn: add query".into(),
+            },
+            PromptSection {
+                number: 3,
+                title: crate::harness_runtime::model::CONSUMER_RUN_CONTEXT_SECTION_TITLE.into(),
+                content: "Run input:\nWrite one note.\n\nConsumer Context snapshot:\n  state: NotConfigured".into(),
+            },
+            PromptSection {
+                number: 5,
+                title: crate::harness_runtime::model::EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE.into(),
+                content: "- phase_complete [phase_completion] review/completion".into(),
+            },
+            PromptSection {
+                number: 6,
+                title: crate::harness_runtime::model::CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE.into(),
+                content: "- UserInput: \"Write one note.\"".into(),
+            },
+        ];
+        request.ordered_turns = vec![
+            ModelRequestTurn::UserInput {
+                content: "Write one note.".into(),
+            },
+            ModelRequestTurn::RepairFeedback {
+                content: "add query".into(),
+            },
+        ];
+
+        let provider_request = runtime.provider_request(&request);
+
+        assert_eq!(provider_request.turn_strategy, "native_action_result_turns");
+        assert_eq!(provider_request.turns, request.ordered_turns);
+        assert!(!provider_request.prompt.contains("Write one note."));
+        assert!(
+            !provider_request
+                .prompt
+                .contains("CURRENT PHASE-LOCAL TRANSCRIPT")
+        );
+        assert!(
+            !provider_request
+                .prompt
+                .contains("EFFECTIVE CAPABILITY CATALOG")
+        );
+        assert!(
+            !provider_request
+                .prompt
+                .contains("Repair feedback from previous turn: add query")
+        );
+        assert!(
+            provider_request
+                .prompt
+                .contains("Consumer Context snapshot:")
+        );
+        assert!(
+            request
+                .prompt
+                .render_text()
+                .contains("CURRENT PHASE-LOCAL TRANSCRIPT")
+        );
+        assert!(request.prompt.render_text().contains("Write one note."));
+    }
+
+    #[test]
+    fn native_provider_request_preserves_before_model_request_hook_context() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.prompt.sections = vec![
+            PromptSection {
+                number: 1,
+                title: "HARNESS CONTROL".into(),
+                content: "Harness authority: propose semantic actions only.\nRepair feedback from previous turn: add query".into(),
+            },
+            PromptSection {
+                number: 3,
+                title: crate::harness_runtime::model::CONSUMER_RUN_CONTEXT_SECTION_TITLE.into(),
+                content: "Run input:\nWrite one note.\n\nConsumer Context snapshot:\n  state: NotConfigured".into(),
+            },
+            PromptSection {
+                number: 5,
+                title: crate::harness_runtime::model::EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE
+                    .into(),
+                content: "- phase_complete [phase_completion] review/completion".into(),
+            },
+            PromptSection {
+                number: 6,
+                title: crate::harness_runtime::model::CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE
+                    .into(),
+                content: "- UserInput: \"Write one note.\"\n- RepairFeedback: \"add query\"".into(),
+            },
+        ];
+        request.ordered_turns = vec![
+            ModelRequestTurn::UserInput {
+                content: "Write one note.".into(),
+            },
+            ModelRequestTurn::RepairFeedback {
+                content: "add query".into(),
+            },
+        ];
+        apply_before_model_request_decision(
+            &mut request,
+            BeforeModelRequestDecision {
+                context_sections: vec![BeforeModelRequestContextSection {
+                    title: "Policy Note".into(),
+                    content: "Prefer the safest concise answer.".into(),
+                }],
+                ..BeforeModelRequestDecision::default()
+            },
+        )
+        .unwrap();
+
+        let provider_request = runtime.provider_request(&request);
+        let openai_body = Value::Object(openai_request_body(&provider_request));
+        let openai_messages = openai_body["messages"].as_array().unwrap();
+
+        assert_eq!(provider_request.turn_strategy, "native_action_result_turns");
+        assert_eq!(provider_request.turns, request.ordered_turns);
+        assert!(provider_request.prompt.contains("Hook Context:"));
+        assert!(provider_request.prompt.contains("Policy Note:"));
+        assert!(
+            provider_request
+                .prompt
+                .contains("Prefer the safest concise answer.")
+        );
+        assert!(
+            !provider_request
+                .prompt
+                .contains("Run input:\nWrite one note.")
+        );
+        assert!(
+            !provider_request
+                .prompt
+                .contains("CURRENT PHASE-LOCAL TRANSCRIPT")
+        );
+        assert!(
+            !provider_request
+                .prompt
+                .contains("Repair feedback from previous turn: add query")
+        );
+        assert_eq!(openai_messages[0]["role"], "system");
+        assert!(
+            openai_messages[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Prefer the safest concise answer.")
+        );
+        assert_eq!(openai_messages[1]["role"], "user");
+        assert_eq!(openai_messages[1]["content"], "Write one note.");
+        assert_eq!(openai_messages[2]["role"], "user");
+        assert_eq!(
+            openai_messages[2]["content"],
+            "Repair feedback from previous turn: add query"
+        );
+    }
+
+    #[test]
+    fn provider_request_retains_prompt_history_when_native_turns_are_unavailable() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.prompt.action_aliases.clear();
+        request.effective_phase.capability_catalog.clear();
+        request.prompt.sections.push(PromptSection {
+            number: 3,
+            title: crate::harness_runtime::model::CONSUMER_RUN_CONTEXT_SECTION_TITLE.into(),
+            content: "Run input:\nFallback input.".into(),
+        });
+        request.prompt.sections.push(PromptSection {
+            number: 6,
+            title: crate::harness_runtime::model::CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE
+                .into(),
+            content: "- RepairFeedback: \"retry\"".into(),
+        });
+        request.ordered_turns = vec![ModelRequestTurn::UserInput {
+            content: "Fallback input.".into(),
+        }];
+
+        let provider_request = runtime.provider_request(&request);
+
+        assert_eq!(provider_request.turn_strategy, "prompt_text_fallback");
+        assert!(provider_request.turns.is_empty());
+        assert!(
+            provider_request
+                .prompt
+                .contains("Run input:\nFallback input.")
+        );
+        assert!(
+            provider_request
+                .prompt
+                .contains("CURRENT PHASE-LOCAL TRANSCRIPT")
+        );
+    }
+
+    #[test]
+    fn built_in_provider_bodies_preserve_native_action_result_correlation() {
+        let request = correlated_provider_request("openai");
+        let openai_body = Value::Object(openai_request_body(&request));
+        let openai_messages = openai_body["messages"].as_array().unwrap();
+        assert_eq!(openai_messages[0]["role"], "system");
+        assert_eq!(openai_messages[1]["role"], "user");
+        assert_eq!(openai_messages[1]["content"], "Write one note.");
+        assert_eq!(openai_messages[3]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(
+            openai_messages[3]["tool_calls"][0]["function"]["name"],
+            "memory_write_notes_note_abcd1234"
+        );
+        assert_eq!(openai_messages[4]["role"], "tool");
+        assert_eq!(openai_messages[4]["tool_call_id"], "call_1");
+        assert_eq!(
+            openai_messages[5]["content"],
+            "Repair feedback from previous turn: retry with record_type"
+        );
+
+        let request = correlated_provider_request("anthropic");
+        let anthropic_body = Value::Object(anthropic_request_body(&request));
+        assert_eq!(anthropic_body["system"], "Provider control.");
+        let anthropic_messages = anthropic_body["messages"].as_array().unwrap();
+        assert_eq!(anthropic_messages[0]["role"], "user");
+        assert_eq!(anthropic_messages[2]["content"][0]["type"], "tool_use");
+        assert_eq!(anthropic_messages[2]["content"][0]["id"], "call_1");
+        assert_eq!(
+            anthropic_messages[2]["content"][0]["name"],
+            "memory_write_notes_note_abcd1234"
+        );
+        assert_eq!(anthropic_messages[3]["content"][0]["type"], "tool_result");
+        assert_eq!(anthropic_messages[3]["content"][0]["tool_use_id"], "call_1");
+
+        let request = correlated_provider_request("ollama");
+        let ollama_body = Value::Object(ollama_request_body(&request));
+        let ollama_messages = ollama_body["messages"].as_array().unwrap();
+        assert_eq!(ollama_messages[3]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(ollama_messages[4]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn built_in_provider_body_degrades_orphaned_action_result_to_text() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.ordered_turns = model_request_turns(&[TranscriptEntry {
+            kind: TranscriptEntryKind::ActionResult,
+            content: json!({
+                "action_kind": "agentpm_tool",
+                "identity": "@zack/search",
+                "provider_call_id": "call_orphan",
+                "result": { "ok": true }
+            }),
+            action_succeeded: Some(true),
+        }]);
+
+        let provider_request = runtime.provider_request(&request);
+        let openai_body = Value::Object(openai_request_body(&provider_request));
+        let openai_messages = openai_body["messages"].as_array().unwrap();
+
+        assert!(
+            openai_messages
+                .iter()
+                .all(|message| message["role"] != "tool")
+        );
+        assert!(openai_messages.iter().any(|message| {
+            message["role"] == "user"
+                && message["content"].as_str().is_some_and(|content| {
+                    content.contains("Previous semantic action result [agentpm_tool @zack/search]")
+                })
+        }));
     }
 
     #[test]
@@ -2870,6 +3387,7 @@ for line in sys.stdin:
                 },
                 diagnostics: Vec::new(),
             },
+            ordered_turns: Vec::new(),
             run_id: "run-test".into(),
             phase_execution_id: "phase-exec-test".into(),
             phase_id: "review".into(),
@@ -2954,12 +3472,71 @@ for line in sys.stdin:
     fn decode_provider_call(alias: ActionAlias, arguments: Value) -> SemanticAction {
         semantic_action_from_provider_call(
             &ProviderActionCall {
+                id: None,
                 alias: alias.alias.clone(),
                 arguments,
             },
             &[alias],
         )
         .expect("provider action call should decode")
+    }
+
+    fn correlated_provider_request(provider: &str) -> ProviderRequest {
+        ProviderRequest {
+            selection: selection(provider),
+            prompt: "Provider control.".into(),
+            include_capability_catalog: false,
+            turn_strategy: "native_action_result_turns".into(),
+            turns: vec![
+                ModelRequestTurn::UserInput {
+                    content: "Write one note.".into(),
+                },
+                ModelRequestTurn::AssistantContent {
+                    content: "Writing now.".into(),
+                },
+                ModelRequestTurn::SemanticActionCall {
+                    provider_call_id: Some("call_1".into()),
+                    provider_alias: Some("memory_write_notes_note_abcd1234".into()),
+                    action_kind: "memory_write".into(),
+                    identity: "@zack/memory/notes".into(),
+                    arguments: json!({
+                        "operation": "create",
+                        "record_type": "note",
+                        "content": { "body": "launch" }
+                    }),
+                },
+                ModelRequestTurn::SemanticActionResult {
+                    provider_call_id: Some("call_1".into()),
+                    action_kind: "memory_write".into(),
+                    identity: "@zack/memory/notes".into(),
+                    result: json!({ "ok": true, "record_id": "mem-1" }),
+                    action_succeeded: Some(true),
+                },
+                ModelRequestTurn::RepairFeedback {
+                    content: "retry with record_type".into(),
+                },
+            ],
+            action_aliases: BTreeMap::from([(
+                "memory_write_notes_note_abcd1234".into(),
+                "@zack/memory/notes".into(),
+            )]),
+            actions: vec![ProviderActionTool {
+                alias: "memory_write_notes_note_abcd1234".into(),
+                action_kind: "memory_write".into(),
+                identity: "@zack/memory/notes".into(),
+                description: "Write notes.".into(),
+                parameters: json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "operation": { "type": "string" },
+                        "record_type": { "type": "string" },
+                        "content": { "type": "object" }
+                    },
+                    "required": ["operation", "record_type"]
+                }),
+            }],
+        }
     }
 
     struct SharedMockTransport {

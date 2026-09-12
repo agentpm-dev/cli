@@ -18,8 +18,9 @@ use crate::harness_runtime::knowledge::{
 use crate::harness_runtime::model::{
     KnowledgeEmbeddingSnapshot, MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
     MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelProviderSelection,
-    ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot, SUCCESSFUL_ACTION_RESULT_CONTROL,
-    ScriptedModelRuntime, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    ModelRequestTurn, ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot,
+    SUCCESSFUL_ACTION_RESULT_CONTROL, ScriptedModelRuntime, SkillResourceSnapshot,
+    SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::harness_runtime::service::HostServiceInvoker;
 use crate::manifest::{

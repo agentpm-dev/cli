@@ -32,7 +32,7 @@ use crate::harness_runtime::{
     MemorySpaceRuntimeSnapshot, ModelRequest, ModelRuntime, NoopHookRuntime, ProfileSnapshot,
     PromptAssemblyInput, RuntimeCapabilitySnapshot, RuntimeSnapshot, SemanticAction,
     ServiceLifecycleEvents, SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry,
-    TranscriptEntryKind, assemble_logical_prompt,
+    TranscriptEntryKind, assemble_logical_prompt, model_request_turns,
 };
 use crate::harness_runtime::{KnowledgeRuntime, KnowledgeRuntimeSnapshot, NoopKnowledgeRuntime};
 use crate::manifest::{
@@ -1382,6 +1382,7 @@ impl HarnessEngine {
                 runtime: self.active_run(session)?.context.runtime.clone(),
                 model: self.active_run(session)?.context.runtime.model.clone(),
                 prompt,
+                ordered_turns: model_request_turns(&state.transcript),
                 run_id: run_id.clone(),
                 phase_execution_id: phase_execution_id.clone(),
                 phase_id: phase.id.clone(),
@@ -2897,7 +2898,11 @@ impl HarnessEngine {
                         });
                     state.transcript.push(TranscriptEntry {
                         kind: TranscriptEntryKind::ActionResult,
-                        content: action_result_transcript_content(&action, result.output),
+                        content: action_result_transcript_content(
+                            &proposal,
+                            &action,
+                            result.output,
+                        ),
                         action_succeeded: Some(false),
                     });
                     continue;
@@ -2926,7 +2931,11 @@ impl HarnessEngine {
                         });
                     state.transcript.push(TranscriptEntry {
                         kind: TranscriptEntryKind::ActionResult,
-                        content: action_result_transcript_content(&action, result.output),
+                        content: action_result_transcript_content(
+                            &proposal,
+                            &action,
+                            result.output,
+                        ),
                         action_succeeded: Some(false),
                     });
                     continue;
@@ -2949,7 +2958,7 @@ impl HarnessEngine {
                 }
                 state.transcript.push(TranscriptEntry {
                     kind: TranscriptEntryKind::ActionResult,
-                    content: action_result_transcript_content(&action, result.output),
+                    content: action_result_transcript_content(&proposal, &action, result.output),
                     action_succeeded: Some(true),
                 });
                 self.active_run_mut(session)?
