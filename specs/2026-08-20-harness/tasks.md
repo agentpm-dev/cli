@@ -981,70 +981,68 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 - [x] Add tests covering the turn structure sent to each built-in transport, provider-native action/result ID correlation across consecutive turns, action/result ordering and one-to-one association, every `TranscriptEntryKind` surviving the switch to native turns including `RepairFeedback`, Section 6 transcript prose omitted from provider text when native turns carry the same history, Run input appearing only as the leading native user turn and not also in Section 3 provider text, repair feedback appearing exactly once per request across native turns and control prose, no double representation of any logical `ModelRequest` component, full logical/diagnostic rendering still including Sections 5 and 6, deliberate degradation when native correlation is unavailable including transcript prose correctly retained in that case, unchanged canonical dispatch/authority/normalization, and no native-provider prose-catalog regression.
 - [x] Add one representative end-to-end fake-provider multi-turn phase test covering action -> native action result -> distinct next action -> native action result -> PhaseCompletion, verifying that logical transcript, provider wire request, events, usage accounting, and RunReport remain aligned.
 
-## Milestone 16c: Agentic Turn Progression and Action-Result Salience Hardening
-> Scope note: improve model understanding of completed semantic actions and expected next-step behavior when a phase or persistence review spans multiple model turns. This milestone hardens normalized action-result presentation, Harness-control guidance, and completion affordances. Sequence it after Milestone 16b and re-measure first: once accepted actions and results are correlated through provider-native turns, some repeated-action behavior may resolve without further prompt work, and the remaining scope should be decided from evidence rather than assumed. It does not add duplicate-action blocking, change semantic-action authority, alter Runtime routing, or make Harness infer whether a repeated action is substantively unnecessary.
-- [ ] Re-measure repeated-action behavior against the Milestone 16b baseline before implementing prompt-side salience work, and scope the remaining items to what the evidence still shows is needed.
-- [ ] Harden the normalized semantic `ActionResult` contract so the model can unambiguously determine:
-  - which canonical semantic action completed,
-  - which fixed target/surface was acted on,
-  - whether execution succeeded, failed, or returned an empty/no-match result,
-  - the authoritative result payload,
-  - and any stable result identity useful for later authorized actions, such as Memory record IDs.
-- [ ] Keep ActionResult semantics provider-neutral and Runtime-neutral; Tool, MCP, Skill-resource, Knowledge, Memory, and other action results should expose a consistent high-level completion/status shape while retaining type-specific structured payloads.
-- [ ] Avoid backend-oriented success payloads that require the model to infer whether the requested operation actually completed from generic fields such as only `{"ok": true}`.
-- [ ] Preserve empty-success semantics distinctly from failure. For example, a successful MemoryRead returning zero records or KnowledgeRequest returning zero results must be represented as completed successfully with no matches, not as an ambiguous failure-like result.
-- [ ] Keep normalized action-result content concise enough for repeated model turns while preserving the information required for correct next-step reasoning; do not duplicate large Tool/Knowledge/Memory payloads merely to add salience.
-- [ ] Strengthen the canonical Harness-control guidance for ordinary phase execution so the model is explicitly told that:
-  - the current phase transcript contains authoritative results for actions Harness already executed;
-  - successful actions normally should not be repeated solely because their capability remains available;
-  - an action may be repeated when new arguments, changed information, explicit retry semantics, verification needs, pagination/continuation, or another distinct operation make repetition useful;
-  - and once the current phase objective is satisfied and no further authorized work is needed, the model should use `PhaseCompletion`.
-- [ ] Keep this guidance generic across semantic action kinds rather than adding Memory-specific progression rules to the ordinary phase prompt.
-- [ ] Do not turn the guidance into an automatic prohibition against repeated actions; the model retains semantic judgment and Harness continues to validate each independently authorized proposal.
-- [ ] Strengthen the provider-facing structured description of `PhaseCompletion` so it is clearly presented as the normal way to stop acting when the phase objective has been satisfied.
-- [ ] Make the `PhaseCompletion` description explicitly distinguish “capability is still available” from “additional work is still required”; continued availability of Tool/Knowledge/Memory/etc. actions must not imply they need to be called again.
-- [ ] Preserve authored outcome semantics exactly: PhaseCompletion guidance may explain when to complete, but must not bias the model toward an outcome not supported by the current phase result.
-- [ ] Keep `PhaseCompletion` provider-facing alias/schema behavior consistent with Milestone 16a and existing canonical action identity rules.
-- [ ] Apply equivalent progression guidance to persistence review:
-  - Memory action results in the review transcript are authoritative;
-  - a successful Memory write does not need to be repeated merely because the same MemoryWrite action remains available;
-  - Memory may be read again when genuinely needed to verify/update another target;
-  - and the model should use `persistence_review_complete` once no additional authorized persistence work is needed.
-- [ ] Strengthen the provider-facing description of `persistence_review_complete` so it is the obvious terminal control action for a completed persistence review rather than another Memory action being the default next choice.
-- [ ] Keep persistence review constrained to its existing MemoryRead/MemoryWrite/control action surface; do not solve repeated-action behavior by broadening the review catalog.
-- [ ] Add optional model-facing recent-action salience derived only from the authoritative current phase/review transcript when needed by the prompt renderer. If implemented, this must summarize recent semantic action status rather than create a second execution-history source of truth.
-- [ ] Any recent-action summary must preserve canonical action identity/target/result status, remain bounded in size, obey trace/content policy where rendered diagnostically, and never replace the underlying structured action results sent through ModelRuntime.
-- [ ] Prefer improving normalized structured action results and Harness-control guidance before relying on a separate recent-action summary; keep the summary implementation minimal or omit it if tests show the base changes are sufficient.
-- [ ] Preserve action availability after successful execution unless the underlying EffectivePhase/readiness state actually changes. Do not dynamically remove an action merely to discourage repetition.
-- [ ] Do not add automatic exact-duplicate suppression, argument-hash blocking, semantic deduplication, or Harness-owned “already done” inference in this milestone.
-- [ ] Continue allowing legitimate repeated operations, including:
-  - repeated reads after state changes,
-  - pagination/continuation,
-  - verification reads,
-  - retries governed by existing failure policy,
-  - repeated Tool/Knowledge actions with changed arguments,
-  - and multiple distinct writes using the same semantic action descriptor.
-- [ ] Keep repeated model proposals subject to all existing action/model-call/Tool-call/persistence-review safety limits so pathological repetition remains bounded even when semantically permitted.
-- [ ] Make action-result and completion-guidance changes intentionally visible in logical prompt/request snapshots and verbose trace/debug output where those surfaces expose model-facing content; preserve canonical action/result identities in machine/SDK/report diagnostics.
-- [ ] Ensure the no-prose-catalog invariant from Milestone 14c.1 remains intact: progression guidance may explain how to react to successful actions and when to complete, but must not reintroduce duplicated detailed action schemas into ordinary prompt prose.
-- [ ] Keep guidance and salience changes compatible with the Milestone 16b provider turn structure; model-facing progression text supplements native action/result turns and must not become a second execution-history source of truth.
-- [ ] Preserve unconditional secret redaction and configured trace content policy for all newly exposed action-result or recent-action diagnostic content.
-- [ ] Add scripted ModelRuntime tests proving:
-  - model proposes a MemoryWrite, receives a clearly successful result, then chooses `PhaseCompletion` rather than repeating the same write;
-  - persistence review performs a MemoryWrite, receives success, then chooses `persistence_review_complete`;
-  - MemoryRead returning zero results is recognized as successful/no-match rather than causing an identical blind read loop;
-  - Knowledge/Tool success can likewise progress to the next distinct action or PhaseCompletion;
-  - a legitimate repeated action with changed arguments remains allowed;
-  - a legitimate verification read after a write remains allowed;
-  - action-result salience does not alter canonical dispatch/authority;
-  - PhaseCompletion outcome validation/repair remains unchanged;
-  - persistence-review completion remains nonfatal and bounded under repeated-action failure;
-  - and no detailed Effective Capability Catalog prose is reintroduced for native structured-action providers.
-- [ ] Add at least one bounded repeated-action regression test where a scripted model intentionally proposes the same successful semantic action until safety limits are reached, proving Harness remains safe and terminates according to existing limit behavior without implementing automatic semantic deduplication.
+## Milestone 16c: Semantic Action Argument-Shape Affordance Hardening
+> Scope note: re-aimed from live measurement after Milestone 16b. Six live runs across OpenAI and Anthropic (objective-style prompt, zero-result read, similar-surfaces multi-phase) produced **zero exact repeated actions**, and every non-failing run completed cleanly on `PhaseCompletion`, so the repeated-successful-action hypothesis that originally motivated this milestone did not reproduce. Neither did the empty-result concern: both providers handled a `MemoryRead` returning `count: 0` correctly and moved on. What did reproduce is **argument-shape selection failure**: OpenAI proposed `memory_read` with `mode: key` and no `record_id`, repeated the same invalid shape after repair, then produced a second invalid shape (`key` plus `query`), exhausting the repair budget and failing the run with zero accepted actions. Descriptor prose already told it not to — the Milestone 14g key-mode guidance was present in that request — so this milestone fixes the affordance structurally rather than with more prose. Canonical Harness identity, EffectivePhase authority, validation, dispatch, Runtime routing, Hooks, and persistence governance remain unchanged.
+- [ ] Split `memory_read` into distinct provider-facing actions **by argument shape, not by mode**, so each advertised action carries a flat schema that is valid by construction rather than one `mode` enum whose legal argument set varies by branch. The shapes the engine currently enforces are:
+  - key on a document space: no required arguments; `record_id` not needed; `query`/`filter` forbidden,
+  - key on a collection/sequence space: `record_id` required; `query`/`filter` forbidden,
+  - chronological: optional `limit` only; `record_id`/`query`/`filter` forbidden,
+  - filter: `filter` is the defining argument and is path-validated; `query` forbidden; `record_id` currently permitted and unvalidated,
+  - full_text: non-empty `query` required; `record_id` forbidden; `filter` currently accepted, not path-validated, and silently ignored at runtime,
+  - semantic: non-empty `query` required; `record_id` forbidden; `filter` permitted, path-validated, and applied as candidate restriction.
+- [ ] Treat the flat-schema exercise as a forcing function for three latent inconsistencies the current `mode` enum hides, and resolve each deliberately rather than by whatever the new schema happens to declare:
+  - `filter` reads permit `record_id` while chronological, full-text, and semantic reads all reject it. If the new filter schema omits `record_id`, record that as an intentional behavior tightening.
+  - `full_text` accepts a `filter` argument, never validates its paths, and never applies it at read time, so a caller passing one silently receives unfiltered results. Decide whether full-text reads reject `filter` outright or validate and apply it the way semantic reads do; do not carry the silent-ignore behavior into an explicit schema.
+  - `semantic` reads do accept and apply `filter`, so the semantic action's flat schema must retain it. Dropping `filter` while splitting would silently remove the candidate-restriction capability added in Milestone 14d.
+- [ ] Treat "one action per distinct argument shape" as the rule rather than "one action per mode". Modes whose argument shapes are identical may share a single action with a mode enum, because that needs no conditional constraint; `full_text` and `semantic` currently have the same shape and are the obvious candidate. Use this as the lever on catalog size before falling back to coarser splits.
+- [ ] Resolve the document-versus-collection/sequence divergence in the key shape at catalog-build time. Harness knows the bound space model, so it must advertise the correct flat key schema for that space instead of expressing the difference as a conditional or as description prose.
+- [ ] Only advertise the shapes the bound space actually declares and the selected runtime actually supports; a space declaring `[key, chronological]` must not advertise filter, full-text, or semantic reads.
+- [ ] Keep the canonical `SemanticAction::MemoryRead` contract, validation, dispatch, and MemoryRuntime routing unchanged. This is provider-facing action surface work in the Milestone 16a sense: aliases and schemas are transport/presentation, and the alias -> canonical identity reverse lookup remains authoritative.
+- [ ] Apply the Milestone 16a alias rules to the new read actions: deterministic identity-derived naming, provider-safe ASCII, the 64-character budget, and component-boundary truncation. Adding a mode signal competes for budget with space and descriptor-fixed record type, so state and test the resulting priority explicitly rather than letting truncation decide it.
+- [ ] Evaluate whether the same conditional-argument shape on `memory_write` warrants the same treatment: `create`/`upsert` forbid `record_id` and require content, `update` requires both, and `delete`/`archive` require `record_id` and forbid content. This is the same structural defect but it did not reproduce in live measurement, so decide deliberately and record the decision instead of splitting by default.
+- [ ] Extend the Milestone 14h repair-feedback shape to mode/argument errors, not just space/record-type mismatches. When a proposed argument shape is invalid, name the invalid combination and, when deterministically discoverable from the current authorized catalog, the authorized action or argument shape that satisfies the intent. Keep suggestions constrained to currently authorized/ready surfaces.
+- [ ] Ensure a corrected retry re-enters the normal ModelRuntime -> semantic-action validation path within the existing structured-output repair budget; do not add a special argument-repair path.
+- [ ] Preserve exhaustion behavior: repeated invalid argument shapes must still fail safely without mutation, and must not become a new terminal state or bypass existing limits.
+
+- [ ] Keep changed-argument repeats legal. Repeated reads after state changes, pagination/continuation, verification reads, retries under existing failure policy, and repeated Tool/Knowledge actions with changed arguments all remain valid model behavior.
+- [ ] Make same-action-kind-and-identity repeats with changed arguments visible in measurement output even though they are permitted, because they can still indicate weak result salience worth investigating later.
+- [ ] Do not add automatic exact-duplicate suppression, argument-hash blocking, semantic deduplication, or Harness-owned "already done" inference.
+- [ ] Preserve action availability after successful execution unless the underlying EffectivePhase/readiness state actually changes; do not dynamically remove an action to discourage repetition.
+- [ ] Keep repeated model proposals subject to all existing action/model-call/Tool-call/persistence-review safety limits.
+
+- [ ] Fix the manual-measurement helper so a summary cannot misreport a run: print report path, trace path, terminal status, report `accepted_semantic_actions`, exact repeats, same action-kind+identity repeats with changed arguments, and the final `ordered_turns`. The Milestone 16b `live-openai-similar-multiphase` summary was byte-identical to the Anthropic summary and reported 8 accepted actions for a run that failed with 0, which hid the only failure in the set.
+- [ ] Re-run the live scenario set after the affordance change and record whether argument-shape rejections and repair exhaustion drop, using several runs per provider per scenario rather than a single sample.
+
+- [ ] Preserve the Milestone 14c.1 invariant: any new action surface or repair guidance must not reintroduce a duplicated Effective Capability Catalog or detailed action schemas into ordinary prompt prose.
+- [ ] Keep changes compatible with the Milestone 16b provider turn structure; new actions must serialize into native action/result turns with correct provider call correlation.
+- [ ] Treat provider-facing action-surface changes as intentional trace-visible changes, preserving canonical AgentPM semantic identity alongside aliases in ModelRuntime request snapshots, verbose trace/debug rendering, machine/SDK diagnostics, and RunReport data.
+- [ ] Preserve unconditional secret redaction and configured trace content policy for any newly exposed diagnostic content.
+
+- [ ] Add tests covering:
+  - split read actions advertising flat, branch-free argument schemas per supported retrieval shape,
+  - key reads on collection/sequence spaces requiring a record id and rejecting query/filter arguments,
+  - key reads on document spaces not requiring a record id, resolved at catalog-build time rather than by conditional or prose,
+  - chronological reads rejecting record id, query, and filter,
+  - filter reads treating filter as the defining argument and rejecting query, with the chosen `record_id` behavior asserted,
+  - full-text and semantic reads requiring a non-empty query and rejecting record id,
+  - semantic reads still accepting and applying `filter` as candidate restriction after the split,
+  - full-text reads handling `filter` according to the recorded decision, with no path that accepts and silently ignores it,
+  - identical-shape modes either sharing one action with a mode enum or splitting, with the chosen behavior asserted,
+  - only declared/supported retrieval shapes being advertised for a bound space,
+  - alias naming, budget, and truncation priority for the new read actions,
+  - alias -> canonical identity round trips for every new action,
+  - improved mode/argument repair feedback naming an authorized alternative shape,
+  - authorized-alternative filtering never naming an unbound, suppressed, or Loop-prohibited surface,
+  - wrong-shape -> repaired -> correct convergence within the default repair budget,
+  - repair exhaustion remaining safe and non-mutating,
+  - changed-argument repeats remaining allowed,
+  - bounded repetition still terminating through existing limits without semantic deduplication,
+  - native action/result turn correlation preserved for the new actions,
+  - and no native-provider prose-catalog regression.
 
 ## Release Band 6: Memory Runtime and Reference Providers
 Covered milestones: 14-16c.
-This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semantics, generated-contract enforcement, trusted scopes, retention/capacity, semantic retrieval, lifecycle operations, durable trigger state, and PostgreSQL/pgvector plus Redis reference providers, plus the Memory repair-feedback/persistence-review visibility, provider-facing semantic action alias, provider-native action/result turn correlation, and agentic turn progression hardening passes. This band should be treated as a major runtime subsystem release because it introduces durable local state and changes the provider request wire shape.
+This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semantics, generated-contract enforcement, trusted scopes, retention/capacity, semantic retrieval, lifecycle operations, durable trigger state, and PostgreSQL/pgvector plus Redis reference providers, plus the Memory repair-feedback/persistence-review visibility, provider-facing semantic action alias, provider-native action/result turn correlation, and semantic action argument-shape affordance hardening passes. This band should be treated as a major runtime subsystem release because it introduces durable local state and changes the provider request wire shape.
 
 ## Milestone 17: MCP Export and `agentpm serve --mcp` Machine Lifecycle
 > Scope note: realize Agent-authored `bindings.mcp` as outward AgentPM MCP server surfaces. Preserve the existing shared-runner MCP implementation while adding a stable machine lifecycle/event contract and Session-owned Harness management. Outward MCP remains independent of active Run phase semantics.
