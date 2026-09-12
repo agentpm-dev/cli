@@ -1,5 +1,7 @@
 use super::custom::{
-    CustomMemoryReadRequest, CustomMemoryWriteOperation, CustomMemoryWriteRequest,
+    CustomMemoryCountRequest, CustomMemoryLifecycleCommitRequest,
+    CustomMemoryOperationStateRequest, CustomMemoryReadRequest, CustomMemoryWriteOperation,
+    CustomMemoryWriteRequest,
 };
 use super::*;
 use crate::harness_runtime::knowledge::KnowledgeRuntimeFailure;
@@ -2691,6 +2693,61 @@ fn custom_memory_capability_validation_rejects_package_version_mismatch() {
 }
 
 #[test]
+fn custom_memory_capability_validation_accepts_sdk_descriptor_wrapper() {
+    let spaces = vec![crate::harness_runtime::model::MemorySpaceRuntimeSnapshot {
+        package: "memory-test".into(),
+        package_version: "0.1.0".into(),
+        space: "notes".into(),
+        model: MemorySpaceModel::Collection,
+        description: "Notes.".into(),
+        root: None,
+        runtime: "remote-memory".into(),
+        source: "agent_binding".into(),
+        state: "available".into(),
+        readiness_reason: None,
+        binding_scope: "global".into(),
+        scope_keys: vec!["user".into()],
+        retrieval_modes: vec![MemoryRetrievalMode::Key],
+        semantic: None,
+        append_only: false,
+        record_types: Vec::new(),
+    }];
+
+    let descriptor = validate_memory_runtime_capabilities(
+        &json!({
+            "ready": true,
+            "registry_id": "remote-memory",
+            "descriptor": {
+                "space_models": ["document", "collection", "sequence"],
+                "retrieval_modes": ["key", "filter", "chronological", "full_text"],
+                "retention_actions": ["delete", "archive"],
+                "constraints": ["append_only"],
+                "capacity": true,
+                "durable_trigger_state": true,
+                "atomic_batches": true
+            },
+            "packages": [
+                { "package": "memory-test", "version": "0.1.0", "ready": true }
+            ]
+        }),
+        "remote-memory",
+        &spaces,
+    )
+    .unwrap();
+
+    assert!(
+        descriptor
+            .space_models
+            .contains(&MemorySpaceModel::Collection)
+    );
+    assert!(
+        descriptor
+            .retrieval_modes
+            .contains(&MemoryRetrievalMode::Key)
+    );
+}
+
+#[test]
 fn custom_memory_capability_validation_rejects_not_ready_or_malformed_descriptor() {
     let spaces = Vec::new();
     let not_ready = validate_memory_runtime_capabilities(
@@ -2813,6 +2870,185 @@ fn custom_memory_runtime_dispatches_read_to_routed_service() {
     assert_eq!(calls[0].2, "read");
     assert_eq!(calls[0].3["request"]["package"], json!("memory-test"));
     assert_eq!(calls[0].3["request"]["space"], json!("notes"));
+}
+
+#[test]
+fn custom_memory_runtime_dispatches_lifecycle_primitives_to_routed_service() {
+    type RecordingInvokerCalls = Arc<Mutex<Vec<(String, Value)>>>;
+
+    #[derive(Clone)]
+    struct RecordingInvoker {
+        calls: RecordingInvokerCalls,
+    }
+
+    impl HostServiceInvoker for RecordingInvoker {
+        fn invoke_host_service(
+            &mut self,
+            _role: &str,
+            _registry_id: &str,
+            method: &str,
+            payload: Value,
+            _timeout_ms: u64,
+        ) -> Result<Value> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((method.to_string(), payload));
+            match method {
+                "count" => Ok(json!({
+                    "ok": true,
+                    "package": "memory-test",
+                    "package_version": "0.1.0",
+                    "space": "notes",
+                    "count": 3
+                })),
+                "load_operation_state" => Ok(json!({
+                    "ok": true,
+                    "package": "memory-test",
+                    "package_version": "0.1.0",
+                    "operation": "summarize_notes",
+                    "state": null
+                })),
+                "store_operation_state" => Ok(json!({
+                    "ok": true,
+                    "package": "memory-test",
+                    "package_version": "0.1.0",
+                    "operation": "summarize_notes"
+                })),
+                "commit_lifecycle" => Ok(json!({
+                    "ok": true,
+                    "package": "memory-test",
+                    "package_version": "0.1.0",
+                    "operation": "summarize_notes",
+                    "output_record_ids": ["summary-1"],
+                    "source_record_ids": ["note-1"]
+                })),
+                _ => anyhow::bail!("unexpected method {method}"),
+            }
+        }
+    }
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut runtime = CustomMemoryRuntime::new(
+        vec![crate::harness_runtime::model::MemorySpaceRuntimeSnapshot {
+            package: "memory-test".into(),
+            package_version: "0.1.0".into(),
+            space: "notes".into(),
+            model: MemorySpaceModel::Collection,
+            description: "Notes.".into(),
+            root: None,
+            runtime: "remote-memory".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![MemoryRetrievalMode::Key],
+            semantic: None,
+            append_only: false,
+            record_types: Vec::new(),
+        }],
+        HashMap::from([(
+            "remote-memory".into(),
+            ServiceRuntime::host(
+                Box::new(RecordingInvoker {
+                    calls: calls.clone(),
+                }),
+                1_000,
+            ),
+        )]),
+    );
+    let now = Utc::now();
+    let operation_scope = BTreeMap::from([("user".into(), "u-123".into())]);
+
+    assert_eq!(
+        runtime
+            .active_record_count(CustomMemoryCountRequest {
+                package: "memory-test".into(),
+                package_version: "0.1.0".into(),
+                space: "notes".into(),
+                scope: operation_scope.clone(),
+                record_type: Some("note".into()),
+                now: now.to_rfc3339(),
+            })
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        runtime
+            .load_operation_state(CustomMemoryOperationStateRequest {
+                package: "memory-test".into(),
+                package_version: "0.1.0".into(),
+                operation: "summarize_notes".into(),
+                scope: operation_scope.clone(),
+                now: now.to_rfc3339(),
+            })
+            .unwrap(),
+        None
+    );
+    let state = LocalMemoryOperationStateRow {
+        package: "memory-test".into(),
+        package_version: "0.1.0".into(),
+        operation: "summarize_notes".into(),
+        scope: operation_scope.clone(),
+        trigger_type: "record_count".into(),
+        armed: true,
+        baseline_at: None,
+        last_completed_at: Some(now),
+        last_failed_at: None,
+        next_eligible_at: None,
+        last_observed_value: Some(3),
+        last_failure: None,
+        watermark: None,
+        updated_at: now,
+    };
+    runtime
+        .store_operation_state(
+            CustomMemoryOperationStateRequest {
+                package: "memory-test".into(),
+                package_version: "0.1.0".into(),
+                operation: "summarize_notes".into(),
+                scope: operation_scope,
+                now: now.to_rfc3339(),
+            },
+            state.clone(),
+        )
+        .unwrap();
+    let commit = runtime
+        .commit_lifecycle_operation(CustomMemoryLifecycleCommitRequest {
+            package: "memory-test".into(),
+            package_version: "0.1.0".into(),
+            operation: "summarize_notes".into(),
+            trigger_precondition: None,
+            expected_sources: Vec::new(),
+            output_writes: Vec::new(),
+            source_mutations: Vec::new(),
+            operation_state: state,
+            now: now.to_rfc3339(),
+        })
+        .unwrap();
+    assert_eq!(commit.output_record_ids, vec!["summary-1"]);
+    assert_eq!(commit.source_record_ids, vec!["note-1"]);
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .map(|(method, _)| method.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "count",
+            "load_operation_state",
+            "store_operation_state",
+            "commit_lifecycle"
+        ]
+    );
+    assert_eq!(calls[0].1["request"]["record_type"], json!("note"));
+    assert_eq!(calls[2].1["state"]["trigger_type"], json!("record_count"));
+    assert_eq!(
+        calls[3].1["request"]["operation_state"]["last_observed_value"],
+        json!(3)
+    );
 }
 
 #[test]

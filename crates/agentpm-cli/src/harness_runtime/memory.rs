@@ -31,14 +31,17 @@ mod semantic;
 
 pub use custom::CustomMemoryRuntime;
 pub(crate) use custom::{
-    custom_memory_action_error_from_output, custom_memory_read_request_from_local,
-    custom_memory_write_request_from_local, emit_memory_host_service_failure,
-    process_memory_runtime_service, validate_memory_runtime_capabilities,
+    CustomMemoryCountRequest, CustomMemoryOperationStateRequest,
+    custom_memory_action_error_from_output, custom_memory_lifecycle_commit_request_from_local,
+    custom_memory_read_request_from_local, custom_memory_write_request_from_local,
+    emit_memory_host_service_failure, process_memory_runtime_service,
+    validate_memory_runtime_capabilities,
 };
+pub(crate) use semantic::durable_memory_content_hash;
 #[cfg(test)]
 use semantic::encode_f32_le_vector;
 use semantic::{
-    LocalMemoryWriteEmbeddingResult, delete_memory_vectors_for_record, durable_memory_content_hash,
+    LocalMemoryWriteEmbeddingResult, delete_memory_vectors_for_record,
     materialize_memory_vector_best_effort,
 };
 
@@ -403,7 +406,7 @@ pub struct LocalMemoryReadResult {
     pub vectors_pending: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LocalMemoryOperationStateRow {
     pub package: String,
     pub package_version: String,
@@ -421,7 +424,7 @@ pub struct LocalMemoryOperationStateRow {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalMemoryLifecycleSourceSnapshot {
     pub package: String,
     pub package_version: String,
@@ -431,7 +434,7 @@ pub struct LocalMemoryLifecycleSourceSnapshot {
     pub content_hash: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LocalMemoryLifecycleTriggerPrecondition {
     ActiveCountAtLeast {
         package: String,
@@ -458,13 +461,13 @@ pub struct LocalMemoryLifecycleCommitRequest<'a> {
     pub operation_state: LocalMemoryOperationStateRow,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalMemoryLifecycleCommitResult {
     pub output_record_ids: Vec<String>,
     pub source_record_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoredMemoryOperationState {
     pub package: String,
     pub package_version: String,

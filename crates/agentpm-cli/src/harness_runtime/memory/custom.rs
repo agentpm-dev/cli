@@ -67,6 +67,40 @@ pub struct CustomMemoryRuntimeFailure {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomMemoryCountRequest {
+    pub package: String,
+    pub package_version: String,
+    pub space: String,
+    pub scope: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_type: Option<String>,
+    pub now: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomMemoryOperationStateRequest {
+    pub package: String,
+    pub package_version: String,
+    pub operation: String,
+    pub scope: BTreeMap<String, String>,
+    pub now: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomMemoryLifecycleCommitRequest {
+    pub package: String,
+    pub package_version: String,
+    pub operation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_precondition: Option<LocalMemoryLifecycleTriggerPrecondition>,
+    pub expected_sources: Vec<LocalMemoryLifecycleSourceSnapshot>,
+    pub output_writes: Vec<CustomMemoryWriteRequest>,
+    pub source_mutations: Vec<CustomMemoryWriteRequest>,
+    pub operation_state: LocalMemoryOperationStateRow,
+    pub now: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CustomMemoryReadResult {
     pub ok: bool,
     pub package: String,
@@ -111,6 +145,53 @@ pub struct CustomMemoryWriteResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomMemoryCountResult {
+    pub ok: bool,
+    pub package: String,
+    pub package_version: String,
+    pub space: String,
+    pub count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<CustomMemoryRuntimeFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomMemoryLoadOperationStateResult {
+    pub ok: bool,
+    pub package: String,
+    pub package_version: String,
+    pub operation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<StoredMemoryOperationState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<CustomMemoryRuntimeFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomMemoryStoreOperationStateResult {
+    pub ok: bool,
+    pub package: String,
+    pub package_version: String,
+    pub operation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<CustomMemoryRuntimeFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomMemoryLifecycleCommitResult {
+    pub ok: bool,
+    pub package: String,
+    pub package_version: String,
+    pub operation: String,
+    #[serde(default)]
+    pub output_record_ids: Vec<String>,
+    #[serde(default)]
+    pub source_record_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<CustomMemoryRuntimeFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct CustomMemoryResultEnvelope {
     pub ok: bool,
     pub package: String,
@@ -122,6 +203,7 @@ struct CustomMemoryResultEnvelope {
 
 pub struct CustomMemoryRuntime {
     spaces: BTreeMap<(String, String), MemorySpaceRuntimeRoute>,
+    packages: BTreeMap<String, MemoryPackageRuntimeRoute>,
     runtimes: HashMap<String, ServiceRuntime>,
     lifecycle_events: Option<crate::harness_runtime::service::ServiceLifecycleEmitter>,
 }
@@ -131,6 +213,13 @@ struct MemorySpaceRuntimeRoute {
     package: String,
     package_version: String,
     space: String,
+    runtime: String,
+}
+
+#[derive(Debug, Clone)]
+struct MemoryPackageRuntimeRoute {
+    package: String,
+    package_version: String,
     runtime: String,
 }
 
@@ -147,21 +236,31 @@ impl CustomMemoryRuntime {
         runtimes: HashMap<String, ServiceRuntime>,
         lifecycle_events: Option<crate::harness_runtime::service::ServiceLifecycleEmitter>,
     ) -> Self {
+        let mut package_routes = BTreeMap::new();
+        let space_routes = spaces
+            .into_iter()
+            .map(|space| {
+                package_routes
+                    .entry(space.package.clone())
+                    .or_insert_with(|| MemoryPackageRuntimeRoute {
+                        package: space.package.clone(),
+                        package_version: space.package_version.clone(),
+                        runtime: space.runtime.clone(),
+                    });
+                (
+                    (space.package.clone(), space.space.clone()),
+                    MemorySpaceRuntimeRoute {
+                        package: space.package,
+                        package_version: space.package_version,
+                        space: space.space,
+                        runtime: space.runtime,
+                    },
+                )
+            })
+            .collect();
         Self {
-            spaces: spaces
-                .into_iter()
-                .map(|space| {
-                    (
-                        (space.package.clone(), space.space.clone()),
-                        MemorySpaceRuntimeRoute {
-                            package: space.package,
-                            package_version: space.package_version,
-                            space: space.space,
-                            runtime: space.runtime,
-                        },
-                    )
-                })
-                .collect(),
+            spaces: space_routes,
+            packages: package_routes,
             runtimes,
             lifecycle_events,
         }
@@ -229,6 +328,135 @@ impl CustomMemoryRuntime {
                 err.to_string(),
             )),
         }
+    }
+
+    pub fn read_records_for_lifecycle(
+        &mut self,
+        request: CustomMemoryReadRequest,
+    ) -> Result<Vec<StoredMemoryRecord>> {
+        let route = self.space_route(&request.package, &request.space)?;
+        let expected_mode = request.mode.clone();
+        let output = self.request_runtime("read", &route, json!({ "request": request }))?;
+        validate_custom_memory_read_result(&output, &route, expected_mode)?;
+        let result: CustomMemoryReadResult =
+            serde_json::from_value(output).context("parsing MemoryRuntime read result")?;
+        if !result.ok {
+            let message = result
+                .error
+                .map(|error| error.message)
+                .unwrap_or_else(|| "MemoryRuntime read failed".into());
+            return Err(LocalMemoryActionError::backend(message).into());
+        }
+        Ok(result.records)
+    }
+
+    pub fn active_record_count(&mut self, request: CustomMemoryCountRequest) -> Result<u64> {
+        let route = self.space_route(&request.package, &request.space)?;
+        let output = self.request_runtime("count", &route, json!({ "request": request }))?;
+        validate_custom_memory_count_result(&output, &route)?;
+        let result: CustomMemoryCountResult =
+            serde_json::from_value(output).context("parsing MemoryRuntime count result")?;
+        if !result.ok {
+            let message = result
+                .error
+                .map(|error| error.message)
+                .unwrap_or_else(|| "MemoryRuntime count failed".into());
+            return Err(LocalMemoryActionError::backend(message).into());
+        }
+        Ok(result.count)
+    }
+
+    pub fn load_operation_state(
+        &mut self,
+        request: CustomMemoryOperationStateRequest,
+    ) -> Result<Option<StoredMemoryOperationState>> {
+        let route = self.package_route(&request.package)?;
+        let output = self.request_runtime(
+            "load_operation_state",
+            &route,
+            json!({ "request": request }),
+        )?;
+        validate_custom_memory_load_operation_state_result(&output, &route)?;
+        let result: CustomMemoryLoadOperationStateResult = serde_json::from_value(output)
+            .context("parsing MemoryRuntime load_operation_state result")?;
+        if !result.ok {
+            let message = result
+                .error
+                .map(|error| error.message)
+                .unwrap_or_else(|| "MemoryRuntime load_operation_state failed".into());
+            return Err(LocalMemoryActionError::backend(message).into());
+        }
+        Ok(result.state)
+    }
+
+    pub fn store_operation_state(
+        &mut self,
+        request: CustomMemoryOperationStateRequest,
+        state: LocalMemoryOperationStateRow,
+    ) -> Result<()> {
+        let route = self.package_route(&request.package)?;
+        let output = self.request_runtime(
+            "store_operation_state",
+            &route,
+            json!({ "request": request, "state": state }),
+        )?;
+        validate_custom_memory_store_operation_state_result(&output, &route)?;
+        let result: CustomMemoryStoreOperationStateResult = serde_json::from_value(output)
+            .context("parsing MemoryRuntime store_operation_state result")?;
+        if !result.ok {
+            let message = result
+                .error
+                .map(|error| error.message)
+                .unwrap_or_else(|| "MemoryRuntime store_operation_state failed".into());
+            return Err(LocalMemoryActionError::backend(message).into());
+        }
+        Ok(())
+    }
+
+    pub fn commit_lifecycle_operation(
+        &mut self,
+        request: CustomMemoryLifecycleCommitRequest,
+    ) -> Result<LocalMemoryLifecycleCommitResult> {
+        let route = self.package_route(&request.package)?;
+        let output =
+            self.request_runtime("commit_lifecycle", &route, json!({ "request": request }))?;
+        validate_custom_memory_lifecycle_commit_result(&output, &route)?;
+        let result: CustomMemoryLifecycleCommitResult = serde_json::from_value(output)
+            .context("parsing MemoryRuntime commit_lifecycle result")?;
+        if !result.ok {
+            let message = result
+                .error
+                .map(|error| error.message)
+                .unwrap_or_else(|| "MemoryRuntime commit_lifecycle failed".into());
+            return Err(LocalMemoryActionError::backend(message).into());
+        }
+        Ok(LocalMemoryLifecycleCommitResult {
+            output_record_ids: result.output_record_ids,
+            source_record_ids: result.source_record_ids,
+        })
+    }
+
+    fn space_route(&self, package: &str, space: &str) -> Result<MemorySpaceRuntimeRoute> {
+        self.spaces
+            .get(&(package.to_string(), space.to_string()))
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "Memory space `{package}/{space}` is not available in the current EffectivePhase"
+                )
+            })
+    }
+
+    fn package_route(&self, package: &str) -> Result<MemorySpaceRuntimeRoute> {
+        let route = self.packages.get(package).cloned().ok_or_else(|| {
+            anyhow!("Memory package `{package}` is not routed to a MemoryRuntime")
+        })?;
+        Ok(MemorySpaceRuntimeRoute {
+            package: route.package,
+            package_version: route.package_version,
+            space: String::new(),
+            runtime: route.runtime,
+        })
     }
 
     fn request_runtime(
@@ -342,6 +570,91 @@ fn validate_custom_memory_write_result(
     Ok(())
 }
 
+fn validate_custom_memory_count_result(
+    output: &Value,
+    route: &MemorySpaceRuntimeRoute,
+) -> Result<()> {
+    let result: CustomMemoryCountResult =
+        serde_json::from_value(output.clone()).with_context(|| {
+            format!(
+                "MemoryRuntime `{}` returned malformed count result",
+                route.runtime
+            )
+        })?;
+    validate_custom_memory_common_result(
+        result.ok,
+        &result.package,
+        &result.package_version,
+        &result.space,
+        result.error.as_ref(),
+        route,
+    )?;
+    Ok(())
+}
+
+fn validate_custom_memory_load_operation_state_result(
+    output: &Value,
+    route: &MemorySpaceRuntimeRoute,
+) -> Result<()> {
+    let result: CustomMemoryLoadOperationStateResult = serde_json::from_value(output.clone())
+        .with_context(|| {
+            format!(
+                "MemoryRuntime `{}` returned malformed load_operation_state result",
+                route.runtime
+            )
+        })?;
+    validate_custom_memory_operation_result_common(
+        result.ok,
+        &result.package,
+        &result.package_version,
+        &result.operation,
+        result.error.as_ref(),
+        route,
+    )
+}
+
+fn validate_custom_memory_store_operation_state_result(
+    output: &Value,
+    route: &MemorySpaceRuntimeRoute,
+) -> Result<()> {
+    let result: CustomMemoryStoreOperationStateResult = serde_json::from_value(output.clone())
+        .with_context(|| {
+            format!(
+                "MemoryRuntime `{}` returned malformed store_operation_state result",
+                route.runtime
+            )
+        })?;
+    validate_custom_memory_operation_result_common(
+        result.ok,
+        &result.package,
+        &result.package_version,
+        &result.operation,
+        result.error.as_ref(),
+        route,
+    )
+}
+
+fn validate_custom_memory_lifecycle_commit_result(
+    output: &Value,
+    route: &MemorySpaceRuntimeRoute,
+) -> Result<()> {
+    let result: CustomMemoryLifecycleCommitResult = serde_json::from_value(output.clone())
+        .with_context(|| {
+            format!(
+                "MemoryRuntime `{}` returned malformed commit_lifecycle result",
+                route.runtime
+            )
+        })?;
+    validate_custom_memory_operation_result_common(
+        result.ok,
+        &result.package,
+        &result.package_version,
+        &result.operation,
+        result.error.as_ref(),
+        route,
+    )
+}
+
 fn validate_custom_memory_common_result(
     ok: bool,
     package: &str,
@@ -369,6 +682,37 @@ fn validate_custom_memory_common_result(
             "MemoryRuntime `{}` returned space `{space}`, expected `{}`",
             route.runtime,
             route.space
+        );
+    }
+    if !ok && error.is_none() {
+        bail!(
+            "MemoryRuntime `{}` returned ok=false without an error",
+            route.runtime
+        );
+    }
+    Ok(())
+}
+
+fn validate_custom_memory_operation_result_common(
+    ok: bool,
+    package: &str,
+    package_version: &str,
+    _operation: &str,
+    error: Option<&CustomMemoryRuntimeFailure>,
+    route: &MemorySpaceRuntimeRoute,
+) -> Result<()> {
+    if package != route.package {
+        bail!(
+            "MemoryRuntime `{}` returned package `{package}`, expected `{}`",
+            route.runtime,
+            route.package
+        );
+    }
+    if package_version != route.package_version {
+        bail!(
+            "MemoryRuntime `{}` returned package_version `{package_version}`, expected `{}`",
+            route.runtime,
+            route.package_version
         );
     }
     if !ok && error.is_none() {
@@ -614,6 +958,34 @@ pub fn custom_memory_write_request_from_local(
     })
 }
 
+pub fn custom_memory_lifecycle_commit_request_from_local(
+    package: &str,
+    package_version: &str,
+    operation: &str,
+    request: LocalMemoryLifecycleCommitRequest<'_>,
+) -> Result<CustomMemoryLifecycleCommitRequest> {
+    let now = request.operation_state.updated_at.to_rfc3339();
+    let mut output_writes = Vec::new();
+    for write in &request.output_writes {
+        output_writes.push(custom_memory_write_request_from_local(write)?);
+    }
+    let mut source_mutations = Vec::new();
+    for write in &request.source_mutations {
+        source_mutations.push(custom_memory_write_request_from_local(write)?);
+    }
+    Ok(CustomMemoryLifecycleCommitRequest {
+        package: package.to_string(),
+        package_version: package_version.to_string(),
+        operation: operation.to_string(),
+        trigger_precondition: request.trigger_precondition,
+        expected_sources: request.expected_sources,
+        output_writes,
+        source_mutations,
+        operation_state: request.operation_state,
+        now,
+    })
+}
+
 fn memory_retrieval_mode_from_local(mode: LocalMemoryReadMode) -> MemoryRetrievalMode {
     match mode {
         LocalMemoryReadMode::Key => MemoryRetrievalMode::Key,
@@ -678,12 +1050,19 @@ pub fn validate_memory_runtime_capabilities(
     {
         bail!("MemoryRuntime initialized as `{advertised_registry_id}`, expected `{registry_id}`");
     }
-    let capabilities_value = value.get("capabilities").unwrap_or(value);
+    let capabilities_value = memory_runtime_descriptor_value(value);
     let descriptor: MemoryRuntimeCapabilityDescriptor =
         serde_json::from_value(capabilities_value.clone())
             .with_context(|| format!("validating MemoryRuntime `{registry_id}` capabilities"))?;
     validate_memory_runtime_packages(value, registry_id, spaces)?;
     Ok(descriptor)
+}
+
+fn memory_runtime_descriptor_value(value: &Value) -> &Value {
+    if let Some(capabilities) = value.get("capabilities") {
+        return capabilities.get("descriptor").unwrap_or(capabilities);
+    }
+    value.get("descriptor").unwrap_or(value)
 }
 
 fn validate_memory_runtime_packages(

@@ -909,22 +909,24 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 
 ## Milestone 16: PostgreSQL/pgvector and Redis Memory Reference Providers + SDK Helpers
 > Scope note: prove Memory Blueprint portability beyond SQLite with two usable external reference backends. Provider-specific logic implements the public MemoryRuntime contract and advertises capabilities honestly; HarnessEngine remains the canonical Blueprint interpreter and must not gain PostgreSQL/Redis-specific lifecycle semantics.
-- [ ] Implement a PostgreSQL/pgvector MemoryRuntime reference provider covering the supported document/collection/sequence, scope partitioning, retrieval, retention, capacity, durable trigger state, atomic batch, and semantic retrieval capabilities.
-- [ ] Implement a Redis/Redis Stack MemoryRuntime reference provider for the semantics it can faithfully support; explicitly omit unsupported capabilities rather than emulating them incorrectly.
-- [ ] Build both providers on the public Milestone 9/10/11 MemoryRuntime process/host contracts; do not add backend-specific branches to HarnessEngine or portable Memory Blueprints.
-- [ ] Reuse the existing `memory.packages` mapping activated in Milestone 14; do not introduce another provider-selection mechanism.
-- [ ] Preserve explicit-mapping no-fallback semantics: unavailable external runtime does not silently route to SQLite.
-- [ ] Advertise the same normalized live MemoryRuntime capability descriptor and let Harness suppress unsupported spaces/operations based on real capability mismatches.
-- [ ] Keep lifecycle trigger interpretation, transform/consolidate/delete orchestration, source handling, trusted scopes, and model-assisted generation in Harness; providers expose primitive persistence/retrieval/state/transaction services only.
-- [ ] Decide and pin provider-aware lifecycle failure cooldown behavior before shipping PostgreSQL/pgvector and Redis providers. M15's fixed local `MEMORY_OPERATION_FAILURE_BACKOFF_SECONDS` default is acceptable for SQLite, but external providers have different transient and persistent failure profiles; either make the cooldown configurable through the appropriate runtime/config contract or explicitly document/test the fixed default as portable provider behavior.
-- [ ] Keep backend credentials provider-side/scoped and out of events/reports.
+- [x] Implement a PostgreSQL/pgvector MemoryRuntime reference provider covering the supported document/collection/sequence, scope partitioning, non-semantic retrieval, retention, capacity, durable trigger state, and atomic batch capabilities using backend-native PostgreSQL tables.
+- [ ] Implement PostgreSQL/pgvector semantic retrieval with real embedding storage, query embedding, and cosine ranking; continue failing closed and omitting `semantic` until this exists.
+- [x] Implement a Redis/Redis Stack MemoryRuntime reference provider for the semantics it can faithfully support; explicitly omit unsupported capabilities rather than emulating them incorrectly.
+- [x] Build both providers on the public Milestone 9/10/11 MemoryRuntime process/host contracts; do not add backend-specific branches to HarnessEngine or portable Memory Blueprints.
+- [x] Reuse the existing `memory.packages` mapping activated in Milestone 14; do not introduce another provider-selection mechanism.
+- [x] Preserve explicit-mapping no-fallback semantics: unavailable external runtime does not silently route to SQLite.
+- [x] Advertise the same normalized live MemoryRuntime capability descriptor and let Harness suppress unsupported spaces/operations based on real capability mismatches.
+- [x] Keep lifecycle trigger interpretation, transform/consolidate/delete orchestration, source handling, trusted scopes, and model-assisted generation in Harness; providers expose primitive persistence/retrieval/state/transaction services only.
+- [x] Decide and pin provider-aware lifecycle failure cooldown behavior before shipping PostgreSQL/pgvector and Redis providers. M15's fixed local `MEMORY_OPERATION_FAILURE_BACKOFF_SECONDS` default is acceptable for SQLite, but external providers have different transient and persistent failure profiles; either make the cooldown configurable through the appropriate runtime/config contract or explicitly document/test the fixed default as portable provider behavior.
+- [x] Pin Redis lifecycle batch capability honestly: Redis reference providers advertise durable trigger state but omit `atomic_batches` until rollback-capable lifecycle commits exist; `WATCH`/`MULTI` stale-write protection is not equivalent to all-or-nothing rollback after `EXEC`.
+- [x] Keep backend credentials provider-side/scoped and out of events/reports.
 
-- [ ] Add Node and Python SDK provider adapters/helpers for PostgreSQL/pgvector and Redis/Redis Stack using optional dependencies/extras.
-- [ ] Provide runnable process-bridge examples compatible with `agentpm.harness.json` so CLI-only consumers can use the same reference implementations without hand-writing protocol framing.
-- [ ] Keep Node/Python provider request/result/capability semantics aligned.
+- [x] Add Node and Python SDK provider adapters/helpers for PostgreSQL/pgvector and Redis/Redis Stack using optional dependencies/extras.
+- [x] Provide runnable process-bridge examples compatible with `agentpm.harness.json` so CLI-only consumers can use the same reference implementations without hand-writing protocol framing.
+- [x] Keep Node/Python provider request/result/capability semantics aligned.
 
-- [ ] Add mocked provider contract tests plus optional live integration suites gated by environment.
-- [ ] Add one cross-backend conformance suite exercising the same representative Blueprint direct-access + lifecycle semantics against SQLite and external provider fixtures, allowing expected unsupported-capability skips only when the provider advertises them honestly.
+- [x] Add mocked provider contract tests plus optional live integration suites gated by environment.
+- [x] Add one cross-backend conformance suite exercising the same representative Blueprint direct-access + lifecycle semantics against SQLite and external provider fixtures, allowing expected unsupported-capability skips only when the provider advertises them honestly.
 
 ## Milestone 16a: Provider-Facing Semantic Action Alias and Description Hardening
 > Scope note: reduce model confusion when multiple structured Harness semantic actions are authorized in the same phase or persistence review, by making provider-facing action names and descriptions self-disambiguating. Milestone 14h already improved bounded recovery and failure visibility for mis-selected Memory actions; this milestone reduces how often that recovery path is needed. Canonical Harness identity, EffectivePhase authority, schemas, validation, dispatch, MemoryRuntime routing, Hooks, and persistence governance remain unchanged.

@@ -1347,6 +1347,7 @@ impl HarnessEngine {
             phase,
             model,
             hooks,
+            memory,
         )?;
         // Explicit outcomes must be selected by the model. Phases with no
         // declared outcomes use the implicit `complete` outcome.
@@ -2767,6 +2768,7 @@ impl HarnessEngine {
                             phase,
                             model,
                             hooks,
+                            memory,
                             &action,
                         ) {
                             Ok(memory_lifecycle::MemoryCapacityReliefResult::Proceed)
@@ -2937,6 +2939,7 @@ impl HarnessEngine {
                         phase,
                         model,
                         hooks,
+                        memory,
                         memory_lifecycle::MemoryChangeContext {
                             package: package.clone(),
                             space: space.clone(),

@@ -232,6 +232,70 @@ pub(super) fn apply_custom_memory_activation_to_runtime(
             space.record_types.clear();
         }
     }
+    for operation in &mut runtime.memory_operations {
+        if let Some(reason) = activation.unavailable_packages.get(&operation.package) {
+            operation.state = "unavailable".into();
+            operation.readiness_reason = Some(reason.clone());
+            continue;
+        }
+        let Some(runtime_capabilities) = activation.capabilities.get(&operation.runtime) else {
+            continue;
+        };
+        let Some(root) = operation.root.as_ref() else {
+            continue;
+        };
+        let manifest_path = root.join("agent.json");
+        let Ok((manifest_value, _)) = load_manifest_value(&manifest_path) else {
+            continue;
+        };
+        let Ok(manifest) = parse_memory_manifest(&manifest_value) else {
+            continue;
+        };
+        let referenced_spaces = operation.referenced_spaces.clone();
+        if let Some((space, reason)) = referenced_spaces.iter().find_map(|space| {
+            activation
+                .unavailable_spaces
+                .get(&(operation.package.clone(), space.clone()))
+                .map(|reason| (space, reason))
+        }) {
+            operation.state = "unavailable".into();
+            operation.readiness_reason = Some(format!(
+                "referenced Memory space `{space}` is unavailable: {reason}"
+            ));
+            continue;
+        }
+        let unrealizable = crate::harness_runtime::memory::unrealizable_memory_spaces(
+            &manifest,
+            runtime_capabilities,
+        )
+        .into_iter()
+        .map(|diagnostic| (diagnostic.space, diagnostic.reason))
+        .collect::<BTreeMap<_, _>>();
+        if let Some((space, reason)) = referenced_spaces
+            .iter()
+            .find_map(|space| unrealizable.get(space).map(|reason| (space, reason)))
+        {
+            operation.state = "unavailable".into();
+            operation.readiness_reason = Some(format!(
+                "referenced Memory space `{space}` is unavailable: {reason}"
+            ));
+            continue;
+        }
+        if !runtime_capabilities.durable_trigger_state {
+            operation.state = "unavailable".into();
+            operation.readiness_reason =
+                Some("Memory lifecycle operations require durable trigger state".into());
+            continue;
+        }
+        if !runtime_capabilities.atomic_batches {
+            operation.state = "unavailable".into();
+            operation.readiness_reason =
+                Some("Memory lifecycle operations require atomic batch support".into());
+            continue;
+        }
+        operation.state = "available".into();
+        operation.readiness_reason = None;
+    }
 }
 
 pub(super) fn custom_memory_routes(plan: &ResolvedHarnessPlan) -> BTreeMap<String, String> {

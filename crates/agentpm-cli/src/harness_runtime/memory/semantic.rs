@@ -407,7 +407,7 @@ fn upsert_memory_vector_if_current(
     Ok(true)
 }
 
-pub(super) fn durable_memory_content_hash(content: &Value) -> Result<String> {
+pub(crate) fn durable_memory_content_hash(content: &Value) -> Result<String> {
     let input = semantic_memory_embedding_input(content)?;
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());

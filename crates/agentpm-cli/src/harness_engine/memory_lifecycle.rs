@@ -2,10 +2,13 @@ use super::effective_phase::{candidate_scope_matches_phase, memory_operation_ide
 use super::*;
 use crate::harness_runtime::hook::BeforeMemoryOperationHook;
 use crate::harness_runtime::memory::{
-    LocalMemoryLifecycleCommitRequest, LocalMemoryLifecycleCommitResult,
-    LocalMemoryLifecycleSourceSnapshot, LocalMemoryLifecycleTriggerPrecondition,
-    LocalMemoryOperationStateRow, StoredMemoryRecord, ValidatedMemoryContracts,
-    durable_memory_content_projection_for_record, generated_memory_content_schema,
+    CustomMemoryCountRequest, CustomMemoryOperationStateRequest, LocalMemoryLifecycleCommitRequest,
+    LocalMemoryLifecycleCommitResult, LocalMemoryLifecycleSourceSnapshot,
+    LocalMemoryLifecycleTriggerPrecondition, LocalMemoryOperationStateRow,
+    StoredMemoryOperationState, StoredMemoryRecord, ValidatedMemoryContracts,
+    custom_memory_lifecycle_commit_request_from_local, custom_memory_read_request_from_local,
+    durable_memory_content_hash, durable_memory_content_projection_for_record,
+    generated_memory_content_schema,
 };
 use crate::harness_runtime::model::{ActionAlias, LogicalPrompt, PromptSection};
 use crate::harness_runtime::{MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot};
@@ -236,6 +239,7 @@ impl HarnessEngine {
                 ..HarnessEventBuilder::default()
             },
         )?;
+        let mut no_custom_memory_runtime = None;
         let count = match self.execute_eligible_memory_lifecycle_operation(
             session,
             &effective_phase,
@@ -247,6 +251,7 @@ impl HarnessEngine {
             &operation_snapshot,
             operation_manifest,
             &expected_scope,
+            &mut no_custom_memory_runtime,
             false,
             Utc::now(),
         ) {
@@ -258,6 +263,7 @@ impl HarnessEngine {
                     &operation_snapshot,
                     operation_manifest,
                     &expected_scope,
+                    &mut no_custom_memory_runtime,
                     "operation_failed",
                     &err.to_string(),
                     Utc::now(),
@@ -325,6 +331,7 @@ impl HarnessEngine {
         phase: &LoopPhase,
         model: &mut dyn ModelRuntime,
         hooks: &mut dyn HookRuntime,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         action: &SemanticAction,
     ) -> Result<MemoryCapacityReliefResult> {
         let SemanticAction::MemoryWrite {
@@ -352,9 +359,6 @@ impl HarnessEngine {
         else {
             return Ok(MemoryCapacityReliefResult::Proceed);
         };
-        if memory.runtime != "local" {
-            return Ok(MemoryCapacityReliefResult::Proceed);
-        }
         let Some(root) = memory.root.clone() else {
             return Ok(MemoryCapacityReliefResult::Proceed);
         };
@@ -370,7 +374,10 @@ impl HarnessEngine {
             &memory,
             &session.runtime_snapshot.runtime_scopes,
         )?;
-        let active_count = session.local_memory_runtime()?.active_record_count(
+        let active_count = active_record_count_for_lifecycle(
+            session,
+            custom_memory_runtime,
+            &memory.runtime,
             &memory.package,
             &memory.package_version,
             &memory.space,
@@ -401,6 +408,7 @@ impl HarnessEngine {
                 phase,
                 model,
                 hooks,
+                custom_memory_runtime,
                 &operation,
                 Some(&MemoryChangeContext {
                     package: package.clone(),
@@ -408,7 +416,10 @@ impl HarnessEngine {
                     capacity_relief: true,
                 }),
             )?;
-            let remaining = session.local_memory_runtime()?.active_record_count(
+            let remaining = active_record_count_for_lifecycle(
+                session,
+                custom_memory_runtime,
+                &memory.runtime,
                 &memory.package,
                 &memory.package_version,
                 &memory.space,
@@ -431,6 +442,7 @@ impl HarnessEngine {
         phase: &LoopPhase,
         model: &mut dyn ModelRuntime,
         hooks: &mut dyn HookRuntime,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         changed: MemoryChangeContext,
     ) -> Result<()> {
         let operations = effective_phase
@@ -454,6 +466,7 @@ impl HarnessEngine {
                 phase,
                 model,
                 hooks,
+                custom_memory_runtime,
                 &operation,
                 Some(&changed),
             )?;
@@ -469,6 +482,7 @@ impl HarnessEngine {
         phase: &LoopPhase,
         model: &mut dyn ModelRuntime,
         hooks: &mut dyn HookRuntime,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
     ) -> Result<()> {
         let operations = effective_phase
             .active_memory_operations
@@ -486,6 +500,7 @@ impl HarnessEngine {
                 phase,
                 model,
                 hooks,
+                custom_memory_runtime,
                 &operation,
                 None,
             )?;
@@ -502,6 +517,7 @@ impl HarnessEngine {
         phase: &LoopPhase,
         model: &mut dyn ModelRuntime,
         hooks: &mut dyn HookRuntime,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         operation_snapshot: &MemoryOperationRuntimeSnapshot,
         changed: Option<&MemoryChangeContext>,
     ) -> Result<()> {
@@ -510,17 +526,6 @@ impl HarnessEngine {
         let Some(root) = operation_snapshot.root.clone() else {
             return Ok(());
         };
-        if operation_snapshot.runtime != "local" {
-            self.emit_memory_lifecycle_failure(
-                session,
-                &run_id,
-                &phase_execution_id,
-                operation_snapshot,
-                "unsupported_runtime",
-                "Memory lifecycle operations require the local MemoryRuntime",
-            )?;
-            return Ok(());
-        }
         let manifest_path = root.join("agent.json");
         let (manifest_value, _) = load_manifest_value(&manifest_path)?;
         let manifest = parse_memory_manifest(&manifest_value)?;
@@ -551,6 +556,7 @@ impl HarnessEngine {
             operation_snapshot,
             operation,
             &scope,
+            custom_memory_runtime,
             now,
         )?;
         session.emitter.emit(
@@ -592,6 +598,7 @@ impl HarnessEngine {
             operation_snapshot,
             operation,
             &scope,
+            custom_memory_runtime,
             changed.is_some_and(|changed| changed.capacity_relief),
             now,
         ) {
@@ -631,13 +638,19 @@ impl HarnessEngine {
                     operation_snapshot,
                     operation,
                     &scope,
+                    custom_memory_runtime,
                     "operation_failed",
                     &err.to_string(),
                     Utc::now(),
                 )?;
-                session
-                    .local_memory_runtime()?
-                    .store_operation_state(&failure_state)?;
+                store_operation_state_for_lifecycle(
+                    session,
+                    custom_memory_runtime,
+                    operation_snapshot,
+                    &scope,
+                    failure_state,
+                    Utc::now(),
+                )?;
                 self.emit_memory_lifecycle_failure(
                     session,
                     &run_id,
@@ -664,6 +677,7 @@ impl HarnessEngine {
         operation_snapshot: &MemoryOperationRuntimeSnapshot,
         operation: &MemoryOperation,
         scope: &BTreeMap<String, String>,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         capacity_relief: bool,
         now: DateTime<Utc>,
     ) -> Result<u64> {
@@ -679,6 +693,7 @@ impl HarnessEngine {
             manifest,
             operation,
             scope,
+            custom_memory_runtime,
         )?;
         session.emitter.emit(
             HarnessEventType::MemoryOperationStarted,
@@ -706,6 +721,7 @@ impl HarnessEngine {
                 targets,
                 *cascade_derived_records,
                 scope,
+                custom_memory_runtime,
                 capacity_relief,
                 now,
             ),
@@ -731,6 +747,7 @@ impl HarnessEngine {
                 output_mode,
                 *preserve_provenance,
                 scope,
+                custom_memory_runtime,
                 capacity_relief,
                 model_guidance.as_deref(),
                 now,
@@ -755,6 +772,7 @@ impl HarnessEngine {
                 source_handling,
                 *preserve_provenance,
                 scope,
+                custom_memory_runtime,
                 capacity_relief,
                 model_guidance.as_deref(),
                 now,
@@ -769,20 +787,25 @@ impl HarnessEngine {
         operation_snapshot: &MemoryOperationRuntimeSnapshot,
         operation: &MemoryOperation,
         operation_scope: &BTreeMap<String, String>,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         now: DateTime<Utc>,
     ) -> Result<bool> {
         let trigger = operation_trigger(operation);
-        let existing = session.local_memory_runtime()?.load_operation_state(
-            &operation_snapshot.package,
-            &operation_snapshot.package_version,
-            &operation_snapshot.operation,
+        let existing = load_operation_state_for_lifecycle(
+            session,
+            custom_memory_runtime,
+            operation_snapshot,
             operation_scope,
+            now,
         )?;
         match trigger {
             MemoryTrigger::External => Ok(false),
             MemoryTrigger::RecordCount { space, threshold } => {
                 let scope = space_scope(manifest, space, operation_scope)?;
-                let count = session.local_memory_runtime()?.active_record_count(
+                let count = active_record_count_for_lifecycle(
+                    session,
+                    custom_memory_runtime,
+                    &operation_snapshot.runtime,
                     &operation_snapshot.package,
                     &operation_snapshot.package_version,
                     space,
@@ -837,15 +860,25 @@ impl HarnessEngine {
                 if cooling_down {
                     let mut cooldown_state = next_state;
                     cooldown_state.armed = armed;
-                    session
-                        .local_memory_runtime()?
-                        .store_operation_state(&cooldown_state)?;
+                    store_operation_state_for_lifecycle(
+                        session,
+                        custom_memory_runtime,
+                        operation_snapshot,
+                        operation_scope,
+                        cooldown_state,
+                        now,
+                    )?;
                     return Ok(false);
                 }
                 if !eligible {
-                    session
-                        .local_memory_runtime()?
-                        .store_operation_state(&next_state)?;
+                    store_operation_state_for_lifecycle(
+                        session,
+                        custom_memory_runtime,
+                        operation_snapshot,
+                        operation_scope,
+                        next_state,
+                        now,
+                    )?;
                 }
                 Ok(eligible)
             }
@@ -859,7 +892,10 @@ impl HarnessEngine {
                 else {
                     return Ok(false);
                 };
-                let count = session.local_memory_runtime()?.active_record_count(
+                let count = active_record_count_for_lifecycle(
+                    session,
+                    custom_memory_runtime,
+                    &operation_snapshot.runtime,
                     &operation_snapshot.package,
                     &operation_snapshot.package_version,
                     space,
@@ -908,15 +944,25 @@ impl HarnessEngine {
                 let cooling_down = failure_cooldown_until.is_some_and(|next| now < next);
                 let eligible = armed && count as i64 >= max_records && !cooling_down;
                 if cooling_down {
-                    session
-                        .local_memory_runtime()?
-                        .store_operation_state(&next_state)?;
+                    store_operation_state_for_lifecycle(
+                        session,
+                        custom_memory_runtime,
+                        operation_snapshot,
+                        operation_scope,
+                        next_state,
+                        now,
+                    )?;
                     return Ok(false);
                 }
                 if !eligible {
-                    session
-                        .local_memory_runtime()?
-                        .store_operation_state(&next_state)?;
+                    store_operation_state_for_lifecycle(
+                        session,
+                        custom_memory_runtime,
+                        operation_snapshot,
+                        operation_scope,
+                        next_state,
+                        now,
+                    )?;
                 }
                 Ok(eligible)
             }
@@ -925,6 +971,7 @@ impl HarnessEngine {
                 if existing.is_none()
                     && !interval_operation_has_relevant_state(
                         session,
+                        custom_memory_runtime,
                         manifest,
                         operation_snapshot,
                         operation,
@@ -970,9 +1017,14 @@ impl HarnessEngine {
                     updated_at: now,
                 };
                 if !eligible {
-                    session
-                        .local_memory_runtime()?
-                        .store_operation_state(&next_state)?;
+                    store_operation_state_for_lifecycle(
+                        session,
+                        custom_memory_runtime,
+                        operation_snapshot,
+                        operation_scope,
+                        next_state,
+                        now,
+                    )?;
                 }
                 Ok(eligible)
             }
@@ -991,6 +1043,7 @@ impl HarnessEngine {
         manifest: &MemoryManifest,
         operation_manifest: &MemoryOperation,
         scope: &BTreeMap<String, String>,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
     ) -> Result<Option<String>> {
         let hook = HarnessHookId::BeforeMemoryOperation;
         let binding_count = hooks.binding_count(&hook);
@@ -1009,6 +1062,7 @@ impl HarnessEngine {
         }
         let source_summary = memory_operation_safe_source_summary(
             session,
+            custom_memory_runtime,
             manifest,
             operation,
             operation_manifest,
@@ -1088,6 +1142,7 @@ impl HarnessEngine {
         output_mode: &MemoryTransformOutputMode,
         preserve_provenance: bool,
         operation_scope: &BTreeMap<String, String>,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         capacity_relief: bool,
         model_guidance: Option<&str>,
         now: DateTime<Utc>,
@@ -1106,6 +1161,7 @@ impl HarnessEngine {
             operation_snapshot,
             input,
             operation_scope,
+            custom_memory_runtime,
             now,
         )?;
         let mut count = 0;
@@ -1134,9 +1190,7 @@ impl HarnessEngine {
                 LocalMemoryWriteOperation::Create
             };
             let output_scope = space_scope(manifest, &output.space, operation_scope)?;
-            let source_snapshot = session
-                .local_memory_runtime()?
-                .source_snapshot_for_lifecycle(&source)?;
+            let source_snapshot = source_snapshot_for_lifecycle(&source)?;
             let source_batch = vec![source.clone()];
             let source_mutations = source_handling_mutations(
                 &operation_snapshot.package,
@@ -1172,6 +1226,7 @@ impl HarnessEngine {
                 operation_snapshot,
                 operation,
                 operation_scope,
+                custom_memory_runtime,
                 &output_writes,
                 &source_mutations,
                 capacity_relief,
@@ -1181,7 +1236,10 @@ impl HarnessEngine {
                     "preserve_provenance": preserve_provenance,
                 })),
             )?;
-            let commit = session.local_memory_runtime()?.commit_lifecycle_operation(
+            let commit = commit_lifecycle_operation_for_runtime(
+                session,
+                custom_memory_runtime,
+                operation_snapshot,
                 LocalMemoryLifecycleCommitRequest {
                     trigger_precondition: lifecycle_trigger_precondition(
                         manifest,
@@ -1217,6 +1275,7 @@ impl HarnessEngine {
         source_handling: &MemorySourceHandling,
         preserve_provenance: bool,
         operation_scope: &BTreeMap<String, String>,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         capacity_relief: bool,
         model_guidance: Option<&str>,
         now: DateTime<Utc>,
@@ -1234,6 +1293,7 @@ impl HarnessEngine {
                 operation_snapshot,
                 input,
                 operation_scope,
+                custom_memory_runtime,
                 now,
             )?);
         }
@@ -1253,7 +1313,7 @@ impl HarnessEngine {
             &sources,
             model_guidance.map(str::to_string),
         )?;
-        let expected_sources = lifecycle_source_snapshots(session, &sources)?;
+        let expected_sources = lifecycle_source_snapshots(&sources)?;
         let source_mutations = source_handling_mutations(
             &operation_snapshot.package,
             &operation_snapshot.package_version,
@@ -1285,6 +1345,7 @@ impl HarnessEngine {
             operation_snapshot,
             operation,
             operation_scope,
+            custom_memory_runtime,
             &output_writes,
             &source_mutations,
             capacity_relief,
@@ -1294,7 +1355,10 @@ impl HarnessEngine {
                 "preserve_provenance": preserve_provenance,
             })),
         )?;
-        let commit = session.local_memory_runtime()?.commit_lifecycle_operation(
+        let commit = commit_lifecycle_operation_for_runtime(
+            session,
+            custom_memory_runtime,
+            operation_snapshot,
             LocalMemoryLifecycleCommitRequest {
                 trigger_precondition: lifecycle_trigger_precondition(
                     manifest,
@@ -1323,6 +1387,7 @@ impl HarnessEngine {
         targets: &[MemoryOperationTarget],
         cascade_derived_records: bool,
         operation_scope: &BTreeMap<String, String>,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         capacity_relief: bool,
         now: DateTime<Utc>,
     ) -> Result<u64> {
@@ -1334,24 +1399,25 @@ impl HarnessEngine {
         let mut sources = Vec::new();
         for target in targets {
             let scope = space_scope(manifest, &target.space, operation_scope)?;
-            sources.extend(
-                session
-                    .local_memory_runtime()?
-                    .read_active_records_for_lifecycle(LocalMemoryReadRequest {
-                        package: &operation_snapshot.package,
-                        package_version: &operation_snapshot.package_version,
-                        manifest,
-                        space: &target.space,
-                        scope: scope.clone(),
-                        mode: LocalMemoryReadMode::Chronological,
-                        record_id: None,
-                        record_type: None,
-                        filter: BTreeMap::new(),
-                        query: None,
-                        limit: None,
-                        now,
-                    })?,
-            );
+            sources.extend(read_active_records_for_lifecycle(
+                session,
+                custom_memory_runtime,
+                &operation_snapshot.runtime,
+                LocalMemoryReadRequest {
+                    package: &operation_snapshot.package,
+                    package_version: &operation_snapshot.package_version,
+                    manifest,
+                    space: &target.space,
+                    scope: scope.clone(),
+                    mode: LocalMemoryReadMode::Chronological,
+                    record_id: None,
+                    record_type: None,
+                    filter: BTreeMap::new(),
+                    query: None,
+                    limit: None,
+                    now,
+                },
+            )?);
         }
         sort_lifecycle_sources(&mut sources);
         sources.dedup_by(|left, right| {
@@ -1372,9 +1438,11 @@ impl HarnessEngine {
                     let Ok(scope) = space_scope(manifest, space_name, operation_scope) else {
                         continue;
                     };
-                    let records = session
-                        .local_memory_runtime()?
-                        .read_active_records_for_lifecycle(LocalMemoryReadRequest {
+                    let records = read_active_records_for_lifecycle(
+                        session,
+                        custom_memory_runtime,
+                        &operation_snapshot.runtime,
+                        LocalMemoryReadRequest {
                             package: &operation_snapshot.package,
                             package_version: &operation_snapshot.package_version,
                             manifest,
@@ -1387,7 +1455,8 @@ impl HarnessEngine {
                             query: None,
                             limit: None,
                             now,
-                        })?;
+                        },
+                    )?;
                     for record in records {
                         if target_ids.contains(&record.id)
                             || !record_is_derived_from_any(&record, &target_ids)
@@ -1406,7 +1475,7 @@ impl HarnessEngine {
             }
         }
         let count = sources.len() as u64;
-        let expected_sources = lifecycle_source_snapshots(session, &sources)?;
+        let expected_sources = lifecycle_source_snapshots(&sources)?;
         let mut source_mutations = Vec::new();
         for source in &sources {
             source_mutations.push(LocalMemoryWriteRequest {
@@ -1431,6 +1500,7 @@ impl HarnessEngine {
             operation_snapshot,
             operation,
             operation_scope,
+            custom_memory_runtime,
             &[],
             &source_mutations,
             capacity_relief,
@@ -1439,7 +1509,10 @@ impl HarnessEngine {
                 "source_ids": sources.iter().map(|source| source.id.clone()).collect::<Vec<_>>(),
             })),
         )?;
-        let commit = session.local_memory_runtime()?.commit_lifecycle_operation(
+        let commit = commit_lifecycle_operation_for_runtime(
+            session,
+            custom_memory_runtime,
+            operation_snapshot,
             LocalMemoryLifecycleCommitRequest {
                 trigger_precondition: lifecycle_trigger_precondition(
                     manifest,
@@ -1464,12 +1537,15 @@ impl HarnessEngine {
         operation: &MemoryOperationRuntimeSnapshot,
         input: &MemoryOperationRef,
         operation_scope: &BTreeMap<String, String>,
+        custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
         now: DateTime<Utc>,
     ) -> Result<Vec<StoredMemoryRecord>> {
         let scope = space_scope(manifest, &input.space, operation_scope)?;
-        let mut records = session
-            .local_memory_runtime()?
-            .read_active_records_for_lifecycle(LocalMemoryReadRequest {
+        let mut records = read_active_records_for_lifecycle(
+            session,
+            custom_memory_runtime,
+            &operation.runtime,
+            LocalMemoryReadRequest {
                 package: &operation.package,
                 package_version: &operation.package_version,
                 manifest,
@@ -1482,7 +1558,8 @@ impl HarnessEngine {
                 query: None,
                 limit: None,
                 now,
-            })?;
+            },
+        )?;
         sort_lifecycle_sources(&mut records);
         Ok(records)
     }
@@ -1833,6 +1910,7 @@ fn memory_operation_event_fields(
 
 fn memory_operation_safe_source_summary(
     session: &mut HarnessSession,
+    custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
     manifest: &MemoryManifest,
     operation: &MemoryOperationRuntimeSnapshot,
     operation_manifest: &MemoryOperation,
@@ -1841,7 +1919,10 @@ fn memory_operation_safe_source_summary(
     let mut sources = Vec::new();
     for reference in operation_source_summary_refs(operation_manifest) {
         let scope = space_scope(manifest, &reference.space, operation_scope)?;
-        let count = session.local_memory_runtime()?.active_record_count(
+        let count = active_record_count_for_lifecycle(
+            session,
+            custom_memory_runtime,
+            &operation.runtime,
             &operation.package,
             &operation.package_version,
             &reference.space,
@@ -1878,6 +1959,7 @@ fn memory_operation_safe_source_summary(
 
 fn interval_operation_has_relevant_state(
     session: &mut HarnessSession,
+    custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
     manifest: &MemoryManifest,
     operation: &MemoryOperationRuntimeSnapshot,
     operation_manifest: &MemoryOperation,
@@ -1885,7 +1967,10 @@ fn interval_operation_has_relevant_state(
 ) -> Result<bool> {
     for reference in operation_source_summary_refs(operation_manifest) {
         let scope = space_scope(manifest, &reference.space, operation_scope)?;
-        let count = session.local_memory_runtime()?.active_record_count(
+        let count = active_record_count_for_lifecycle(
+            session,
+            custom_memory_runtime,
+            &operation.runtime,
             &operation.package,
             &operation.package_version,
             &reference.space,
@@ -2078,17 +2163,161 @@ fn sort_lifecycle_sources(records: &mut [StoredMemoryRecord]) {
 }
 
 fn lifecycle_source_snapshots(
-    session: &mut HarnessSession,
     sources: &[StoredMemoryRecord],
 ) -> Result<Vec<LocalMemoryLifecycleSourceSnapshot>> {
-    sources
-        .iter()
-        .map(|source| {
-            session
-                .local_memory_runtime()?
-                .source_snapshot_for_lifecycle(source)
-        })
-        .collect()
+    sources.iter().map(source_snapshot_for_lifecycle).collect()
+}
+
+fn source_snapshot_for_lifecycle(
+    record: &StoredMemoryRecord,
+) -> Result<LocalMemoryLifecycleSourceSnapshot> {
+    let scope: BTreeMap<String, String> = serde_json::from_str(&record.scope_json)
+        .context("parsing Memory source record scope JSON")?;
+    Ok(LocalMemoryLifecycleSourceSnapshot {
+        package: record.package.clone(),
+        package_version: record.package_version.clone(),
+        space: record.space.clone(),
+        scope,
+        record_id: record.id.clone(),
+        content_hash: durable_memory_content_hash(&record.content)?,
+    })
+}
+
+fn active_record_count_for_lifecycle(
+    session: &mut HarnessSession,
+    custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
+    runtime: &str,
+    package: &str,
+    package_version: &str,
+    space: &str,
+    scope: &BTreeMap<String, String>,
+    record_type: Option<&str>,
+) -> Result<u64> {
+    if runtime == "local" {
+        return session.local_memory_runtime()?.active_record_count(
+            package,
+            package_version,
+            space,
+            scope,
+            record_type,
+        );
+    }
+    let custom_runtime = custom_memory_runtime
+        .as_mut()
+        .ok_or_else(|| anyhow!("configured MemoryRuntime `{runtime}` is unavailable"))?;
+    custom_runtime.active_record_count(CustomMemoryCountRequest {
+        package: package.to_string(),
+        package_version: package_version.to_string(),
+        space: space.to_string(),
+        scope: scope.clone(),
+        record_type: record_type.map(str::to_string),
+        now: Utc::now().to_rfc3339(),
+    })
+}
+
+fn read_active_records_for_lifecycle(
+    session: &mut HarnessSession,
+    custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
+    runtime: &str,
+    request: LocalMemoryReadRequest<'_>,
+) -> Result<Vec<StoredMemoryRecord>> {
+    if runtime == "local" {
+        return session
+            .local_memory_runtime()?
+            .read_active_records_for_lifecycle(request);
+    }
+    let custom_request = custom_memory_read_request_from_local(&request)?;
+    let custom_runtime = custom_memory_runtime
+        .as_mut()
+        .ok_or_else(|| anyhow!("configured MemoryRuntime `{runtime}` is unavailable"))?;
+    custom_runtime.read_records_for_lifecycle(custom_request)
+}
+
+fn load_operation_state_for_lifecycle(
+    session: &mut HarnessSession,
+    custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
+    operation: &MemoryOperationRuntimeSnapshot,
+    operation_scope: &BTreeMap<String, String>,
+    now: DateTime<Utc>,
+) -> Result<Option<StoredMemoryOperationState>> {
+    if operation.runtime == "local" {
+        return session.local_memory_runtime()?.load_operation_state(
+            &operation.package,
+            &operation.package_version,
+            &operation.operation,
+            operation_scope,
+        );
+    }
+    let custom_runtime = custom_memory_runtime.as_mut().ok_or_else(|| {
+        anyhow!(
+            "configured MemoryRuntime `{}` is unavailable",
+            operation.runtime
+        )
+    })?;
+    custom_runtime.load_operation_state(CustomMemoryOperationStateRequest {
+        package: operation.package.clone(),
+        package_version: operation.package_version.clone(),
+        operation: operation.operation.clone(),
+        scope: operation_scope.clone(),
+        now: now.to_rfc3339(),
+    })
+}
+
+fn store_operation_state_for_lifecycle(
+    session: &mut HarnessSession,
+    custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
+    operation: &MemoryOperationRuntimeSnapshot,
+    operation_scope: &BTreeMap<String, String>,
+    state: LocalMemoryOperationStateRow,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    if operation.runtime == "local" {
+        return session
+            .local_memory_runtime()?
+            .store_operation_state(&state);
+    }
+    let custom_runtime = custom_memory_runtime.as_mut().ok_or_else(|| {
+        anyhow!(
+            "configured MemoryRuntime `{}` is unavailable",
+            operation.runtime
+        )
+    })?;
+    custom_runtime.store_operation_state(
+        CustomMemoryOperationStateRequest {
+            package: operation.package.clone(),
+            package_version: operation.package_version.clone(),
+            operation: operation.operation.clone(),
+            scope: operation_scope.clone(),
+            now: now.to_rfc3339(),
+        },
+        state,
+    )
+}
+
+fn commit_lifecycle_operation_for_runtime(
+    session: &mut HarnessSession,
+    custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
+    operation: &MemoryOperationRuntimeSnapshot,
+    request: LocalMemoryLifecycleCommitRequest<'_>,
+) -> Result<LocalMemoryLifecycleCommitResult> {
+    if operation.runtime == "local" {
+        return session
+            .local_memory_runtime()?
+            .commit_lifecycle_operation(request);
+    }
+    let custom_request = custom_memory_lifecycle_commit_request_from_local(
+        &operation.package,
+        &operation.package_version,
+        &operation.operation,
+        request,
+    )?;
+    let custom_runtime = custom_memory_runtime.as_mut().ok_or_else(|| {
+        anyhow!(
+            "configured MemoryRuntime `{}` is unavailable",
+            operation.runtime
+        )
+    })?;
+    custom_runtime.commit_lifecycle_operation(custom_request)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2151,6 +2380,7 @@ fn completed_operation_state<'a>(
     operation: &MemoryOperationRuntimeSnapshot,
     operation_manifest: &MemoryOperation,
     operation_scope: &BTreeMap<String, String>,
+    custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
     output_writes: &[LocalMemoryWriteRequest<'a>],
     source_mutations: &[LocalMemoryWriteRequest<'a>],
     capacity_relief: bool,
@@ -2158,11 +2388,12 @@ fn completed_operation_state<'a>(
     watermark: Option<Value>,
 ) -> Result<LocalMemoryOperationStateRow> {
     let trigger = operation_trigger(operation_manifest);
-    let existing = session.local_memory_runtime()?.load_operation_state(
-        &operation.package,
-        &operation.package_version,
-        &operation.operation,
+    let existing = load_operation_state_for_lifecycle(
+        session,
+        custom_memory_runtime,
+        operation,
         operation_scope,
+        now,
     )?;
     let baseline_at = existing
         .as_ref()
@@ -2199,6 +2430,7 @@ fn completed_operation_state<'a>(
                 operation,
                 space,
                 operation_scope,
+                custom_memory_runtime,
                 output_writes,
                 source_mutations,
             )?;
@@ -2219,6 +2451,7 @@ fn completed_operation_state<'a>(
                 operation,
                 space,
                 operation_scope,
+                custom_memory_runtime,
                 output_writes,
                 source_mutations,
             )?;
@@ -2240,16 +2473,18 @@ fn failed_operation_state(
     operation: &MemoryOperationRuntimeSnapshot,
     operation_manifest: &MemoryOperation,
     operation_scope: &BTreeMap<String, String>,
+    custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
     code: &str,
     message: &str,
     now: DateTime<Utc>,
 ) -> Result<LocalMemoryOperationStateRow> {
     let trigger = operation_trigger(operation_manifest);
-    let existing = session.local_memory_runtime()?.load_operation_state(
-        &operation.package,
-        &operation.package_version,
-        &operation.operation,
+    let existing = load_operation_state_for_lifecycle(
+        session,
+        custom_memory_runtime,
+        operation,
         operation_scope,
+        now,
     )?;
     let (next_eligible_at, last_observed_value) = match trigger {
         MemoryTrigger::External => (
@@ -2263,7 +2498,10 @@ fn failed_operation_state(
         ),
         MemoryTrigger::RecordCount { space, threshold } => {
             let scope = space_scope(manifest, space, operation_scope)?;
-            let count = session.local_memory_runtime()?.active_record_count(
+            let count = active_record_count_for_lifecycle(
+                session,
+                custom_memory_runtime,
+                &operation.runtime,
                 &operation.package,
                 &operation.package_version,
                 space,
@@ -2277,7 +2515,10 @@ fn failed_operation_state(
         }
         MemoryTrigger::Capacity { space } => {
             let scope = space_scope(manifest, space, operation_scope)?;
-            let count = session.local_memory_runtime()?.active_record_count(
+            let count = active_record_count_for_lifecycle(
+                session,
+                custom_memory_runtime,
+                &operation.runtime,
                 &operation.package,
                 &operation.package_version,
                 space,
@@ -2338,11 +2579,15 @@ fn projected_active_count_after_commit<'a>(
     operation: &MemoryOperationRuntimeSnapshot,
     trigger_space: &str,
     operation_scope: &BTreeMap<String, String>,
+    custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
     output_writes: &[LocalMemoryWriteRequest<'a>],
     source_mutations: &[LocalMemoryWriteRequest<'a>],
 ) -> Result<i64> {
     let trigger_scope = space_scope(manifest, trigger_space, operation_scope)?;
-    let mut count = session.local_memory_runtime()?.active_record_count(
+    let mut count = active_record_count_for_lifecycle(
+        session,
+        custom_memory_runtime,
+        &operation.runtime,
         &operation.package,
         &operation.package_version,
         trigger_space,
