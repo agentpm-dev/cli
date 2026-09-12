@@ -930,26 +930,26 @@ This gives us real Knowledge semantic actions, local context/vector retrieval, e
 
 ## Milestone 16a: Provider-Facing Semantic Action Alias and Description Hardening
 > Scope note: reduce model confusion when multiple structured Harness semantic actions are authorized in the same phase or persistence review, by making provider-facing action names and descriptions self-disambiguating. Milestone 14h already improved bounded recovery and failure visibility for mis-selected Memory actions; this milestone reduces how often that recovery path is needed. Canonical Harness identity, EffectivePhase authority, schemas, validation, dispatch, MemoryRuntime routing, Hooks, and persistence governance remain unchanged.
-- [ ] Replace positional provider-facing aliases such as `action_1` with deterministic semantic aliases derived only from descriptor-fixed Harness action identity.
-- [ ] Standardize generated AgentPM provider aliases on a provider-safe ASCII subset compatible with the supported native function/tool APIs and a maximum 64-character budget.
-- [ ] Preserve the most discriminating fixed target information under the alias length budget. For Memory actions, prioritize:
+- [x] Replace positional provider-facing aliases such as `action_1` with deterministic semantic aliases derived only from descriptor-fixed Harness action identity.
+- [x] Standardize generated AgentPM provider aliases on a provider-safe ASCII subset compatible with the supported native function/tool APIs and a maximum 64-character budget.
+- [x] Preserve the most discriminating fixed target information under the alias length budget. For Memory actions, prioritize:
   1. semantic action kind,
   2. space,
   3. record type, but only when the space declares exactly one permitted record type and it is therefore descriptor-fixed,
   4. concise package signal when space remains,
   5. deterministic identity-derived suffix when needed for uniqueness/stability.
-- [ ] Do not encode model-selected arguments into aliases. When a space declares multiple permitted record types, `record_type` is a model-selected argument enum and must not appear in the alias; encoding one permitted value would misdescribe what the action accepts. Likewise keep `phase_complete` when outcome remains an argument enum rather than generating aliases per possible outcome.
-- [ ] Sanitize AgentPM package/resource identities for provider function-name constraints without changing canonical AgentPM identity.
-- [ ] Use deterministic identity-derived collision/truncation suffixes rather than catalog-position suffixes so provider-facing aliases remain stable when unrelated EffectivePhase actions are added or removed.
-- [ ] Preserve the existing alias -> canonical semantic action mapping as the authoritative reverse lookup; provider aliases remain transport/presentation metadata and never become capability identity or authority.
+- [x] Do not encode model-selected arguments into aliases. When a space declares multiple permitted record types, `record_type` is a model-selected argument enum and must not appear in the alias; encoding one permitted value would misdescribe what the action accepts. Likewise keep `phase_complete` when outcome remains an argument enum rather than generating aliases per possible outcome.
+- [x] Sanitize AgentPM package/resource identities for provider function-name constraints without changing canonical AgentPM identity.
+- [x] Use deterministic identity-derived collision/truncation suffixes rather than catalog-position suffixes so provider-facing aliases remain stable when unrelated EffectivePhase actions are added or removed.
+- [x] Preserve the existing alias -> canonical semantic action mapping as the authoritative reverse lookup; provider aliases remain transport/presentation metadata and never become capability identity or authority.
 
-- [ ] Improve provider-facing structured action descriptions when multiple actions of the same semantic kind are simultaneously available. Clearly identify the fixed target surface and distinguish nearby alternatives without duplicating detailed action schemas into ordinary prompt prose.
-- [ ] Add persistence-review Harness-control guidance telling the model to choose the Memory action whose fixed package/space/record-type semantics match the intended durable target exactly and to use `persistence_review_complete` when no further Memory work is needed.
-- [ ] Preserve the M14c.1 invariant that native structured-action providers receive semantic action declarations through their structured tool/function API rather than a duplicated Effective Capability Catalog in ordinary prompt text.
+- [x] Improve provider-facing structured action descriptions when multiple actions of the same semantic kind are simultaneously available. Clearly identify the fixed target surface and distinguish nearby alternatives without duplicating detailed action schemas into ordinary prompt prose.
+- [x] Add persistence-review Harness-control guidance telling the model to choose the Memory action whose fixed package/space/record-type semantics match the intended durable target exactly and to use `persistence_review_complete` when no further Memory work is needed.
+- [x] Preserve the M14c.1 invariant that native structured-action providers receive semantic action declarations through their structured tool/function API rather than a duplicated Effective Capability Catalog in ordinary prompt text.
 
-- [ ] Treat provider-facing alias changes as intentional trace-visible output changes. Preserve canonical AgentPM semantic identity alongside aliases in ModelRuntime request snapshots, verbose trace/debug rendering, machine/SDK-observable diagnostics, and RunReport data wherever aliases are exposed.
+- [x] Treat provider-facing alias changes as intentional trace-visible output changes. Preserve canonical AgentPM semantic identity alongside aliases in ModelRuntime request snapshots, verbose trace/debug rendering, machine/SDK-observable diagnostics, and RunReport data wherever aliases are exposed.
 
-- [ ] Add tests covering:
+- [x] Add tests covering:
   - provider-facing aliases across AgentPM Tool, MCP Tool, Skill-resource, Knowledge, Memory, PhaseCompletion, and persistence-review control actions,
   - provider-safe character normalization and 64-character length enforcement,
   - Memory alias truncation priority preserving space and, where descriptor-fixed, record-type signals,

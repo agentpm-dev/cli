@@ -2,7 +2,7 @@
 
 use super::action::{MemoryReadMode, MemoryWriteOperation, SemanticAction, SemanticActionProposal};
 use super::model::{
-    ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
+    ActionAlias, ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
     ModelRuntimeFailure, ModelTurn,
 };
 use super::service::{ProcessServiceClient, ProcessServiceConfig, ServiceLifecycleEmitter};
@@ -367,11 +367,67 @@ fn provider_action_tools(request: &ModelRequest) -> Vec<ProviderActionTool> {
                 alias: alias.alias.clone(),
                 action_kind: alias.action_kind.clone(),
                 identity: alias.identity.clone(),
-                description: descriptor.description.clone(),
+                description: provider_action_description(alias, descriptor, request),
                 parameters: action_parameters_schema(alias, request),
             })
         })
         .collect()
+}
+
+fn provider_action_description(
+    alias: &ActionAlias,
+    descriptor: &super::model::CapabilityDescriptor,
+    request: &ModelRequest,
+) -> String {
+    match alias.action_kind.as_str() {
+        "phase_completion" => format!(
+            "{} Use this action when the phase objective is satisfied. Other available actions do not need to be called just because they remain available.",
+            descriptor.description
+        ),
+        "persistence_review_complete" => {
+            "Complete the bounded persistence review when no additional authorized Memory read or write is needed. This does not change the pending phase outcome.".into()
+        }
+        "memory_read" | "memory_write" => {
+            let fixed_target = request
+                .effective_phase
+                .active_memory
+                .iter()
+                .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+                .map(|memory| {
+                    let record_type = if let [record_type] = memory.record_types.as_slice() {
+                        format!(", fixed record_type `{}`", record_type.name)
+                    } else {
+                        ", record_type must be selected from this action's schema".into()
+                    };
+                    format!(
+                        "Fixed Memory target: package `{}`, space `{}`{}.",
+                        memory.package, memory.space, record_type
+                    )
+                })
+                .unwrap_or_else(|| format!("Fixed Memory target identity: `{}`.", alias.identity));
+            format!(
+                "{} {} Choose this action only when that fixed target exactly matches the intended durable Memory surface.",
+                descriptor.description, fixed_target
+            )
+        }
+        "knowledge_request" => format!(
+            "{} Fixed Knowledge target: package `{}`. Do not put a different package identity in the arguments.",
+            descriptor.description, alias.identity
+        ),
+        "skill_resource_read" => format!(
+            "{} Fixed Skill target: `{}`. Select only one declared resource id in the arguments.",
+            descriptor.description, alias.identity
+        ),
+        "agentpm_tool" => format!(
+            "{} Fixed AgentPM Tool target: `{}`. Put only this Tool's JSON arguments in the arguments field.",
+            descriptor.description, alias.identity
+        ),
+        "external_mcp_tool" => format!(
+            "{} Fixed MCP Tool target: `{}`. Put only this MCP Tool's JSON arguments in the arguments field.",
+            descriptor.description, alias.identity
+        ),
+        _ => descriptor.description.clone(),
+    }
 }
 
 fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRequest) -> Value {
@@ -1589,7 +1645,7 @@ mod tests {
         let response = ProviderResponse {
             text: "I am completing this phase.".into(),
             action_calls: vec![ProviderActionCall {
-                alias: "action_1".into(),
+                alias: "phase_complete".into(),
                 arguments: json!({
                     "outcome": "ready",
                     "output": { "ok": true }
@@ -2087,7 +2143,9 @@ mod tests {
     fn built_in_runtime_generate_passes_aliases_to_transport() {
         let diagnostic_prompt = model_request().prompt.render_text();
         assert!(diagnostic_prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
-        assert!(diagnostic_prompt.contains("- action_1 [phase_completion] review/completion"));
+        assert!(
+            diagnostic_prompt.contains("- phase_complete [phase_completion] review/completion")
+        );
 
         let transport = SharedMockTransport::new(vec![ProviderResponse {
             text: json!({ "outcome": "ready" }).to_string(),
@@ -2104,11 +2162,11 @@ mod tests {
         let requests = requests.borrow();
         assert_eq!(requests.len(), 1);
         assert_eq!(
-            requests[0].action_aliases.get("action_1"),
+            requests[0].action_aliases.get("phase_complete"),
             Some(&"review/completion".to_string())
         );
         assert_eq!(requests[0].actions.len(), 1);
-        assert_eq!(requests[0].actions[0].alias, "action_1");
+        assert_eq!(requests[0].actions[0].alias, "phase_complete");
         assert_eq!(requests[0].actions[0].action_kind, "phase_completion");
         assert_eq!(
             requests[0].actions[0].parameters["properties"]["outcome"]["enum"],
@@ -2119,8 +2177,190 @@ mod tests {
         assert!(
             !requests[0]
                 .prompt
-                .contains("- action_1 [phase_completion] review/completion")
+                .contains("- phase_complete [phase_completion] review/completion")
         );
+    }
+
+    #[test]
+    fn provider_action_tools_use_semantic_aliases_and_fixed_target_descriptions() {
+        let mut request = model_request();
+        let memory = MemorySpaceRuntimeSnapshot {
+            package: "@zack/m16-reference-memory".into(),
+            package_version: "0.1.0".into(),
+            space: "notes".into(),
+            model: MemorySpaceModel::Collection,
+            description: "Durable note collection.".into(),
+            root: None,
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![MemoryRetrievalMode::Key],
+            semantic: None,
+            append_only: false,
+            record_types: vec![MemoryRecordTypeRuntimeSnapshot {
+                name: "note".into(),
+                schema_version: "1.0.0".into(),
+                content_schema: json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "body": { "type": "string" }
+                    },
+                    "required": ["body"]
+                }),
+            }],
+        };
+        request.effective_phase.active_memory.push(memory);
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "memory_write".into(),
+                identity: "@zack/m16-reference-memory/notes".into(),
+                description: "Write durable notes.".into(),
+                source: "agent_binding".into(),
+            });
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+
+        let tools = provider_action_tools(&request);
+
+        let phase_tool = tools
+            .iter()
+            .find(|tool| tool.action_kind == "phase_completion")
+            .expect("phase completion tool");
+        assert_eq!(phase_tool.alias, "phase_complete");
+        assert_eq!(phase_tool.identity, "review/completion");
+        assert!(
+            phase_tool
+                .description
+                .contains("phase objective is satisfied")
+        );
+        let memory_tool = tools
+            .iter()
+            .find(|tool| tool.action_kind == "memory_write")
+            .expect("memory write tool");
+        assert!(memory_tool.alias.starts_with("memory_write_notes_note_"));
+        assert_eq!(memory_tool.identity, "@zack/m16-reference-memory/notes");
+        assert!(
+            memory_tool
+                .description
+                .contains("package `@zack/m16-reference-memory`")
+        );
+        assert!(memory_tool.description.contains("space `notes`"));
+        assert!(memory_tool.description.contains("fixed record_type `note`"));
+
+        let transport = SharedMockTransport::new(vec![ProviderResponse {
+            text: json!({ "outcome": "ready" }).to_string(),
+            action_calls: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            metadata: BTreeMap::new(),
+        }]);
+        let requests = transport.requests.clone();
+        let mut runtime = BuiltInModelRuntime::new(selection("openai"), Box::new(transport));
+        runtime.generate(request).unwrap();
+        let requests = requests.borrow();
+        assert!(!requests[0].prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
+        assert!(!requests[0].prompt.contains(&memory_tool.alias));
+        assert!(
+            requests[0]
+                .actions
+                .iter()
+                .any(|action| action.alias == memory_tool.alias
+                    && action.action_kind == "memory_write"
+                    && action.identity == "@zack/m16-reference-memory/notes")
+        );
+        assert_eq!(
+            requests[0].action_aliases.get(&memory_tool.alias),
+            Some(&"@zack/m16-reference-memory/notes".to_string())
+        );
+    }
+
+    #[test]
+    fn memory_provider_alias_round_trip_selects_the_exact_surface() {
+        let mut request = model_request();
+        for (space, model) in [
+            ("current_note", MemorySpaceModel::Document),
+            ("notes", MemorySpaceModel::Collection),
+        ] {
+            request
+                .effective_phase
+                .active_memory
+                .push(MemorySpaceRuntimeSnapshot {
+                    package: "@zack/m16-reference-memory".into(),
+                    package_version: "0.1.0".into(),
+                    space: space.into(),
+                    model,
+                    description: format!("{space} memory"),
+                    root: None,
+                    runtime: "local".into(),
+                    source: "agent_binding".into(),
+                    state: "available".into(),
+                    readiness_reason: None,
+                    binding_scope: "global".into(),
+                    scope_keys: vec!["user".into()],
+                    retrieval_modes: vec![MemoryRetrievalMode::Key],
+                    semantic: None,
+                    append_only: false,
+                    record_types: vec![MemoryRecordTypeRuntimeSnapshot {
+                        name: "note".into(),
+                        schema_version: "1.0.0".into(),
+                        content_schema: json!({ "type": "object", "additionalProperties": true }),
+                    }],
+                });
+            request
+                .effective_phase
+                .capability_catalog
+                .push(CapabilityDescriptor {
+                    action_kind: "memory_write".into(),
+                    identity: format!("@zack/m16-reference-memory/{space}"),
+                    description: format!("Write {space}."),
+                    source: "agent_binding".into(),
+                });
+        }
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+        let notes_alias = request
+            .prompt
+            .action_aliases
+            .iter()
+            .find(|alias| {
+                alias.action_kind == "memory_write"
+                    && alias.identity == "@zack/m16-reference-memory/notes"
+            })
+            .expect("notes alias");
+        assert!(notes_alias.alias.starts_with("memory_write_notes_note_"));
+
+        let action = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                alias: notes_alias.alias.clone(),
+                arguments: json!({
+                    "operation": "create",
+                    "record_type": "note",
+                    "content": { "body": "launch readiness" }
+                }),
+            },
+            &request.prompt.action_aliases,
+        )
+        .unwrap();
+
+        match action {
+            SemanticAction::MemoryWrite {
+                package,
+                space,
+                record_type,
+                ..
+            } => {
+                assert_eq!(package, "@zack/m16-reference-memory");
+                assert_eq!(space, "notes");
+                assert_eq!(record_type, "note");
+            }
+            other => panic!("expected memory write, got {other:?}"),
+        }
     }
 
     #[test]
@@ -2170,7 +2410,7 @@ mod tests {
             assert!(
                 !requests[0]
                     .prompt
-                    .contains("- action_1 [phase_completion] review/completion"),
+                    .contains("- phase_complete [phase_completion] review/completion"),
                 "provider {provider}"
             );
         }
@@ -2285,14 +2525,14 @@ mod tests {
 
         let openai_tools = openai_tool_definitions(&tools);
         assert_eq!(openai_tools[0]["type"], "function");
-        assert_eq!(openai_tools[0]["function"]["name"], "action_1");
+        assert_eq!(openai_tools[0]["function"]["name"], "phase_complete");
         assert_eq!(
             openai_tools[0]["function"]["parameters"]["properties"]["outcome"]["enum"],
             json!(["ready"])
         );
 
         let anthropic_tools = anthropic_tool_definitions(&tools);
-        assert_eq!(anthropic_tools[0]["name"], "action_1");
+        assert_eq!(anthropic_tools[0]["name"], "phase_complete");
         assert_eq!(
             anthropic_tools[0]["input_schema"]["properties"]["outcome"]["enum"],
             json!(["ready"])
@@ -2615,11 +2855,11 @@ for line in sys.stdin:
                     PromptSection {
                         number: 5,
                         title: "EFFECTIVE CAPABILITY CATALOG".into(),
-                        content: "- action_1 [phase_completion] review/completion".into(),
+                        content: "- phase_complete [phase_completion] review/completion".into(),
                     },
                 ],
                 action_aliases: vec![crate::harness_runtime::model::ActionAlias {
-                    alias: "action_1".into(),
+                    alias: "phase_complete".into(),
                     action_kind: capability.action_kind.clone(),
                     identity: capability.identity.clone(),
                 }],

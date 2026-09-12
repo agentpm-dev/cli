@@ -16,6 +16,10 @@ pub const CONSUMER_RUN_CONTEXT_SECTION_TITLE: &str = "CONSUMER / RUN CONTEXT";
 pub const EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE: &str = "EFFECTIVE CAPABILITY CATALOG";
 pub(crate) const SUCCESSFUL_ACTION_RESULT_CONTROL: &str = "If the phase-local transcript already contains successful ActionResults for all requested executable actions, do not propose any of those actions again; propose phase_completion next. For repeated actions, compare action kind, identity, and arguments.";
 pub(crate) const SUCCESSFUL_REVIEW_ACTION_RESULT_CONTROL: &str = "If the review transcript already contains successful ActionResults for all requested Memory actions, do not propose any of those actions again; propose persistence_review_complete next. For repeated actions, compare action kind, identity, and arguments.";
+pub(crate) const PERSISTENCE_REVIEW_TARGET_SELECTION_CONTROL: &str = "Choose the Memory action whose fixed package, space, and record-type semantics match the intended durable target exactly. Use persistence_review_complete when no further Memory work is needed.";
+
+const PROVIDER_ACTION_ALIAS_MAX_LEN: usize = 64;
+const PROVIDER_ACTION_HASH_LEN: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -430,17 +434,7 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         implicit_complete,
     };
     let mut diagnostics = Vec::new();
-    let action_aliases = input
-        .effective_phase
-        .capability_catalog
-        .iter()
-        .enumerate()
-        .map(|(index, descriptor)| ActionAlias {
-            alias: format!("action_{}", index + 1),
-            action_kind: descriptor.action_kind.clone(),
-            identity: descriptor.identity.clone(),
-        })
-        .collect::<Vec<_>>();
+    let action_aliases = provider_action_aliases(input.effective_phase);
 
     let outcome_contract = match input.purpose {
         PromptAssemblyPurpose::Phase if implicit_complete => {
@@ -454,7 +448,7 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
             point,
             pending_outcome,
         } => format!(
-            "This is a bounded Memory write review at `{point}` for pending phase outcome `{pending_outcome}`. Use only authorized Memory actions if useful, then propose persistence_review_complete. Do not propose phase_completion."
+            "This is a bounded Memory write review at `{point}` for pending phase outcome `{pending_outcome}`. Use only authorized Memory actions if useful, then propose persistence_review_complete. {PERSISTENCE_REVIEW_TARGET_SELECTION_CONTROL} Do not propose phase_completion."
         ),
     };
     let mut control = format!(
@@ -593,6 +587,221 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         completion,
         diagnostics,
     }
+}
+
+pub(crate) fn provider_action_aliases(effective_phase: &EffectivePhase) -> Vec<ActionAlias> {
+    effective_phase
+        .capability_catalog
+        .iter()
+        .map(|descriptor| ActionAlias {
+            alias: provider_action_alias(descriptor, effective_phase),
+            action_kind: descriptor.action_kind.clone(),
+            identity: descriptor.identity.clone(),
+        })
+        .collect()
+}
+
+fn provider_action_alias(
+    descriptor: &CapabilityDescriptor,
+    effective_phase: &EffectivePhase,
+) -> String {
+    match descriptor.action_kind.as_str() {
+        "phase_completion" => "phase_complete".into(),
+        "persistence_review_complete" => "persistence_review_complete".into(),
+        "memory_read" | "memory_write" => memory_provider_action_alias(descriptor, effective_phase),
+        "agentpm_tool" => identity_provider_action_alias("agentpm_tool", descriptor),
+        "external_mcp_tool" => identity_provider_action_alias("mcp_tool", descriptor),
+        "skill_resource_read" => identity_provider_action_alias("skill_resource", descriptor),
+        "knowledge_request" => identity_provider_action_alias("knowledge_request", descriptor),
+        other => identity_provider_action_alias(other, descriptor),
+    }
+}
+
+fn memory_provider_action_alias(
+    descriptor: &CapabilityDescriptor,
+    effective_phase: &EffectivePhase,
+) -> String {
+    let mut parts = vec![provider_safe_component(&descriptor.action_kind)];
+    let memory = effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == descriptor.identity);
+    if let Some(memory) = memory {
+        parts.push(provider_safe_component(&memory.space));
+        if let [record_type] = memory.record_types.as_slice() {
+            parts.push(provider_safe_component(&record_type.name));
+        }
+        parts.push(provider_safe_component(&package_signal(&memory.package)));
+    } else if let Some((package, space)) = split_memory_identity(&descriptor.identity) {
+        parts.push(provider_safe_component(space));
+        parts.push(provider_safe_component(&package_signal(package)));
+    } else {
+        parts.push(provider_safe_component(&descriptor.identity));
+    }
+    provider_alias_with_hash(parts, descriptor)
+}
+
+fn identity_provider_action_alias(prefix: &str, descriptor: &CapabilityDescriptor) -> String {
+    provider_alias_with_hash(
+        vec![
+            provider_safe_component(prefix),
+            provider_safe_component(&identity_signal(&descriptor.identity)),
+        ],
+        descriptor,
+    )
+}
+
+fn provider_alias_with_hash(parts: Vec<String>, descriptor: &CapabilityDescriptor) -> String {
+    let suffix_source = format!("{}:{}", descriptor.action_kind, descriptor.identity);
+    let suffix = stable_hash_hex(&suffix_source, PROVIDER_ACTION_HASH_LEN);
+    let mut cleaned = parts
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if cleaned.is_empty() {
+        cleaned.push("agentpm_action".into());
+    }
+    let suffix_len = suffix.len() + 1;
+    let base_budget = PROVIDER_ACTION_ALIAS_MAX_LEN.saturating_sub(suffix_len);
+    let mut truncated = truncate_provider_alias_parts(cleaned, base_budget);
+    truncated = truncated.trim_matches('_').to_string();
+    if truncated.is_empty() {
+        truncated = "agentpm_action".into();
+    }
+    format!("{truncated}_{suffix}")
+}
+
+fn provider_safe_component(raw: &str) -> String {
+    let mut out = String::new();
+    let mut previous_underscore = false;
+    for byte in raw.bytes() {
+        let ch = match byte {
+            b'a'..=b'z' => byte as char,
+            b'A'..=b'Z' => (byte as char).to_ascii_lowercase(),
+            b'0'..=b'9' => byte as char,
+            _ => '_',
+        };
+        if ch == '_' {
+            if !previous_underscore && !out.is_empty() {
+                out.push('_');
+            }
+            previous_underscore = true;
+        } else {
+            out.push(ch);
+            previous_underscore = false;
+        }
+    }
+    let trimmed = out.trim_matches('_').to_string();
+    if trimmed
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| byte.is_ascii_digit())
+    {
+        format!("a_{trimmed}")
+    } else {
+        trimmed
+    }
+}
+
+fn truncate_provider_alias_parts(mut parts: Vec<String>, max_len: usize) -> String {
+    if parts.join("_").len() <= max_len {
+        return parts.join("_");
+    }
+    while parts.len() > 1 {
+        let fixed_len = parts[..parts.len() - 1].join("_").len() + 1;
+        if fixed_len < max_len {
+            let tail_budget = max_len - fixed_len;
+            let tail = truncate_provider_alias_component(
+                parts.last().expect("alias parts are not empty"),
+                tail_budget,
+            );
+            if !tail.is_empty() {
+                let mut candidate = parts[..parts.len() - 1].to_vec();
+                candidate.push(tail);
+                return candidate.join("_");
+            }
+        }
+        parts.pop();
+        if parts.join("_").len() <= max_len {
+            return parts.join("_");
+        }
+    }
+    truncate_provider_alias_component(
+        parts
+            .first()
+            .map(String::as_str)
+            .unwrap_or("agentpm_action"),
+        max_len,
+    )
+}
+
+fn truncate_provider_alias_component(value: &str, max_len: usize) -> String {
+    if value.len() <= max_len {
+        return value.to_string();
+    }
+    if max_len == 0 {
+        return String::new();
+    }
+    let prefix = value
+        .bytes()
+        .take(max_len)
+        .map(char::from)
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string();
+    if prefix.is_empty() || value.as_bytes().get(max_len) == Some(&b'_') {
+        return prefix;
+    }
+    prefix
+        .rsplit_once('_')
+        .map(|(head, _)| head.trim_matches('_').to_string())
+        .filter(|head| !head.is_empty())
+        .unwrap_or(prefix)
+}
+
+fn stable_hash_hex(value: &str, len: usize) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}").chars().take(len).collect()
+}
+
+fn identity_signal(identity: &str) -> String {
+    identity
+        .rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or(identity)
+        .to_string()
+}
+
+fn package_signal(package: &str) -> String {
+    package
+        .rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or(package)
+        .to_string()
+}
+
+fn split_memory_identity(identity: &str) -> Option<(&str, &str)> {
+    identity.rsplit_once('/')
+}
+
+fn memory_identity(package: &str, space: &str) -> String {
+    format!("{package}/{space}")
+}
+
+pub(crate) fn is_provider_safe_action_alias(alias: &str) -> bool {
+    !alias.is_empty()
+        && alias.len() <= PROVIDER_ACTION_ALIAS_MAX_LEN
+        && alias
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        && alias
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_lowercase())
 }
 
 fn transcript_has_successful_action_result(transcript: &[TranscriptEntry]) -> bool {
@@ -901,5 +1110,336 @@ impl ModelRuntime for ScriptedModelRuntime {
         self.turns
             .pop_front()
             .unwrap_or_else(|| Err(ModelRuntimeFailure::new("scripted model exhausted")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn descriptor(action_kind: &str, identity: &str) -> CapabilityDescriptor {
+        CapabilityDescriptor {
+            action_kind: action_kind.into(),
+            identity: identity.into(),
+            description: format!("{action_kind} descriptor"),
+            source: "test".into(),
+        }
+    }
+
+    fn memory_space(
+        package: &str,
+        space: &str,
+        record_types: impl IntoIterator<Item = &'static str>,
+    ) -> MemorySpaceRuntimeSnapshot {
+        MemorySpaceRuntimeSnapshot {
+            package: package.into(),
+            package_version: "0.1.0".into(),
+            space: space.into(),
+            model: MemorySpaceModel::Collection,
+            description: format!("{space} memory"),
+            root: None,
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![MemoryRetrievalMode::Key],
+            semantic: None,
+            append_only: false,
+            record_types: record_types
+                .into_iter()
+                .map(|name| MemoryRecordTypeRuntimeSnapshot {
+                    name: name.into(),
+                    schema_version: "1.0.0".into(),
+                    content_schema: Value::Object(Default::default()),
+                })
+                .collect(),
+        }
+    }
+
+    fn phase_with(
+        capability_catalog: Vec<CapabilityDescriptor>,
+        active_memory: Vec<MemorySpaceRuntimeSnapshot>,
+    ) -> EffectivePhase {
+        EffectivePhase {
+            phase_id: "remember".into(),
+            tools_allowed: None,
+            knowledge_allowed: None,
+            memory_read_allowed: None,
+            memory_write_allowed: None,
+            authored_profile_candidates: Vec::new(),
+            active_profiles: Vec::new(),
+            active_tools: Vec::new(),
+            active_skills: Vec::new(),
+            active_knowledge: Vec::new(),
+            active_memory,
+            active_memory_operations: Vec::new(),
+            capability_catalog,
+            suppressed_capabilities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn provider_action_aliases_are_semantic_provider_safe_and_stable() {
+        let single_memory = memory_space("@zack/m16-reference-memory", "notes", ["note"]);
+        let multi_memory = memory_space(
+            "@zack/m16-reference-memory",
+            "mixed_notes",
+            ["summary", "preference"],
+        );
+        let capability_catalog = vec![
+            descriptor("phase_completion", "remember/completion"),
+            descriptor("agentpm_tool", "@zack/search"),
+            descriptor("agentpm_tool", "@other/search"),
+            descriptor("external_mcp_tool", "incident-data/search"),
+            descriptor("skill_resource_read", "@zack/handoff-skill"),
+            descriptor("knowledge_request", "@zack/guide"),
+            descriptor("memory_read", "@zack/m16-reference-memory/notes"),
+            descriptor("memory_write", "@zack/m16-reference-memory/notes"),
+            descriptor("memory_write", "@zack/m16-reference-memory/mixed_notes"),
+            descriptor("persistence_review_complete", "harness/persistence_review"),
+        ];
+        let phase = phase_with(
+            capability_catalog,
+            vec![single_memory.clone(), multi_memory.clone()],
+        );
+
+        let aliases = provider_action_aliases(&phase);
+
+        assert_eq!(aliases.len(), phase.capability_catalog.len());
+        for alias in &aliases {
+            assert!(
+                is_provider_safe_action_alias(&alias.alias),
+                "alias `{}` should be provider safe",
+                alias.alias
+            );
+            assert!(
+                !alias.alias.starts_with("action_"),
+                "alias `{}` should not be positional",
+                alias.alias
+            );
+        }
+        assert!(aliases.iter().any(|alias| {
+            alias.action_kind == "phase_completion" && alias.alias == "phase_complete"
+        }));
+        assert!(aliases.iter().any(|alias| {
+            alias.action_kind == "persistence_review_complete"
+                && alias.alias == "persistence_review_complete"
+        }));
+        let search_aliases = aliases
+            .iter()
+            .filter(|alias| alias.action_kind == "agentpm_tool")
+            .map(|alias| alias.alias.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(search_aliases.len(), 2);
+        assert_ne!(search_aliases[0], search_aliases[1]);
+        assert!(
+            search_aliases
+                .iter()
+                .all(|alias| alias.starts_with("agentpm_tool_search_"))
+        );
+        let mcp_tool = aliases
+            .iter()
+            .find(|alias| alias.action_kind == "external_mcp_tool")
+            .expect("mcp tool alias");
+        assert_eq!(mcp_tool.identity, "incident-data/search");
+        assert!(mcp_tool.alias.starts_with("mcp_tool_search_"));
+        assert_eq!(
+            mcp_tool
+                .alias
+                .rsplit_once('_')
+                .map(|(_, suffix)| suffix.len()),
+            Some(PROVIDER_ACTION_HASH_LEN)
+        );
+        let skill_resource = aliases
+            .iter()
+            .find(|alias| alias.action_kind == "skill_resource_read")
+            .expect("skill resource alias");
+        assert_eq!(skill_resource.identity, "@zack/handoff-skill");
+        assert!(
+            skill_resource
+                .alias
+                .starts_with("skill_resource_handoff_skill_")
+        );
+        assert_eq!(
+            skill_resource
+                .alias
+                .rsplit_once('_')
+                .map(|(_, suffix)| suffix.len()),
+            Some(PROVIDER_ACTION_HASH_LEN)
+        );
+        let knowledge = aliases
+            .iter()
+            .find(|alias| alias.action_kind == "knowledge_request")
+            .expect("knowledge alias");
+        assert_eq!(knowledge.identity, "@zack/guide");
+        assert!(knowledge.alias.starts_with("knowledge_request_guide_"));
+        assert_eq!(
+            knowledge
+                .alias
+                .rsplit_once('_')
+                .map(|(_, suffix)| suffix.len()),
+            Some(PROVIDER_ACTION_HASH_LEN)
+        );
+        let notes_write = aliases
+            .iter()
+            .find(|alias| {
+                alias.action_kind == "memory_write"
+                    && alias.identity == "@zack/m16-reference-memory/notes"
+            })
+            .expect("notes write alias");
+        assert!(notes_write.alias.starts_with("memory_write_notes_note_"));
+        let mixed_write = aliases
+            .iter()
+            .find(|alias| {
+                alias.action_kind == "memory_write"
+                    && alias.identity == "@zack/m16-reference-memory/mixed_notes"
+            })
+            .expect("mixed write alias");
+        assert!(mixed_write.alias.starts_with("memory_write_mixed_notes_"));
+        assert!(!mixed_write.alias.contains("summary"));
+        assert!(!mixed_write.alias.contains("preference"));
+
+        let mut expanded_phase = phase_with(
+            vec![
+                descriptor("agentpm_tool", "@zack/unrelated"),
+                descriptor("memory_write", "@zack/m16-reference-memory/notes"),
+                descriptor("phase_completion", "remember/completion"),
+            ],
+            vec![single_memory],
+        );
+        let stable_alias = provider_action_aliases(&expanded_phase)
+            .into_iter()
+            .find(|alias| {
+                alias.action_kind == "memory_write"
+                    && alias.identity == "@zack/m16-reference-memory/notes"
+            })
+            .expect("expanded notes write alias");
+        assert_eq!(stable_alias.alias, notes_write.alias);
+        expanded_phase.capability_catalog.reverse();
+        let reordered_alias = provider_action_aliases(&expanded_phase)
+            .into_iter()
+            .find(|alias| {
+                alias.action_kind == "memory_write"
+                    && alias.identity == "@zack/m16-reference-memory/notes"
+            })
+            .expect("reordered notes write alias");
+        assert_eq!(reordered_alias.alias, notes_write.alias);
+    }
+
+    #[test]
+    fn memory_alias_truncation_preserves_space_and_fixed_record_type() {
+        let memory = memory_space(
+            "@very-long-scope/very-long-package-name-that-should-not-dominate",
+            "launch_readiness_notes",
+            ["note"],
+        );
+        let phase = phase_with(
+            vec![descriptor(
+                "memory_write",
+                "@very-long-scope/very-long-package-name-that-should-not-dominate/launch_readiness_notes",
+            )],
+            vec![memory],
+        );
+
+        let alias = &provider_action_aliases(&phase)[0].alias;
+
+        assert!(is_provider_safe_action_alias(alias));
+        assert!(alias.len() <= 64);
+        assert!(alias.contains("memory_write"));
+        assert!(alias.contains("launch_readiness_notes"));
+        assert!(alias.contains("note"));
+    }
+
+    #[test]
+    fn alias_truncation_prefers_component_boundaries_for_all_action_kinds() {
+        let phase = phase_with(
+            vec![descriptor(
+                "external_mcp_tool",
+                "incident-data/very-long-server-name-with-very-long-tool-name-that-should-drop-tail",
+            )],
+            vec![],
+        );
+
+        let alias = &provider_action_aliases(&phase)[0].alias;
+
+        assert!(is_provider_safe_action_alias(alias));
+        assert_eq!(alias.len(), 64);
+        assert!(alias.starts_with("mcp_tool_very_long_server_name_with_very_long_tool_name_"));
+        assert!(!alias.contains("nam_"));
+    }
+
+    #[test]
+    fn alias_truncation_shortens_low_priority_parts_before_required_parts() {
+        let memory = memory_space(
+            "@very-long-scope/package-signal-that-should-shorten-first",
+            "conversation_state",
+            ["note"],
+        );
+        let phase = phase_with(
+            vec![descriptor(
+                "memory_write",
+                "@very-long-scope/package-signal-that-should-shorten-first/conversation_state",
+            )],
+            vec![memory],
+        );
+
+        let alias = &provider_action_aliases(&phase)[0].alias;
+
+        assert!(is_provider_safe_action_alias(alias));
+        assert!(alias.len() <= 64);
+        assert!(alias.starts_with("memory_write_conversation_state_note_package_signal_"));
+        assert!(!alias.contains("package_signal_th"));
+    }
+
+    #[test]
+    fn persistence_review_control_guidance_names_exact_memory_target_selection() {
+        let phase = phase_with(
+            vec![
+                descriptor("memory_write", "@zack/memory/notes"),
+                descriptor("memory_write", "@zack/memory/current_note"),
+                descriptor("persistence_review_complete", "harness/persistence_review"),
+            ],
+            vec![
+                memory_space("@zack/memory", "notes", ["note"]),
+                memory_space("@zack/memory", "current_note", ["note"]),
+            ],
+        );
+        let aliases = provider_action_aliases(&phase);
+        assert!(aliases.iter().any(|alias| {
+            alias.action_kind == "memory_write"
+                && alias.identity == "@zack/memory/notes"
+                && alias.alias.starts_with("memory_write_notes_note_")
+        }));
+        assert!(aliases.iter().any(|alias| {
+            alias.action_kind == "memory_write"
+                && alias.identity == "@zack/memory/current_note"
+                && alias.alias.starts_with("memory_write_current_note_note_")
+        }));
+        assert!(
+            aliases
+                .iter()
+                .any(|alias| alias.alias == "persistence_review_complete")
+        );
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::MemoryWriteReview {
+                point: "phase_end",
+                pending_outcome: "done",
+            },
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &["done".into()],
+            run_input: "input",
+            consumer_context: None,
+            prior_phase_results: &[],
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+
+        let text = prompt.render_text();
+        assert!(text.contains(PERSISTENCE_REVIEW_TARGET_SELECTION_CONTROL));
+        assert!(text.contains("persistence_review_complete"));
     }
 }
