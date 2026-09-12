@@ -621,24 +621,94 @@ fn memory_provider_action_alias(
     descriptor: &CapabilityDescriptor,
     effective_phase: &EffectivePhase,
 ) -> String {
-    let mut parts = vec![provider_safe_component(&descriptor.action_kind)];
     let memory = effective_phase
         .active_memory
         .iter()
         .find(|memory| memory_identity(&memory.package, &memory.space) == descriptor.identity);
     if let Some(memory) = memory {
-        parts.push(provider_safe_component(&memory.space));
-        if let [record_type] = memory.record_types.as_slice() {
-            parts.push(provider_safe_component(&record_type.name));
-        }
-        parts.push(provider_safe_component(&package_signal(&memory.package)));
+        return provider_memory_alias_with_hash(
+            &descriptor.action_kind,
+            &memory.space,
+            memory
+                .record_types
+                .as_slice()
+                .first()
+                .filter(|_| memory.record_types.len() == 1)
+                .map(|record_type| record_type.name.as_str()),
+            Some(&package_signal(&memory.package)),
+            descriptor,
+        );
     } else if let Some((package, space)) = split_memory_identity(&descriptor.identity) {
-        parts.push(provider_safe_component(space));
-        parts.push(provider_safe_component(&package_signal(package)));
+        return provider_memory_alias_with_hash(
+            &descriptor.action_kind,
+            space,
+            None,
+            Some(&package_signal(package)),
+            descriptor,
+        );
     } else {
-        parts.push(provider_safe_component(&descriptor.identity));
+        let parts = vec![
+            provider_safe_component(&descriptor.action_kind),
+            provider_safe_component(&descriptor.identity),
+        ];
+        provider_alias_with_hash(parts, descriptor)
     }
-    provider_alias_with_hash(parts, descriptor)
+}
+
+fn provider_memory_alias_with_hash(
+    action_kind: &str,
+    space: &str,
+    fixed_record_type: Option<&str>,
+    package_signal: Option<&str>,
+    descriptor: &CapabilityDescriptor,
+) -> String {
+    let (suffix, base_budget) = provider_alias_suffix_and_budget(descriptor);
+
+    let mut parts = vec![
+        provider_safe_component(action_kind),
+        provider_safe_component(space),
+    ];
+    if let Some(record_type) = fixed_record_type {
+        parts.push(provider_safe_component(record_type));
+    }
+    if let Some(package_signal) = package_signal {
+        parts.push(provider_safe_component(package_signal));
+    }
+
+    let mut cleaned = parts
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if cleaned.is_empty() {
+        cleaned.push("memory".into());
+    }
+
+    if fixed_record_type.is_some() && cleaned.len() >= 3 {
+        let required = cleaned[..3].to_vec();
+        if required.join("_").len() > base_budget {
+            let action = required[0].clone();
+            let space = required[1].clone();
+            let record_type = required[2].clone();
+            if let Some(space_budget) = base_budget
+                .checked_sub(action.len())
+                .and_then(|remaining| remaining.checked_sub(record_type.len()))
+                .and_then(|remaining| remaining.checked_sub(2))
+            {
+                let truncated_space = truncate_provider_alias_component(&space, space_budget);
+                if !truncated_space.is_empty() {
+                    let base = [action, truncated_space, record_type].join("_");
+                    return format!("{base}_{suffix}");
+                }
+            }
+        }
+    }
+
+    let mut truncated = truncate_provider_alias_parts(cleaned, base_budget);
+    truncated = truncated.trim_matches('_').to_string();
+    if truncated.is_empty() {
+        truncated = "memory".into();
+    }
+    format!("{truncated}_{suffix}")
 }
 
 fn identity_provider_action_alias(prefix: &str, descriptor: &CapabilityDescriptor) -> String {
@@ -652,8 +722,7 @@ fn identity_provider_action_alias(prefix: &str, descriptor: &CapabilityDescripto
 }
 
 fn provider_alias_with_hash(parts: Vec<String>, descriptor: &CapabilityDescriptor) -> String {
-    let suffix_source = format!("{}:{}", descriptor.action_kind, descriptor.identity);
-    let suffix = stable_hash_hex(&suffix_source, PROVIDER_ACTION_HASH_LEN);
+    let (suffix, base_budget) = provider_alias_suffix_and_budget(descriptor);
     let mut cleaned = parts
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -661,14 +730,20 @@ fn provider_alias_with_hash(parts: Vec<String>, descriptor: &CapabilityDescripto
     if cleaned.is_empty() {
         cleaned.push("agentpm_action".into());
     }
-    let suffix_len = suffix.len() + 1;
-    let base_budget = PROVIDER_ACTION_ALIAS_MAX_LEN.saturating_sub(suffix_len);
     let mut truncated = truncate_provider_alias_parts(cleaned, base_budget);
     truncated = truncated.trim_matches('_').to_string();
     if truncated.is_empty() {
         truncated = "agentpm_action".into();
     }
     format!("{truncated}_{suffix}")
+}
+
+fn provider_alias_suffix_and_budget(descriptor: &CapabilityDescriptor) -> (String, usize) {
+    let suffix_source = format!("{}:{}", descriptor.action_kind, descriptor.identity);
+    let suffix = stable_hash_hex(&suffix_source, PROVIDER_ACTION_HASH_LEN);
+    let suffix_len = suffix.len() + 1;
+    let base_budget = PROVIDER_ACTION_ALIAS_MAX_LEN.saturating_sub(suffix_len);
+    (suffix, base_budget)
 }
 
 fn provider_safe_component(raw: &str) -> String {
@@ -1350,6 +1425,28 @@ mod tests {
         assert!(alias.contains("memory_write"));
         assert!(alias.contains("launch_readiness_notes"));
         assert!(alias.contains("note"));
+    }
+
+    #[test]
+    fn memory_alias_truncation_keeps_fixed_record_type_when_space_is_long() {
+        let memory = memory_space(
+            "@zack/m16a-memory-package-with-long-alias-truncation-name",
+            "conversation_state_notes_with_intentionally_long_alias_tail",
+            ["note"],
+        );
+        let phase = phase_with(
+            vec![descriptor(
+                "memory_write",
+                "@zack/m16a-memory-package-with-long-alias-truncation-name/conversation_state_notes_with_intentionally_long_alias_tail",
+            )],
+            vec![memory],
+        );
+
+        let alias = &provider_action_aliases(&phase)[0].alias;
+
+        assert!(is_provider_safe_action_alias(alias));
+        assert!(alias.len() <= 64);
+        assert!(alias.starts_with("memory_write_conversation_state_notes_with_note_"));
     }
 
     #[test]
