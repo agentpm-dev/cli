@@ -844,6 +844,23 @@ pub fn validate_manifest_value(
     value: &mut Value,
     fix: bool,
 ) -> Result<(bool, Vec<LintIssue>)> {
+    let manifest_path = resolve_existing_manifest_path(file_label);
+    validate_manifest_value_with_manifest_path(
+        schema_source,
+        file_label,
+        value,
+        fix,
+        manifest_path.as_deref(),
+    )
+}
+
+fn validate_manifest_value_with_manifest_path(
+    schema_source: &str,
+    file_label: &str,
+    value: &mut Value,
+    fix: bool,
+    manifest_path: Option<&Path>,
+) -> Result<(bool, Vec<LintIssue>)> {
     // Compile schema (keep simple for now; we can cache later if needed)
     let schema_value = load_schema_value(schema_source)?;
     let schema_static: &'static serde_json::Value = Box::leak(Box::new(schema_value));
@@ -941,12 +958,11 @@ pub fn validate_manifest_value(
     if value.get("kind").and_then(Value::as_str) == Some("memory")
         && let Ok(manifest) = parse_memory_manifest(value)
     {
-        let manifest_path = resolve_existing_manifest_path(file_label);
         issues.extend(validate_memory_manifest_semantics(
             file_label,
             value,
             &manifest,
-            manifest_path.as_deref(),
+            manifest_path,
         ));
     }
 
@@ -5591,15 +5607,15 @@ mod tests {
         let manifest_path = dir.join("agent.json");
         write_manifest_pretty(&manifest_path, &base_memory_manifest()).unwrap();
 
-        let cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&dir).unwrap();
-
-        let result = {
-            let (mut loaded, _) = load_manifest_value(Path::new("agent.json")).unwrap();
-            validate_manifest_value(&schema_path(), "agent.json", &mut loaded, false).unwrap()
-        };
-
-        std::env::set_current_dir(cwd).unwrap();
+        let (mut loaded, _) = load_manifest_value(&manifest_path).unwrap();
+        let result = validate_manifest_value_with_manifest_path(
+            &schema_path(),
+            "agent.json",
+            &mut loaded,
+            false,
+            Some(&manifest_path),
+        )
+        .unwrap();
 
         let (ok, issues) = result;
         assert!(!ok, "expected manifest to fail validation");

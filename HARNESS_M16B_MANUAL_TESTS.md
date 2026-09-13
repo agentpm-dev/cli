@@ -689,6 +689,7 @@ trace_path = Path(report["trace_path"]).resolve()
 events = [json.loads(line) for line in trace_path.read_text().splitlines() if line.strip()]
 actions = []
 families = []
+family_fields = {}
 for event in events:
     if event.get("event_type") != "semantic_action_proposed":
         continue
@@ -702,6 +703,7 @@ for event in events:
         json.dumps(fields, sort_keys=True),
     ))
     families.append((kind, identity))
+    family_fields.setdefault((kind, identity), Counter())[json.dumps(fields, sort_keys=True)] += 1
 
 counts = Counter(actions)
 family_counts = Counter(families)
@@ -717,9 +719,18 @@ for (kind, identity, fields), count in counts.items():
 print(f"total accepted actions: {sum(counts.values())}")
 print(f"repeated exact action+identity+fields entries: {sum(1 for count in counts.values() if count > 1)}")
 print("repeated action kind+identity entries, ignoring argument changes:")
+changed_argument_repeat_count = 0
 for (kind, identity), count in family_counts.items():
     if count > 1:
         print(f"  {count}x {kind} {identity}")
+        variants = family_fields.get((kind, identity), Counter())
+        if len(variants) > 1:
+            changed_argument_repeat_count += 1
+            print("    changed argument variants:")
+            for fields, variant_count in variants.items():
+                print(f"      {variant_count}x {fields}")
+if changed_argument_repeat_count == 0:
+    print("  none with changed arguments")
 
 provider_requests = [
     event for event in events

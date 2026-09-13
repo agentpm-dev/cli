@@ -2,8 +2,8 @@
 
 use super::action::{MemoryReadMode, MemoryWriteOperation, SemanticAction, SemanticActionProposal};
 use super::model::{
-    ActionAlias, ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest,
-    ModelRequestTurn, ModelRuntime, ModelRuntimeFailure, ModelTurn,
+    ActionAlias, CapabilityDescriptor, ModelCapabilityAdvertisement, ModelProviderSelection,
+    ModelRequest, ModelRequestTurn, ModelRuntime, ModelRuntimeFailure, ModelTurn,
 };
 use super::service::{ProcessServiceClient, ProcessServiceConfig, ServiceLifecycleEmitter};
 use crate::harness_config::HarnessImplementation;
@@ -421,6 +421,8 @@ fn provider_action_description(
             "Complete the bounded persistence review when no additional authorized Memory read or write is needed. This does not change the pending phase outcome.".into()
         }
         "memory_read" | "memory_write" => {
+            let descriptor_description =
+                provider_memory_descriptor_description(alias, descriptor, request);
             let fixed_target = request
                 .effective_phase
                 .active_memory
@@ -438,9 +440,19 @@ fn provider_action_description(
                     )
                 })
                 .unwrap_or_else(|| format!("Fixed Memory target identity: `{}`.", alias.identity));
+            let read_shape = if alias.action_kind == "memory_read" {
+                alias
+                    .provider_shape
+                    .as_deref()
+                    .and_then(memory_read_shape_description)
+                    .map(|description| format!(" Fixed read shape: {description}."))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
             format!(
-                "{} {} Choose this action only when that fixed target exactly matches the intended durable Memory surface.",
-                descriptor.description, fixed_target
+                "{} {}{} Choose this action only when that fixed target exactly matches the intended durable Memory surface.",
+                descriptor_description, fixed_target, read_shape
             )
         }
         "knowledge_request" => format!(
@@ -461,6 +473,23 @@ fn provider_action_description(
         ),
         _ => descriptor.description.clone(),
     }
+}
+
+fn provider_memory_descriptor_description(
+    alias: &super::model::ActionAlias,
+    descriptor: &CapabilityDescriptor,
+    request: &ModelRequest,
+) -> String {
+    if alias.action_kind != "memory_read" || alias.provider_shape.is_none() {
+        return descriptor.description.clone();
+    }
+    request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .map(|memory| memory.description.clone())
+        .unwrap_or_else(|| descriptor.description.clone())
 }
 
 fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRequest) -> Value {
@@ -498,6 +527,10 @@ fn memory_read_parameters_schema(
     alias: &super::model::ActionAlias,
     request: &ModelRequest,
 ) -> Value {
+    if let Some(provider_shape) = alias.provider_shape.as_deref() {
+        return memory_read_shape_parameters_schema(provider_shape, alias, request);
+    }
+
     let modes = request
         .effective_phase
         .active_memory
@@ -548,6 +581,116 @@ fn memory_read_parameters_schema(
         },
         "required": ["mode"]
     })
+}
+
+fn memory_read_shape_parameters_schema(
+    provider_shape: &str,
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    let record_type = memory_record_type_schema(alias, request);
+    match provider_shape {
+        "key_document" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_type": record_type
+            }
+        }),
+        "key_record" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_id": memory_record_id_schema(),
+                "record_type": record_type
+            },
+            "required": ["record_id"]
+        }),
+        "chronological" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_type": record_type,
+                "limit": memory_limit_schema()
+            }
+        }),
+        "filter" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_type": record_type,
+                "filter": memory_filter_schema(),
+                "limit": memory_limit_schema()
+            },
+            "required": ["filter"]
+        }),
+        "full_text" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_type": record_type,
+                "query": memory_query_schema("Text query for full_text Memory retrieval."),
+                "limit": memory_limit_schema()
+            },
+            "required": ["query"]
+        }),
+        "semantic" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_type": record_type,
+                "filter": memory_filter_schema(),
+                "query": memory_query_schema("Text query for semantic Memory retrieval."),
+                "limit": memory_limit_schema()
+            },
+            "required": ["query"]
+        }),
+        _ => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["key", "filter", "chronological", "full_text", "semantic"],
+                    "description": "Memory retrieval mode for this already-selected package/space."
+                },
+                "record_id": memory_record_id_schema(),
+                "record_type": record_type,
+                "filter": memory_filter_schema(),
+                "query": memory_query_schema("Text query for full_text or semantic Memory retrieval."),
+                "limit": memory_limit_schema()
+            },
+            "required": ["mode"]
+        }),
+    }
+}
+
+fn memory_record_id_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "description": "Existing Memory record id returned by authorized Memory access."
+    })
+}
+
+fn memory_filter_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Conjunctive exact-match filter using dot-path keys over durable record content."
+    })
+}
+
+fn memory_query_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "description": description
+    })
+}
+
+fn memory_limit_schema() -> Value {
+    json!({ "type": "integer", "minimum": 1 })
 }
 
 fn memory_write_parameters_schema(
@@ -1120,10 +1263,27 @@ fn semantic_action_from_provider_call(
         }),
         "memory_read" => {
             let (package, space) = split_identity(&alias.identity)?;
+            let fixed_mode = memory_read_mode_from_provider_shape(alias.provider_shape.as_deref())?;
+            let mode = match (fixed_mode, call.arguments.get("mode")) {
+                (Some(fixed_mode), Some(value)) => {
+                    let proposed = parse_memory_read_mode(Some(value))?;
+                    if proposed != fixed_mode {
+                        return Err(ModelRuntimeFailure::new(format!(
+                            "memory_read provider action `{}` fixes mode `{}` but arguments requested `{}`",
+                            alias.alias,
+                            memory_read_mode_name(fixed_mode),
+                            memory_read_mode_name(proposed)
+                        )));
+                    }
+                    fixed_mode
+                }
+                (Some(fixed_mode), None) => fixed_mode,
+                (None, value) => parse_memory_read_mode(value)?,
+            };
             Ok(SemanticAction::MemoryRead {
                 package,
                 space,
-                mode: parse_memory_read_mode(call.arguments.get("mode"))?,
+                mode,
                 record_id: call
                     .arguments
                     .get("record_id")
@@ -1175,6 +1335,52 @@ fn semantic_action_from_provider_call(
         other => Err(ModelRuntimeFailure::new(format!(
             "unsupported provider action kind `{other}`"
         ))),
+    }
+}
+
+fn memory_read_mode_from_provider_shape(
+    provider_shape: Option<&str>,
+) -> Result<Option<MemoryReadMode>, ModelRuntimeFailure> {
+    let Some(provider_shape) = provider_shape else {
+        return Ok(None);
+    };
+    match provider_shape {
+        "key_document" | "key_record" => Ok(Some(MemoryReadMode::Key)),
+        "filter" => Ok(Some(MemoryReadMode::Filter)),
+        "chronological" => Ok(Some(MemoryReadMode::Chronological)),
+        "full_text" => Ok(Some(MemoryReadMode::FullText)),
+        "semantic" => Ok(Some(MemoryReadMode::Semantic)),
+        other => Err(ModelRuntimeFailure::new(format!(
+            "unsupported memory_read provider shape `{other}`"
+        ))),
+    }
+}
+
+fn memory_read_mode_name(mode: MemoryReadMode) -> &'static str {
+    match mode {
+        MemoryReadMode::Key => "key",
+        MemoryReadMode::Filter => "filter",
+        MemoryReadMode::Chronological => "chronological",
+        MemoryReadMode::FullText => "full_text",
+        MemoryReadMode::Semantic => "semantic",
+    }
+}
+
+fn memory_read_shape_description(provider_shape: &str) -> Option<&'static str> {
+    match provider_shape {
+        "key_document" => Some(
+            "key read for the current scoped document; do not provide record_id, query, or filter",
+        ),
+        "key_record" => Some("key read by existing record_id; do not provide query or filter"),
+        "chronological" => {
+            Some("chronological list read; only record_type and limit may narrow results")
+        }
+        "filter" => Some("filter read; provide filter and do not provide query or record_id"),
+        "full_text" => Some("full_text read; provide query and do not provide record_id or filter"),
+        "semantic" => Some(
+            "semantic read; provide query, optionally provide filter, and do not provide record_id",
+        ),
+        _ => None,
     }
 }
 
@@ -1920,6 +2126,7 @@ mod tests {
             alias: "action_1".into(),
             action_kind: "persistence_review_complete".into(),
             identity: "harness/persistence_review".into(),
+            provider_shape: None,
         }];
         let turn = normalize_provider_response(response, &aliases).unwrap();
         assert_eq!(turn.actions.len(), 1);
@@ -2085,6 +2292,7 @@ mod tests {
             alias: "action_2".into(),
             action_kind: "memory_write".into(),
             identity: "@zack/state/conversation_state".into(),
+            provider_shape: None,
         });
         request
             .effective_phase
@@ -2598,6 +2806,210 @@ mod tests {
     }
 
     #[test]
+    fn memory_read_provider_actions_advertise_flat_shape_schemas() {
+        let mut request = model_request();
+        request.effective_phase.active_memory.push(memory_snapshot(
+            "@zack/m16-reference-memory",
+            "notes",
+            MemorySpaceModel::Collection,
+            vec![
+                MemoryRetrievalMode::Key,
+                MemoryRetrievalMode::Chronological,
+                MemoryRetrievalMode::Filter,
+                MemoryRetrievalMode::FullText,
+                MemoryRetrievalMode::Semantic,
+            ],
+        ));
+        request.effective_phase.active_memory.push(memory_snapshot(
+            "@zack/m16-reference-memory",
+            "current_note",
+            MemorySpaceModel::Document,
+            vec![MemoryRetrievalMode::Key],
+        ));
+        for identity in [
+            "@zack/m16-reference-memory/notes",
+            "@zack/m16-reference-memory/current_note",
+        ] {
+            request
+                .effective_phase
+                .capability_catalog
+                .push(CapabilityDescriptor {
+                    action_kind: "memory_read".into(),
+                    identity: identity.into(),
+                    description: format!("Read {identity}."),
+                    source: "agent_binding".into(),
+                });
+        }
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+
+        let shape_schema = |shape: &str| {
+            let alias = request
+                .prompt
+                .action_aliases
+                .iter()
+                .find(|alias| {
+                    alias.action_kind == "memory_read"
+                        && alias.identity == "@zack/m16-reference-memory/notes"
+                        && alias.provider_shape.as_deref() == Some(shape)
+                })
+                .unwrap_or_else(|| panic!("missing {shape} alias"));
+            action_parameters_schema(alias, &request)
+        };
+
+        let key_record = shape_schema("key_record");
+        assert_eq!(key_record["required"], json!(["record_id"]));
+        assert!(key_record["properties"].get("mode").is_none());
+        assert!(key_record["properties"].get("query").is_none());
+        assert!(key_record["properties"].get("filter").is_none());
+
+        let chronological = shape_schema("chronological");
+        assert!(chronological.get("required").is_none());
+        assert!(chronological["properties"].get("limit").is_some());
+        assert!(chronological["properties"].get("record_id").is_none());
+        assert!(chronological["properties"].get("query").is_none());
+        assert!(chronological["properties"].get("filter").is_none());
+
+        let filter = shape_schema("filter");
+        assert_eq!(filter["required"], json!(["filter"]));
+        assert!(filter["properties"].get("filter").is_some());
+        assert!(filter["properties"].get("record_id").is_none());
+        assert!(filter["properties"].get("query").is_none());
+
+        let full_text = shape_schema("full_text");
+        assert_eq!(full_text["required"], json!(["query"]));
+        assert!(full_text["properties"].get("query").is_some());
+        assert!(full_text["properties"].get("filter").is_none());
+        assert!(full_text["properties"].get("record_id").is_none());
+
+        let semantic = shape_schema("semantic");
+        assert_eq!(semantic["required"], json!(["query"]));
+        assert!(semantic["properties"].get("query").is_some());
+        assert!(semantic["properties"].get("filter").is_some());
+        assert!(semantic["properties"].get("record_id").is_none());
+
+        let key_document_alias = request
+            .prompt
+            .action_aliases
+            .iter()
+            .find(|alias| {
+                alias.identity == "@zack/m16-reference-memory/current_note"
+                    && alias.provider_shape.as_deref() == Some("key_document")
+            })
+            .expect("document key alias");
+        let key_document = action_parameters_schema(key_document_alias, &request);
+        assert!(key_document.get("required").is_none());
+        assert!(key_document["properties"].get("record_id").is_none());
+        assert!(key_document["properties"].get("query").is_none());
+        assert!(key_document["properties"].get("filter").is_none());
+
+        let tools = provider_action_tools(&request);
+        assert_eq!(
+            tools
+                .iter()
+                .filter(|tool| tool.action_kind == "memory_read")
+                .count(),
+            6
+        );
+        assert!(tools.iter().any(|tool| {
+            tool.alias == key_document_alias.alias
+                && tool.description.contains("Fixed read shape: key read")
+        }));
+        let key_record_tool = tools
+            .iter()
+            .find(|tool| {
+                tool.action_kind == "memory_read"
+                    && tool.identity == "@zack/m16-reference-memory/notes"
+                    && tool.alias.contains("key_record")
+            })
+            .expect("key record provider tool");
+        assert!(key_record_tool.description.contains("notes memory"));
+        assert!(
+            key_record_tool
+                .description
+                .contains("Fixed read shape: key read by existing record_id")
+        );
+        assert!(!key_record_tool.description.contains("Modes:"));
+        assert!(
+            !key_record_tool
+                .description
+                .contains("key requires record_id")
+        );
+    }
+
+    #[test]
+    fn memory_read_provider_shape_aliases_round_trip_to_canonical_actions() {
+        let aliases = vec![
+            ActionAlias {
+                alias: "memory_read_notes_key_record_note_abcd1234".into(),
+                action_kind: "memory_read".into(),
+                identity: "@zack/memory/notes".into(),
+                provider_shape: Some("key_record".into()),
+            },
+            ActionAlias {
+                alias: "memory_read_notes_semantic_note_abcd1234".into(),
+                action_kind: "memory_read".into(),
+                identity: "@zack/memory/notes".into(),
+                provider_shape: Some("semantic".into()),
+            },
+        ];
+
+        let key_action = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: aliases[0].alias.clone(),
+                arguments: json!({ "record_id": "mem-1", "record_type": "note" }),
+            },
+            &aliases,
+        )
+        .expect("key alias should decode");
+        match key_action {
+            SemanticAction::MemoryRead {
+                package,
+                space,
+                mode,
+                record_id,
+                ..
+            } => {
+                assert_eq!(package, "@zack/memory");
+                assert_eq!(space, "notes");
+                assert_eq!(mode, MemoryReadMode::Key);
+                assert_eq!(record_id.as_deref(), Some("mem-1"));
+            }
+            other => panic!("expected MemoryRead, got {other:?}"),
+        }
+
+        let semantic_action = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: aliases[1].alias.clone(),
+                arguments: json!({
+                    "query": "launch readiness",
+                    "filter": { "tag": "release" },
+                    "limit": 3
+                }),
+            },
+            &aliases,
+        )
+        .expect("semantic alias should decode");
+        match semantic_action {
+            SemanticAction::MemoryRead {
+                mode,
+                query,
+                filter,
+                limit,
+                ..
+            } => {
+                assert_eq!(mode, MemoryReadMode::Semantic);
+                assert_eq!(query.as_deref(), Some("launch readiness"));
+                assert_eq!(filter.get("tag"), Some(&json!("release")));
+                assert_eq!(limit, Some(3));
+            }
+            other => panic!("expected MemoryRead, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn native_provider_prompt_omits_catalog_for_supported_built_in_providers() {
         for provider in ["openai", "anthropic", "ollama"] {
             let transport = SharedMockTransport::new(vec![ProviderResponse {
@@ -2896,6 +3308,35 @@ mod tests {
         let ollama_messages = ollama_body["messages"].as_array().unwrap();
         assert_eq!(ollama_messages[3]["tool_calls"][0]["id"], "call_1");
         assert_eq!(ollama_messages[4]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn split_memory_read_aliases_preserve_native_action_result_correlation() {
+        let request = correlated_memory_read_provider_request("openai");
+        let openai_body = Value::Object(openai_request_body(&request));
+        let openai_messages = openai_body["messages"].as_array().unwrap();
+        assert_eq!(openai_messages[2]["tool_calls"][0]["id"], "call_read_1");
+        assert_eq!(
+            openai_messages[2]["tool_calls"][0]["function"]["name"],
+            "memory_read_notes_chronological_note_abcd1234"
+        );
+        assert_eq!(openai_messages[3]["role"], "tool");
+        assert_eq!(openai_messages[3]["tool_call_id"], "call_read_1");
+
+        let request = correlated_memory_read_provider_request("anthropic");
+        let anthropic_body = Value::Object(anthropic_request_body(&request));
+        let anthropic_messages = anthropic_body["messages"].as_array().unwrap();
+        assert_eq!(anthropic_messages[1]["content"][0]["type"], "tool_use");
+        assert_eq!(anthropic_messages[1]["content"][0]["id"], "call_read_1");
+        assert_eq!(
+            anthropic_messages[1]["content"][0]["name"],
+            "memory_read_notes_chronological_note_abcd1234"
+        );
+        assert_eq!(anthropic_messages[2]["content"][0]["type"], "tool_result");
+        assert_eq!(
+            anthropic_messages[2]["content"][0]["tool_use_id"],
+            "call_read_1"
+        );
     }
 
     #[test]
@@ -3379,6 +3820,7 @@ for line in sys.stdin:
                     alias: "phase_complete".into(),
                     action_kind: capability.action_kind.clone(),
                     identity: capability.identity.clone(),
+                    provider_shape: None,
                 }],
                 completion: CompletionContract {
                     phase_id: "review".into(),
@@ -3466,6 +3908,40 @@ for line in sys.stdin:
             alias: alias.into(),
             action_kind: action_kind.into(),
             identity: identity.into(),
+            provider_shape: None,
+        }
+    }
+
+    fn memory_snapshot(
+        package: &str,
+        space: &str,
+        model: MemorySpaceModel,
+        retrieval_modes: Vec<MemoryRetrievalMode>,
+    ) -> MemorySpaceRuntimeSnapshot {
+        MemorySpaceRuntimeSnapshot {
+            package: package.into(),
+            package_version: "0.1.0".into(),
+            space: space.into(),
+            model,
+            description: format!("{space} memory"),
+            root: None,
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes,
+            semantic: None,
+            append_only: false,
+            record_types: vec![MemoryRecordTypeRuntimeSnapshot {
+                name: "note".into(),
+                schema_version: "1.0.0".into(),
+                content_schema: json!({
+                    "type": "object",
+                    "additionalProperties": true
+                }),
+            }],
         }
     }
 
@@ -3563,6 +4039,62 @@ for line in sys.stdin:
                 return Err(ModelRuntimeFailure::new("shared mock exhausted"));
             }
             Ok(self.responses.remove(0))
+        }
+    }
+
+    fn correlated_memory_read_provider_request(provider: &str) -> ProviderRequest {
+        ProviderRequest {
+            selection: selection(provider),
+            prompt: "Provider control.".into(),
+            include_capability_catalog: false,
+            turn_strategy: "native_action_result_turns".into(),
+            turns: vec![
+                ModelRequestTurn::UserInput {
+                    content: "Check notes.".into(),
+                },
+                ModelRequestTurn::SemanticActionCall {
+                    provider_call_id: Some("call_read_1".into()),
+                    provider_alias: Some("memory_read_notes_chronological_note_abcd1234".into()),
+                    action_kind: "memory_read".into(),
+                    identity: "@zack/memory/notes".into(),
+                    arguments: json!({
+                        "limit": 5,
+                        "record_type": "note"
+                    }),
+                },
+                ModelRequestTurn::SemanticActionResult {
+                    provider_call_id: Some("call_read_1".into()),
+                    action_kind: "memory_read".into(),
+                    identity: "@zack/memory/notes".into(),
+                    result: json!({
+                        "ok": true,
+                        "count": 0,
+                        "records": []
+                    }),
+                    action_succeeded: Some(true),
+                },
+            ],
+            action_aliases: BTreeMap::from([(
+                "memory_read_notes_chronological_note_abcd1234".into(),
+                "@zack/memory/notes".into(),
+            )]),
+            actions: vec![ProviderActionTool {
+                alias: "memory_read_notes_chronological_note_abcd1234".into(),
+                action_kind: "memory_read".into(),
+                identity: "@zack/memory/notes".into(),
+                description: "Chronological Memory read.".into(),
+                parameters: json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "limit": { "type": "integer", "minimum": 1 },
+                        "record_type": {
+                            "type": "string",
+                            "enum": ["note"]
+                        }
+                    }
+                }),
+            }],
         }
     }
 }

@@ -333,6 +333,8 @@ pub struct ActionAlias {
     pub alias: String,
     pub action_kind: String,
     pub identity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_shape: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -780,10 +782,17 @@ pub(crate) fn provider_action_aliases(effective_phase: &EffectivePhase) -> Vec<A
     effective_phase
         .capability_catalog
         .iter()
-        .map(|descriptor| ActionAlias {
-            alias: provider_action_alias(descriptor, effective_phase),
-            action_kind: descriptor.action_kind.clone(),
-            identity: descriptor.identity.clone(),
+        .flat_map(|descriptor| {
+            if descriptor.action_kind == "memory_read" {
+                memory_read_provider_action_aliases(descriptor, effective_phase)
+            } else {
+                vec![ActionAlias {
+                    alias: provider_action_alias(descriptor, effective_phase, None),
+                    action_kind: descriptor.action_kind.clone(),
+                    identity: descriptor.identity.clone(),
+                    provider_shape: None,
+                }]
+            }
         })
         .collect()
 }
@@ -791,11 +800,14 @@ pub(crate) fn provider_action_aliases(effective_phase: &EffectivePhase) -> Vec<A
 fn provider_action_alias(
     descriptor: &CapabilityDescriptor,
     effective_phase: &EffectivePhase,
+    provider_shape: Option<&str>,
 ) -> String {
     match descriptor.action_kind.as_str() {
         "phase_completion" => "phase_complete".into(),
         "persistence_review_complete" => "persistence_review_complete".into(),
-        "memory_read" | "memory_write" => memory_provider_action_alias(descriptor, effective_phase),
+        "memory_read" | "memory_write" => {
+            memory_provider_action_alias(descriptor, effective_phase, provider_shape)
+        }
         "agentpm_tool" => identity_provider_action_alias("agentpm_tool", descriptor),
         "external_mcp_tool" => identity_provider_action_alias("mcp_tool", descriptor),
         "skill_resource_read" => identity_provider_action_alias("skill_resource", descriptor),
@@ -804,9 +816,49 @@ fn provider_action_alias(
     }
 }
 
+fn memory_read_provider_action_aliases(
+    descriptor: &CapabilityDescriptor,
+    effective_phase: &EffectivePhase,
+) -> Vec<ActionAlias> {
+    let Some(memory) = effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == descriptor.identity)
+    else {
+        return vec![ActionAlias {
+            alias: provider_action_alias(descriptor, effective_phase, None),
+            action_kind: descriptor.action_kind.clone(),
+            identity: descriptor.identity.clone(),
+            provider_shape: None,
+        }];
+    };
+
+    memory
+        .retrieval_modes
+        .iter()
+        .map(|mode| match mode {
+            MemoryRetrievalMode::Key if matches!(memory.model, MemorySpaceModel::Document) => {
+                "key_document"
+            }
+            MemoryRetrievalMode::Key => "key_record",
+            MemoryRetrievalMode::Filter => "filter",
+            MemoryRetrievalMode::Chronological => "chronological",
+            MemoryRetrievalMode::FullText => "full_text",
+            MemoryRetrievalMode::Semantic => "semantic",
+        })
+        .map(|provider_shape| ActionAlias {
+            alias: provider_action_alias(descriptor, effective_phase, Some(provider_shape)),
+            action_kind: descriptor.action_kind.clone(),
+            identity: descriptor.identity.clone(),
+            provider_shape: Some(provider_shape.into()),
+        })
+        .collect()
+}
+
 fn memory_provider_action_alias(
     descriptor: &CapabilityDescriptor,
     effective_phase: &EffectivePhase,
+    provider_shape: Option<&str>,
 ) -> String {
     let memory = effective_phase
         .active_memory
@@ -816,6 +868,7 @@ fn memory_provider_action_alias(
         return provider_memory_alias_with_hash(
             &descriptor.action_kind,
             &memory.space,
+            provider_shape,
             memory
                 .record_types
                 .as_slice()
@@ -829,6 +882,7 @@ fn memory_provider_action_alias(
         return provider_memory_alias_with_hash(
             &descriptor.action_kind,
             space,
+            provider_shape,
             None,
             Some(&package_signal(package)),
             descriptor,
@@ -845,16 +899,20 @@ fn memory_provider_action_alias(
 fn provider_memory_alias_with_hash(
     action_kind: &str,
     space: &str,
+    provider_shape: Option<&str>,
     fixed_record_type: Option<&str>,
     package_signal: Option<&str>,
     descriptor: &CapabilityDescriptor,
 ) -> String {
-    let (suffix, base_budget) = provider_alias_suffix_and_budget(descriptor);
+    let (suffix, base_budget) = provider_alias_suffix_and_budget(descriptor, provider_shape);
 
     let mut parts = vec![
         provider_safe_component(action_kind),
         provider_safe_component(space),
     ];
+    if let Some(provider_shape) = provider_shape {
+        parts.push(provider_safe_component(provider_shape));
+    }
     if let Some(record_type) = fixed_record_type {
         parts.push(provider_safe_component(record_type));
     }
@@ -870,20 +928,26 @@ fn provider_memory_alias_with_hash(
         cleaned.push("memory".into());
     }
 
-    if fixed_record_type.is_some() && cleaned.len() >= 3 {
-        let required = cleaned[..3].to_vec();
+    if (provider_shape.is_some() || fixed_record_type.is_some()) && cleaned.len() >= 3 {
+        let required_count =
+            2 + usize::from(provider_shape.is_some()) + usize::from(fixed_record_type.is_some());
+        let required = cleaned[..required_count.min(cleaned.len())].to_vec();
         if required.join("_").len() > base_budget {
             let action = required[0].clone();
             let space = required[1].clone();
-            let record_type = required[2].clone();
+            let tail = required[2..].to_vec();
+            let tail_len = tail.iter().map(String::len).sum::<usize>();
+            let underscores = required.len().saturating_sub(1);
             if let Some(space_budget) = base_budget
                 .checked_sub(action.len())
-                .and_then(|remaining| remaining.checked_sub(record_type.len()))
-                .and_then(|remaining| remaining.checked_sub(2))
+                .and_then(|remaining| remaining.checked_sub(tail_len))
+                .and_then(|remaining| remaining.checked_sub(underscores))
             {
                 let truncated_space = truncate_provider_alias_component(&space, space_budget);
                 if !truncated_space.is_empty() {
-                    let base = [action, truncated_space, record_type].join("_");
+                    let mut base_parts = vec![action, truncated_space];
+                    base_parts.extend(tail);
+                    let base = base_parts.join("_");
                     return format!("{base}_{suffix}");
                 }
             }
@@ -909,7 +973,7 @@ fn identity_provider_action_alias(prefix: &str, descriptor: &CapabilityDescripto
 }
 
 fn provider_alias_with_hash(parts: Vec<String>, descriptor: &CapabilityDescriptor) -> String {
-    let (suffix, base_budget) = provider_alias_suffix_and_budget(descriptor);
+    let (suffix, base_budget) = provider_alias_suffix_and_budget(descriptor, None);
     let mut cleaned = parts
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -925,8 +989,17 @@ fn provider_alias_with_hash(parts: Vec<String>, descriptor: &CapabilityDescripto
     format!("{truncated}_{suffix}")
 }
 
-fn provider_alias_suffix_and_budget(descriptor: &CapabilityDescriptor) -> (String, usize) {
-    let suffix_source = format!("{}:{}", descriptor.action_kind, descriptor.identity);
+fn provider_alias_suffix_and_budget(
+    descriptor: &CapabilityDescriptor,
+    provider_shape: Option<&str>,
+) -> (String, usize) {
+    let suffix_source = match provider_shape {
+        Some(provider_shape) => format!(
+            "{}:{}:{}",
+            descriptor.action_kind, descriptor.identity, provider_shape
+        ),
+        None => format!("{}:{}", descriptor.action_kind, descriptor.identity),
+    };
     let suffix = stable_hash_hex(&suffix_source, PROVIDER_ACTION_HASH_LEN);
     let suffix_len = suffix.len() + 1;
     let base_budget = PROVIDER_ACTION_ALIAS_MAX_LEN.saturating_sub(suffix_len);
@@ -1559,6 +1632,19 @@ mod tests {
             })
             .expect("notes write alias");
         assert!(notes_write.alias.starts_with("memory_write_notes_note_"));
+        let notes_read = aliases
+            .iter()
+            .find(|alias| {
+                alias.action_kind == "memory_read"
+                    && alias.identity == "@zack/m16-reference-memory/notes"
+            })
+            .expect("notes read alias");
+        assert_eq!(notes_read.provider_shape.as_deref(), Some("key_record"));
+        assert!(
+            notes_read
+                .alias
+                .starts_with("memory_read_notes_key_record_note_")
+        );
         let mixed_write = aliases
             .iter()
             .find(|alias| {
@@ -1595,6 +1681,70 @@ mod tests {
             })
             .expect("reordered notes write alias");
         assert_eq!(reordered_alias.alias, notes_write.alias);
+    }
+
+    #[test]
+    fn memory_read_provider_aliases_split_by_flat_argument_shape() {
+        let mut collection = memory_space("@zack/m16-reference-memory", "notes", ["note"]);
+        collection.retrieval_modes = vec![
+            MemoryRetrievalMode::Key,
+            MemoryRetrievalMode::Chronological,
+            MemoryRetrievalMode::Filter,
+            MemoryRetrievalMode::FullText,
+            MemoryRetrievalMode::Semantic,
+        ];
+        let mut document = memory_space("@zack/m16-reference-memory", "current_note", ["note"]);
+        document.model = MemorySpaceModel::Document;
+        document.retrieval_modes = vec![MemoryRetrievalMode::Key];
+        let phase = phase_with(
+            vec![
+                descriptor("memory_read", "@zack/m16-reference-memory/notes"),
+                descriptor("memory_read", "@zack/m16-reference-memory/current_note"),
+            ],
+            vec![collection, document],
+        );
+
+        let aliases = provider_action_aliases(&phase);
+        let collection_shapes = aliases
+            .iter()
+            .filter(|alias| {
+                alias.action_kind == "memory_read"
+                    && alias.identity == "@zack/m16-reference-memory/notes"
+            })
+            .map(|alias| alias.provider_shape.as_deref().expect("provider shape"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            collection_shapes,
+            vec![
+                "key_record",
+                "chronological",
+                "filter",
+                "full_text",
+                "semantic"
+            ]
+        );
+        for alias in aliases
+            .iter()
+            .filter(|alias| alias.action_kind == "memory_read")
+        {
+            assert!(is_provider_safe_action_alias(&alias.alias));
+            assert!(alias.alias.len() <= PROVIDER_ACTION_ALIAS_MAX_LEN);
+        }
+        assert!(aliases.iter().any(|alias| {
+            alias.identity == "@zack/m16-reference-memory/notes"
+                && alias.provider_shape.as_deref() == Some("chronological")
+                && alias
+                    .alias
+                    .starts_with("memory_read_notes_chronological_note_")
+        }));
+        assert!(aliases.iter().any(|alias| {
+            alias.identity == "@zack/m16-reference-memory/current_note"
+                && alias.provider_shape.as_deref() == Some("key_document")
+                && alias
+                    .alias
+                    .starts_with("memory_read_current_note_key_document_note_")
+        }));
     }
 
     #[test]
@@ -1641,6 +1791,29 @@ mod tests {
         assert!(is_provider_safe_action_alias(alias));
         assert!(alias.len() <= 64);
         assert!(alias.starts_with("memory_write_conversation_state_notes_with_note_"));
+    }
+
+    #[test]
+    fn memory_read_alias_truncation_preserves_shape_and_fixed_record_type() {
+        let mut memory = memory_space(
+            "@zack/m16a-memory-package-with-long-alias-truncation-name",
+            "conversation_state_notes_with_intentionally_long_alias_tail",
+            ["note"],
+        );
+        memory.retrieval_modes = vec![MemoryRetrievalMode::Chronological];
+        let phase = phase_with(
+            vec![descriptor(
+                "memory_read",
+                "@zack/m16a-memory-package-with-long-alias-truncation-name/conversation_state_notes_with_intentionally_long_alias_tail",
+            )],
+            vec![memory],
+        );
+
+        let alias = &provider_action_aliases(&phase)[0].alias;
+
+        assert!(is_provider_safe_action_alias(alias));
+        assert!(alias.len() <= PROVIDER_ACTION_ALIAS_MAX_LEN);
+        assert!(alias.starts_with("memory_read_conversation_state_notes_chronological_note_"));
     }
 
     #[test]

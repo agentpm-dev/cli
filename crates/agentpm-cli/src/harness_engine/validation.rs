@@ -3,6 +3,7 @@ use super::effective_phase::{
     memory_write_operation_label,
 };
 use super::*;
+use crate::manifest::{MemoryRetrievalMode, MemorySpaceModel};
 
 pub(super) fn validate_semantic_action(
     action: &SemanticAction,
@@ -169,50 +170,109 @@ pub(super) fn validate_semantic_action(
             match mode {
                 MemoryReadMode::Key => {
                     if record_id.is_none() && !matches!(memory.model, MemorySpaceModel::Document) {
-                        return Err(
-                            "Memory key read requires a record_id for non-document spaces.".into(),
-                        );
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory key read requires a record_id for non-document spaces.",
+                        ));
                     }
                     if query.is_some() || !filter.is_empty() {
-                        return Err(
-                            "Memory key read must not include query or filter arguments.".into(),
-                        );
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory key read must not include query or filter arguments.",
+                        ));
                     }
                 }
                 MemoryReadMode::Filter => {
+                    if record_id.is_some() {
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory filter read must not include record_id.",
+                        ));
+                    }
                     if query.is_some() {
-                        return Err("Memory filter read must not include a query.".into());
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory filter read must not include a query.",
+                        ));
                     }
                     validate_memory_filter_paths(memory, filter)?;
                 }
                 MemoryReadMode::Chronological => {
                     if record_id.is_some() || query.is_some() || !filter.is_empty() {
-                        return Err(
-                            "Memory chronological read must not include record_id, query, or filter arguments."
-                                .into(),
-                        );
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory chronological read must not include record_id, query, or filter arguments.",
+                        ));
                     }
                 }
                 MemoryReadMode::FullText => {
                     let Some(query) = query else {
-                        return Err("Memory full_text read requires a query.".into());
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory full_text read requires a query.",
+                        ));
                     };
                     if query.trim().is_empty() {
-                        return Err("Memory full_text query must not be empty.".into());
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory full_text query must not be empty.",
+                        ));
                     }
                     if record_id.is_some() {
-                        return Err("Memory full_text read must not include record_id.".into());
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory full_text read must not include record_id.",
+                        ));
+                    }
+                    if !filter.is_empty() {
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory full_text read must not include filter.",
+                        ));
                     }
                 }
                 MemoryReadMode::Semantic => {
                     let Some(query) = query else {
-                        return Err("Memory semantic read requires a query.".into());
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory semantic read requires a query.",
+                        ));
                     };
                     if query.trim().is_empty() {
-                        return Err("Memory semantic query must not be empty.".into());
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory semantic query must not be empty.",
+                        ));
                     }
                     if record_id.is_some() {
-                        return Err("Memory semantic read must not include record_id.".into());
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory semantic read must not include record_id.",
+                        ));
                     }
                     validate_memory_filter_paths(memory, filter)?;
                 }
@@ -293,6 +353,46 @@ pub(super) fn validate_semantic_action(
         }
         _ => Ok(()),
     }
+}
+
+fn memory_read_argument_feedback(
+    phase: &EffectivePhase,
+    package: &str,
+    space: &str,
+    message: &str,
+) -> String {
+    let Some(memory) = active_memory_space(phase, package, space) else {
+        return message.into();
+    };
+    let mut shapes = Vec::new();
+    for mode in &memory.retrieval_modes {
+        match mode {
+            MemoryRetrievalMode::Key if matches!(memory.model, MemorySpaceModel::Document) => {
+                shapes.push("key document read: omit record_id, query, and filter")
+            }
+            MemoryRetrievalMode::Key => {
+                shapes.push("key record read: provide record_id and omit query/filter")
+            }
+            MemoryRetrievalMode::Chronological => shapes
+                .push("chronological read: omit record_id, query, and filter; limit is optional"),
+            MemoryRetrievalMode::Filter => {
+                shapes.push("filter read: provide filter and omit record_id/query")
+            }
+            MemoryRetrievalMode::FullText => {
+                shapes.push("full_text read: provide non-empty query and omit record_id/filter")
+            }
+            MemoryRetrievalMode::Semantic => shapes.push(
+                "semantic read: provide non-empty query, optionally filter, and omit record_id",
+            ),
+        }
+    }
+    if shapes.is_empty() {
+        return message.into();
+    }
+    format!(
+        "{message} Authorized Memory read shapes for `{package}/{space}`: {}.",
+        shapes.join("; ")
+    )
 }
 
 fn memory_record_type_mismatch_feedback(
@@ -468,4 +568,158 @@ pub(super) fn schema_for_standalone_compile(schema: &Value) -> Value {
         object.remove("$id");
     }
     schema
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness_runtime::MemoryRecordTypeRuntimeSnapshot;
+    use serde_json::json;
+
+    fn memory_phase(model: MemorySpaceModel, modes: Vec<MemoryRetrievalMode>) -> EffectivePhase {
+        let memory = MemorySpaceRuntimeSnapshot {
+            package: "@zack/memory".into(),
+            package_version: "0.1.0".into(),
+            space: "notes".into(),
+            model,
+            description: "Notes.".into(),
+            root: None,
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: modes,
+            semantic: None,
+            append_only: false,
+            record_types: vec![MemoryRecordTypeRuntimeSnapshot {
+                name: "note".into(),
+                schema_version: "1.0.0".into(),
+                content_schema: json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "tag": { "type": "string" }
+                    }
+                }),
+            }],
+        };
+        EffectivePhase {
+            phase_id: "remember".into(),
+            tools_allowed: None,
+            knowledge_allowed: None,
+            memory_read_allowed: None,
+            memory_write_allowed: None,
+            authored_profile_candidates: Vec::new(),
+            active_profiles: Vec::new(),
+            active_tools: Vec::new(),
+            active_skills: Vec::new(),
+            active_knowledge: Vec::new(),
+            active_memory: vec![memory],
+            active_memory_operations: Vec::new(),
+            capability_catalog: vec![CapabilityDescriptor {
+                action_kind: "memory_read".into(),
+                identity: "@zack/memory/notes".into(),
+                description: "Read notes.".into(),
+                source: "agent_binding".into(),
+            }],
+            suppressed_capabilities: Vec::new(),
+        }
+    }
+
+    fn memory_read(
+        mode: MemoryReadMode,
+        record_id: Option<&str>,
+        filter: BTreeMap<String, Value>,
+        query: Option<&str>,
+    ) -> SemanticAction {
+        SemanticAction::MemoryRead {
+            package: "@zack/memory".into(),
+            space: "notes".into(),
+            mode,
+            record_id: record_id.map(str::to_string),
+            record_type: Some("note".into()),
+            filter,
+            query: query.map(str::to_string),
+            limit: None,
+        }
+    }
+
+    #[test]
+    fn memory_read_argument_errors_name_authorized_alternative_shapes() {
+        let phase = memory_phase(
+            MemorySpaceModel::Collection,
+            vec![
+                MemoryRetrievalMode::Key,
+                MemoryRetrievalMode::Chronological,
+                MemoryRetrievalMode::Filter,
+            ],
+        );
+
+        let err = validate_semantic_action(
+            &memory_read(MemoryReadMode::Key, None, BTreeMap::new(), None),
+            &phase,
+        )
+        .expect_err("collection key read without record_id should fail");
+
+        assert!(err.contains("Memory key read requires a record_id"));
+        assert!(err.contains("Authorized Memory read shapes for `@zack/memory/notes`"));
+        assert!(err.contains("key record read: provide record_id"));
+        assert!(err.contains("chronological read"));
+        assert!(err.contains("filter read"));
+        assert!(!err.contains("full_text read"));
+        assert!(!err.contains("semantic read"));
+    }
+
+    #[test]
+    fn memory_read_validation_rejects_filter_record_id_and_full_text_filter() {
+        let phase = memory_phase(
+            MemorySpaceModel::Collection,
+            vec![MemoryRetrievalMode::Filter, MemoryRetrievalMode::FullText],
+        );
+
+        let filter_err = validate_semantic_action(
+            &memory_read(
+                MemoryReadMode::Filter,
+                Some("mem-1"),
+                BTreeMap::from([("tag".into(), json!("release"))]),
+                None,
+            ),
+            &phase,
+        )
+        .expect_err("filter read with record_id should fail");
+        assert!(filter_err.contains("Memory filter read must not include record_id"));
+
+        let full_text_err = validate_semantic_action(
+            &memory_read(
+                MemoryReadMode::FullText,
+                None,
+                BTreeMap::from([("tag".into(), json!("release"))]),
+                Some("launch"),
+            ),
+            &phase,
+        )
+        .expect_err("full_text read with filter should fail");
+        assert!(full_text_err.contains("Memory full_text read must not include filter"));
+    }
+
+    #[test]
+    fn memory_read_validation_preserves_semantic_filter_candidate_restriction() {
+        let phase = memory_phase(
+            MemorySpaceModel::Collection,
+            vec![MemoryRetrievalMode::Semantic],
+        );
+
+        validate_semantic_action(
+            &memory_read(
+                MemoryReadMode::Semantic,
+                None,
+                BTreeMap::from([("tag".into(), json!("release"))]),
+                Some("launch"),
+            ),
+            &phase,
+        )
+        .expect("semantic read with filter should remain valid");
+    }
 }

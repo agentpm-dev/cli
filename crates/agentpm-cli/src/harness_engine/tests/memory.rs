@@ -3382,6 +3382,255 @@ fn invalid_memory_write_and_unknown_filter_path_request_repair_before_dispatch()
 }
 
 #[test]
+fn invalid_memory_read_shape_repairs_to_valid_read_before_dispatch() {
+    let temp = temp_workspace_dir("m16c-read-shape-repair");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "bad-key-read",
+                SemanticAction::MemoryRead {
+                    package: "m14c-memory-test".into(),
+                    space: "notes".into(),
+                    mode: MemoryReadMode::Key,
+                    record_id: None,
+                    record_type: Some("note".into()),
+                    filter: BTreeMap::new(),
+                    query: None,
+                    limit: None,
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        ModelTurn {
+            assistant_content: None,
+            actions: vec![SemanticActionProposal::new(
+                "fixed-chronological-read",
+                SemanticAction::MemoryRead {
+                    package: "m14c-memory-test".into(),
+                    space: "notes".into(),
+                    mode: MemoryReadMode::Chronological,
+                    record_id: None,
+                    record_type: Some("note".into()),
+                    filter: BTreeMap::new(),
+                    query: None,
+                    limit: Some(10),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            provider_metadata: BTreeMap::new(),
+        },
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "repair memory read shape",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.repair_count, 1);
+    assert_eq!(result.report.usage.memory_requests, 1);
+    assert!(dispatcher.dispatched.is_empty());
+    assert_eq!(
+        handle
+            .events()
+            .iter()
+            .filter(|event| event.event_type == HarnessEventType::SemanticActionRejected)
+            .count(),
+        1
+    );
+    assert_eq!(
+        handle
+            .events()
+            .iter()
+            .filter(|event| event.event_type == HarnessEventType::MemoryReadStarted)
+            .count(),
+        1
+    );
+    assert_eq!(
+        handle
+            .events()
+            .iter()
+            .filter(|event| event.event_type == HarnessEventType::MemoryReadCompleted)
+            .count(),
+        1
+    );
+    let repair_prompt = model.requests[1].prompt.render_text();
+    assert!(repair_prompt.contains("Memory key read requires a record_id"));
+    assert!(repair_prompt.contains("Authorized Memory read shapes"));
+    assert!(repair_prompt.contains("chronological read"));
+}
+
+#[test]
+fn changed_argument_memory_reads_remain_allowed() {
+    let temp = temp_workspace_dir("m16c-changed-argument-read");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let read_turn = |id: &str, limit: usize| ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            id,
+            SemanticAction::MemoryRead {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                mode: MemoryReadMode::Chronological,
+                record_id: None,
+                record_type: Some("note".into()),
+                filter: BTreeMap::new(),
+                query: None,
+                limit: Some(limit),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    };
+    let mut model = ScriptedModelRuntime::new(vec![
+        read_turn("read-one", 1),
+        read_turn("read-two", 2),
+        completion("done", "done"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "read with changed arguments",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.repair_count, 0);
+    assert_eq!(result.report.usage.memory_requests, 2);
+    assert_eq!(
+        handle
+            .events()
+            .iter()
+            .filter(|event| event.event_type == HarnessEventType::MemoryReadCompleted)
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn invalid_memory_read_shape_exhaustion_fails_without_dispatch() {
+    let temp = temp_workspace_dir("m16c-read-shape-exhaustion");
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = runtime_with_m14c_memory(&temp, &package_root, "global", "available", true);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let bad_key_read = || ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "bad-key-read",
+            SemanticAction::MemoryRead {
+                package: "m14c-memory-test".into(),
+                space: "notes".into(),
+                mode: MemoryReadMode::Key,
+                record_id: None,
+                record_type: Some("note".into()),
+                filter: BTreeMap::new(),
+                query: None,
+                limit: None,
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    };
+    let mut model = ScriptedModelRuntime::new(vec![bad_key_read(), bad_key_read(), bad_key_read()]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let result = engine
+        .execute_run(
+            &mut session,
+            "exhaust memory read shape repair",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Failed);
+    assert_eq!(result.report.repair_count, 2);
+    assert_eq!(result.report.usage.memory_requests, 0);
+    assert_eq!(
+        result.output,
+        Some(json!({ "error": "structured output repair limit exhausted" }))
+    );
+    assert!(dispatcher.dispatched.is_empty());
+    assert_eq!(
+        handle
+            .events()
+            .iter()
+            .filter(|event| event.event_type == HarnessEventType::SemanticActionRejected)
+            .count(),
+        3
+    );
+    assert!(
+        !handle
+            .events()
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::MemoryReadStarted)
+    );
+    assert!(
+        !handle
+            .events()
+            .iter()
+            .any(|event| event.event_type == HarnessEventType::MemoryReadCompleted)
+    );
+}
+
+#[test]
 fn append_only_memory_write_rejects_mutation_before_dispatch() {
     let temp = temp_workspace_dir("m14c-append-only-repair");
     let package_root = temp.join("memory-package");
