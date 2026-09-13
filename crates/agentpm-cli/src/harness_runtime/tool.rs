@@ -306,9 +306,11 @@ mod tests {
     use crate::harness_runtime::model::{RuntimeSnapshot, SkillResourceSnapshot};
     use std::sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     };
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
     #[test]
     fn skill_resource_loader_rejects_path_escape() {
@@ -562,11 +564,16 @@ printf '%s\n' '{"schema_version":2,"status":"success","output":{"ok":true}}'
     }
 
     fn temp_dir(label: &str) -> PathBuf {
-        let nanos = SystemTime::now()
+        let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("agentpm-harness-runtime-{label}-{nanos}"));
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "agentpm-harness-runtime-{label}-{}-{unique}-{id}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
