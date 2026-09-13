@@ -711,14 +711,14 @@ usage = report.get("usage") or {}
 print(f"report: {report_path}")
 print(f"trace: {trace_path}")
 print(f"terminal status: {report.get('terminal_status')}")
-print(f"report accepted_semantic_actions: {usage.get('accepted_semantic_actions')}")
-print("accepted semantic actions:")
+print(f"report accepted_semantic_actions including phase_completion: {usage.get('accepted_semantic_actions')}")
+print("accepted non-completion semantic actions:")
 for (kind, identity, fields), count in counts.items():
     repeat = " repeated" if count > 1 else ""
     print(f"  {count}x {kind} {identity}{repeat}")
-print(f"total accepted actions: {sum(counts.values())}")
-print(f"repeated exact action+identity+fields entries: {sum(1 for count in counts.values() if count > 1)}")
-print("repeated action kind+identity entries, ignoring argument changes:")
+print(f"total accepted non-completion actions: {sum(counts.values())}")
+print(f"repeated exact non-completion action+identity+fields entries: {sum(1 for count in counts.values() if count > 1)}")
+print("repeated non-completion action kind+identity entries, ignoring argument changes:")
 changed_argument_repeat_count = 0
 for (kind, identity), count in family_counts.items():
     if count > 1:
@@ -1390,3 +1390,1183 @@ Record:
 - whether it repeats the same action target with changed arguments;
 - whether it enters `followup`;
 - if it enters `followup`, whether it repeats the same search/read/write because the phase-local transcript reset and prior PhaseResults became the main cross-phase signal.
+
+## Additional M16c Split-Read Manual Tests
+
+These tests continue from the generated M16b workspace and start at Test 9. They exercise the Milestone 16c MemoryRead split by provider-facing argument shape:
+
+- document key read has no `record_id`;
+- collection key read requires `record_id`;
+- chronological read has no key/query/filter arguments;
+- filter read requires `filter` and has no key/query arguments;
+- full_text read requires `query` and has no key/filter arguments;
+- legacy bundled `mode` arguments are rejected and repair feedback names the valid alternatives;
+- semantic read remains absent in this manual fixture because no embedding provider is configured.
+
+Run Setup again first if you removed `harness-m16b-test`.
+
+### Test 9: Create The M16c Split-Read Workspace
+
+This creates an isolated workspace from the M16b fixture and adds a document space plus a collection space with `key`, `chronological`, `filter`, and `full_text` retrieval.
+
+```bash
+export M16C_SPLIT_WORK="$HARNESS_M16B_TEST_BASE/m16c-split-read-workspace"
+rm -rf "$M16C_SPLIT_WORK"
+cp -R "$M16B_WORK" "$M16C_SPLIT_WORK"
+
+"$AGENTPM_MANUAL_PYTHON" - "$M16C_SPLIT_WORK" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+work = Path(sys.argv[1])
+
+memory_manifest = work / ".agentpm/memory/zack/m16b-native-turn-memory-package/0.1.0/agent.json"
+memory = json.loads(memory_manifest.read_text())
+memory["memory"]["spaces"] = {
+    "current_note": {
+        "description": "Current launch readiness note document for M16c split-read testing.",
+        "model": "document",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": {"modes": ["key"]},
+    },
+    "launch_readiness_notes": {
+        "description": "Launch readiness note collection for M16c split-read testing.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": {"modes": ["key", "chronological", "filter", "full_text", "semantic"]},
+    },
+}
+memory_manifest.write_text(json.dumps(memory, indent=2) + "\n")
+
+loop_manifest = work / ".agentpm/loops/zack/m16b-native-turn-loop/0.1.0/agent.json"
+loop = json.loads(loop_manifest.read_text())
+loop["loop"]["limits"]["max_steps"] = 16
+loop["loop"]["phases"][0]["objective"] = "Use the requested M16c split-read Memory surfaces, then complete."
+loop_manifest.write_text(json.dumps(loop, indent=2) + "\n")
+
+agent_manifest = work / "agent.json"
+agent = json.loads(agent_manifest.read_text())
+agent["bindings"]["global"]["memory"][0]["spaces"] = ["current_note", "launch_readiness_notes"]
+agent_manifest.write_text(json.dumps(agent, indent=2) + "\n")
+
+for config_name, state_dir in [
+    ("agentpm.m16b.openai.harness.json", ".agentpm-state-m16c-split-openai"),
+    ("agentpm.m16b.anthropic.harness.json", ".agentpm-state-m16c-split-anthropic"),
+]:
+    config_path = work / config_name
+    config = json.loads(config_path.read_text())
+    config["runtime"]["state_dir"] = state_dir
+    config["runtime"]["limits"]["max_steps"] = 16
+    config["runtime"]["limits"]["max_model_calls_per_phase"] = 12
+    config["runtime"]["limits"]["max_tool_calls_per_phase"] = 12
+    config["runtime"]["limits"]["max_actions_per_phase"] = 20
+    config["runtime"]["limits"]["max_tool_call_repairs"] = 3
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+PY
+
+(cd "$M16C_SPLIT_WORK" && "$APM" lint agent.json >/dev/null)
+(cd "$M16C_SPLIT_WORK" && "$APM" memory build \
+  --manifest .agentpm/memory/zack/m16b-native-turn-memory-package/0.1.0/agent.json >/dev/null)
+```
+
+Add the M16c capture and assertion helpers:
+
+```bash
+cat > "$M16C_SPLIT_WORK/scripts/m16c_split_capture_server.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--host", default="127.0.0.1")
+parser.add_argument("--port", type=int, required=True)
+parser.add_argument("--log", required=True)
+parser.add_argument("--provider", choices=["openai", "anthropic"], required=True)
+parser.add_argument("--scenario", choices=["schema", "split_sequence", "repair"], required=True)
+args = parser.parse_args()
+
+log_path = Path(args.log)
+log_path.parent.mkdir(parents=True, exist_ok=True)
+sequence = 0
+
+def tools(body):
+    if args.provider == "openai":
+        return [tool.get("function") or {} for tool in body.get("tools", [])]
+    return body.get("tools", [])
+
+def alias_for(body, *needles):
+    for tool in tools(body):
+        name = tool.get("name") or ""
+        if all(needle in name for needle in needles):
+            return name
+    raise RuntimeError(f"missing tool alias containing {needles}")
+
+def first_record_id(body):
+    def maybe_parse(value):
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except Exception:
+                return None
+        return value if isinstance(value, dict) else None
+
+    if args.provider == "openai":
+        for message in body.get("messages", []):
+            if message.get("role") != "tool":
+                continue
+            parsed = maybe_parse(message.get("content"))
+            if not parsed:
+                continue
+            if parsed.get("record_id"):
+                return parsed["record_id"]
+            record = parsed.get("record") or {}
+            if record.get("id"):
+                return record["id"]
+    else:
+        for message in body.get("messages", []):
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for item in content:
+                if item.get("type") != "tool_result":
+                    continue
+                parsed = maybe_parse(item.get("content"))
+                if not parsed:
+                    continue
+                if parsed.get("record_id"):
+                    return parsed["record_id"]
+                record = parsed.get("record") or {}
+                if record.get("id"):
+                    return record["id"]
+    raise RuntimeError("missing prior Memory write record_id")
+
+def write_log(path, body):
+    global sequence
+    sequence += 1
+    with log_path.open("a") as handle:
+        handle.write(json.dumps({
+            "sequence": sequence,
+            "provider": args.provider,
+            "scenario": args.scenario,
+            "path": path,
+            "body": body,
+        }, sort_keys=True) + "\n")
+
+def openai_tool_response(alias, call_id, arguments):
+    return {
+        "id": "chatcmpl-m16c-capture",
+        "object": "chat.completion",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": alias,
+                        "arguments": json.dumps(arguments),
+                    },
+                }],
+            },
+            "finish_reason": "tool_calls",
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+def anthropic_tool_response(alias, call_id, arguments):
+    return {
+        "id": "msg_m16c_capture",
+        "type": "message",
+        "role": "assistant",
+        "content": [{
+            "type": "tool_use",
+            "id": call_id,
+            "name": alias,
+            "input": arguments,
+        }],
+        "stop_reason": "tool_use",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+
+def tool_response(body, alias, call_id, arguments):
+    if args.provider == "openai":
+        return openai_tool_response(alias, call_id, arguments)
+    return anthropic_tool_response(alias, call_id, arguments)
+
+def response_for(body):
+    if args.scenario == "schema":
+        return tool_response(
+            body,
+            alias_for(body, "phase_complete"),
+            "call_m16c_schema_done",
+            {"outcome": "done", "output": {"summary": "schema captured"}},
+        )
+
+    if args.scenario == "split_sequence":
+        if sequence == 1:
+            return tool_response(
+                body,
+                alias_for(body, "memory_write", "launch_readiness_notes"),
+                "call_m16c_write_collection",
+                {
+                    "operation": "create",
+                    "record_type": "note",
+                    "content": {
+                        "body": "Launch readiness is green for M16c split-read testing.",
+                        "tag": "launch-readiness",
+                    },
+                },
+            )
+        if sequence == 2:
+            return tool_response(
+                body,
+                alias_for(body, "memory_read", "launch_readiness_notes", "key_record"),
+                "call_m16c_key_record",
+                {"record_id": first_record_id(body), "record_type": "note"},
+            )
+        if sequence == 3:
+            return tool_response(
+                body,
+                alias_for(body, "memory_write", "current_note"),
+                "call_m16c_write_document",
+                {
+                    "operation": "create",
+                    "record_type": "note",
+                    "content": {
+                        "body": "Current launch readiness note for M16c split-read testing.",
+                        "tag": "current",
+                    },
+                },
+            )
+        if sequence == 4:
+            return tool_response(
+                body,
+                alias_for(body, "memory_read", "current_note", "key_document"),
+                "call_m16c_key_document",
+                {"record_type": "note"},
+            )
+        if sequence == 5:
+            return tool_response(
+                body,
+                alias_for(body, "memory_read", "launch_readiness_notes", "chronological"),
+                "call_m16c_chronological",
+                {"record_type": "note", "limit": 10},
+            )
+        if sequence == 6:
+            return tool_response(
+                body,
+                alias_for(body, "memory_read", "launch_readiness_notes", "filter"),
+                "call_m16c_filter",
+                {"record_type": "note", "filter": {"tag": "launch-readiness"}, "limit": 10},
+            )
+        if sequence == 7:
+            return tool_response(
+                body,
+                alias_for(body, "memory_read", "launch_readiness_notes", "full_text"),
+                "call_m16c_full_text",
+                {"record_type": "note", "query": "green", "limit": 10},
+            )
+        return tool_response(
+            body,
+            alias_for(body, "phase_complete"),
+            "call_m16c_split_done",
+            {"outcome": "done", "output": {"summary": "split sequence complete"}},
+        )
+
+    if args.scenario == "repair":
+        if sequence == 1:
+            return tool_response(
+                body,
+                alias_for(body, "memory_read", "launch_readiness_notes", "key_record"),
+                "call_m16c_bad_key_record",
+                {"mode": "key", "query": "launch readiness"},
+            )
+        if sequence == 2:
+            return tool_response(
+                body,
+                alias_for(body, "memory_read", "launch_readiness_notes", "chronological"),
+                "call_m16c_repaired_chronological",
+                {"record_type": "note", "limit": 10},
+            )
+        return tool_response(
+            body,
+            alias_for(body, "phase_complete"),
+            "call_m16c_repair_done",
+            {"outcome": "done", "output": {"summary": "repair complete"}},
+        )
+
+    raise RuntimeError("unknown scenario")
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length", "0"))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        write_log(self.path, body)
+        try:
+            response = response_for(body)
+            payload = json.dumps(response).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        except Exception as exc:
+            payload = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    def log_message(self, fmt, *values):
+        return
+
+server = ThreadingHTTPServer((args.host, args.port), Handler)
+print(f"ready http://{args.host}:{args.port}", flush=True)
+server.serve_forever()
+PY
+chmod +x "$M16C_SPLIT_WORK/scripts/m16c_split_capture_server.py"
+
+cat > "$M16C_SPLIT_WORK/scripts/m16c_assert_split_read.py" <<'PY'
+#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+report_path = Path(sys.argv[1])
+body_log_path = Path(sys.argv[2])
+provider = sys.argv[3]
+scenario = sys.argv[4]
+
+def fail(message):
+    raise AssertionError(message)
+
+def load_jsonl(path):
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+def body_tools(body):
+    if provider == "openai":
+        return [
+            {
+                "name": (tool.get("function") or {}).get("name"),
+                "description": (tool.get("function") or {}).get("description") or "",
+                "schema": (tool.get("function") or {}).get("parameters") or {},
+            }
+            for tool in body.get("tools", [])
+        ]
+    return [
+        {
+            "name": tool.get("name"),
+            "description": tool.get("description") or "",
+            "schema": tool.get("input_schema") or {},
+        }
+        for tool in body.get("tools", [])
+    ]
+
+def find_tool(tools, *needles):
+    for tool in tools:
+        name = tool.get("name") or ""
+        if all(needle in name for needle in needles):
+            return tool
+    fail(f"missing tool containing {needles}")
+
+def assert_absent(schema, *keys):
+    properties = schema.get("properties") or {}
+    for key in keys:
+        if key in properties:
+            fail(f"unexpected `{key}` in schema {schema}")
+
+def assert_required(schema, *keys):
+    required = set(schema.get("required") or [])
+    for key in keys:
+        if key not in required:
+            fail(f"expected required `{key}` in schema {schema}")
+
+def assert_not_required(schema, *keys):
+    required = set(schema.get("required") or [])
+    for key in keys:
+        if key in required:
+            fail(f"did not expect required `{key}` in schema {schema}")
+
+report = json.loads(report_path.read_text())
+events = load_jsonl(Path(report["trace_path"]))
+bodies = [row["body"] for row in load_jsonl(body_log_path)]
+if not bodies:
+    fail("capture server recorded no provider bodies")
+
+first_tools = body_tools(bodies[0])
+read_tools = [tool for tool in first_tools if (tool.get("name") or "").startswith("memory_read_")]
+if not read_tools:
+    fail("no provider-facing memory_read tools captured")
+
+for tool in read_tools:
+    assert_absent(tool["schema"], "mode")
+    if "Modes:" in tool["description"]:
+        fail(f"old canonical mode prose leaked into split-read description: {tool['name']}")
+    if "For collection spaces, key requires record_id" in tool["description"]:
+        fail(f"old key-mode prose leaked into split-read description: {tool['name']}")
+
+key_document = find_tool(first_tools, "memory_read", "current_note", "key_document")
+assert_absent(key_document["schema"], "record_id", "query", "filter", "mode")
+assert_not_required(key_document["schema"], "record_id", "query", "filter", "mode")
+
+key_record = find_tool(first_tools, "memory_read", "launch_readiness_notes", "key_record")
+assert_required(key_record["schema"], "record_id")
+assert_absent(key_record["schema"], "query", "filter", "mode")
+
+chronological = find_tool(first_tools, "memory_read", "launch_readiness_notes", "chronological")
+assert_absent(chronological["schema"], "record_id", "query", "filter", "mode")
+assert_not_required(chronological["schema"], "record_id", "query", "filter", "mode")
+
+filter_read = find_tool(first_tools, "memory_read", "launch_readiness_notes", "filter")
+assert_required(filter_read["schema"], "filter")
+assert_absent(filter_read["schema"], "record_id", "query", "mode")
+
+full_text = find_tool(first_tools, "memory_read", "launch_readiness_notes", "full_text")
+assert_required(full_text["schema"], "query")
+assert_absent(full_text["schema"], "record_id", "filter", "mode")
+
+if any("semantic" in (tool.get("name") or "") for tool in read_tools):
+    fail("semantic read alias should be absent without a configured embedding provider")
+
+if scenario == "schema":
+    print(f"ok: {provider} split-read schemas are flat and shape-specific")
+    sys.exit(0)
+
+if scenario == "split_sequence":
+    rejected = [event for event in events if event.get("event_type") == "semantic_action_rejected"]
+    if rejected:
+        fail(f"split sequence should not reject semantic actions: {rejected}")
+    completed_reads = [
+        ((event.get("payload") or {}).get("fields") or {})
+        for event in events
+        if event.get("event_type") == "memory_read_completed"
+    ]
+    seen = {(fields.get("space"), fields.get("mode")) for fields in completed_reads}
+    expected = {
+        ("launch_readiness_notes", "key"),
+        ("current_note", "key"),
+        ("launch_readiness_notes", "chronological"),
+        ("launch_readiness_notes", "filter"),
+        ("launch_readiness_notes", "full_text"),
+    }
+    missing = expected - seen
+    if missing:
+        fail(f"missing completed MemoryRead modes: {missing}; saw {seen}")
+    print(f"ok: {provider} split-read sequence dispatched every shape")
+    sys.exit(0)
+
+if scenario == "repair":
+    rejected = [event for event in events if event.get("event_type") == "semantic_action_rejected"]
+    if len(rejected) != 1:
+        fail(f"expected exactly one rejected read before repair, saw {len(rejected)}")
+    error_text = json.dumps(rejected[0])
+    if "Authorized Memory read shapes" not in error_text:
+        fail("repair feedback did not name authorized Memory read shapes")
+    completed_reads = [
+        event for event in events
+        if event.get("event_type") == "memory_read_completed"
+    ]
+    if len(completed_reads) != 1:
+        fail(f"expected exactly one dispatched read after repair, saw {len(completed_reads)}")
+    fields = (completed_reads[0].get("payload") or {}).get("fields") or {}
+    if fields.get("mode") != "chronological":
+        fail(f"expected repaired chronological read, saw {fields}")
+    if (report.get("usage") or {}).get("memory_requests") != 1:
+        fail(f"invalid rejected read should not count as a memory request: {report.get('usage')}")
+    print(f"ok: {provider} invalid legacy read args repaired before dispatch")
+    sys.exit(0)
+
+fail(f"unknown scenario {scenario}")
+PY
+chmod +x "$M16C_SPLIT_WORK/scripts/m16c_assert_split_read.py"
+```
+
+Expected:
+
+- lint and memory build pass;
+- `M16C_SPLIT_WORK` points to the isolated split-read workspace;
+- generated configs use fresh `.agentpm-state-m16c-split-*` state directories;
+- no real provider calls happen yet.
+
+### Test 10: OpenAI Capture, Split-Read Tool Schemas
+
+This captures the first OpenAI request body and verifies each MemoryRead shape has a flat, provider-native schema.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-openai-schema"
+rm -f "$M16B_RUNS/m16c-openai-schema/bodies.jsonl"
+rm -rf "$M16C_SPLIT_WORK/.agentpm-state-m16c-split-openai"
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_split_capture_server.py" \
+  --provider openai \
+  --scenario schema \
+  --port 18084 \
+  --log "$M16B_RUNS/m16c-openai-schema/bodies.jsonl" \
+  >"$M16B_RUNS/m16c-openai-schema/server.stdout.txt" \
+  2>"$M16B_RUNS/m16c-openai-schema/server.stderr.txt" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+until curl -fsS http://127.0.0.1:18084/health >/dev/null 2>&1; do sleep 0.1; done
+
+export OPENAI_API_KEY="m16c-capture-key"
+export OPENAI_BASE_URL="http://127.0.0.1:18084/v1/chat/completions"
+
+REPORT="$M16B_RUNS/m16c-openai-schema/report.json"
+(cd "$M16C_SPLIT_WORK" && "$APM" harness \
+  --config agentpm.m16b.openai.harness.json \
+  --headless \
+  --scope user=m16c-openai-schema \
+  --input "Capture the M16c split-read OpenAI tool schemas, then complete." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-openai-schema/stdout.txt" \
+  2>"$M16B_RUNS/m16c-openai-schema/stderr.txt")
+
+kill "$SERVER_PID" 2>/dev/null || true
+trap - EXIT
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_assert_split_read.py" \
+  "$REPORT" \
+  "$M16B_RUNS/m16c-openai-schema/bodies.jsonl" \
+  openai \
+  schema \
+  | tee "$M16B_RUNS/m16c-openai-schema/assertion.txt"
+```
+
+Expected:
+
+- captured OpenAI `tools[*].function.name` include `memory_read_*_key_document_*`, `memory_read_*_key_record_*`, `memory_read_*_chronological_*`, `memory_read_*_filter_*`, and `memory_read_*_full_text_*`;
+- no MemoryRead schema exposes `mode`;
+- `key_record` requires `record_id`;
+- `key_document` does not expose `record_id`;
+- `filter` requires `filter` and does not expose `query`;
+- `full_text` requires `query` and does not expose `filter`;
+- no `semantic` MemoryRead alias appears because this fixture has no embedding provider.
+
+Useful body inspection:
+
+```bash
+"$AGENTPM_MANUAL_PYTHON" - "$M16B_RUNS/m16c-openai-schema/bodies.jsonl" <<'PY'
+import json, sys
+from pathlib import Path
+body = json.loads(Path(sys.argv[1]).read_text().splitlines()[0])["body"]
+for tool in body.get("tools", []):
+    fn = tool["function"]
+    if fn["name"].startswith("memory_read_"):
+        print("\n" + fn["name"])
+        print(fn["description"])
+        print(json.dumps(fn["parameters"], indent=2))
+PY
+```
+
+### Test 11: Anthropic Capture, Split-Read Tool Schemas
+
+This is the same schema check through the Anthropic serializer.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-anthropic-schema"
+rm -f "$M16B_RUNS/m16c-anthropic-schema/bodies.jsonl"
+rm -rf "$M16C_SPLIT_WORK/.agentpm-state-m16c-split-anthropic"
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_split_capture_server.py" \
+  --provider anthropic \
+  --scenario schema \
+  --port 18085 \
+  --log "$M16B_RUNS/m16c-anthropic-schema/bodies.jsonl" \
+  >"$M16B_RUNS/m16c-anthropic-schema/server.stdout.txt" \
+  2>"$M16B_RUNS/m16c-anthropic-schema/server.stderr.txt" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+until curl -fsS http://127.0.0.1:18085/health >/dev/null 2>&1; do sleep 0.1; done
+
+export ANTHROPIC_API_KEY="m16c-capture-key"
+export ANTHROPIC_BASE_URL="http://127.0.0.1:18085/v1/messages"
+
+REPORT="$M16B_RUNS/m16c-anthropic-schema/report.json"
+(cd "$M16C_SPLIT_WORK" && "$APM" harness \
+  --config agentpm.m16b.anthropic.harness.json \
+  --headless \
+  --scope user=m16c-anthropic-schema \
+  --input "Capture the M16c split-read Anthropic tool schemas, then complete." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-anthropic-schema/stdout.txt" \
+  2>"$M16B_RUNS/m16c-anthropic-schema/stderr.txt")
+
+kill "$SERVER_PID" 2>/dev/null || true
+trap - EXIT
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_assert_split_read.py" \
+  "$REPORT" \
+  "$M16B_RUNS/m16c-anthropic-schema/bodies.jsonl" \
+  anthropic \
+  schema \
+  | tee "$M16B_RUNS/m16c-anthropic-schema/assertion.txt"
+```
+
+Expected:
+
+- captured Anthropic `tools[*].name` expose the same split MemoryRead aliases as OpenAI;
+- captured Anthropic `tools[*].input_schema` has the same flat schema properties;
+- no old bundled `mode` enum is present.
+
+Useful body inspection:
+
+```bash
+"$AGENTPM_MANUAL_PYTHON" - "$M16B_RUNS/m16c-anthropic-schema/bodies.jsonl" <<'PY'
+import json, sys
+from pathlib import Path
+body = json.loads(Path(sys.argv[1]).read_text().splitlines()[0])["body"]
+for tool in body.get("tools", []):
+    if tool["name"].startswith("memory_read_"):
+        print("\n" + tool["name"])
+        print(tool["description"])
+        print(json.dumps(tool["input_schema"], indent=2))
+PY
+```
+
+### Test 12: OpenAI Capture, Every Split-Read Shape Dispatches
+
+This deterministic capture run writes one collection record, reads it by collection key, writes one document record, reads the document by key, then exercises chronological, filter, and full_text reads. It verifies that valid split-shape calls dispatch without repair.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-openai-split-sequence"
+rm -f "$M16B_RUNS/m16c-openai-split-sequence/bodies.jsonl"
+rm -rf "$M16C_SPLIT_WORK/.agentpm-state-m16c-split-openai"
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_split_capture_server.py" \
+  --provider openai \
+  --scenario split_sequence \
+  --port 18086 \
+  --log "$M16B_RUNS/m16c-openai-split-sequence/bodies.jsonl" \
+  >"$M16B_RUNS/m16c-openai-split-sequence/server.stdout.txt" \
+  2>"$M16B_RUNS/m16c-openai-split-sequence/server.stderr.txt" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+until curl -fsS http://127.0.0.1:18086/health >/dev/null 2>&1; do sleep 0.1; done
+
+export OPENAI_API_KEY="m16c-capture-key"
+export OPENAI_BASE_URL="http://127.0.0.1:18086/v1/chat/completions"
+
+REPORT="$M16B_RUNS/m16c-openai-split-sequence/report.json"
+(cd "$M16C_SPLIT_WORK" && "$APM" harness \
+  --config agentpm.m16b.openai.harness.json \
+  --headless \
+  --scope user=m16c-openai-split-sequence \
+  --input "Run the M16c split-read sequence." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-openai-split-sequence/stdout.txt" \
+  2>"$M16B_RUNS/m16c-openai-split-sequence/stderr.txt")
+
+kill "$SERVER_PID" 2>/dev/null || true
+trap - EXIT
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_assert_split_read.py" \
+  "$REPORT" \
+  "$M16B_RUNS/m16c-openai-split-sequence/bodies.jsonl" \
+  openai \
+  split_sequence \
+  | tee "$M16B_RUNS/m16c-openai-split-sequence/assertion.txt"
+```
+
+Expected:
+
+- run ends `ended`;
+- trace has no `semantic_action_rejected`;
+- trace has completed Memory reads for:
+  - `current_note` with mode `key`;
+  - `launch_readiness_notes` with mode `key`;
+  - `launch_readiness_notes` with mode `chronological`;
+  - `launch_readiness_notes` with mode `filter`;
+  - `launch_readiness_notes` with mode `full_text`;
+- `usage.memory_requests` counts only dispatched Memory reads/writes, not provider tool-schema inspection.
+
+Useful trace inspection:
+
+```bash
+"$AGENTPM_MANUAL_PYTHON" - "$REPORT" <<'PY'
+import json, sys
+from pathlib import Path
+report = json.loads(Path(sys.argv[1]).read_text())
+events = [json.loads(line) for line in Path(report["trace_path"]).read_text().splitlines() if line.strip()]
+for event in events:
+    if event.get("event_type") in {"semantic_action_proposed", "memory_read_started", "memory_read_completed"}:
+        payload = event.get("payload") or {}
+        print(event["event_type"], payload.get("identity"), json.dumps(payload.get("fields") or {}, sort_keys=True))
+PY
+```
+
+### Test 13: OpenAI Capture, Legacy Read Arguments Repair Before Dispatch
+
+This intentionally sends an invalid collection key-read shape with legacy bundled arguments. Harness should reject it before Memory dispatch, ask for repair, accept a chronological read, and count only the repaired Memory read as a Memory request.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-openai-repair"
+rm -f "$M16B_RUNS/m16c-openai-repair/bodies.jsonl"
+rm -rf "$M16C_SPLIT_WORK/.agentpm-state-m16c-split-openai"
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_split_capture_server.py" \
+  --provider openai \
+  --scenario repair \
+  --port 18087 \
+  --log "$M16B_RUNS/m16c-openai-repair/bodies.jsonl" \
+  >"$M16B_RUNS/m16c-openai-repair/server.stdout.txt" \
+  2>"$M16B_RUNS/m16c-openai-repair/server.stderr.txt" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+until curl -fsS http://127.0.0.1:18087/health >/dev/null 2>&1; do sleep 0.1; done
+
+export OPENAI_API_KEY="m16c-capture-key"
+export OPENAI_BASE_URL="http://127.0.0.1:18087/v1/chat/completions"
+
+REPORT="$M16B_RUNS/m16c-openai-repair/report.json"
+(cd "$M16C_SPLIT_WORK" && "$APM" harness \
+  --config agentpm.m16b.openai.harness.json \
+  --headless \
+  --scope user=m16c-openai-repair \
+  --input "Run the M16c split-read repair scenario." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-openai-repair/stdout.txt" \
+  2>"$M16B_RUNS/m16c-openai-repair/stderr.txt")
+
+kill "$SERVER_PID" 2>/dev/null || true
+trap - EXIT
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_assert_split_read.py" \
+  "$REPORT" \
+  "$M16B_RUNS/m16c-openai-repair/bodies.jsonl" \
+  openai \
+  repair \
+  | tee "$M16B_RUNS/m16c-openai-repair/assertion.txt"
+```
+
+Expected:
+
+- trace has exactly one `semantic_action_rejected`;
+- rejection text contains `Authorized Memory read shapes`;
+- no `memory_read_started` event exists for the invalid read;
+- the repaired chronological read dispatches and completes;
+- `usage.memory_requests == 1`.
+
+Useful repair inspection:
+
+```bash
+"$AGENTPM_MANUAL_PYTHON" - "$REPORT" <<'PY'
+import json, sys
+from pathlib import Path
+report = json.loads(Path(sys.argv[1]).read_text())
+events = [json.loads(line) for line in Path(report["trace_path"]).read_text().splitlines() if line.strip()]
+for event in events:
+    if event.get("event_type") in {"semantic_action_rejected", "model_repair_requested", "memory_read_started", "memory_read_completed"}:
+        print(json.dumps(event, indent=2))
+PY
+```
+
+### Test 14: Anthropic Capture, Every Split-Read Shape Dispatches
+
+This repeats Test 12 through Anthropic so both built-in provider serializers are covered beyond schema inspection.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-anthropic-split-sequence"
+rm -f "$M16B_RUNS/m16c-anthropic-split-sequence/bodies.jsonl"
+rm -rf "$M16C_SPLIT_WORK/.agentpm-state-m16c-split-anthropic"
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_split_capture_server.py" \
+  --provider anthropic \
+  --scenario split_sequence \
+  --port 18088 \
+  --log "$M16B_RUNS/m16c-anthropic-split-sequence/bodies.jsonl" \
+  >"$M16B_RUNS/m16c-anthropic-split-sequence/server.stdout.txt" \
+  2>"$M16B_RUNS/m16c-anthropic-split-sequence/server.stderr.txt" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+until curl -fsS http://127.0.0.1:18088/health >/dev/null 2>&1; do sleep 0.1; done
+
+export ANTHROPIC_API_KEY="m16c-capture-key"
+export ANTHROPIC_BASE_URL="http://127.0.0.1:18088/v1/messages"
+
+REPORT="$M16B_RUNS/m16c-anthropic-split-sequence/report.json"
+(cd "$M16C_SPLIT_WORK" && "$APM" harness \
+  --config agentpm.m16b.anthropic.harness.json \
+  --headless \
+  --scope user=m16c-anthropic-split-sequence \
+  --input "Run the M16c split-read sequence." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-anthropic-split-sequence/stdout.txt" \
+  2>"$M16B_RUNS/m16c-anthropic-split-sequence/stderr.txt")
+
+kill "$SERVER_PID" 2>/dev/null || true
+trap - EXIT
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_assert_split_read.py" \
+  "$REPORT" \
+  "$M16B_RUNS/m16c-anthropic-split-sequence/bodies.jsonl" \
+  anthropic \
+  split_sequence \
+  | tee "$M16B_RUNS/m16c-anthropic-split-sequence/assertion.txt"
+```
+
+Expected:
+
+- same as Test 12;
+- Anthropic `tool_use` and `tool_result` turns remain correlated across the longer MemoryRead sequence.
+
+### Test 15: Anthropic Capture, Legacy Read Arguments Repair Before Dispatch
+
+This repeats Test 13 through Anthropic.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-anthropic-repair"
+rm -f "$M16B_RUNS/m16c-anthropic-repair/bodies.jsonl"
+rm -rf "$M16C_SPLIT_WORK/.agentpm-state-m16c-split-anthropic"
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_split_capture_server.py" \
+  --provider anthropic \
+  --scenario repair \
+  --port 18089 \
+  --log "$M16B_RUNS/m16c-anthropic-repair/bodies.jsonl" \
+  >"$M16B_RUNS/m16c-anthropic-repair/server.stdout.txt" \
+  2>"$M16B_RUNS/m16c-anthropic-repair/server.stderr.txt" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+until curl -fsS http://127.0.0.1:18089/health >/dev/null 2>&1; do sleep 0.1; done
+
+export ANTHROPIC_API_KEY="m16c-capture-key"
+export ANTHROPIC_BASE_URL="http://127.0.0.1:18089/v1/messages"
+
+REPORT="$M16B_RUNS/m16c-anthropic-repair/report.json"
+(cd "$M16C_SPLIT_WORK" && "$APM" harness \
+  --config agentpm.m16b.anthropic.harness.json \
+  --headless \
+  --scope user=m16c-anthropic-repair \
+  --input "Run the M16c split-read repair scenario." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-anthropic-repair/stdout.txt" \
+  2>"$M16B_RUNS/m16c-anthropic-repair/stderr.txt")
+
+kill "$SERVER_PID" 2>/dev/null || true
+trap - EXIT
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_WORK/scripts/m16c_assert_split_read.py" \
+  "$REPORT" \
+  "$M16B_RUNS/m16c-anthropic-repair/bodies.jsonl" \
+  anthropic \
+  repair \
+  | tee "$M16B_RUNS/m16c-anthropic-repair/assertion.txt"
+```
+
+Expected:
+
+- same as Test 13;
+- Anthropic receives repair feedback as provider-native turn content, and the invalid read is never dispatched.
+
+### Test 16: Optional Live OpenAI, Zero-Result Read With Split Aliases
+
+This revisits the OpenAI failure mode that motivated M16c: an objective prompt over an empty collection should now expose separate list/filter/full_text read actions instead of one bundled `mode` enum.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-live-openai-zero-read"
+rm -rf "$M16C_SPLIT_WORK/.agentpm-state-m16c-split-openai"
+unset OPENAI_BASE_URL
+test -n "${OPENAI_API_KEY:-}"
+
+REPORT="$M16B_RUNS/m16c-live-openai-zero-read/report.json"
+(cd "$M16C_SPLIT_WORK" && "$APM" harness \
+  --config agentpm.m16b.openai.harness.json \
+  --headless \
+  --scope user="m16c-live-openai-zero-$(date +%s)" \
+  --input "Determine whether any launch readiness notes are already remembered for this user." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-live-openai-zero-read/stdout.txt" \
+  2>"$M16B_RUNS/m16c-live-openai-zero-read/stderr.txt")
+
+"$AGENTPM_MANUAL_PYTHON" "$M16B_WORK/scripts/m16b_measure_repeats.py" "$REPORT" \
+  | tee "$M16B_RUNS/m16c-live-openai-zero-read/repeat-summary.txt"
+```
+
+Record:
+
+- whether the run ends or fails;
+- whether any `semantic_action_rejected` events remain;
+- which split MemoryRead alias the model chose;
+- whether a `memory_read_completed` result with `count: 0` is treated as successful/no-match;
+- whether exact or changed-argument MemoryRead repeats occur.
+
+### Test 17: Optional Live Anthropic, Zero-Result Read With Split Aliases
+
+This is the same live zero-result read measurement through Anthropic.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-live-anthropic-zero-read"
+rm -rf "$M16C_SPLIT_WORK/.agentpm-state-m16c-split-anthropic"
+unset ANTHROPIC_BASE_URL
+test -n "${ANTHROPIC_API_KEY:-}"
+
+REPORT="$M16B_RUNS/m16c-live-anthropic-zero-read/report.json"
+(cd "$M16C_SPLIT_WORK" && "$APM" harness \
+  --config agentpm.m16b.anthropic.harness.json \
+  --headless \
+  --scope user="m16c-live-anthropic-zero-$(date +%s)" \
+  --input "Determine whether any launch readiness notes are already remembered for this user." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-live-anthropic-zero-read/stdout.txt" \
+  2>"$M16B_RUNS/m16c-live-anthropic-zero-read/stderr.txt")
+
+"$AGENTPM_MANUAL_PYTHON" "$M16B_WORK/scripts/m16b_measure_repeats.py" "$REPORT" \
+  | tee "$M16B_RUNS/m16c-live-anthropic-zero-read/repeat-summary.txt"
+```
+
+Record:
+
+- same observations as Test 16;
+- compare chosen MemoryRead shape and repair behavior with OpenAI.
+
+### Test 18: Optional Live OpenAI, Objective Prompt With Similar Read Choices
+
+This checks whether the split aliases help the model choose between document key read, collection list read, filter read, full_text read, Tool use, Memory write, and PhaseCompletion without explicit sequencing.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-live-openai-objective"
+rm -rf "$M16C_SPLIT_WORK/.agentpm-state-m16c-split-openai"
+unset OPENAI_BASE_URL
+test -n "${OPENAI_API_KEY:-}"
+
+REPORT="$M16B_RUNS/m16c-live-openai-objective/report.json"
+(cd "$M16C_SPLIT_WORK" && "$APM" harness \
+  --config agentpm.m16b.openai.harness.json \
+  --headless \
+  --scope user="m16c-live-openai-objective-$(date +%s)" \
+  --input "Find out whether the launch is ready, and record anything worth remembering." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-live-openai-objective/stdout.txt" \
+  2>"$M16B_RUNS/m16c-live-openai-objective/stderr.txt")
+
+"$AGENTPM_MANUAL_PYTHON" "$M16B_WORK/scripts/m16b_measure_repeats.py" "$REPORT" \
+  | tee "$M16B_RUNS/m16c-live-openai-objective/repeat-summary.txt"
+```
+
+Record:
+
+- whether the model uses a MemoryRead shape before writing;
+- whether it uses the Tool, Memory, both, or neither;
+- whether it repeats a semantically similar action with changed arguments;
+- whether completion happens cleanly without explicit completion wording.
+
+### Test 19: Optional Live Anthropic, Objective Prompt With Similar Read Choices
+
+This is the same objective prompt through Anthropic.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-live-anthropic-objective"
+rm -rf "$M16C_SPLIT_WORK/.agentpm-state-m16c-split-anthropic"
+unset ANTHROPIC_BASE_URL
+test -n "${ANTHROPIC_API_KEY:-}"
+
+REPORT="$M16B_RUNS/m16c-live-anthropic-objective/report.json"
+(cd "$M16C_SPLIT_WORK" && "$APM" harness \
+  --config agentpm.m16b.anthropic.harness.json \
+  --headless \
+  --scope user="m16c-live-anthropic-objective-$(date +%s)" \
+  --input "Find out whether the launch is ready, and record anything worth remembering." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-live-anthropic-objective/stdout.txt" \
+  2>"$M16B_RUNS/m16c-live-anthropic-objective/stderr.txt")
+
+"$AGENTPM_MANUAL_PYTHON" "$M16B_WORK/scripts/m16b_measure_repeats.py" "$REPORT" \
+  | tee "$M16B_RUNS/m16c-live-anthropic-objective/repeat-summary.txt"
+```
+
+Record:
+
+- same observations as Test 18;
+- compare chosen read/write/tool path with OpenAI.
+
+### Test 20: Create The M16c Similar-Surface Multi-Phase Workspace
+
+This replaces the split-read fixture's Memory spaces with two long, similar collection spaces and adds a second phase. It is the M16c version of the Test 8 failure shape: similar collection surfaces plus a phase boundary, with split MemoryRead aliases active.
+
+```bash
+export M16C_SPLIT_MULTIPHASE_WORK="$HARNESS_M16B_TEST_BASE/m16c-split-read-multiphase-workspace"
+rm -rf "$M16C_SPLIT_MULTIPHASE_WORK"
+cp -R "$M16C_SPLIT_WORK" "$M16C_SPLIT_MULTIPHASE_WORK"
+
+"$AGENTPM_MANUAL_PYTHON" - "$M16C_SPLIT_MULTIPHASE_WORK" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+work = Path(sys.argv[1])
+
+memory_manifest = work / ".agentpm/memory/zack/m16b-native-turn-memory-package/0.1.0/agent.json"
+memory = json.loads(memory_manifest.read_text())
+memory["memory"]["spaces"] = {
+    "launch_readiness_notes_with_native_turn_history_for_current_release": {
+        "description": "Launch readiness note collection with a long similar name for M16c multi-phase target-selection testing.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": {"modes": ["key", "chronological", "filter"]},
+    },
+    "launch_readiness_notes_with_native_turn_history_for_followup_review": {
+        "description": "Launch readiness note collection with a long similar name for M16c multi-phase target-selection testing.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": {"modes": ["key", "chronological", "filter"]},
+    },
+}
+memory_manifest.write_text(json.dumps(memory, indent=2) + "\n")
+
+loop_manifest = work / ".agentpm/loops/zack/m16b-native-turn-loop/0.1.0/agent.json"
+loop = json.loads(loop_manifest.read_text())
+loop["loop"]["limits"]["max_steps"] = 20
+exercise = loop["loop"]["phases"][0]
+exercise["objective"] = "Use the requested M16c split-read Memory and Tool surfaces, then choose whether another phase is needed."
+if not any(outcome.get("id") == "followup" for outcome in exercise["outcomes"]):
+    exercise["outcomes"].append({
+        "id": "followup",
+        "description": "Continue into a second phase for similar-surface multi-phase measurement.",
+    })
+if not any(phase.get("id") == "followup" for phase in loop["loop"]["phases"]):
+    loop["loop"]["phases"].append({
+        "id": "followup",
+        "objective": "Use the requested M16c split-read Memory and Tool surfaces in the second phase, then complete.",
+        "access": {
+            "tools": True,
+            "memory": {"read": True, "write": True},
+        },
+        "outcomes": [
+            {"id": "done", "description": "The second phase is complete."},
+        ],
+    })
+if not any(t.get("from") == "exercise" and t.get("on") == "followup" for t in loop["loop"]["transitions"]):
+    loop["loop"]["transitions"].append({
+        "from": "exercise",
+        "on": "followup",
+        "to": "followup",
+    })
+if not any(t.get("from") == "followup" and t.get("on") == "done" for t in loop["loop"]["transitions"]):
+    loop["loop"]["transitions"].append({
+        "from": "followup",
+        "on": "done",
+        "to": "$end",
+    })
+loop_manifest.write_text(json.dumps(loop, indent=2) + "\n")
+
+agent_manifest = work / "agent.json"
+agent = json.loads(agent_manifest.read_text())
+agent["bindings"]["global"]["memory"][0]["spaces"] = [
+    "launch_readiness_notes_with_native_turn_history_for_current_release",
+    "launch_readiness_notes_with_native_turn_history_for_followup_review",
+]
+agent["bindings"]["phases"]["followup"] = {
+    "tools": ["@zack/m16b-native-turn-search-tool-with-long-readable-name"],
+}
+agent_manifest.write_text(json.dumps(agent, indent=2) + "\n")
+
+for config_name, state_dir in [
+    ("agentpm.m16b.openai.harness.json", ".agentpm-state-m16c-split-multiphase-openai"),
+    ("agentpm.m16b.anthropic.harness.json", ".agentpm-state-m16c-split-multiphase-anthropic"),
+]:
+    config_path = work / config_name
+    config = json.loads(config_path.read_text())
+    config["runtime"]["state_dir"] = state_dir
+    config["runtime"]["limits"]["max_steps"] = 20
+    config["runtime"]["limits"]["max_model_calls_per_phase"] = 12
+    config["runtime"]["limits"]["max_tool_calls_per_phase"] = 12
+    config["runtime"]["limits"]["max_actions_per_phase"] = 24
+    config["runtime"]["limits"]["max_tool_call_repairs"] = 3
+    config["runtime"]["limits"]["max_structured_output_repairs"] = 3
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+PY
+
+(cd "$M16C_SPLIT_MULTIPHASE_WORK" && "$APM" lint agent.json >/dev/null)
+(cd "$M16C_SPLIT_MULTIPHASE_WORK" && "$APM" memory build \
+  --manifest .agentpm/memory/zack/m16b-native-turn-memory-package/0.1.0/agent.json >/dev/null)
+```
+
+Expected:
+
+- lint and memory build pass;
+- `M16C_SPLIT_MULTIPHASE_WORK` points to the isolated multi-phase workspace;
+- the workspace has two long, similar collection spaces:
+  - `launch_readiness_notes_with_native_turn_history_for_current_release`;
+  - `launch_readiness_notes_with_native_turn_history_for_followup_review`;
+- both collections declare only `key`, `chronological`, and `filter`;
+- both phases expose the same Tool and Memory surfaces;
+- OpenAI/Anthropic configs use fresh `.agentpm-state-m16c-split-multiphase-*` state directories.
+
+### Test 21: Optional Live OpenAI And Anthropic, Similar Surfaces Plus Multi-Phase
+
+Run this after Test 20. This is the strongest M16c live measurement because it revisits the M16b failure shape with the split MemoryRead aliases in place.
+
+#### OpenAI
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-live-openai-similar-multiphase"
+rm -rf "$M16C_SPLIT_MULTIPHASE_WORK/.agentpm-state-m16c-split-multiphase-openai"
+unset OPENAI_BASE_URL
+test -n "${OPENAI_API_KEY:-}"
+
+REPORT="$M16B_RUNS/m16c-live-openai-similar-multiphase/report.json"
+(cd "$M16C_SPLIT_MULTIPHASE_WORK" && "$APM" harness \
+  --config agentpm.m16b.openai.harness.json \
+  --headless \
+  --scope user="m16c-live-openai-similar-multiphase-$(date +%s)" \
+  --input "Find out whether the launch is ready and record anything worth remembering. Use a followup phase if another pass is needed to verify the result." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-live-openai-similar-multiphase/stdout.txt" \
+  2>"$M16B_RUNS/m16c-live-openai-similar-multiphase/stderr.txt")
+
+"$AGENTPM_MANUAL_PYTHON" "$M16B_WORK/scripts/m16b_measure_repeats.py" "$REPORT" \
+  | tee "$M16B_RUNS/m16c-live-openai-similar-multiphase/repeat-summary.txt"
+```
+
+#### Anthropic
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-live-anthropic-similar-multiphase"
+rm -rf "$M16C_SPLIT_MULTIPHASE_WORK/.agentpm-state-m16c-split-multiphase-anthropic"
+unset ANTHROPIC_BASE_URL
+test -n "${ANTHROPIC_API_KEY:-}"
+
+REPORT="$M16B_RUNS/m16c-live-anthropic-similar-multiphase/report.json"
+(cd "$M16C_SPLIT_MULTIPHASE_WORK" && "$APM" harness \
+  --config agentpm.m16b.anthropic.harness.json \
+  --headless \
+  --scope user="m16c-live-anthropic-similar-multiphase-$(date +%s)" \
+  --input "Find out whether the launch is ready and record anything worth remembering. Use a followup phase if another pass is needed to verify the result." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-live-anthropic-similar-multiphase/stdout.txt" \
+  2>"$M16B_RUNS/m16c-live-anthropic-similar-multiphase/stderr.txt")
+
+"$AGENTPM_MANUAL_PYTHON" "$M16B_WORK/scripts/m16b_measure_repeats.py" "$REPORT" \
+  | tee "$M16B_RUNS/m16c-live-anthropic-similar-multiphase/repeat-summary.txt"
+```
+
+Record:
+
+- whether either provider fails or exhausts repair;
+- whether OpenAI still proposes an invalid collection key read;
+- whether any `semantic_action_rejected` events appear;
+- whether the model selects the `current_release` collection, the `followup_review` collection, the Tool, or some combination;
+- whether the visible alias prefixes are still readable enough despite the two long similar collection names;
+- whether the model enters `followup`;
+- if it enters `followup`, whether actions repeat across the phase boundary;
+- exact repeats and changed-argument repeats from `repeat-summary.txt`;
+- whether completion repair is still needed.
