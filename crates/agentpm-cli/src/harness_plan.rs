@@ -14,6 +14,7 @@ use crate::semver::types::{
     Lock, LockV2, LockedPackage, LockedRoot, PackageKind, split_package_ref,
 };
 use crate::{
+    harness_runtime::memory::{MemoryRuntimeCapabilityDescriptor, unrealizable_memory_spaces},
     harness_runtime::model::{
         ModelCapabilityAdvertisement, ModelProviderSelection, ProfileBindingSnapshot,
         ProfileSnapshot,
@@ -188,6 +189,7 @@ pub fn resolve_harness_plan(
             state_dir: options.state_dir_override.clone(),
         },
     )?;
+    let runtime_scopes = merged_runtime_scopes(&config.config.scopes, &options.runtime_scopes);
 
     let lock_path = workspace_root.join("agent.lock");
     let mut diagnostics = Vec::new();
@@ -214,7 +216,7 @@ pub fn resolve_harness_plan(
             selected_agent: None,
             loop_package: None,
             package_graph,
-            runtime_scopes: options.runtime_scopes.clone(),
+            runtime_scopes,
             consumer_context,
             profile_bindings,
             profiles,
@@ -231,7 +233,7 @@ pub fn resolve_harness_plan(
             selected_agent: None,
             loop_package: None,
             package_graph,
-            runtime_scopes: options.runtime_scopes.clone(),
+            runtime_scopes,
             consumer_context,
             profile_bindings,
             profiles,
@@ -268,7 +270,7 @@ pub fn resolve_harness_plan(
             loop_info,
             &package_graph,
             &config,
-            &options.runtime_scopes,
+            &runtime_scopes,
             options.surface,
             &mut consumer_context,
             &mut profile_bindings,
@@ -285,13 +287,25 @@ pub fn resolve_harness_plan(
         selected_agent,
         loop_package,
         package_graph,
-        runtime_scopes: options.runtime_scopes.clone(),
+        runtime_scopes,
         consumer_context,
         profile_bindings,
         profiles,
         capabilities,
         diagnostics,
     }))
+}
+
+fn merged_runtime_scopes(
+    config_scopes: &HashMap<String, String>,
+    override_scopes: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut scopes = config_scopes
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<BTreeMap<_, _>>();
+    scopes.extend(override_scopes.clone());
+    scopes
 }
 
 fn build_plan(parts: PlanParts) -> ResolvedHarnessPlan {
@@ -707,6 +721,7 @@ fn validate_selected_agent(
         bindings,
         &loop_phase_ids,
         package_graph,
+        config,
         &mut tool_readiness,
         capabilities,
         diagnostics,
@@ -903,6 +918,7 @@ fn validate_bound_scopes(
     bindings: &AgentBindings,
     loop_phase_ids: &BTreeSet<String>,
     package_graph: &BTreeMap<String, ResolvedPackageInfo>,
+    config: &ResolvedHarnessConfig,
     tool_readiness: &mut BTreeMap<String, CapabilityState>,
     capabilities: &mut Vec<StaticCapabilityCandidate>,
     diagnostics: &mut Vec<PreflightDiagnostic>,
@@ -914,6 +930,7 @@ fn validate_bound_scopes(
             "global",
             global,
             package_graph,
+            config,
             tool_readiness,
             capabilities,
             diagnostics,
@@ -931,6 +948,7 @@ fn validate_bound_scopes(
             &format!("phase:{phase}"),
             scope,
             package_graph,
+            config,
             tool_readiness,
             capabilities,
             diagnostics,
@@ -1181,6 +1199,7 @@ fn validate_binding_scope(
     scope_label: &str,
     scope: &AgentBindingScope,
     package_graph: &BTreeMap<String, ResolvedPackageInfo>,
+    config: &ResolvedHarnessConfig,
     tool_readiness: &mut BTreeMap<String, CapabilityState>,
     capabilities: &mut Vec<StaticCapabilityCandidate>,
     diagnostics: &mut Vec<PreflightDiagnostic>,
@@ -1237,6 +1256,7 @@ fn validate_binding_scope(
         &scope.memory,
         &declared_memory,
         package_graph,
+        config,
         scope_label,
         capabilities,
         diagnostics,
@@ -1350,11 +1370,13 @@ fn validate_tool_bindings(
     active
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_memory_bindings(
     workspace_root: &Path,
     bindings: &[crate::manifest::AgentMemoryBinding],
     declared_names: &BTreeSet<String>,
     package_graph: &BTreeMap<String, ResolvedPackageInfo>,
+    config: &ResolvedHarnessConfig,
     scope_label: &str,
     capabilities: &mut Vec<StaticCapabilityCandidate>,
     diagnostics: &mut Vec<PreflightDiagnostic>,
@@ -1385,6 +1407,7 @@ fn validate_memory_bindings(
             continue;
         };
         let manifest = load_memory_manifest(workspace_root, package, diagnostics);
+        let mut state = CapabilityState::Pending;
         if let Some(manifest) = manifest.as_ref() {
             for space in &binding.spaces {
                 if !manifest.memory.spaces.contains_key(space) {
@@ -1400,6 +1423,14 @@ fn validate_memory_bindings(
                     );
                 }
             }
+            state = selected_memory_binding_readiness_state(
+                &name,
+                binding,
+                manifest,
+                config,
+                scope_label,
+                diagnostics,
+            );
             for operation in &binding.operations {
                 if !manifest.memory.operations.contains_key(operation) {
                     push_diag(
@@ -1421,9 +1452,47 @@ fn validate_memory_bindings(
             identity: name,
             scope: scope_label.to_string(),
             source: "agent_binding".to_string(),
-            state: CapabilityState::Pending,
+            state,
         });
     }
+}
+
+fn selected_memory_binding_readiness_state(
+    package_name: &str,
+    binding: &crate::manifest::AgentMemoryBinding,
+    manifest: &MemoryManifest,
+    config: &ResolvedHarnessConfig,
+    scope_label: &str,
+    diagnostics: &mut Vec<PreflightDiagnostic>,
+) -> CapabilityState {
+    if config.config.memory.packages.contains_key(package_name) {
+        return CapabilityState::Pending;
+    }
+
+    let selected_spaces = selected_memory_spaces(binding, manifest);
+    let selected_unrealizable =
+        unrealizable_memory_spaces(manifest, &MemoryRuntimeCapabilityDescriptor::local_sqlite())
+            .into_iter()
+            .filter(|diagnostic| selected_spaces.contains(&diagnostic.space))
+            .collect::<Vec<_>>();
+
+    if selected_unrealizable.is_empty() {
+        return CapabilityState::Pending;
+    }
+
+    for diagnostic in selected_unrealizable {
+        push_diag(
+            diagnostics,
+            PreflightDiagnosticSeverity::Suppressed,
+            "unrealizable_memory_space",
+            format!(
+                "Memory package `{package_name}` selects space `{}` in {scope_label}, but the selected local SQLite MemoryRuntime cannot realize it: {}.",
+                diagnostic.space, diagnostic.reason
+            ),
+            Some(format!("/bindings/{scope_label}/memory")),
+        );
+    }
+    CapabilityState::Suppressed
 }
 
 fn validate_knowledge_bindings(
@@ -1982,6 +2051,16 @@ fn validate_provider_readiness(
         implementation_capability(
             id,
             "knowledge_runtime",
+            &entry.implementation,
+            surface,
+            capabilities,
+            diagnostics,
+        );
+    }
+    for (id, entry) in &config.config.memory.runtimes {
+        implementation_capability(
+            id,
+            "memory_runtime",
             &entry.implementation,
             surface,
             capabilities,
@@ -2983,6 +3062,73 @@ mod tests {
     }
 
     #[test]
+    fn preflight_uses_configured_runtime_scopes() {
+        let root = temp_dir("config-runtime-scopes");
+        write_base_workspace(&root);
+        write_json(
+            &root.join("agentpm.harness.json"),
+            json!({
+                "version": 1,
+                "scopes": {
+                    "user": "config-user"
+                }
+            }),
+        );
+        lock_with_root(&root, base_root(), base_packages());
+
+        let plan = resolve_harness_plan(&root, &options()).unwrap();
+
+        assert_eq!(plan.report.status, PreflightStatus::Ready);
+        assert_eq!(
+            plan.runtime_scopes.get("user").map(String::as_str),
+            Some("config-user")
+        );
+        assert!(!codes(&plan).contains("unresolved_runtime_scope"));
+        assert!(plan.capabilities.iter().any(|capability| {
+            capability.kind == "memory"
+                && capability.identity == "@zack/session-memory"
+                && capability.scope == "global"
+                && capability.state == CapabilityState::Pending
+        }));
+    }
+
+    #[test]
+    fn cli_runtime_scopes_override_configured_runtime_scopes() {
+        let root = temp_dir("cli-runtime-scope-override");
+        write_base_workspace(&root);
+        write_json(
+            &root.join("agentpm.harness.json"),
+            json!({
+                "version": 1,
+                "scopes": {
+                    "user": "config-user",
+                    "conversation": "config-conversation"
+                }
+            }),
+        );
+        lock_with_root(&root, base_root(), base_packages());
+
+        let plan = resolve_harness_plan(
+            &root,
+            &HarnessBootstrapOptions {
+                runtime_scopes: BTreeMap::from([("user".to_string(), "cli-user".to_string())]),
+                ..options()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.runtime_scopes.get("user").map(String::as_str),
+            Some("cli-user")
+        );
+        assert_eq!(
+            plan.runtime_scopes.get("conversation").map(String::as_str),
+            Some("config-conversation")
+        );
+        assert!(!codes(&plan).contains("unresolved_runtime_scope"));
+    }
+
+    #[test]
     fn preflight_selects_installed_agent_only_root() {
         let root = temp_dir("installed-agent");
         write_loop(&root);
@@ -3534,6 +3680,202 @@ mod tests {
                 .as_ref()
                 .is_some_and(|path| path.ends_with("missing-context.md"))
         );
+    }
+
+    #[test]
+    fn preflight_suppresses_local_memory_space_that_runtime_cannot_realize() {
+        let root = temp_dir("memory-unrealizable");
+        write_base_workspace(&root);
+        write_json(
+            &package_root(&root, PackageKind::Memory, "@zack/session-memory", "0.1.0")
+                .join("agent.json"),
+            json!({
+                "kind": "memory",
+                "name": "@zack/session-memory",
+                "version": "0.1.0",
+                "description": "Session memory.",
+                "memory": {
+                    "scopes": { "user": { "description": "User." } },
+                    "record_types": {
+                        "note": {
+                            "schema": "schemas/note.schema.json",
+                            "version": "1.0.0",
+                            "description": "Note."
+                        }
+                    },
+                    "spaces": {
+                        "session": {
+                            "model": "collection",
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["semantic"] },
+                            "description": "Session state.",
+                            "record_types": ["note"]
+                        }
+                    }
+                }
+            }),
+        );
+        lock_with_root(&root, base_root(), base_packages());
+
+        let plan = resolve_harness_plan(
+            &root,
+            &HarnessBootstrapOptions {
+                runtime_scopes: BTreeMap::from([("user".to_string(), "user-1".to_string())]),
+                ..options()
+            },
+        )
+        .unwrap();
+
+        assert!(codes(&plan).contains("unrealizable_memory_space"));
+        assert!(plan.report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "unrealizable_memory_space"
+                && diagnostic
+                    .message
+                    .contains("no supported retrieval modes; declared modes: `Semantic`")
+        }));
+        assert!(plan.capabilities.iter().any(|capability| {
+            capability.kind == "memory"
+                && capability.identity == "@zack/session-memory"
+                && capability.scope == "global"
+                && capability.state == CapabilityState::Suppressed
+        }));
+    }
+
+    #[test]
+    fn preflight_ignores_unselected_memory_spaces_for_local_runtime_readiness() {
+        let root = temp_dir("memory-unselected-unrealizable");
+        write_base_workspace(&root);
+        write_json(
+            &package_root(&root, PackageKind::Memory, "@zack/session-memory", "0.1.0")
+                .join("agent.json"),
+            json!({
+                "kind": "memory",
+                "name": "@zack/session-memory",
+                "version": "0.1.0",
+                "description": "Session memory.",
+                "memory": {
+                    "scopes": { "user": { "description": "User." } },
+                    "record_types": {
+                        "note": {
+                            "schema": "schemas/note.schema.json",
+                            "version": "1.0.0",
+                            "description": "Note."
+                        }
+                    },
+                    "spaces": {
+                        "session": {
+                            "model": "document",
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["key"] },
+                            "description": "Session state.",
+                            "record_types": ["note"]
+                        },
+                        "semantic_notes": {
+                            "model": "collection",
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["semantic"] },
+                            "description": "Unbound semantic notes.",
+                            "record_types": ["note"]
+                        }
+                    }
+                }
+            }),
+        );
+        lock_with_root(&root, base_root(), base_packages());
+
+        let plan = resolve_harness_plan(
+            &root,
+            &HarnessBootstrapOptions {
+                runtime_scopes: BTreeMap::from([("user".to_string(), "user-1".to_string())]),
+                ..options()
+            },
+        )
+        .unwrap();
+
+        assert!(!codes(&plan).contains("unrealizable_memory_space"));
+        assert!(plan.capabilities.iter().any(|capability| {
+            capability.kind == "memory"
+                && capability.identity == "@zack/session-memory"
+                && capability.scope == "global"
+                && capability.state == CapabilityState::Pending
+        }));
+    }
+
+    #[test]
+    fn preflight_leaves_custom_memory_runtime_mapping_pending_for_later_attestation() {
+        let root = temp_dir("memory-custom-runtime-pending");
+        write_base_workspace(&root);
+        write_json(
+            &package_root(&root, PackageKind::Memory, "@zack/session-memory", "0.1.0")
+                .join("agent.json"),
+            json!({
+                "kind": "memory",
+                "name": "@zack/session-memory",
+                "version": "0.1.0",
+                "description": "Session memory.",
+                "memory": {
+                    "scopes": { "user": { "description": "User." } },
+                    "record_types": {
+                        "note": {
+                            "schema": "schemas/note.schema.json",
+                            "version": "1.0.0",
+                            "description": "Note."
+                        }
+                    },
+                    "spaces": {
+                        "session": {
+                            "model": "collection",
+                            "scope": ["user"],
+                            "retrieval": { "modes": ["semantic"] },
+                            "description": "Session state.",
+                            "record_types": ["note"]
+                        }
+                    }
+                }
+            }),
+        );
+        write_json(
+            &root.join("agentpm.harness.json"),
+            json!({
+                "version": 1,
+                "memory": {
+                    "runtimes": {
+                        "custom-memory": {
+                            "implementation": {
+                                "type": "process",
+                                "command": "node"
+                            }
+                        }
+                    },
+                    "packages": {
+                        "@zack/session-memory": { "runtime": "custom-memory" }
+                    }
+                }
+            }),
+        );
+        lock_with_root(&root, base_root(), base_packages());
+
+        let plan = resolve_harness_plan(
+            &root,
+            &HarnessBootstrapOptions {
+                runtime_scopes: BTreeMap::from([("user".to_string(), "user-1".to_string())]),
+                ..options()
+            },
+        )
+        .unwrap();
+
+        assert!(!codes(&plan).contains("unrealizable_memory_space"));
+        assert!(plan.capabilities.iter().any(|capability| {
+            capability.kind == "memory"
+                && capability.identity == "@zack/session-memory"
+                && capability.scope == "global"
+                && capability.state == CapabilityState::Pending
+        }));
+        assert!(plan.capabilities.iter().any(|capability| {
+            capability.kind == "memory_runtime"
+                && capability.identity == "custom-memory"
+                && capability.state == CapabilityState::Pending
+        }));
     }
 
     #[test]

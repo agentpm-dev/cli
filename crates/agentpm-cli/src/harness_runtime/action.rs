@@ -10,6 +10,12 @@ use std::collections::{BTreeMap, VecDeque};
 pub struct SemanticActionProposal {
     pub id: String,
     pub action: SemanticAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_alias: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_arguments: Option<Value>,
 }
 
 impl SemanticActionProposal {
@@ -17,8 +23,47 @@ impl SemanticActionProposal {
         Self {
             id: id.into(),
             action,
+            provider_call_id: None,
+            provider_alias: None,
+            provider_arguments: None,
         }
     }
+
+    pub fn with_provider_call(
+        id: impl Into<String>,
+        action: SemanticAction,
+        provider_call_id: impl Into<String>,
+        provider_alias: impl Into<String>,
+        provider_arguments: Value,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            action,
+            provider_call_id: Some(provider_call_id.into()),
+            provider_alias: Some(provider_alias.into()),
+            provider_arguments: Some(provider_arguments),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryReadMode {
+    Key,
+    Filter,
+    Chronological,
+    FullText,
+    Semantic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryWriteOperation {
+    Create,
+    Upsert,
+    Update,
+    Delete,
+    Archive,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,16 +100,33 @@ pub enum SemanticAction {
     MemoryRead {
         package: String,
         space: String,
+        mode: MemoryReadMode,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        record_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        record_type: Option<String>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        filter: BTreeMap<String, Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        limit: Option<usize>,
     },
     MemoryWrite {
         package: String,
         space: String,
-        content: Value,
+        operation: MemoryWriteOperation,
+        record_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        record_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content: Option<Value>,
     },
     PhaseCompletion {
         outcome: Option<String>,
         output: Option<Value>,
     },
+    PersistenceReviewComplete,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +172,7 @@ impl SemanticAction {
             Self::MemoryRead { .. } => "memory_read",
             Self::MemoryWrite { .. } => "memory_write",
             Self::PhaseCompletion { .. } => "phase_completion",
+            Self::PersistenceReviewComplete => "persistence_review_complete",
         }
     }
 
@@ -119,12 +182,13 @@ impl SemanticAction {
             Self::ExternalMcpTool { server, tool, .. } => format!("{server}/{tool}"),
             Self::SkillResourceRead { skill, resource } => format!("{skill}/{resource}"),
             Self::KnowledgeRequest { package, .. } => package.clone(),
-            Self::MemoryRead { package, space } | Self::MemoryWrite { package, space, .. } => {
+            Self::MemoryRead { package, space, .. } | Self::MemoryWrite { package, space, .. } => {
                 format!("{package}/{space}")
             }
             Self::PhaseCompletion { outcome, .. } => {
                 outcome.clone().unwrap_or_else(|| "complete".to_string())
             }
+            Self::PersistenceReviewComplete => "harness/persistence_review".into(),
         }
     }
 

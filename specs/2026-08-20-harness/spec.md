@@ -1043,6 +1043,12 @@ Rules:
 
 Defaults are exactly the values above. `level` is exactly `minimal | normal | verbose`. `content` is exactly `none | redacted | full`. `full` still never serializes values classified by Harness as secrets.
 
+Prompt/context observability uses those same controls rather than prompt-specific knobs:
+
+- `minimal`: do not include full logical prompt bodies;
+- `normal`: include prompt metadata such as section names/counts where useful, but not full logical prompt bodies by default;
+- `verbose`: include full logical prompt renderings, including Section 5 Effective Capability Catalog, subject to `content` policy and unconditional secret redaction.
+
 ### UI branding configuration
 
 ```json
@@ -1409,9 +1415,9 @@ Requirements:
 
 Ollama is the required local/open path so a user can run the Harness without a paid hosted model provider when a suitable local model is installed.
 
-## Prompt assembly and model-visible structure
+## ModelRequest assembly and provider serialization
 
-Harness should have one canonical logical prompt/request structure even though different providers map those sections to system/developer/user messages or other API fields differently. Provider adaptation must not change the semantic ordering/authority of the sections.
+Harness should have one canonical provider-neutral `ModelRequest` structure even though different providers map those logical parts to system/developer/user messages, structured tool/function declarations, or other API fields differently. Provider adaptation must not change the semantic ordering/authority of the logical request.
 
 Conceptually each phase ModelRequest is assembled as:
 
@@ -1421,6 +1427,10 @@ Conceptually each phase ModelRequest is assembled as:
    - current phase identity
    - valid completion/outcome contract
    - authority rule: model proposes; Harness validates/executes
+   - after Engine-recorded successful executable ActionResults, guidance to
+     avoid repeating completed actions by action kind, identity, and arguments,
+     and to complete the phase when all requested executable actions have
+     succeeded
 
 2. AUTHORED PHASE + BEHAVIOR
    - Loop phase objective
@@ -1451,7 +1461,13 @@ Conceptually each phase ModelRequest is assembled as:
      during this phase
 ```
 
-The capability catalog may be carried through provider-native tool/function definitions rather than literal prompt text. Knowledge/Memory contents and Tool results are not inserted until retrieved/executed. Consumer Context is eager because that is its contract. Profiles/Skills are instructional; retrieved/generated results remain lower-trust data even if a provider serializes everything into one message stream.
+The Effective Capability Catalog is a logical part of the `ModelRequest`, not necessarily a literal prose block sent to the model provider. Harness's canonical `ModelRequest` remains the source of truth for action aliases, canonical identities, input schemas, and argument constraints. For ModelRuntimes with native structured action support, the catalog should be translated into provider-native tool/function/structured action declarations as the authoritative wire representation of that canonical request.
+
+Prompt text should provide Harness control and behavioral guidance about how and when to use available actions. It should not duplicate full action schemas already supplied through the structured provider API unless a runtime explicitly supports a text-action emulation mode with its own validation and repair semantics.
+
+Harness may still render the complete logical request, including Section 5, as text for diagnostics, trace/report output, tests, and debugging whenever the configured trace level/content policy permits full prompt/context detail. That diagnostic rendering must not become a second source of truth for provider requests that use native structured actions.
+
+Knowledge/Memory contents and Tool results are not inserted until retrieved/executed. Consumer Context is eager because that is its contract. Profiles/Skills are instructional; retrieved/generated results remain lower-trust data even if a provider serializes everything into one message stream.
 
 `before_model_request` Hook executes after canonical assembly and before provider-specific translation. It may shape the mutable model-facing context/provider options allowed by its typed contract, but it cannot remove/replace Harness control authority, change canonical phase/outcome IDs, add action descriptors, or change EffectivePhase.
 
@@ -1506,6 +1522,491 @@ Rules:
 - malformed/unauthorized action proposals are returned as structured repair/error feedback when repair is possible and never executed speculatively;
 - the Engine continues the inner loop until valid PhaseCompletion/implicit completion, phase failure, cancellation, approval/runtime terminal, or a safety limit is reached;
 - phase-local raw transcripts are discarded from automatic cross-phase context after PhaseResult creation, though they may remain in trace/report according to content policy.
+
+### Agentic Turn Progression and Action-Result Feedback
+
+A phase-local agentic loop is not merely a sequence of model calls. Each accepted semantic action creates authoritative Harness execution history that must be returned to the model before the model decides what to do next.
+
+The canonical progression is:
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│                    Current Phase Context                     │
+│                                                              │
+│ Harness control                                              │
+│ Authored behavior                                            │
+│ Run context / prior PhaseResults                             │
+│ Effective semantic actions                                   │
+│ Current phase-local transcript                               │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+                        ModelRuntime
+                               │
+                               ▼
+                          ModelTurn
+                               │
+                ┌──────────────┴──────────────┐
+                │                             │
+                ▼                             ▼
+        Assistant content             Semantic action
+                                            proposal
+                                             │
+                                             ▼
+                                  Harness validates action
+                                             │
+                                             ▼
+                                      Runtime / Harness
+                                          executes
+                                             │
+                                             ▼
+                                   Semantic ActionResult
+                                             │
+                                             ▼
+                            append authoritative result to
+                               phase-local transcript
+                                             │
+                                             ▼
+                                  next ModelRequest
+                                             │
+                                             └───────────────┐
+                                                             │
+                                                             ▼
+                                                   next ModelTurn
+```
+
+The model does not execute an action merely by proposing it. Harness remains authoritative for:
+
+* capability availability;
+* argument/schema validation;
+* Hooks;
+* runtime dispatch;
+* retries;
+* persistence governance;
+* action result status;
+* and RunState mutation.
+
+The next model turn must therefore treat the Harness-provided `ActionResult` as the authoritative outcome of the prior proposal.
+
+#### Capability availability does not imply unfinished work
+
+Semantic actions normally remain available after successful use unless `EffectivePhase` or runtime readiness actually changes.
+
+For example:
+
+```text
+Available actions:
+
+memory_write__notes__note
+knowledge_search__runbooks
+tool__csv_query
+phase_complete
+```
+
+After:
+
+```text
+MemoryWrite(notes/note)
+        ↓
+completed successfully
+```
+
+the model may still see:
+
+```text
+memory_write__notes__note
+```
+
+in the next request.
+
+Its continued presence means:
+
+> this action remains authorized.
+
+It does **not** mean:
+
+> this action still needs to be performed.
+
+Harness control guidance must make this distinction explicit.
+
+The expected progression is:
+
+```text
+action needed
+    ↓
+model proposes action
+    ↓
+Harness executes action
+    ↓
+model receives authoritative ActionResult
+    ↓
+model evaluates new state
+    ├── more distinct work needed ──> propose next action
+    └── objective satisfied ────────> PhaseCompletion
+```
+
+Harness must not remove otherwise-valid capabilities merely to force progression.
+
+#### Action results are execution state, not incidental output
+
+A normalized `ActionResult` should make the outcome of an accepted action unambiguous to the next model turn.
+
+At minimum, the model-facing semantic result should communicate:
+
+```text
+what action completed?
+what authorized target did it operate on?
+did it succeed, fail, or succeed with no matches?
+what structured result did Harness produce?
+is there a stable identity needed for later authorized work?
+```
+
+Conceptually:
+
+```text
+ActionResult
+
+kind:
+  memory_write
+
+target:
+  package: @acme/conversation-memory
+  space: notes
+  record_type: note
+
+status:
+  success
+
+result:
+  operation: create
+  record_id: mem_123
+```
+
+This is preferable to requiring the model to infer completion from backend-oriented output such as:
+
+```json
+{"ok": true}
+```
+
+Type-specific payloads remain available, but all semantic action results should expose a consistent high-level completion meaning.
+
+A successful action returning no data is also distinct from failure:
+
+```text
+MemoryRead
+status: success
+matches: 0
+```
+
+not:
+
+```text
+MemoryRead
+status: unknown/error-like empty payload
+```
+
+#### The phase-local transcript is authoritative working history
+
+The current phase-local transcript answers:
+
+> What has already happened during this phase, and what did Harness say happened?
+
+For example:
+
+```text
+Assistant:
+  I should check the current incident notes.
+
+Semantic Action:
+  MemoryRead(notes, query="latency")
+
+Harness ActionResult:
+  success
+  1 matching record returned
+
+Assistant:
+  The existing note is outdated. I should update it.
+
+Semantic Action:
+  MemoryWrite(notes/note, update mem_123)
+
+Harness ActionResult:
+  success
+  record mem_123 updated
+```
+
+The next model request includes that working history.
+
+Harness control instructions should explicitly direct the model to consult prior ActionResults before selecting another action.
+
+The transcript remains phase-local. It does not become implicit Session history and does not automatically cross Run boundaries.
+
+#### Legitimate repetition remains allowed
+
+Harness must not infer that an exact or similar repeated action is inherently incorrect.
+
+Repeated actions may be valid for reasons such as:
+
+* changed arguments;
+* changed runtime state;
+* pagination or continuation;
+* verification after a mutation;
+* retry policy;
+* another independently required write;
+* or repeated retrieval after new information becomes available.
+
+For example:
+
+```text
+MemoryWrite(note)
+        ↓
+success
+        ↓
+MemoryRead(note)
+```
+
+may be a legitimate verification pattern.
+
+Likewise:
+
+```text
+KnowledgeRequest(query A)
+KnowledgeRequest(query B)
+```
+
+is not duplicate work merely because both use the same semantic action descriptor.
+
+Phase 7B therefore does not automatically suppress repeated actions, hash/block duplicate arguments, or let Harness decide that a semantic operation is "already done."
+
+Pathological repetition remains bounded through existing:
+
+* model-call limits;
+* semantic-action limits;
+* Tool-call limits;
+* structured repair limits;
+* persistence-review limits;
+* and Loop-step limits.
+
+#### Completion is a first-class semantic choice
+
+For ordinary phase execution, the model's high-level decision is:
+
+```text
+more authorized work is required
+              │
+              ▼
+       semantic action
+
+              OR
+
+phase objective is satisfied
+              │
+              ▼
+        PhaseCompletion
+```
+
+`PhaseCompletion` should be presented to the model as the normal terminal action for a satisfied phase objective.
+
+Its provider-facing description should make clear that the continued availability of other capabilities is not evidence that they must be invoked again.
+
+The normal flow should therefore look like:
+
+```text
+Model
+  │
+  ├── ToolCall
+  │      ↓
+  │   ToolResult success
+  │
+  ├── KnowledgeRequest
+  │      ↓
+  │   KnowledgeResult success
+  │
+  └── PhaseCompletion
+         ↓
+      PhaseResult
+         ↓
+      Loop transition
+```
+
+rather than:
+
+```text
+Model
+  ↓
+successful action
+  ↓
+same successful action
+  ↓
+same successful action
+  ↓
+limit exhaustion
+```
+
+#### Persistence review uses the same progression semantics
+
+The optional Memory persistence-review loop follows the same action/result model but with a deliberately narrowed action catalog:
+
+```text
+┌────────────────────────────────────┐
+│        Persistence Review          │
+│                                    │
+│ MemoryRead                         │
+│ MemoryWrite                        │
+│ persistence_review_complete        │
+└─────────────────┬──────────────────┘
+                  │
+                  ▼
+                Model
+                  │
+                  ▼
+             MemoryRead
+                  │
+                  ▼
+           Memory ActionResult
+                  │
+                  ▼
+                Model
+                  │
+                  ▼
+             MemoryWrite
+                  │
+                  ▼
+           Memory ActionResult
+                  │
+                  ▼
+                Model
+                  │
+                  ▼
+     persistence_review_complete
+```
+
+A successful review-time Memory action remains in the review transcript and is authoritative on the next review turn.
+
+The review guidance should explicitly instruct the model:
+
+* do not repeat a successful Memory action merely because it remains available;
+* read Memory again when genuinely useful for deduplication, verification, or correct update targeting;
+* and use `persistence_review_complete` when no additional persistence work is needed.
+
+#### Provider transport must preserve action/result causality
+
+The canonical Harness transcript is provider-neutral, but `ModelRuntime` must preserve the strongest action/result correlation supported by the selected provider.
+
+Phase 7B's initial provider transport did not do this. `ProviderRequest` carried a single rendered prompt string plus structured tool declarations, and every built-in transport sent exactly one user message per turn, so accepted semantic actions and their results reached the provider only as flattened transcript prose. From the provider's perspective the model had issued no calls and received no results, which is a plausible contributor to models re-proposing actions they had already completed successfully. The requirements below describe the intended behavior, not the original implementation.
+
+Conceptually:
+
+```text
+Canonical Harness
+
+SemanticAction(call-id)
+        ↓
+ActionResult(call-id)
+```
+
+may serialize as:
+
+```text
+OpenAI
+function_call
+     ↓
+function_call_output
+```
+
+or:
+
+```text
+Anthropic
+tool_use
+     ↓
+tool_result
+```
+
+or an equivalent provider-native mechanism.
+
+Provider serialization must not:
+
+* omit an accepted ActionResult;
+* reorder it relative to its action;
+* associate it with the wrong provider-native call identity;
+* or reduce a clearly successful semantic result to an ambiguous provider-visible representation.
+
+The logical Harness trace may render the complete semantic sequence for diagnostics even when the provider request uses structured native action/result fields rather than equivalent prose.
+
+#### Each logical component gets exactly one wire representation
+
+The canonical `ModelRequest` is provider-neutral. Each transport turns it into a serialization plan in which every logical component appears exactly once:
+
+```text
+CANONICAL MODEL REQUEST                 PROVIDER SERIALIZATION
+
+Harness control                    ->   system / instruction material
+authored behavior                  ->   system / instruction material
+Consumer Context                   ->   context material
+prior PhaseResults                 ->   context material
+Run input                          ->   leading native user turn
+Section 5 capability descriptors   ->   structured action declarations
+Section 6 phase transcript         ->   ordered native assistant /
+                                        action-call / action-result turns
+```
+
+A component carried by a native mechanism is omitted from the provider's text rendering. A component with no native representation stays in text. Nothing appears twice.
+
+This generalizes the rule the Effective Capability Catalog already follows, and it applies in both directions: emitting Run input as the leading user turn means Section 3's provider text no longer repeats it, while Consumer Context and other contextual material remain there.
+
+The full logical render — all six sections — remains available for traces, reports, debugging, and tests regardless of any provider's plan.
+
+#### Native turns replace the transcript section, they do not accompany it
+
+When a provider carries execution history as native action/result turns, the Section 6 phase-local transcript prose is omitted from that provider's request text.
+
+Sending both is worse than sending either. The two representations do not say the same thing:
+
+```text
+native turns          "you called this, and this came back"
+Section 6 prose       "here is a list of things that happened"
+```
+
+A model given both can read the prose as history *in addition to* its own turns and double-count completed work — the opposite of the problem native correlation exists to solve.
+
+Every transcript entry must map onto a native turn so the switch drops nothing:
+
+```text
+run/user input     ->  leading user turn
+assistant content  ->  assistant turn
+semantic action    ->  native action call (with provider call identity)
+action result      ->  correlated native action result
+repair feedback    ->  model-visible turn
+```
+
+Repair feedback has exactly one model-visible representation per request. It is currently both a transcript entry and appended to Harness control text, so when native turns carry it, the control-text injection is dropped; when native turns are unavailable, the control-text fallback is retained. Mapping it to a turn without removing the prose injection would reproduce the double-history problem these rules exist to eliminate. Repair semantics and repair-budget accounting are unaffected either way.
+
+The decision to omit Section 6 must be derived from the transport's chosen representation strategy, not by inspecting rendered prompt text. Where a provider or model cannot carry native action/result turns, the prose transcript is retained and the degraded strategy is recorded.
+
+#### Responsibility boundary
+
+The progression model can be summarized as:
+
+```text
+Section 5 / structured action catalog
+    "What am I currently allowed to do?"
+
+Section 6 prose / native action-result turns
+    "What have I already done, and what happened?"
+
+Harness control
+    "How should I decide whether to act again or finish?"
+
+Model
+    "What should happen next?"
+
+HarnessEngine
+    "Is that proposed next action authorized and valid?"
+```
+
+Harness improves clarity at these boundaries but does not replace model judgment with hidden semantic deduplication.
+
 
 ## Profiles
 
@@ -1646,6 +2147,8 @@ The model proposes `content` only. Harness/MemoryRuntime owns:
 
 Model-proposed content is validated against the content schema before persistence; the completed envelope is validated against the generated contract.
 
+For direct Memory writes, Harness records non-content execution provenance under `provenance.harness`, including the Run ID, phase execution ID, phase ID, Memory action kind, direct write operation, capability source, and model provider/model ID when available. `provenance.harness` is a Harness-owned runtime envelope namespace recognized during envelope validation and must not require already-generated or already-published Memory contracts to be rebuilt. Lifecycle operation provenance remains separate and may use operation/source-record metadata governed by the Blueprint lifecycle operation semantics.
+
 ### Scope resolution
 
 Blueprint scope keys are arbitrary authored identifiers. `user` and `conversation` are examples, not special literals.
@@ -1658,7 +2161,7 @@ A direct space or operation requiring unresolved scope keys is unavailable and d
 
 Per complete resolved scope tuple:
 
-- `document`: one current logical document per space/record type; direct write is create-or-replace/update;
+- `document`: one current logical document per exact Memory package/version + space + complete resolved scope tuple; direct `create` succeeds only when no current document exists for that identity, while direct `upsert` replaces the current document when present. `record_type` remains validated record metadata but does not create an independent current document within a document space. A document space may declare multiple permitted record types. These record types are alternative schemas for the space's single current logical document; they do not create separate document identities. Replacing the current document may change its record type to another type permitted by the space;
 - `collection`: multiple identified records; direct create/read/update/delete where constraints permit;
 - `sequence`: ordered records; direct creation appends and runtime assigns ordinal; mutation/deletion only where constraints permit.
 
@@ -1686,7 +2189,15 @@ The arrays contain only capabilities the runtime can actually realize in its **c
 
 `capacity` means the runtime can atomically enforce scoped hard record limits. `durable_trigger_state` means operation scheduling state survives Harness process restarts. `atomic_batches` means the runtime can commit/rollback the related multi-record/source/trigger-state mutations required by lifecycle operations as one semantic batch.
 
-Harness compares this live descriptor with every Blueprint space and participating operation during preflight. A direct space is exposed only when all of its declared model/retrieval/retention/constraint/capacity requirements can be faithfully realized. A lifecycle operation is ready only when all referenced spaces are realizable for internal access and the backend provides durable trigger state plus atomic batches for operations that mutate multiple records/state entries.
+For the built-in SQLite runtime, Phase 7B `full_text` is a practical local text lookup over durable record content string values. Matching is case-insensitive using Unicode simple lowercase mapping. It does not apply Unicode normalization, full case folding, or locale-specific casing rules, so canonically equivalent sequences that differ in composition (precomposed `ä` versus `a` plus combining diaeresis) and full-fold pairs such as `ß`/`ss` are not guaranteed to match. Runtimes may implement stronger text matching. It does not imply SQLite FTS tables, tokenized ranking, stemming, or language-aware search. A future release may add a stronger FTS-backed implementation, but runtimes that advertise `full_text` in Phase 7B must at minimum make declared full-text reads operate over persisted durable content rather than silently failing or falling back to another retrieval mode.
+
+`filter` retrieval matches durable record content by path. A filter key is a sequence of dot-separated segments addressing a value within the record content. A record matches a filter entry when any traversal of that path reaches a value equal to the filter value; traversal descends into objects by key and into arrays by trying every element. A filter entry naming a leaf array therefore matches when the array contains the filter value. Multiple filter entries are conjunctive.
+
+Filter values match by exact equality: structural equality for array and object values. `filter` does not support comparison operators, ranges, or partial string matching. A record property whose name contains a literal `.` is not addressable by `filter`.
+
+Unlike `full_text`, this is a strict contract rather than a floor: a runtime advertising `filter` must return exactly this result set. A backend capable of richer querying must restrict itself to these semantics so that the same Blueprint and request return the same records across runtimes.
+
+Harness compares this live descriptor with every Blueprint space and participating operation during preflight. A direct space is exposed only when its declared model/retention/constraint/capacity requirements can be faithfully realized and at least one declared retrieval mode is currently supported. Retrieval modes are exposed as the intersection of Blueprint-declared modes and runtime-supported modes; unsupported retrieval modes are omitted with readiness diagnostics when that omission leaves no usable direct retrieval surface. A lifecycle operation is ready only when all referenced spaces are realizable for internal access and the backend provides durable trigger state plus atomic batches for operations that mutate multiple records/state entries.
 
 ### Local SQLite MemoryRuntime
 
@@ -1730,7 +2241,7 @@ For operation state spanning multiple spaces, the operation scope tuple is the u
 - `schema_version TEXT NOT NULL`
 - `ordinal INTEGER NULL`
 - `created_at TEXT NOT NULL`
-- `updated_at TEXT NULL`
+- `updated_at TEXT NOT NULL`
 - `expires_at TEXT NULL`
 - `archived_at TEXT NULL`
 - `provenance_json TEXT NULL`
@@ -1744,7 +2255,7 @@ Required indexes/constraints:
 - index `(package, package_version, space, scope_hash, record_type, archived_at)` for active scoped lookup;
 - index `(package, package_version, space, scope_hash, ordinal)` for sequence reads;
 - index `expires_at` for retention cleanup;
-- partial unique index `(package, package_version, space, scope_hash, record_type)` where `space_model = 'document' AND archived_at IS NULL`, enforcing one active document per scope/record type;
+- partial unique index `(package, package_version, space, scope_hash)` where `space_model = 'document' AND archived_at IS NULL`, enforcing one active document per exact Memory package/version + space + complete resolved scope tuple;
 - sequence records require non-null `ordinal`; non-sequence records require null `ordinal`, enforced in runtime validation if a portable SQLite CHECK would make migrations awkward.
 
 Archived records remain in `memory_records` with `archived_at` set and are excluded from normal active reads/counts/retrieval. Delete semantics physically remove the record and any local vector row.
@@ -1773,13 +2284,15 @@ Sequence ordinal allocation starts at `0`. Appending reserves the current `next_
 - `armed INTEGER NOT NULL` (`0 | 1`)
 - `baseline_at TEXT NULL`
 - `last_completed_at TEXT NULL`
+- `last_failed_at TEXT NULL`
 - `next_eligible_at TEXT NULL`
 - `last_observed_value INTEGER NULL`
+- `last_failure_json TEXT NULL`
 - `watermark_json TEXT NULL`
 - `updated_at TEXT NOT NULL`
 - primary key: `(package, package_version, operation, scope_hash)`
 
-`watermark_json` is reserved for trigger-specific durable state that cannot be represented by the scalar columns. Harness owns its typed contents; models/hooks never write it directly.
+`last_failure_json` stores the last Harness-owned lifecycle failure code/message for diagnostics and retry control. `watermark_json` is reserved for trigger-specific durable state that cannot be represented by the scalar columns. Harness owns both typed contents; models/hooks never write them directly.
 
 #### `memory_vectors`
 
@@ -1809,8 +2322,10 @@ All SQLite writes that combine record mutation, sequence allocation, vector inva
 TTL anchor:
 
 ```text
-expires_at = (updated_at if present else created_at) + ttl
+expires_at = updated_at + ttl
 ```
+
+On creation, `updated_at` equals `created_at`; subsequent updates refresh `updated_at` and therefore refresh the TTL anchor.
 
 Local runtime may enforce expiry lazily on startup/read/write/trigger evaluation; expired records must not participate as active Memory after expiry.
 
@@ -1844,6 +2359,12 @@ Omitted value defaults to `create` for backward compatibility.
 
 `replace_input` means the transformed output updates/replaces the originating source record and is valid only when output space/record type matches the single input space/record type **and** `source_handling` is `retain`. It is explicit lifecycle authority even if the space is append-only for direct writes. `delete_after_success` or `retain_until_expiration` with `replace_input` is invalid because the transformed record is the retained source identity itself.
 
+`source_handling` policies are:
+
+- `retain`: do not mutate source records after a successful lifecycle operation.
+- `retain_until_expiration`: do not mutate source records after success, but require every source input space to declare retention and every selected source record to have a runtime-owned `expires_at`; the source remains active only until normal Memory retention removes it.
+- `delete_after_success`: delete source records in the same atomic lifecycle commit that writes the derived output.
+
 Update the flagship `refresh_saved_note` example to declare `output_mode: "replace_input"`.
 
 ### Trigger semantics
@@ -1853,9 +2374,11 @@ Trigger state is persistent MemoryRuntime state.
 - `external`: never automatic; invoked only through the canonical Harness external-operation invocation path.
 - `record_count`: edge-trigger when active scoped count moves from below threshold to threshold-or-higher; disarm after firing and re-arm once count falls below threshold.
 - `capacity`: edge-trigger when active scoped count reaches capacity; re-arm once count falls below capacity. A write that would exceed a hard capacity may first run an eligible participating capacity operation; if capacity is not freed, reject the write.
-- `interval`: dormant until relevant scoped input/target state first exists. First baseline starts when that state first exists. After successful execution, next eligibility is successful completion time plus `every`. If no relevant state exists, remain dormant.
+- `interval`: dormant until relevant scoped input/target state first exists. First baseline starts when that state first exists. After successful execution, next eligibility is successful completion time plus `every`. If no relevant state exists, remain dormant. Runtime uses the same supported positive ISO 8601 duration subset for `every` as manifest lint/build validation; shorthand values such as `5m` or `30s` are rejected. Interval eligibility is evaluated opportunistically at HarnessEngine yield points during an active Run, including phase start and related Memory writes; it is not a wall-clock scheduler. An operation whose interval elapses while no Run is active becomes eligible at the first evaluation opportunity after a Run resumes. `every` specifies a minimum elapsed interval between successful executions, not a guaranteed execution cadence. Memory reads do not evaluate interval lifecycle triggers.
 
-Automatic trigger eligibility is evaluated at relevant state changes, including mid-phase immediately after Memory writes.
+Automatic trigger eligibility is evaluated at relevant state changes, including mid-phase immediately after Memory writes. Interval triggers are also evaluated at phase start without a specific changed space so quiet spaces can run elapsed maintenance before the phase's normal model work.
+
+When an automatic lifecycle operation fails after becoming eligible, Harness records `last_failed_at`, `last_failure_json`, the current trigger observation, and a bounded `next_eligible_at` failure cooldown in `memory_operation_state`. The default cooldown is 30 seconds. This cooldown is Harness-owned portable behavior and applies the same way for built-in SQLite, process-backed, and SDK-hosted MemoryRuntime providers; providers persist the state but do not choose the retry policy in Phase 7B. While the cooldown is in the future, the trigger remains armed but is not eligible, so repeated Memory writes do not immediately re-run the same failing operation or consume additional lifecycle model calls. Once the cooldown expires, the operation may retry if the trigger condition is still true; if the condition falls below threshold/capacity first, normal re-arm semantics take over.
 
 ### External operation invocation
 
@@ -1866,6 +2389,10 @@ invoke_memory_operation(package, operation, current_resolved_scope)
 ```
 
 Harness validates that the operation exists, is bound/participating in the current scope, has `trigger.type = external`, has resolved scopes, and has a ready backend before execution.
+
+External operation controls are serviced by the active Run owner only at explicit HarnessEngine yield points. They must not interrupt an in-flight model turn, Tool/Knowledge/Memory dispatch, direct Memory transaction, lifecycle commit, or other non-yielding Engine section. A Session accepts at most one active-or-pending external Memory-operation control; additional controls are rejected with a stable `memory_operation_busy` error. Pending controls are flushed with stable cancellation or run-ended errors if the active Run is cancelled or reaches terminal before the control is serviced.
+
+Machine/SDK clients forward `memory_operation` requests into this Engine-owned ingress and return the resulting success payload or typed control error. The TUI must reuse the same ingress when it later exposes external Memory-operation controls; it must preserve the single-active-Run invariant, pass only trusted resolved scope values, and render the same events, report summaries, usage accounting, and typed success/error outcomes rather than implementing separate lifecycle semantics.
 
 The phase model does not automatically receive authority to invoke external Memory operations.
 
@@ -2668,7 +3195,7 @@ Keep failures semantically distinct:
 - ToolRuntime invocation failure -> Loop `tool_failure` policy;
 - phase cannot complete after repairs/service failures -> Loop `phase_failure` policy/default;
 - Knowledge/Memory backend request failure -> structured service failure returned to phase; not automatically Tool failure;
-- Memory lifecycle operation failure -> first-class Memory operation failure; may cause originating write/phase failure when required;
+- Memory lifecycle operation failure -> first-class Memory operation failure. Capacity-relief operation failure or insufficient relief falls through to the originating Memory write, which returns the normal typed `capacity_exceeded` structured failure to the phase; lifecycle machinery/infrastructure failures that prevent safe dispatch may still fail the phase.
 - Hook failure -> fail closed by default unless explicit continue policy;
 - approval transport/timeout -> runtime/control failure, not rejection;
 - Harness infrastructure/service protocol failure -> runtime `failed`;

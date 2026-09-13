@@ -1,17 +1,19 @@
 #![allow(dead_code)]
 
-use super::action::{SemanticAction, SemanticActionProposal};
+use super::action::{MemoryReadMode, MemoryWriteOperation, SemanticAction, SemanticActionProposal};
 use super::model::{
-    ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
-    ModelRuntimeFailure, ModelTurn,
+    ActionAlias, CapabilityDescriptor, ModelCapabilityAdvertisement, ModelProviderSelection,
+    ModelRequest, ModelRequestTurn, ModelRuntime, ModelRuntimeFailure, ModelTurn,
+    memory_content_filter_path_enumeration, memory_filter_shape_supported,
 };
 use super::service::{ProcessServiceClient, ProcessServiceConfig, ServiceLifecycleEmitter};
 use crate::harness_config::HarnessImplementation;
 use crate::harness_observability::RunUsage;
+use crate::manifest::MemoryRetrievalMode;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::PathBuf;
 
@@ -19,6 +21,10 @@ use std::path::PathBuf;
 pub struct ProviderRequest {
     pub selection: ModelProviderSelection,
     pub prompt: String,
+    pub include_capability_catalog: bool,
+    pub turn_strategy: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub turns: Vec<ModelRequestTurn>,
     // Provider-safe alias -> canonical Harness identity. Provider adapters use
     // aliases in native tool/function definitions and map calls back here.
     pub action_aliases: BTreeMap<String, String>,
@@ -36,6 +42,8 @@ pub struct ProviderActionTool {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderActionCall {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub alias: String,
     pub arguments: Value,
 }
@@ -128,6 +136,31 @@ impl ProcessModelRuntime {
 impl ModelRuntime for ProcessModelRuntime {
     fn capabilities(&self) -> ModelCapabilityAdvertisement {
         self.capabilities.clone()
+    }
+
+    fn inspect_request(
+        &self,
+        request: &ModelRequest,
+    ) -> Option<super::model::ModelRuntimeRequestSnapshot> {
+        let selection = request
+            .model
+            .clone()
+            .unwrap_or_else(|| self.selection.clone());
+        let prompt = request.prompt.render_text();
+        Some(super::model::ModelRuntimeRequestSnapshot {
+            runtime_kind: "process".into(),
+            request_kind: "canonical_model_request".into(),
+            provider: selection.provider,
+            model: selection.model,
+            action_descriptors: request.prompt.action_aliases.len(),
+            structured_actions: None,
+            capability_catalog_in_prompt: request.prompt.has_capability_catalog_section(),
+            action_aliases: request.prompt.action_aliases.clone(),
+            turn_strategy: "canonical_request".into(),
+            ordered_turns: request.ordered_turns.clone(),
+            diagnostics: request.prompt.diagnostics.clone(),
+            prompt,
+        })
     }
 
     fn generate(&mut self, request: ModelRequest) -> Result<ModelTurn, ModelRuntimeFailure> {
@@ -266,20 +299,69 @@ impl ModelRuntime for BuiltInModelRuntime {
         self.capabilities.clone()
     }
 
+    fn inspect_request(
+        &self,
+        request: &ModelRequest,
+    ) -> Option<super::model::ModelRuntimeRequestSnapshot> {
+        let provider_request = self.provider_request(request);
+        let capability_catalog_in_prompt = provider_request.include_capability_catalog
+            && request.prompt.has_capability_catalog_section();
+        let mut diagnostics = request.prompt.diagnostics.clone();
+        diagnostics.extend(provider_schema_fallback_diagnostics(request));
+        Some(super::model::ModelRuntimeRequestSnapshot {
+            runtime_kind: "built_in".into(),
+            request_kind: "provider_wire_request".into(),
+            provider: provider_request.selection.provider,
+            model: provider_request.selection.model,
+            action_descriptors: request.prompt.action_aliases.len(),
+            structured_actions: Some(provider_request.actions.len()),
+            capability_catalog_in_prompt,
+            action_aliases: request.prompt.action_aliases.clone(),
+            turn_strategy: provider_request.turn_strategy,
+            ordered_turns: provider_request.turns,
+            diagnostics,
+            prompt: provider_request.prompt,
+        })
+    }
+
     fn generate(&mut self, request: ModelRequest) -> Result<ModelTurn, ModelRuntimeFailure> {
         if !self.capabilities.semantic_actions || !self.capabilities.structured_output {
             return Err(ModelRuntimeFailure::new(
                 "selected model runtime does not advertise required Harness semantic action support",
             ));
         }
+        let provider_request = self.provider_request(&request);
+        let response = self.transport.send(provider_request)?;
+        normalize_provider_response(response, &request.prompt.action_aliases)
+    }
+}
+
+impl BuiltInModelRuntime {
+    fn provider_request(&self, request: &ModelRequest) -> ProviderRequest {
         let selection = request
             .model
             .clone()
             .unwrap_or_else(|| self.selection.clone());
-        let actions = provider_action_tools(&request);
-        let provider_request = ProviderRequest {
+        let actions = provider_action_tools(request);
+        let include_capability_catalog = actions.is_empty();
+        let native_turns_available = !actions.is_empty();
+        let turn_strategy = if native_turns_available {
+            "native_action_result_turns"
+        } else {
+            "prompt_text_fallback"
+        };
+        let prompt = if native_turns_available {
+            request
+                .prompt
+                .render_provider_text_with_native_turns(include_capability_catalog)
+        } else {
+            request
+                .prompt
+                .render_provider_text(include_capability_catalog)
+        };
+        ProviderRequest {
             selection,
-            prompt: request.prompt.render_text(),
+            prompt,
             action_aliases: request
                 .prompt
                 .action_aliases
@@ -287,9 +369,20 @@ impl ModelRuntime for BuiltInModelRuntime {
                 .map(|alias| (alias.alias.clone(), alias.identity.clone()))
                 .collect(),
             actions,
-        };
-        let response = self.transport.send(provider_request)?;
-        normalize_provider_response(response, &request.prompt.action_aliases)
+            include_capability_catalog,
+            turn_strategy: turn_strategy.into(),
+            turns: if native_turns_available {
+                if request.ordered_turns.is_empty() {
+                    vec![ModelRequestTurn::UserInput {
+                        content: request.run_input.clone(),
+                    }]
+                } else {
+                    request.ordered_turns.clone()
+                }
+            } else {
+                Vec::new()
+            },
+        }
     }
 }
 
@@ -312,16 +405,229 @@ fn provider_action_tools(request: &ModelRequest) -> Vec<ProviderActionTool> {
                 alias: alias.alias.clone(),
                 action_kind: alias.action_kind.clone(),
                 identity: alias.identity.clone(),
-                description: descriptor.description.clone(),
+                description: provider_action_description(alias, descriptor, request),
                 parameters: action_parameters_schema(alias, request),
             })
         })
         .collect()
 }
 
+fn provider_schema_fallback_diagnostics(request: &ModelRequest) -> Vec<String> {
+    let mut diagnostics = BTreeSet::new();
+    for memory in &request.effective_phase.active_memory {
+        if memory
+            .retrieval_modes
+            .iter()
+            .any(|mode| matches!(mode, MemoryRetrievalMode::Filter))
+            && !memory_filter_shape_supported(memory)
+            && request
+                .effective_phase
+                .capability_catalog
+                .iter()
+                .any(|descriptor| {
+                    descriptor.action_kind == "memory_read"
+                        && descriptor.identity == memory_identity(&memory.package, &memory.space)
+                })
+        {
+            diagnostics.insert(format!(
+                "provider-facing schema omission: Memory read `{}` filter mode has no declared content filter paths; filter action is not advertised.",
+                memory_identity(&memory.package, &memory.space)
+            ));
+        }
+    }
+    for alias in &request.prompt.action_aliases {
+        match alias.action_kind.as_str() {
+            "agentpm_tool" => {
+                if !request
+                    .runtime
+                    .tools
+                    .iter()
+                    .any(|tool| tool.name == alias.identity)
+                {
+                    diagnostics.insert(format!(
+                        "provider-facing schema fallback for `{}`: Tool `{}` has no runtime input_schema metadata; arguments are advertised as an open object.",
+                        alias.alias, alias.identity
+                    ));
+                }
+            }
+            "knowledge_request" => {
+                let knowledge = request
+                    .effective_phase
+                    .active_knowledge
+                    .iter()
+                    .find(|knowledge| knowledge.name == alias.identity)
+                    .or_else(|| {
+                        request
+                            .runtime
+                            .knowledge
+                            .iter()
+                            .find(|knowledge| knowledge.name == alias.identity)
+                    });
+                match knowledge {
+                    Some(knowledge)
+                        if knowledge.mode == "context" && knowledge.documents.is_empty() =>
+                    {
+                        diagnostics.insert(format!(
+                            "provider-facing schema fallback for `{}`: Knowledge package `{}` has no declared document metadata; document is advertised as an open string.",
+                            alias.alias, alias.identity
+                        ));
+                    }
+                    None => {
+                        diagnostics.insert(format!(
+                            "provider-facing schema fallback for `{}`: Knowledge package `{}` has no runtime metadata; request mode is advertised as an open fallback.",
+                            alias.alias, alias.identity
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            "memory_write" => {
+                let memory = request.effective_phase.active_memory.iter().find(|memory| {
+                    memory_identity(&memory.package, &memory.space) == alias.identity
+                });
+                if memory.is_none_or(|memory| memory.record_types.is_empty()) {
+                    diagnostics.insert(format!(
+                        "provider-facing schema fallback for `{}`: Memory write `{}` has no record-type metadata; content is advertised as an open object.",
+                        alias.alias, alias.identity
+                    ));
+                }
+            }
+            "memory_read" if memory_read_filter_paths_incomplete(alias, request) => {
+                diagnostics.insert(format!(
+                    "provider-facing schema fallback for `{}`: Memory read `{}` has recursive or oversized content filter paths; filter is advertised as an open object and Harness validation remains authoritative.",
+                    alias.alias, alias.identity
+                ));
+            }
+            _ => {}
+        }
+    }
+    diagnostics.into_iter().collect()
+}
+
+fn provider_action_description(
+    alias: &ActionAlias,
+    descriptor: &super::model::CapabilityDescriptor,
+    request: &ModelRequest,
+) -> String {
+    match alias.action_kind.as_str() {
+        "phase_completion" => format!(
+            "{} Use this action when the phase objective is satisfied. Other available actions do not need to be called just because they remain available.",
+            descriptor.description
+        ),
+        "persistence_review_complete" => {
+            "Complete the bounded persistence review when no additional authorized Memory read or write is needed. This does not change the pending phase outcome.".into()
+        }
+        "memory_read" | "memory_write" => {
+            let descriptor_description =
+                provider_memory_descriptor_description(alias, descriptor, request);
+            let fixed_target = request
+                .effective_phase
+                .active_memory
+                .iter()
+                .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+                .map(|memory| {
+                    let fixed_record_type = alias
+                        .provider_shape
+                        .as_deref()
+                        .and_then(|provider_shape| {
+                            memory_write_provider_shape(provider_shape)
+                                .and_then(|shape| shape.record_type())
+                        })
+                        .or_else(|| {
+                            memory
+                                .record_types
+                                .as_slice()
+                                .first()
+                                .filter(|_| memory.record_types.len() == 1)
+                                .map(|record_type| record_type.name.as_str())
+                        });
+                    let record_type = if let Some(record_type) = fixed_record_type {
+                        format!(", fixed record_type `{record_type}`")
+                    } else {
+                        ", record_type must be selected from this action's schema".into()
+                    };
+                    format!(
+                        "Fixed Memory target: package `{}`, space `{}`{}.",
+                        memory.package, memory.space, record_type
+                    )
+                })
+                .unwrap_or_else(|| format!("Fixed Memory target identity: `{}`.", alias.identity));
+            let read_shape = if alias.action_kind == "memory_read" {
+                alias.provider_shape
+                    .as_deref()
+                    .and_then(|provider_shape| {
+                        memory_read_shape_description(
+                            provider_shape,
+                            memory_filter_shape_supported_for_alias(alias, request),
+                        )
+                    })
+                    .map(|description| format!(" Fixed read shape: {description}."))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let write_shape = if alias.action_kind == "memory_write" {
+                alias
+                    .provider_shape
+                    .as_deref()
+                    .and_then(memory_write_shape_description)
+                    .map(|description| format!(" Fixed write shape: {description}."))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            format!(
+                "{} {}{}{} Choose this action only when that fixed target exactly matches the intended durable Memory surface.",
+                descriptor_description, fixed_target, read_shape, write_shape
+            )
+        }
+        "knowledge_request" => format!(
+            "{} Fixed Knowledge target: package `{}`. Do not put a different package identity in the arguments.",
+            descriptor.description, alias.identity
+        ),
+        "skill_resource_read" => format!(
+            "{} Fixed Skill target: `{}`. Select only one declared resource id in the arguments.",
+            descriptor.description, alias.identity
+        ),
+        "agentpm_tool" => format!(
+            "{} Fixed AgentPM Tool target: `{}`. Put only this Tool's JSON arguments in the arguments field.",
+            descriptor.description, alias.identity
+        ),
+        "external_mcp_tool" => format!(
+            "{} Fixed MCP Tool target: `{}`. Put only this MCP Tool's JSON arguments in the arguments field.",
+            descriptor.description, alias.identity
+        ),
+        _ => descriptor.description.clone(),
+    }
+}
+
+fn provider_memory_descriptor_description(
+    alias: &super::model::ActionAlias,
+    descriptor: &CapabilityDescriptor,
+    request: &ModelRequest,
+) -> String {
+    if !matches!(alias.action_kind.as_str(), "memory_read" | "memory_write")
+        || alias.provider_shape.is_none()
+    {
+        return descriptor.description.clone();
+    }
+    request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .map(|memory| memory.description.clone())
+        .unwrap_or_else(|| descriptor.description.clone())
+}
+
 fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRequest) -> Value {
     match alias.action_kind.as_str() {
         "phase_completion" => phase_completion_parameters_schema(request),
+        "persistence_review_complete" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+        }),
         "agentpm_tool" => agentpm_tool_parameters_schema(alias, request),
         "external_mcp_tool" => json!({
             "type": "object",
@@ -336,32 +642,499 @@ fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRe
         }),
         "skill_resource_read" => skill_resource_read_parameters_schema(alias, request),
         "knowledge_request" => knowledge_request_parameters_schema(alias, request),
-        "memory_read" => json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "space": { "type": "string", "minLength": 1 }
-            },
-            "required": ["space"]
-        }),
-        "memory_write" => json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "space": { "type": "string", "minLength": 1 },
-                "content": {
-                    "type": "object",
-                    "additionalProperties": true,
-                    "description": "Memory record content proposed by the model."
-                }
-            },
-            "required": ["space", "content"]
-        }),
+        "memory_read" => memory_read_parameters_schema(alias, request),
+        "memory_write" => memory_write_parameters_schema(alias, request),
         _ => json!({
             "type": "object",
             "additionalProperties": true
         }),
     }
+}
+
+fn memory_read_parameters_schema(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    if let Some(provider_shape) = alias.provider_shape.as_deref() {
+        return memory_read_shape_parameters_schema(provider_shape, alias, request);
+    }
+
+    let modes = request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .map(|memory| {
+            memory
+                .retrieval_modes
+                .iter()
+                .map(memory_retrieval_mode_label)
+                .collect::<Vec<_>>()
+        })
+        .filter(|modes| !modes.is_empty())
+        .unwrap_or_else(|| {
+            vec![
+                "key".into(),
+                "filter".into(),
+                "chronological".into(),
+                "full_text".into(),
+            ]
+        });
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "mode": {
+                "type": "string",
+                "enum": modes,
+                "description": "Memory retrieval mode for this already-selected package/space."
+            },
+            "record_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Existing Memory record id returned by authorized Memory access."
+            },
+            "record_type": memory_record_type_schema(alias, request),
+            "filter": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Conjunctive exact-match filter using dot-path keys over durable record content."
+            },
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Text query for full_text or semantic Memory retrieval."
+            },
+            "limit": { "type": "integer", "minimum": 1 }
+        },
+        "required": ["mode"]
+    })
+}
+
+fn memory_read_shape_parameters_schema(
+    provider_shape: &str,
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    let record_type = memory_record_type_schema(alias, request);
+    match provider_shape {
+        "key_document" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_type": record_type
+            }
+        }),
+        "key_record" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_id": memory_record_id_schema(),
+                "record_type": record_type
+            },
+            "required": ["record_id"]
+        }),
+        "chronological" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_type": record_type,
+                "limit": memory_limit_schema()
+            }
+        }),
+        "filter" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_type": record_type,
+                "filter": memory_filter_schema(alias, request),
+                "limit": memory_limit_schema()
+            },
+            "required": ["filter"]
+        }),
+        "full_text" => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "record_type": record_type,
+                "query": memory_query_schema("Text query for full_text Memory retrieval."),
+                "limit": memory_limit_schema()
+            },
+            "required": ["query"]
+        }),
+        "semantic" => {
+            let mut properties = Map::from_iter([
+                ("record_type".into(), record_type),
+                (
+                    "query".into(),
+                    memory_query_schema("Text query for semantic Memory retrieval."),
+                ),
+                ("limit".into(), memory_limit_schema()),
+            ]);
+            if memory_filter_shape_supported_for_alias(alias, request) {
+                properties.insert("filter".into(), memory_filter_schema(alias, request));
+            }
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": properties,
+                "required": ["query"]
+            })
+        }
+        _ => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["key", "filter", "chronological", "full_text", "semantic"],
+                    "description": "Memory retrieval mode for this already-selected package/space."
+                },
+                "record_id": memory_record_id_schema(),
+                "record_type": record_type,
+                "filter": memory_filter_schema(alias, request),
+                "query": memory_query_schema("Text query for full_text or semantic Memory retrieval."),
+                "limit": memory_limit_schema()
+            },
+            "required": ["mode"]
+        }),
+    }
+}
+
+fn memory_record_id_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "description": "Existing Memory record id returned by authorized Memory access."
+    })
+}
+
+fn memory_filter_schema(alias: &super::model::ActionAlias, request: &ModelRequest) -> Value {
+    let Some(memory) = request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+    else {
+        return memory_open_filter_schema(
+            "Conjunctive exact-match filter using dot-path keys over durable record content.",
+        );
+    };
+    let enumerations = memory
+        .record_types
+        .iter()
+        .map(|record_type| memory_content_filter_path_enumeration(&record_type.content_schema))
+        .collect::<Vec<_>>();
+    if enumerations.iter().any(|enumeration| !enumeration.complete) {
+        return memory_open_filter_schema(
+            "Conjunctive exact-match filter using dot-path keys over durable record content. Declared filter paths are recursive or too large to enumerate in provider-facing schema; Harness validation remains authoritative.",
+        );
+    }
+    let mut paths = enumerations
+        .into_iter()
+        .flat_map(|enumeration| enumeration.paths)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    let properties = paths
+        .into_iter()
+        .map(|path| {
+            (
+                path,
+                json!({
+                    "description": "Exact value to match at this declared durable content path."
+                }),
+            )
+        })
+        .collect::<Map<_, _>>();
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": properties,
+        "description": "Conjunctive exact-match filter using dot-path keys over durable record content."
+    })
+}
+
+fn memory_open_filter_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": true,
+        "minProperties": 1,
+        "description": description
+    })
+}
+
+fn memory_filter_shape_supported_for_alias(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> bool {
+    request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .is_none_or(memory_filter_shape_supported)
+}
+
+fn memory_read_filter_paths_incomplete(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> bool {
+    if !matches!(
+        alias.provider_shape.as_deref(),
+        Some("filter") | Some("semantic")
+    ) {
+        return false;
+    }
+    request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .is_some_and(|memory| {
+            memory.record_types.iter().any(|record_type| {
+                !memory_content_filter_path_enumeration(&record_type.content_schema).complete
+            })
+        })
+}
+
+fn memory_query_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "description": description
+    })
+}
+
+fn memory_limit_schema() -> Value {
+    json!({ "type": "integer", "minimum": 1 })
+}
+
+fn memory_write_parameters_schema(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    if let Some(provider_shape) = alias.provider_shape.as_deref() {
+        return memory_write_shape_parameters_schema(provider_shape, alias, request);
+    }
+    let content_schema = memory_write_content_schema(alias, request);
+    let operations = memory_write_operation_values(alias, request);
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "operation": {
+                "type": "string",
+                "enum": operations,
+                "description": "Direct Memory mutation intent for this already-selected package/space."
+            },
+            "record_type": memory_record_type_schema(alias, request),
+            "record_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Existing Memory record id returned by authorized Memory access for update/delete/archive."
+            },
+            "content": content_schema
+        },
+        "required": ["operation", "record_type"]
+    })
+}
+
+fn memory_write_shape_parameters_schema(
+    provider_shape: &str,
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    if let Some(parsed_shape) = memory_write_provider_shape(provider_shape) {
+        if let Some(record_type) = parsed_shape.record_type() {
+            let content_schema =
+                memory_write_content_schema_for_record_type(alias, request, record_type);
+            let record_type_schema = json!({
+                "type": "string",
+                "const": record_type
+            });
+            if matches!(
+                parsed_shape,
+                MemoryWriteProviderShape::Create { .. }
+                    | MemoryWriteProviderShape::CreateOrUpsert { .. }
+            ) {
+                let operations = match parsed_shape {
+                    MemoryWriteProviderShape::Create { .. } => json!(["create"]),
+                    MemoryWriteProviderShape::CreateOrUpsert { .. } => json!(["create", "upsert"]),
+                    _ => unreachable!("matched create shapes"),
+                };
+                return json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "operation": {
+                            "type": "string",
+                            "enum": operations,
+                            "description": "Create or upsert Memory content for this fixed record type."
+                        },
+                        "record_type": record_type_schema,
+                        "content": content_schema
+                    },
+                    "required": ["operation", "content"]
+                });
+            }
+            if matches!(parsed_shape, MemoryWriteProviderShape::Update { .. }) {
+                return json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "operation": {
+                            "type": "string",
+                            "const": "update",
+                            "description": "Update an existing Memory record for this fixed record type."
+                        },
+                        "record_id": memory_record_id_schema(),
+                        "record_type": record_type_schema,
+                        "content": content_schema
+                    },
+                    "required": ["operation", "record_id", "content"]
+                });
+            }
+        }
+        if matches!(parsed_shape, MemoryWriteProviderShape::DeleteOrArchive) {
+            return json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["delete", "archive"],
+                        "description": "Delete or archive an existing Memory record in this fixed package/space."
+                    },
+                    "record_id": memory_record_id_schema(),
+                    "record_type": memory_record_type_schema(alias, request)
+                },
+                "required": ["operation", "record_id", "record_type"]
+            });
+        }
+    }
+    memory_write_parameters_schema(
+        &super::model::ActionAlias {
+            provider_shape: None,
+            ..alias.clone()
+        },
+        request,
+    )
+}
+
+fn memory_write_operation_values(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Vec<&'static str> {
+    let append_only = request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .map(|memory| memory.append_only)
+        .unwrap_or(false);
+    if append_only {
+        vec!["create"]
+    } else {
+        vec!["create", "upsert", "update", "delete", "archive"]
+    }
+}
+
+fn memory_record_type_schema(alias: &super::model::ActionAlias, request: &ModelRequest) -> Value {
+    let record_types = request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .map(|memory| {
+            memory
+                .record_types
+                .iter()
+                .map(|record_type| record_type.name.clone())
+                .collect::<Vec<_>>()
+        })
+        .filter(|record_types| !record_types.is_empty());
+    match record_types {
+        Some(record_types) => json!({
+            "type": "string",
+            "enum": record_types
+        }),
+        None => json!({
+            "type": "string",
+            "minLength": 1
+        }),
+    }
+}
+
+fn memory_write_content_schema(alias: &super::model::ActionAlias, request: &ModelRequest) -> Value {
+    let schemas = request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .map(|memory| {
+            memory
+                .record_types
+                .iter()
+                .map(|record_type| record_type.content_schema.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    match schemas.as_slice() {
+        [schema] => schema.clone(),
+        [] => json!({
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Memory record content proposed by the model."
+        }),
+        _ => json!({
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Memory record content proposed by the model. Harness validates this against the selected record type contract before mutation."
+        }),
+    }
+}
+
+fn memory_write_content_schema_for_record_type(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+    record_type_name: &str,
+) -> Value {
+    request
+        .effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == alias.identity)
+        .and_then(|memory| {
+            memory
+                .record_types
+                .iter()
+                .find(|record_type| record_type.name == record_type_name)
+        })
+        .map(|record_type| record_type.content_schema.clone())
+        .unwrap_or_else(|| {
+            json!({
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Memory record content proposed by the model."
+            })
+        })
+}
+
+fn memory_identity(package: &str, space: &str) -> String {
+    format!("{package}/{space}")
+}
+
+fn memory_retrieval_mode_label(mode: &MemoryRetrievalMode) -> String {
+    match mode {
+        MemoryRetrievalMode::Key => "key",
+        MemoryRetrievalMode::Filter => "filter",
+        MemoryRetrievalMode::Chronological => "chronological",
+        MemoryRetrievalMode::FullText => "full_text",
+        MemoryRetrievalMode::Semantic => "semantic",
+    }
+    .into()
 }
 
 fn knowledge_request_parameters_schema(
@@ -550,10 +1323,13 @@ fn normalize_provider_response(
             .iter()
             .enumerate()
             .map(|(index, call)| {
-                Ok(SemanticActionProposal::new(
-                    format!("provider-action-{}", index + 1),
-                    semantic_action_from_provider_call(call, aliases)?,
-                ))
+                let action = semantic_action_from_provider_call(call, aliases)?;
+                let mut proposal =
+                    SemanticActionProposal::new(format!("provider-action-{}", index + 1), action);
+                proposal.provider_call_id.clone_from(&call.id);
+                proposal.provider_alias = Some(call.alias.clone());
+                proposal.provider_arguments = Some(call.arguments.clone());
+                Ok(proposal)
             })
             .collect::<Result<Vec<_>, ModelRuntimeFailure>>()?;
         return Ok(ModelTurn {
@@ -650,6 +1426,7 @@ fn semantic_action_from_json(value: &Value) -> Result<SemanticAction, ModelRunti
         .and_then(Value::as_str)
         .ok_or_else(|| ModelRuntimeFailure::new("provider action is missing type"))?;
     match action_type {
+        "persistence_review_complete" => Ok(SemanticAction::PersistenceReviewComplete),
         "phase_completion" => Ok(SemanticAction::PhaseCompletion {
             outcome: value
                 .get("outcome")
@@ -691,11 +1468,44 @@ fn semantic_action_from_json(value: &Value) -> Result<SemanticAction, ModelRunti
         "memory_read" => Ok(SemanticAction::MemoryRead {
             package: required_string(value, "package")?,
             space: required_string(value, "space")?,
+            mode: parse_memory_read_mode(value.get("mode"))?,
+            record_id: value
+                .get("record_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            record_type: value
+                .get("record_type")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            filter: value
+                .get("filter")
+                .and_then(Value::as_object)
+                .map(|object| {
+                    object
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            query: value
+                .get("query")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            limit: value
+                .get("limit")
+                .and_then(Value::as_u64)
+                .map(|limit| limit as usize),
         }),
         "memory_write" => Ok(SemanticAction::MemoryWrite {
             package: required_string(value, "package")?,
             space: required_string(value, "space")?,
-            content: value.get("content").cloned().unwrap_or(Value::Null),
+            operation: parse_memory_write_operation(value.get("operation"))?,
+            record_type: required_string(value, "record_type")?,
+            record_id: value
+                .get("record_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            content: value.get("content").cloned(),
         }),
         other => Err(ModelRuntimeFailure::new(format!(
             "unsupported provider action type `{other}`"
@@ -717,6 +1527,7 @@ fn semantic_action_from_provider_call(
             ))
         })?;
     match alias.action_kind.as_str() {
+        "persistence_review_complete" => Ok(SemanticAction::PersistenceReviewComplete),
         "phase_completion" => Ok(SemanticAction::PhaseCompletion {
             outcome: call
                 .arguments
@@ -779,23 +1590,251 @@ fn semantic_action_from_provider_call(
                 .get("return_citations")
                 .and_then(Value::as_bool),
         }),
-        "memory_read" => Ok(SemanticAction::MemoryRead {
-            package: alias.identity.clone(),
-            space: required_string(&call.arguments, "space")?,
-        }),
-        "memory_write" => Ok(SemanticAction::MemoryWrite {
-            package: alias.identity.clone(),
-            space: required_string(&call.arguments, "space")?,
-            content: call
-                .arguments
-                .get("content")
-                .cloned()
-                .unwrap_or(Value::Null),
-        }),
+        "memory_read" => {
+            let (package, space) = split_identity(&alias.identity)?;
+            let fixed_mode = memory_read_mode_from_provider_shape(alias.provider_shape.as_deref())?;
+            let mode = match (fixed_mode, call.arguments.get("mode")) {
+                (Some(fixed_mode), Some(value)) => {
+                    let proposed = parse_memory_read_mode(Some(value))?;
+                    if proposed != fixed_mode {
+                        return Err(ModelRuntimeFailure::new(format!(
+                            "memory_read provider action `{}` fixes mode `{}` but arguments requested `{}`",
+                            alias.alias,
+                            memory_read_mode_name(fixed_mode),
+                            memory_read_mode_name(proposed)
+                        )));
+                    }
+                    fixed_mode
+                }
+                (Some(fixed_mode), None) => fixed_mode,
+                (None, value) => parse_memory_read_mode(value)?,
+            };
+            Ok(SemanticAction::MemoryRead {
+                package,
+                space,
+                mode,
+                record_id: call
+                    .arguments
+                    .get("record_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                record_type: call
+                    .arguments
+                    .get("record_type")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                filter: call
+                    .arguments
+                    .get("filter")
+                    .and_then(Value::as_object)
+                    .map(|object| {
+                        object
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                query: call
+                    .arguments
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                limit: call
+                    .arguments
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .map(|limit| limit as usize),
+            })
+        }
+        "memory_write" => {
+            let (package, space) = split_identity(&alias.identity)?;
+            let fixed_operations =
+                memory_write_operations_from_provider_shape(alias.provider_shape.as_deref())?;
+            let operation = match (fixed_operations.as_deref(), call.arguments.get("operation")) {
+                (Some(operations), Some(value)) => {
+                    let proposed = parse_memory_write_operation(Some(value))?;
+                    if !operations.contains(&proposed) {
+                        return Err(ModelRuntimeFailure::new(format!(
+                            "memory_write provider action `{}` does not permit operation `{}`",
+                            alias.alias,
+                            memory_write_operation_name(proposed)
+                        )));
+                    }
+                    proposed
+                }
+                (Some([operation]), None) => *operation,
+                (Some(_), None) => {
+                    return Err(ModelRuntimeFailure::new(
+                        "memory_write operation is required",
+                    ));
+                }
+                (None, value) => parse_memory_write_operation(value)?,
+            };
+            let fixed_record_type = alias.provider_shape.as_deref().and_then(|provider_shape| {
+                memory_write_provider_shape(provider_shape).and_then(|shape| shape.record_type())
+            });
+            let record_type = match (fixed_record_type, call.arguments.get("record_type")) {
+                (Some(fixed_record_type), Some(value)) => {
+                    let proposed = value.as_str().ok_or_else(|| {
+                        ModelRuntimeFailure::new("memory_write record_type must be a string")
+                    })?;
+                    if proposed != fixed_record_type {
+                        return Err(ModelRuntimeFailure::new(format!(
+                            "memory_write provider action `{}` fixes record_type `{}` but arguments requested `{}`",
+                            alias.alias, fixed_record_type, proposed
+                        )));
+                    }
+                    fixed_record_type.to_string()
+                }
+                (Some(fixed_record_type), None) => fixed_record_type.to_string(),
+                (None, _) => required_string(&call.arguments, "record_type")?,
+            };
+            Ok(SemanticAction::MemoryWrite {
+                package,
+                space,
+                operation,
+                record_type,
+                record_id: call
+                    .arguments
+                    .get("record_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                content: call.arguments.get("content").cloned(),
+            })
+        }
         other => Err(ModelRuntimeFailure::new(format!(
             "unsupported provider action kind `{other}`"
         ))),
     }
+}
+
+fn memory_read_mode_from_provider_shape(
+    provider_shape: Option<&str>,
+) -> Result<Option<MemoryReadMode>, ModelRuntimeFailure> {
+    let Some(provider_shape) = provider_shape else {
+        return Ok(None);
+    };
+    match provider_shape {
+        "key_document" | "key_record" => Ok(Some(MemoryReadMode::Key)),
+        "filter" => Ok(Some(MemoryReadMode::Filter)),
+        "chronological" => Ok(Some(MemoryReadMode::Chronological)),
+        "full_text" => Ok(Some(MemoryReadMode::FullText)),
+        "semantic" => Ok(Some(MemoryReadMode::Semantic)),
+        other => Err(ModelRuntimeFailure::new(format!(
+            "unsupported memory_read provider shape `{other}`"
+        ))),
+    }
+}
+
+fn memory_read_mode_name(mode: MemoryReadMode) -> &'static str {
+    match mode {
+        MemoryReadMode::Key => "key",
+        MemoryReadMode::Filter => "filter",
+        MemoryReadMode::Chronological => "chronological",
+        MemoryReadMode::FullText => "full_text",
+        MemoryReadMode::Semantic => "semantic",
+    }
+}
+
+fn memory_read_shape_description(
+    provider_shape: &str,
+    filter_supported: bool,
+) -> Option<&'static str> {
+    match provider_shape {
+        "key_document" => Some(
+            "key read for the current scoped document; do not provide record_id, query, or filter",
+        ),
+        "key_record" => Some("key read by existing record_id; do not provide query or filter"),
+        "chronological" => {
+            Some("chronological list read; only record_type and limit may narrow results")
+        }
+        "filter" => Some("filter read; provide filter and do not provide query or record_id"),
+        "full_text" => Some("full_text read; provide query and do not provide record_id or filter"),
+        "semantic" if filter_supported => Some(
+            "semantic read; provide query, optionally provide filter, and do not provide record_id",
+        ),
+        "semantic" => Some("semantic read; provide query and do not provide record_id or filter"),
+        _ => None,
+    }
+}
+
+fn memory_write_shape_description(provider_shape: &str) -> Option<&'static str> {
+    match memory_write_provider_shape(provider_shape)? {
+        MemoryWriteProviderShape::Create { .. } => {
+            Some("create; provide content and do not provide record_id")
+        }
+        MemoryWriteProviderShape::CreateOrUpsert { .. } => {
+            Some("create/upsert; provide content and do not provide record_id")
+        }
+        MemoryWriteProviderShape::Update { .. } => Some("update; provide record_id and content"),
+        MemoryWriteProviderShape::DeleteOrArchive => {
+            Some("delete/archive; provide record_id and record_type, and do not provide content")
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemoryWriteProviderShape<'a> {
+    Create { record_type: &'a str },
+    CreateOrUpsert { record_type: &'a str },
+    Update { record_type: &'a str },
+    DeleteOrArchive,
+}
+
+impl<'a> MemoryWriteProviderShape<'a> {
+    fn record_type(self) -> Option<&'a str> {
+        match self {
+            Self::Create { record_type }
+            | Self::CreateOrUpsert { record_type }
+            | Self::Update { record_type } => Some(record_type),
+            Self::DeleteOrArchive => None,
+        }
+    }
+
+    fn operations(self) -> &'static [MemoryWriteOperation] {
+        match self {
+            Self::Create { .. } => &[MemoryWriteOperation::Create],
+            Self::CreateOrUpsert { .. } => {
+                &[MemoryWriteOperation::Create, MemoryWriteOperation::Upsert]
+            }
+            Self::Update { .. } => &[MemoryWriteOperation::Update],
+            Self::DeleteOrArchive => &[MemoryWriteOperation::Delete, MemoryWriteOperation::Archive],
+        }
+    }
+}
+
+fn memory_write_provider_shape(provider_shape: &str) -> Option<MemoryWriteProviderShape<'_>> {
+    if provider_shape == "delete_or_archive" {
+        return Some(MemoryWriteProviderShape::DeleteOrArchive);
+    }
+    if let Some(record_type) = provider_shape.strip_prefix("create_or_upsert_") {
+        return (!record_type.is_empty())
+            .then_some(MemoryWriteProviderShape::CreateOrUpsert { record_type });
+    }
+    if let Some(record_type) = provider_shape.strip_prefix("create_only_") {
+        return (!record_type.is_empty())
+            .then_some(MemoryWriteProviderShape::Create { record_type });
+    }
+    if let Some(record_type) = provider_shape.strip_prefix("update_") {
+        return (!record_type.is_empty())
+            .then_some(MemoryWriteProviderShape::Update { record_type });
+    }
+    None
+}
+
+fn memory_write_operations_from_provider_shape(
+    provider_shape: Option<&str>,
+) -> Result<Option<Vec<MemoryWriteOperation>>, ModelRuntimeFailure> {
+    let Some(provider_shape) = provider_shape else {
+        return Ok(None);
+    };
+    memory_write_provider_shape(provider_shape)
+        .map(|shape| Some(shape.operations().to_vec()))
+        .ok_or_else(|| {
+            ModelRuntimeFailure::new(format!(
+                "unsupported memory_write provider shape `{provider_shape}`"
+            ))
+        })
 }
 
 fn split_identity(identity: &str) -> Result<(String, String), ModelRuntimeFailure> {
@@ -839,6 +1878,62 @@ fn parse_optional_knowledge_mode(
     }
 }
 
+fn parse_memory_read_mode(value: Option<&Value>) -> Result<MemoryReadMode, ModelRuntimeFailure> {
+    let Some(value) = value else {
+        return Err(ModelRuntimeFailure::new("memory_read mode is required"));
+    };
+    let Some(mode) = value.as_str() else {
+        return Err(ModelRuntimeFailure::new(
+            "memory_read mode must be a string",
+        ));
+    };
+    match mode {
+        "key" => Ok(MemoryReadMode::Key),
+        "filter" => Ok(MemoryReadMode::Filter),
+        "chronological" => Ok(MemoryReadMode::Chronological),
+        "full_text" => Ok(MemoryReadMode::FullText),
+        "semantic" => Ok(MemoryReadMode::Semantic),
+        other => Err(ModelRuntimeFailure::new(format!(
+            "unsupported memory_read mode `{other}`"
+        ))),
+    }
+}
+
+fn parse_memory_write_operation(
+    value: Option<&Value>,
+) -> Result<MemoryWriteOperation, ModelRuntimeFailure> {
+    let Some(value) = value else {
+        return Err(ModelRuntimeFailure::new(
+            "memory_write operation is required",
+        ));
+    };
+    let Some(operation) = value.as_str() else {
+        return Err(ModelRuntimeFailure::new(
+            "memory_write operation must be a string",
+        ));
+    };
+    match operation {
+        "create" => Ok(MemoryWriteOperation::Create),
+        "upsert" => Ok(MemoryWriteOperation::Upsert),
+        "update" => Ok(MemoryWriteOperation::Update),
+        "delete" => Ok(MemoryWriteOperation::Delete),
+        "archive" => Ok(MemoryWriteOperation::Archive),
+        other => Err(ModelRuntimeFailure::new(format!(
+            "unsupported memory_write operation `{other}`"
+        ))),
+    }
+}
+
+fn memory_write_operation_name(operation: MemoryWriteOperation) -> &'static str {
+    match operation {
+        MemoryWriteOperation::Create => "create",
+        MemoryWriteOperation::Upsert => "upsert",
+        MemoryWriteOperation::Update => "update",
+        MemoryWriteOperation::Delete => "delete",
+        MemoryWriteOperation::Archive => "archive",
+    }
+}
+
 #[derive(Default)]
 pub struct OpenAiTransport {
     client: Client,
@@ -851,16 +1946,7 @@ impl ModelProviderTransport for OpenAiTransport {
         })?;
         let url = env::var("OPENAI_BASE_URL")
             .unwrap_or_else(|_| "https://api.openai.com/v1/chat/completions".into());
-        let mut body = object_options(&request.selection.options);
-        body.insert("model".into(), json!(request.selection.model));
-        body.insert(
-            "messages".into(),
-            json!([{ "role": "user", "content": request.prompt }]),
-        );
-        if !request.actions.is_empty() {
-            body.insert("tools".into(), openai_tool_definitions(&request.actions));
-            body.entry("tool_choice").or_insert(json!("auto"));
-        }
+        let body = openai_request_body(&request);
         let value: Value = self
             .client
             .post(url)
@@ -872,6 +1958,80 @@ impl ModelProviderTransport for OpenAiTransport {
             .map_err(|err| ModelRuntimeFailure::new(format!("openai request failed: {err}")))?;
         provider_response_from_openai(value)
     }
+}
+
+fn openai_request_body(request: &ProviderRequest) -> Map<String, Value> {
+    let mut body = object_options(&request.selection.options);
+    body.insert("model".into(), json!(request.selection.model));
+    body.insert("messages".into(), json!(openai_messages(request)));
+    if !request.actions.is_empty() {
+        body.insert("tools".into(), openai_tool_definitions(&request.actions));
+        body.entry("tool_choice").or_insert(json!("auto"));
+    }
+    body
+}
+
+fn openai_messages(request: &ProviderRequest) -> Vec<Value> {
+    if request.turns.is_empty() {
+        return vec![json!({ "role": "user", "content": request.prompt })];
+    }
+    let mut messages = vec![json!({ "role": "system", "content": request.prompt })];
+    for turn in &request.turns {
+        match turn {
+            ModelRequestTurn::UserInput { content } => {
+                messages.push(json!({ "role": "user", "content": content }));
+            }
+            ModelRequestTurn::AssistantContent { content } => {
+                messages.push(json!({ "role": "assistant", "content": content }));
+            }
+            ModelRequestTurn::SemanticActionCall {
+                provider_call_id: Some(provider_call_id),
+                provider_alias: Some(provider_alias),
+                arguments,
+                ..
+            } => {
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": provider_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": provider_alias,
+                            "arguments": arguments.to_string()
+                        }
+                    }]
+                }));
+            }
+            ModelRequestTurn::SemanticActionCall { .. } => {
+                messages.push(json!({
+                    "role": "user",
+                    "content": native_turn_text(turn)
+                }));
+            }
+            ModelRequestTurn::SemanticActionResult {
+                provider_call_id: Some(provider_call_id),
+                result,
+                ..
+            } => {
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": provider_call_id,
+                    "content": result.to_string()
+                }));
+            }
+            ModelRequestTurn::SemanticActionResult { .. } => {
+                messages.push(json!({
+                    "role": "user",
+                    "content": native_turn_text(turn)
+                }));
+            }
+            ModelRequestTurn::RepairFeedback { content } => {
+                messages.push(json!({ "role": "user", "content": repair_feedback_turn(content) }));
+            }
+        }
+    }
+    messages
 }
 
 fn provider_response_from_openai(value: Value) -> Result<ProviderResponse, ModelRuntimeFailure> {
@@ -922,16 +2082,7 @@ impl ModelProviderTransport for AnthropicTransport {
         })?;
         let url = env::var("ANTHROPIC_BASE_URL")
             .unwrap_or_else(|_| "https://api.anthropic.com/v1/messages".into());
-        let mut body = object_options(&request.selection.options);
-        body.insert("model".into(), json!(request.selection.model));
-        body.entry("max_tokens").or_insert(json!(1024));
-        body.insert(
-            "messages".into(),
-            json!([{ "role": "user", "content": request.prompt }]),
-        );
-        if !request.actions.is_empty() {
-            body.insert("tools".into(), anthropic_tool_definitions(&request.actions));
-        }
+        let body = anthropic_request_body(&request);
         let value: Value = self
             .client
             .post(url)
@@ -944,6 +2095,81 @@ impl ModelProviderTransport for AnthropicTransport {
             .map_err(|err| ModelRuntimeFailure::new(format!("anthropic request failed: {err}")))?;
         provider_response_from_anthropic(value)
     }
+}
+
+fn anthropic_request_body(request: &ProviderRequest) -> Map<String, Value> {
+    let mut body = object_options(&request.selection.options);
+    body.insert("model".into(), json!(request.selection.model));
+    body.entry("max_tokens").or_insert(json!(1024));
+    body.insert("system".into(), json!(request.prompt));
+    body.insert("messages".into(), json!(anthropic_messages(request)));
+    if !request.actions.is_empty() {
+        body.insert("tools".into(), anthropic_tool_definitions(&request.actions));
+    }
+    body
+}
+
+fn anthropic_messages(request: &ProviderRequest) -> Vec<Value> {
+    if request.turns.is_empty() {
+        return vec![json!({ "role": "user", "content": request.prompt })];
+    }
+    let mut messages = Vec::new();
+    for turn in &request.turns {
+        match turn {
+            ModelRequestTurn::UserInput { content } => {
+                messages.push(json!({ "role": "user", "content": content }));
+            }
+            ModelRequestTurn::AssistantContent { content } => {
+                messages.push(json!({ "role": "assistant", "content": content }));
+            }
+            ModelRequestTurn::SemanticActionCall {
+                provider_call_id: Some(provider_call_id),
+                provider_alias: Some(provider_alias),
+                arguments,
+                ..
+            } => {
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": provider_call_id,
+                        "name": provider_alias,
+                        "input": arguments
+                    }]
+                }));
+            }
+            ModelRequestTurn::SemanticActionCall { .. } => {
+                messages.push(json!({
+                    "role": "user",
+                    "content": native_turn_text(turn)
+                }));
+            }
+            ModelRequestTurn::SemanticActionResult {
+                provider_call_id: Some(provider_call_id),
+                result,
+                ..
+            } => {
+                messages.push(json!({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": provider_call_id,
+                        "content": result.to_string()
+                    }]
+                }));
+            }
+            ModelRequestTurn::SemanticActionResult { .. } => {
+                messages.push(json!({
+                    "role": "user",
+                    "content": native_turn_text(turn)
+                }));
+            }
+            ModelRequestTurn::RepairFeedback { content } => {
+                messages.push(json!({ "role": "user", "content": repair_feedback_turn(content) }));
+            }
+        }
+    }
+    messages
 }
 
 fn provider_response_from_anthropic(value: Value) -> Result<ProviderResponse, ModelRuntimeFailure> {
@@ -990,16 +2216,7 @@ impl ModelProviderTransport for OllamaTransport {
         let base_url =
             env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".into());
         let url = format!("{}/api/chat", base_url.trim_end_matches('/'));
-        let mut body = object_options(&request.selection.options);
-        body.insert("model".into(), json!(request.selection.model));
-        body.insert("stream".into(), json!(false));
-        body.insert(
-            "messages".into(),
-            json!([{ "role": "user", "content": request.prompt }]),
-        );
-        if !request.actions.is_empty() {
-            body.insert("tools".into(), openai_tool_definitions(&request.actions));
-        }
+        let body = ollama_request_body(&request);
         let value: Value = self
             .client
             .post(url)
@@ -1010,6 +2227,53 @@ impl ModelProviderTransport for OllamaTransport {
             .map_err(|err| ModelRuntimeFailure::new(format!("ollama request failed: {err}")))?;
         provider_response_from_ollama(value)
     }
+}
+
+fn ollama_request_body(request: &ProviderRequest) -> Map<String, Value> {
+    let mut body = object_options(&request.selection.options);
+    body.insert("model".into(), json!(request.selection.model));
+    body.insert("stream".into(), json!(false));
+    body.insert("messages".into(), json!(ollama_messages(request)));
+    if !request.actions.is_empty() {
+        body.insert("tools".into(), openai_tool_definitions(&request.actions));
+    }
+    body
+}
+
+fn ollama_messages(request: &ProviderRequest) -> Vec<Value> {
+    openai_messages(request)
+}
+
+fn native_turn_text(turn: &ModelRequestTurn) -> String {
+    match turn {
+        ModelRequestTurn::SemanticActionCall {
+            action_kind,
+            identity,
+            arguments,
+            ..
+        } => format!(
+            "Previous semantic action call [{action_kind} {identity}]: {}",
+            arguments
+        ),
+        ModelRequestTurn::SemanticActionResult {
+            action_kind,
+            identity,
+            result,
+            action_succeeded,
+            ..
+        } => format!(
+            "Previous semantic action result [{action_kind} {identity}] succeeded={}: {}",
+            action_succeeded
+                .map(|succeeded| succeeded.to_string())
+                .unwrap_or_else(|| "unknown".into()),
+            result
+        ),
+        other => serde_json::to_string(other).unwrap_or_else(|_| format!("{other:?}")),
+    }
+}
+
+fn repair_feedback_turn(content: &str) -> String {
+    format!("Repair feedback from previous turn: {content}")
 }
 
 fn provider_response_from_ollama(value: Value) -> Result<ProviderResponse, ModelRuntimeFailure> {
@@ -1090,11 +2354,16 @@ fn openai_tool_call(value: &Value) -> Result<ProviderActionCall, ModelRuntimeFai
         .map(parse_tool_arguments)
         .transpose()?
         .unwrap_or_else(|| json!({}));
-    Ok(ProviderActionCall { alias, arguments })
+    Ok(ProviderActionCall {
+        id: value.get("id").and_then(Value::as_str).map(str::to_string),
+        alias,
+        arguments,
+    })
 }
 
 fn anthropic_tool_call(value: &Value) -> Result<ProviderActionCall, ModelRuntimeFailure> {
     Ok(ProviderActionCall {
+        id: value.get("id").and_then(Value::as_str).map(str::to_string),
         alias: required_string(value, "name")?,
         arguments: value.get("input").cloned().unwrap_or_else(|| json!({})),
     })
@@ -1110,7 +2379,11 @@ fn ollama_tool_call(value: &Value) -> Result<ProviderActionCall, ModelRuntimeFai
         Some(value) => value.clone(),
         None => json!({}),
     };
-    Ok(ProviderActionCall { alias, arguments })
+    Ok(ProviderActionCall {
+        id: value.get("id").and_then(Value::as_str).map(str::to_string),
+        alias,
+        arguments,
+    })
 }
 
 fn parse_tool_arguments(raw: &str) -> Result<Value, ModelRuntimeFailure> {
@@ -1184,11 +2457,18 @@ impl ModelProviderTransport for MockModelTransport {
 mod tests {
     use super::*;
     use crate::harness_engine::EffectivePhase;
+    use crate::harness_runtime::hook::{
+        BeforeModelRequestContextSection, BeforeModelRequestDecision,
+        apply_before_model_request_decision,
+    };
     use crate::harness_runtime::model::{
         ActionAlias, CapabilityDescriptor, CompletionContract, KnowledgeDocumentSnapshot,
-        KnowledgeRetrievalSnapshot, KnowledgeRuntimeSnapshot, LogicalPrompt, PromptSection,
-        RuntimeSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+        KnowledgeRetrievalSnapshot, KnowledgeRuntimeSnapshot, LogicalPrompt,
+        MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelRequestTurn,
+        PromptSection, RuntimeSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot,
+        ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind, model_request_turns,
     };
+    use crate::manifest::MemorySpaceModel;
     use std::cell::RefCell;
     use std::fs;
     use std::rc::Rc;
@@ -1227,11 +2507,34 @@ mod tests {
     }
 
     #[test]
+    fn provider_response_normalizes_persistence_review_complete_action() {
+        let response = ProviderResponse {
+            text: json!({
+                "actions": [
+                    { "type": "persistence_review_complete" }
+                ]
+            })
+            .to_string(),
+            action_calls: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            metadata: BTreeMap::new(),
+        };
+        let turn = normalize_provider_response(response, &[]).unwrap();
+        assert_eq!(turn.actions.len(), 1);
+        assert!(matches!(
+            turn.actions[0].action,
+            SemanticAction::PersistenceReviewComplete
+        ));
+    }
+
+    #[test]
     fn provider_response_normalizes_native_action_calls_through_aliases() {
         let response = ProviderResponse {
             text: "I am completing this phase.".into(),
             action_calls: vec![ProviderActionCall {
-                alias: "action_1".into(),
+                id: Some("call-openai-1".into()),
+                alias: "phase_complete".into(),
                 arguments: json!({
                     "outcome": "ready",
                     "output": { "ok": true }
@@ -1255,6 +2558,45 @@ mod tests {
                 ..
             } if outcome == "ready"
         ));
+        assert_eq!(
+            turn.actions[0].provider_call_id.as_deref(),
+            Some("call-openai-1")
+        );
+        assert_eq!(
+            turn.actions[0].provider_alias.as_deref(),
+            Some("phase_complete")
+        );
+        assert_eq!(
+            turn.actions[0].provider_arguments.as_ref().unwrap()["outcome"],
+            json!("ready")
+        );
+    }
+
+    #[test]
+    fn provider_response_normalizes_native_persistence_review_complete_alias() {
+        let response = ProviderResponse {
+            text: "review complete".into(),
+            action_calls: vec![ProviderActionCall {
+                id: Some("call-review-1".into()),
+                alias: "action_1".into(),
+                arguments: json!({}),
+            }],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            metadata: BTreeMap::new(),
+        };
+        let aliases = vec![ActionAlias {
+            alias: "action_1".into(),
+            action_kind: "persistence_review_complete".into(),
+            identity: "harness/persistence_review".into(),
+            provider_shape: None,
+        }];
+        let turn = normalize_provider_response(response, &aliases).unwrap();
+        assert_eq!(turn.actions.len(), 1);
+        assert!(matches!(
+            turn.actions[0].action,
+            SemanticAction::PersistenceReviewComplete
+        ));
     }
 
     #[test]
@@ -1263,6 +2605,36 @@ mod tests {
         let guide = vector_knowledge_snapshot("@zack/guide");
         request.runtime.knowledge.push(guide.clone());
         request.effective_phase.active_knowledge.push(guide);
+        let memory = MemorySpaceRuntimeSnapshot {
+            package: "@zack/state".into(),
+            package_version: "0.1.0".into(),
+            space: "conversation_state".into(),
+            model: MemorySpaceModel::Document,
+            description: "Conversation state.".into(),
+            root: None,
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![MemoryRetrievalMode::Key, MemoryRetrievalMode::Filter],
+            semantic: None,
+            append_only: false,
+            record_types: vec![MemoryRecordTypeRuntimeSnapshot {
+                name: "summary".into(),
+                schema_version: "1.0.0".into(),
+                content_schema: json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "summary": { "type": "string", "minLength": 1 }
+                    },
+                    "required": ["summary"]
+                }),
+            }],
+        };
+        request.effective_phase.active_memory.push(memory);
         let tool_schema = action_parameters_schema(
             &action_alias("action_2", "agentpm_tool", "@zack/search"),
             &request,
@@ -1295,8 +2667,8 @@ mod tests {
                 "query",
             ),
             (
-                action_alias("action_6", "memory_read", "@zack/state"),
-                "space",
+                action_alias("action_6", "memory_read", "@zack/state/conversation_state"),
+                "mode",
             ),
         ];
 
@@ -1327,21 +2699,234 @@ mod tests {
         }
 
         let memory_write_schema = action_parameters_schema(
-            &action_alias("action_7", "memory_write", "@zack/state"),
+            &action_alias("action_7", "memory_write", "@zack/state/conversation_state"),
             &request,
         );
         assert_eq!(memory_write_schema["type"], "object");
-        assert!(
-            memory_write_schema["required"]
-                .as_array()
-                .expect("memory_write required array")
-                .contains(&json!("space"))
+        assert_eq!(
+            memory_write_schema["properties"]["record_type"]["enum"],
+            json!(["summary"])
+        );
+        assert_eq!(
+            memory_write_schema["properties"]["content"]["properties"]["summary"]["type"],
+            json!("string")
+        );
+        assert_eq!(
+            memory_write_schema["properties"]["operation"]["enum"],
+            json!(["create", "upsert", "update", "delete", "archive"])
         );
         assert!(
             memory_write_schema["required"]
                 .as_array()
                 .expect("memory_write required array")
-                .contains(&json!("content"))
+                .contains(&json!("operation"))
+        );
+        assert!(
+            memory_write_schema["required"]
+                .as_array()
+                .expect("memory_write required array")
+                .contains(&json!("record_type"))
+        );
+
+        request.effective_phase.active_memory[0].append_only = true;
+        let append_only_memory_write_schema = action_parameters_schema(
+            &action_alias("action_7", "memory_write", "@zack/state/conversation_state"),
+            &request,
+        );
+        assert_eq!(
+            append_only_memory_write_schema["properties"]["operation"]["enum"],
+            json!(["create"])
+        );
+    }
+
+    #[test]
+    fn memory_write_provider_actions_advertise_flat_shape_schemas() {
+        let mut request = model_request();
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "memory_write".into(),
+                identity: "@zack/state/conversation_state".into(),
+                description: "Write conversation state.".into(),
+                source: "agent_binding".into(),
+            });
+        request
+            .effective_phase
+            .active_memory
+            .push(MemorySpaceRuntimeSnapshot {
+                package: "@zack/state".into(),
+                package_version: "0.1.0".into(),
+                space: "conversation_state".into(),
+                model: MemorySpaceModel::Collection,
+                description: "Conversation state.".into(),
+                root: None,
+                runtime: "local".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+                readiness_reason: None,
+                binding_scope: "global".into(),
+                scope_keys: vec!["user".into()],
+                retrieval_modes: vec![MemoryRetrievalMode::Key],
+                semantic: None,
+                append_only: false,
+                record_types: vec![
+                    MemoryRecordTypeRuntimeSnapshot {
+                        name: "summary".into(),
+                        schema_version: "1.0.0".into(),
+                        content_schema: json!({
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "summary": { "type": "string", "minLength": 1 }
+                            },
+                            "required": ["summary"]
+                        }),
+                    },
+                    MemoryRecordTypeRuntimeSnapshot {
+                        name: "preference".into(),
+                        schema_version: "1.0.0".into(),
+                        content_schema: json!({
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "preference": { "type": "string", "minLength": 1 }
+                            },
+                            "required": ["preference"]
+                        }),
+                    },
+                ],
+            });
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+
+        let tools = provider_action_tools(&request);
+        assert_eq!(
+            tools
+                .iter()
+                .filter(|tool| tool.action_kind == "memory_write")
+                .count(),
+            5
+        );
+        let summary_create = tools
+            .iter()
+            .find(|tool| {
+                tool.action_kind == "memory_write"
+                    && tool.alias.contains("create_or_upsert_summary")
+            })
+            .expect("summary create/upsert tool");
+        assert_eq!(
+            summary_create.parameters["properties"]["operation"]["enum"],
+            json!(["create", "upsert"])
+        );
+        assert_eq!(
+            summary_create.parameters["properties"]["record_type"]["const"],
+            json!("summary")
+        );
+        assert_eq!(
+            summary_create.parameters["properties"]["content"]["properties"]["summary"]["type"],
+            json!("string")
+        );
+        assert!(
+            summary_create.parameters["properties"]["content"]["properties"]
+                .get("preference")
+                .is_none()
+        );
+        assert_eq!(
+            summary_create.parameters["required"],
+            json!(["operation", "content"])
+        );
+        assert!(
+            summary_create.parameters["properties"]
+                .get("record_id")
+                .is_none()
+        );
+
+        let preference_update = tools
+            .iter()
+            .find(|tool| {
+                tool.action_kind == "memory_write" && tool.alias.contains("update_preference")
+            })
+            .expect("preference update tool");
+        assert_eq!(
+            preference_update.parameters["properties"]["operation"]["const"],
+            json!("update")
+        );
+        assert_eq!(
+            preference_update.parameters["properties"]["record_type"]["const"],
+            json!("preference")
+        );
+        assert_eq!(
+            preference_update.parameters["required"],
+            json!(["operation", "record_id", "content"])
+        );
+        assert_eq!(
+            preference_update.parameters["properties"]["content"]["properties"]["preference"]["type"],
+            json!("string")
+        );
+
+        let delete_archive = tools
+            .iter()
+            .find(|tool| {
+                tool.action_kind == "memory_write" && tool.alias.contains("delete_or_archive")
+            })
+            .expect("delete/archive tool");
+        assert_eq!(
+            delete_archive.parameters["properties"]["operation"]["enum"],
+            json!(["delete", "archive"])
+        );
+        assert_eq!(
+            delete_archive.parameters["properties"]["record_type"]["enum"],
+            json!(["summary", "preference"])
+        );
+        assert!(
+            delete_archive.parameters["properties"]
+                .get("content")
+                .is_none()
+        );
+        assert_eq!(
+            delete_archive.parameters["required"],
+            json!(["operation", "record_id", "record_type"])
+        );
+    }
+
+    #[test]
+    fn append_only_create_schema_does_not_treat_record_type_prefix_as_upsert_shape() {
+        let mut request = model_request();
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "memory_write".into(),
+                identity: "@zack/memory/notes".into(),
+                description: "Write notes.".into(),
+                source: "agent_binding".into(),
+            });
+        let mut memory = memory_snapshot(
+            "@zack/memory",
+            "notes",
+            MemorySpaceModel::Collection,
+            vec![MemoryRetrievalMode::Key],
+        );
+        memory.append_only = true;
+        memory.record_types[0].name = "or_upsert_note".into();
+        request.effective_phase.active_memory.push(memory);
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+
+        let tool = provider_action_tools(&request)
+            .into_iter()
+            .find(|tool| tool.action_kind == "memory_write")
+            .expect("memory write provider action");
+
+        assert!(tool.alias.contains("create_only_or_upsert_note"));
+        assert_eq!(
+            tool.parameters["properties"]["operation"]["enum"],
+            json!(["create"])
+        );
+        assert_eq!(
+            tool.parameters["properties"]["record_type"]["const"],
+            json!("or_upsert_note")
         );
     }
 
@@ -1402,12 +2987,18 @@ mod tests {
 
         let action = decode_provider_call(
             action_alias("action_1", "memory_read", "@zack/state"),
-            json!({ "space": "conversation_state" }),
+            json!({ "mode": "key" }),
         );
         match action {
-            SemanticAction::MemoryRead { package, space } => {
-                assert_eq!(package, "@zack/state");
-                assert_eq!(space, "conversation_state");
+            SemanticAction::MemoryRead {
+                package,
+                space,
+                mode,
+                ..
+            } => {
+                assert_eq!(package, "@zack");
+                assert_eq!(space, "state");
+                assert_eq!(mode, MemoryReadMode::Key);
             }
             other => panic!("expected memory read action, got {other:?}"),
         }
@@ -1415,7 +3006,8 @@ mod tests {
         let action = decode_provider_call(
             action_alias("action_1", "memory_write", "@zack/state"),
             json!({
-                "space": "conversation_state",
+                "operation": "upsert",
+                "record_type": "summary",
                 "content": { "summary": "updated" }
             }),
         );
@@ -1423,11 +3015,16 @@ mod tests {
             SemanticAction::MemoryWrite {
                 package,
                 space,
+                operation,
+                record_type,
                 content,
+                ..
             } => {
-                assert_eq!(package, "@zack/state");
-                assert_eq!(space, "conversation_state");
-                assert_eq!(content["summary"], json!("updated"));
+                assert_eq!(package, "@zack");
+                assert_eq!(space, "state");
+                assert_eq!(operation, MemoryWriteOperation::Upsert);
+                assert_eq!(record_type, "summary");
+                assert_eq!(content.as_ref().unwrap()["summary"], json!("updated"));
             }
             other => panic!("expected memory write action, got {other:?}"),
         }
@@ -1559,6 +3156,12 @@ mod tests {
 
     #[test]
     fn built_in_runtime_generate_passes_aliases_to_transport() {
+        let diagnostic_prompt = model_request().prompt.render_text();
+        assert!(diagnostic_prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
+        assert!(
+            diagnostic_prompt.contains("- phase_complete [phase_completion] review/completion")
+        );
+
         let transport = SharedMockTransport::new(vec![ProviderResponse {
             text: json!({ "outcome": "ready" }).to_string(),
             action_calls: Vec::new(),
@@ -1574,17 +3177,1354 @@ mod tests {
         let requests = requests.borrow();
         assert_eq!(requests.len(), 1);
         assert_eq!(
-            requests[0].action_aliases.get("action_1"),
+            requests[0].action_aliases.get("phase_complete"),
             Some(&"review/completion".to_string())
         );
         assert_eq!(requests[0].actions.len(), 1);
-        assert_eq!(requests[0].actions[0].alias, "action_1");
+        assert_eq!(requests[0].actions[0].alias, "phase_complete");
         assert_eq!(requests[0].actions[0].action_kind, "phase_completion");
         assert_eq!(
             requests[0].actions[0].parameters["properties"]["outcome"]["enum"],
             json!(["ready"])
         );
-        assert!(requests[0].prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
+        assert!(requests[0].prompt.contains("HARNESS CONTROL"));
+        assert!(!requests[0].prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
+        assert!(
+            !requests[0]
+                .prompt
+                .contains("- phase_complete [phase_completion] review/completion")
+        );
+    }
+
+    #[test]
+    fn provider_action_tools_use_semantic_aliases_and_fixed_target_descriptions() {
+        let mut request = model_request();
+        let memory = MemorySpaceRuntimeSnapshot {
+            package: "@zack/m16-reference-memory".into(),
+            package_version: "0.1.0".into(),
+            space: "notes".into(),
+            model: MemorySpaceModel::Collection,
+            description: "Durable note collection.".into(),
+            root: None,
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes: vec![MemoryRetrievalMode::Key],
+            semantic: None,
+            append_only: false,
+            record_types: vec![MemoryRecordTypeRuntimeSnapshot {
+                name: "note".into(),
+                schema_version: "1.0.0".into(),
+                content_schema: json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "body": { "type": "string" }
+                    },
+                    "required": ["body"]
+                }),
+            }],
+        };
+        request.effective_phase.active_memory.push(memory);
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "memory_write".into(),
+                identity: "@zack/m16-reference-memory/notes".into(),
+                description: "Write durable notes.".into(),
+                source: "agent_binding".into(),
+            });
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+
+        let tools = provider_action_tools(&request);
+
+        let phase_tool = tools
+            .iter()
+            .find(|tool| tool.action_kind == "phase_completion")
+            .expect("phase completion tool");
+        assert_eq!(phase_tool.alias, "phase_complete");
+        assert_eq!(phase_tool.identity, "review/completion");
+        assert!(
+            phase_tool
+                .description
+                .contains("phase objective is satisfied")
+        );
+        let memory_tool = tools
+            .iter()
+            .find(|tool| {
+                tool.action_kind == "memory_write" && tool.alias.contains("create_or_upsert_note")
+            })
+            .expect("memory write tool");
+        assert!(
+            memory_tool
+                .alias
+                .starts_with("memory_write_notes_create_or_upsert_note_")
+        );
+        assert_eq!(memory_tool.identity, "@zack/m16-reference-memory/notes");
+        assert!(
+            memory_tool
+                .description
+                .contains("package `@zack/m16-reference-memory`")
+        );
+        assert!(memory_tool.description.contains("space `notes`"));
+        assert!(memory_tool.description.contains("fixed record_type `note`"));
+        assert!(
+            memory_tool
+                .description
+                .contains("Fixed write shape: create/upsert")
+        );
+
+        let transport = SharedMockTransport::new(vec![ProviderResponse {
+            text: json!({ "outcome": "ready" }).to_string(),
+            action_calls: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            metadata: BTreeMap::new(),
+        }]);
+        let requests = transport.requests.clone();
+        let mut runtime = BuiltInModelRuntime::new(selection("openai"), Box::new(transport));
+        runtime.generate(request).unwrap();
+        let requests = requests.borrow();
+        assert!(!requests[0].prompt.contains("EFFECTIVE CAPABILITY CATALOG"));
+        assert!(!requests[0].prompt.contains(&memory_tool.alias));
+        assert!(
+            requests[0]
+                .actions
+                .iter()
+                .any(|action| action.alias == memory_tool.alias
+                    && action.action_kind == "memory_write"
+                    && action.identity == "@zack/m16-reference-memory/notes")
+        );
+        assert_eq!(
+            requests[0].action_aliases.get(&memory_tool.alias),
+            Some(&"@zack/m16-reference-memory/notes".to_string())
+        );
+    }
+
+    #[test]
+    fn memory_provider_alias_round_trip_selects_the_exact_surface() {
+        let mut request = model_request();
+        for (space, model) in [
+            ("current_note", MemorySpaceModel::Document),
+            ("notes", MemorySpaceModel::Collection),
+        ] {
+            request
+                .effective_phase
+                .active_memory
+                .push(MemorySpaceRuntimeSnapshot {
+                    package: "@zack/m16-reference-memory".into(),
+                    package_version: "0.1.0".into(),
+                    space: space.into(),
+                    model,
+                    description: format!("{space} memory"),
+                    root: None,
+                    runtime: "local".into(),
+                    source: "agent_binding".into(),
+                    state: "available".into(),
+                    readiness_reason: None,
+                    binding_scope: "global".into(),
+                    scope_keys: vec!["user".into()],
+                    retrieval_modes: vec![MemoryRetrievalMode::Key],
+                    semantic: None,
+                    append_only: false,
+                    record_types: vec![MemoryRecordTypeRuntimeSnapshot {
+                        name: "note".into(),
+                        schema_version: "1.0.0".into(),
+                        content_schema: json!({ "type": "object", "additionalProperties": true }),
+                    }],
+                });
+            request
+                .effective_phase
+                .capability_catalog
+                .push(CapabilityDescriptor {
+                    action_kind: "memory_write".into(),
+                    identity: format!("@zack/m16-reference-memory/{space}"),
+                    description: format!("Write {space}."),
+                    source: "agent_binding".into(),
+                });
+        }
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+        let notes_alias = request
+            .prompt
+            .action_aliases
+            .iter()
+            .find(|alias| {
+                alias.action_kind == "memory_write"
+                    && alias.identity == "@zack/m16-reference-memory/notes"
+                    && alias.provider_shape.as_deref() == Some("create_or_upsert_note")
+            })
+            .expect("notes alias");
+        assert!(
+            notes_alias
+                .alias
+                .starts_with("memory_write_notes_create_or_upsert_note_")
+        );
+
+        let action = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: notes_alias.alias.clone(),
+                arguments: json!({
+                    "operation": "create",
+                    "record_type": "note",
+                    "content": { "body": "launch readiness" }
+                }),
+            },
+            &request.prompt.action_aliases,
+        )
+        .unwrap();
+
+        match action {
+            SemanticAction::MemoryWrite {
+                package,
+                space,
+                record_type,
+                ..
+            } => {
+                assert_eq!(package, "@zack/m16-reference-memory");
+                assert_eq!(space, "notes");
+                assert_eq!(record_type, "note");
+            }
+            other => panic!("expected memory write, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn memory_read_provider_actions_advertise_flat_shape_schemas() {
+        let mut request = model_request();
+        request.effective_phase.active_memory.push(memory_snapshot(
+            "@zack/m16-reference-memory",
+            "notes",
+            MemorySpaceModel::Collection,
+            vec![
+                MemoryRetrievalMode::Key,
+                MemoryRetrievalMode::Chronological,
+                MemoryRetrievalMode::Filter,
+                MemoryRetrievalMode::FullText,
+                MemoryRetrievalMode::Semantic,
+            ],
+        ));
+        request.effective_phase.active_memory[0].record_types[0].content_schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "body": { "type": "string" },
+                "tag": { "type": "string" },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "name": { "type": "string" }
+                        }
+                    }
+                }
+            }
+        });
+        request.effective_phase.active_memory.push(memory_snapshot(
+            "@zack/m16-reference-memory",
+            "current_note",
+            MemorySpaceModel::Document,
+            vec![MemoryRetrievalMode::Key],
+        ));
+        for identity in [
+            "@zack/m16-reference-memory/notes",
+            "@zack/m16-reference-memory/current_note",
+        ] {
+            request
+                .effective_phase
+                .capability_catalog
+                .push(CapabilityDescriptor {
+                    action_kind: "memory_read".into(),
+                    identity: identity.into(),
+                    description: format!("Read {identity}."),
+                    source: "agent_binding".into(),
+                });
+        }
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+
+        let shape_schema = |shape: &str| {
+            let alias = request
+                .prompt
+                .action_aliases
+                .iter()
+                .find(|alias| {
+                    alias.action_kind == "memory_read"
+                        && alias.identity == "@zack/m16-reference-memory/notes"
+                        && alias.provider_shape.as_deref() == Some(shape)
+                })
+                .unwrap_or_else(|| panic!("missing {shape} alias"));
+            action_parameters_schema(alias, &request)
+        };
+
+        let key_record = shape_schema("key_record");
+        assert_eq!(key_record["required"], json!(["record_id"]));
+        assert!(key_record["properties"].get("mode").is_none());
+        assert!(key_record["properties"].get("query").is_none());
+        assert!(key_record["properties"].get("filter").is_none());
+
+        let chronological = shape_schema("chronological");
+        assert!(chronological.get("required").is_none());
+        assert!(chronological["properties"].get("limit").is_some());
+        assert!(chronological["properties"].get("record_id").is_none());
+        assert!(chronological["properties"].get("query").is_none());
+        assert!(chronological["properties"].get("filter").is_none());
+
+        let filter = shape_schema("filter");
+        assert_eq!(filter["required"], json!(["filter"]));
+        assert!(filter["properties"].get("filter").is_some());
+        assert_eq!(
+            filter["properties"]["filter"]["additionalProperties"],
+            json!(false)
+        );
+        assert_eq!(
+            filter["properties"]["filter"]["properties"]
+                .as_object()
+                .expect("filter properties")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["body", "tag", "tags", "tags.name"]
+        );
+        assert!(
+            filter["properties"]["filter"]["properties"]
+                .get("status")
+                .is_none()
+        );
+        assert!(filter["properties"].get("record_id").is_none());
+        assert!(filter["properties"].get("query").is_none());
+
+        let full_text = shape_schema("full_text");
+        assert_eq!(full_text["required"], json!(["query"]));
+        assert!(full_text["properties"].get("query").is_some());
+        assert!(full_text["properties"].get("filter").is_none());
+        assert!(full_text["properties"].get("record_id").is_none());
+
+        let semantic = shape_schema("semantic");
+        assert_eq!(semantic["required"], json!(["query"]));
+        assert!(semantic["properties"].get("query").is_some());
+        assert!(semantic["properties"].get("filter").is_some());
+        assert_eq!(
+            semantic["properties"]["filter"]["properties"]["tags.name"]["description"],
+            json!("Exact value to match at this declared durable content path.")
+        );
+        assert!(semantic["properties"].get("record_id").is_none());
+
+        let key_document_alias = request
+            .prompt
+            .action_aliases
+            .iter()
+            .find(|alias| {
+                alias.identity == "@zack/m16-reference-memory/current_note"
+                    && alias.provider_shape.as_deref() == Some("key_document")
+            })
+            .expect("document key alias");
+        let key_document = action_parameters_schema(key_document_alias, &request);
+        assert!(key_document.get("required").is_none());
+        assert!(key_document["properties"].get("record_id").is_none());
+        assert!(key_document["properties"].get("query").is_none());
+        assert!(key_document["properties"].get("filter").is_none());
+
+        let tools = provider_action_tools(&request);
+        assert_eq!(
+            tools
+                .iter()
+                .filter(|tool| tool.action_kind == "memory_read")
+                .count(),
+            6
+        );
+        assert!(tools.iter().any(|tool| {
+            tool.alias == key_document_alias.alias
+                && tool.description.contains("Fixed read shape: key read")
+        }));
+        let key_record_tool = tools
+            .iter()
+            .find(|tool| {
+                tool.action_kind == "memory_read"
+                    && tool.identity == "@zack/m16-reference-memory/notes"
+                    && tool.alias.contains("key_record")
+            })
+            .expect("key record provider tool");
+        assert!(key_record_tool.description.contains("notes memory"));
+        assert!(
+            key_record_tool
+                .description
+                .contains("Fixed read shape: key read by existing record_id")
+        );
+        assert!(!key_record_tool.description.contains("Modes:"));
+        assert!(
+            !key_record_tool
+                .description
+                .contains("key requires record_id")
+        );
+    }
+
+    #[test]
+    fn memory_filter_provider_schema_enumerates_only_declared_paths() {
+        let mut request = model_request();
+        request.effective_phase.active_memory.push(memory_snapshot(
+            "@zack/memory",
+            "notes",
+            MemorySpaceModel::Collection,
+            vec![MemoryRetrievalMode::Filter],
+        ));
+        request.effective_phase.active_memory[0].record_types[0].content_schema = json!({
+            "type": "object",
+            "$defs": {
+                "Owner": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "team": { "type": "string" }
+                    }
+                }
+            },
+            "additionalProperties": false,
+            "properties": {
+                "body": { "type": "string" },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "name": { "type": "string" }
+                        }
+                    }
+                },
+                "owner": { "$ref": "#/$defs/Owner" }
+            }
+        });
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "memory_read".into(),
+                identity: "@zack/memory/notes".into(),
+                description: "Read notes.".into(),
+                source: "agent_binding".into(),
+            });
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+
+        let filter_alias = request
+            .prompt
+            .action_aliases
+            .iter()
+            .find(|alias| {
+                alias.action_kind == "memory_read"
+                    && alias.identity == "@zack/memory/notes"
+                    && alias.provider_shape.as_deref() == Some("filter")
+            })
+            .expect("filter alias");
+        let schema = action_parameters_schema(filter_alias, &request);
+        let filter_schema = &schema["properties"]["filter"];
+
+        assert_eq!(filter_schema["additionalProperties"], json!(false));
+        assert_eq!(filter_schema["minProperties"], json!(1));
+        assert_eq!(
+            filter_schema["properties"]
+                .as_object()
+                .expect("filter properties")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["body", "owner", "owner.team", "tags", "tags.name"]
+        );
+        assert!(
+            filter_schema["properties"]
+                .as_object()
+                .expect("filter properties")
+                .get("status")
+                .is_none(),
+            "undeclared filter path should not be representable in the closed provider schema"
+        );
+    }
+
+    #[test]
+    fn memory_read_provider_shape_aliases_round_trip_to_canonical_actions() {
+        let aliases = vec![
+            ActionAlias {
+                alias: "memory_read_notes_key_record_note_abcd1234".into(),
+                action_kind: "memory_read".into(),
+                identity: "@zack/memory/notes".into(),
+                provider_shape: Some("key_record".into()),
+            },
+            ActionAlias {
+                alias: "memory_read_notes_semantic_note_abcd1234".into(),
+                action_kind: "memory_read".into(),
+                identity: "@zack/memory/notes".into(),
+                provider_shape: Some("semantic".into()),
+            },
+        ];
+
+        let key_action = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: aliases[0].alias.clone(),
+                arguments: json!({ "record_id": "mem-1", "record_type": "note" }),
+            },
+            &aliases,
+        )
+        .expect("key alias should decode");
+        match key_action {
+            SemanticAction::MemoryRead {
+                package,
+                space,
+                mode,
+                record_id,
+                ..
+            } => {
+                assert_eq!(package, "@zack/memory");
+                assert_eq!(space, "notes");
+                assert_eq!(mode, MemoryReadMode::Key);
+                assert_eq!(record_id.as_deref(), Some("mem-1"));
+            }
+            other => panic!("expected MemoryRead, got {other:?}"),
+        }
+
+        let semantic_action = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: aliases[1].alias.clone(),
+                arguments: json!({
+                    "query": "launch readiness",
+                    "filter": { "tag": "release" },
+                    "limit": 3
+                }),
+            },
+            &aliases,
+        )
+        .expect("semantic alias should decode");
+        match semantic_action {
+            SemanticAction::MemoryRead {
+                mode,
+                query,
+                filter,
+                limit,
+                ..
+            } => {
+                assert_eq!(mode, MemoryReadMode::Semantic);
+                assert_eq!(query.as_deref(), Some("launch readiness"));
+                assert_eq!(filter.get("tag"), Some(&json!("release")));
+                assert_eq!(limit, Some(3));
+            }
+            other => panic!("expected MemoryRead, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn memory_write_provider_shape_aliases_round_trip_to_canonical_actions() {
+        let aliases = vec![
+            action_alias_with_shape(
+                "memory_write_notes_create_or_upsert_note_abcd1234",
+                "memory_write",
+                "@zack/memory/notes",
+                "create_or_upsert_note",
+            ),
+            action_alias_with_shape(
+                "memory_write_notes_update_note_abcd1234",
+                "memory_write",
+                "@zack/memory/notes",
+                "update_note",
+            ),
+            action_alias_with_shape(
+                "memory_write_notes_delete_or_archive_abcd1234",
+                "memory_write",
+                "@zack/memory/notes",
+                "delete_or_archive",
+            ),
+        ];
+
+        let create = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: aliases[0].alias.clone(),
+                arguments: json!({
+                    "operation": "upsert",
+                    "content": { "body": "launch readiness" }
+                }),
+            },
+            &aliases,
+        )
+        .expect("create/upsert alias should decode");
+        match create {
+            SemanticAction::MemoryWrite {
+                operation,
+                record_type,
+                record_id,
+                content,
+                ..
+            } => {
+                assert_eq!(operation, MemoryWriteOperation::Upsert);
+                assert_eq!(record_type, "note");
+                assert!(record_id.is_none());
+                assert_eq!(content.unwrap()["body"], json!("launch readiness"));
+            }
+            other => panic!("expected MemoryWrite, got {other:?}"),
+        }
+
+        let update = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: aliases[1].alias.clone(),
+                arguments: json!({
+                    "operation": "update",
+                    "record_id": "mem-1",
+                    "record_type": "note",
+                    "content": { "body": "updated" }
+                }),
+            },
+            &aliases,
+        )
+        .expect("update alias should decode");
+        match update {
+            SemanticAction::MemoryWrite {
+                operation,
+                record_type,
+                record_id,
+                ..
+            } => {
+                assert_eq!(operation, MemoryWriteOperation::Update);
+                assert_eq!(record_type, "note");
+                assert_eq!(record_id.as_deref(), Some("mem-1"));
+            }
+            other => panic!("expected MemoryWrite, got {other:?}"),
+        }
+
+        let delete = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: aliases[2].alias.clone(),
+                arguments: json!({
+                    "operation": "archive",
+                    "record_id": "mem-1",
+                    "record_type": "summary"
+                }),
+            },
+            &aliases,
+        )
+        .expect("delete/archive alias should decode");
+        match delete {
+            SemanticAction::MemoryWrite {
+                operation,
+                record_type,
+                record_id,
+                content,
+                ..
+            } => {
+                assert_eq!(operation, MemoryWriteOperation::Archive);
+                assert_eq!(record_type, "summary");
+                assert_eq!(record_id.as_deref(), Some("mem-1"));
+                assert!(content.is_none());
+            }
+            other => panic!("expected MemoryWrite, got {other:?}"),
+        }
+
+        let err = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: aliases[0].alias.clone(),
+                arguments: json!({
+                    "operation": "create",
+                    "record_type": "summary",
+                    "content": { "summary": "wrong type" }
+                }),
+            },
+            &aliases,
+        )
+        .expect_err("contradictory fixed record_type should fail");
+        assert!(err.message.contains("fixes record_type `note`"));
+
+        let append_only_create = action_alias_with_shape(
+            "memory_write_notes_create_only_or_upsert_note_abcd1234",
+            "memory_write",
+            "@zack/memory/notes",
+            "create_only_or_upsert_note",
+        );
+        let action = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: append_only_create.alias.clone(),
+                arguments: json!({
+                    "operation": "create",
+                    "content": { "body": "append-only" }
+                }),
+            },
+            std::slice::from_ref(&append_only_create),
+        )
+        .expect("append-only create shape should decode");
+        match action {
+            SemanticAction::MemoryWrite {
+                operation,
+                record_type,
+                ..
+            } => {
+                assert_eq!(operation, MemoryWriteOperation::Create);
+                assert_eq!(record_type, "or_upsert_note");
+            }
+            other => panic!("expected MemoryWrite, got {other:?}"),
+        }
+        let err = semantic_action_from_provider_call(
+            &ProviderActionCall {
+                id: None,
+                alias: append_only_create.alias.clone(),
+                arguments: json!({
+                    "operation": "upsert",
+                    "content": { "body": "append-only" }
+                }),
+            },
+            &[append_only_create],
+        )
+        .expect_err("append-only create shape should not permit upsert");
+        assert!(err.message.contains("does not permit operation `upsert`"));
+    }
+
+    #[test]
+    fn native_provider_prompt_omits_catalog_for_supported_built_in_providers() {
+        for provider in ["openai", "anthropic", "ollama"] {
+            let transport = SharedMockTransport::new(vec![ProviderResponse {
+                text: json!({ "outcome": "ready" }).to_string(),
+                action_calls: Vec::new(),
+                usage: RunUsage::default(),
+                finish_reason: Some("stop".into()),
+                metadata: BTreeMap::new(),
+            }]);
+            let requests = transport.requests.clone();
+            let mut runtime = BuiltInModelRuntime::new(selection(provider), Box::new(transport));
+            let mut request = model_request();
+            request.model = Some(selection(provider));
+            let snapshot = runtime.inspect_request(&request).unwrap();
+            assert_eq!(snapshot.runtime_kind, "built_in", "provider {provider}");
+            assert_eq!(
+                snapshot.request_kind, "provider_wire_request",
+                "provider {provider}"
+            );
+            assert_eq!(snapshot.provider, provider, "provider {provider}");
+            assert_eq!(snapshot.structured_actions, Some(1), "provider {provider}");
+            assert!(
+                !snapshot.capability_catalog_in_prompt,
+                "provider {provider}"
+            );
+            assert!(
+                !snapshot.prompt.contains("EFFECTIVE CAPABILITY CATALOG"),
+                "provider {provider}"
+            );
+
+            runtime.generate(request).unwrap();
+
+            let requests = requests.borrow();
+            assert_eq!(requests.len(), 1, "provider {provider}");
+            assert_eq!(requests[0].actions.len(), 1, "provider {provider}");
+            assert!(
+                requests[0].prompt.contains("HARNESS CONTROL"),
+                "provider {provider}"
+            );
+            assert!(
+                !requests[0].prompt.contains("EFFECTIVE CAPABILITY CATALOG"),
+                "provider {provider}"
+            );
+            assert!(
+                !requests[0]
+                    .prompt
+                    .contains("- phase_complete [phase_completion] review/completion"),
+                "provider {provider}"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_request_snapshot_reports_open_schema_fallback_diagnostics() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.model = Some(selection("openai"));
+        request.prompt.action_aliases = vec![
+            action_alias(
+                "agentpm_tool_missing_schema_abcd1234",
+                "agentpm_tool",
+                "@zack/missing-tool",
+            ),
+            action_alias(
+                "knowledge_request_empty_docs_abcd1234",
+                "knowledge_request",
+                "@zack/empty-context",
+            ),
+            action_alias(
+                "memory_write_missing_record_types_abcd1234",
+                "memory_write",
+                "@zack/memory/notes",
+            ),
+        ];
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "agentpm_tool".into(),
+                identity: "@zack/missing-tool".into(),
+                description: "Missing tool metadata.".into(),
+                source: "agent_binding".into(),
+            });
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "knowledge_request".into(),
+                identity: "@zack/empty-context".into(),
+                description: "Empty context Knowledge.".into(),
+                source: "agent_binding".into(),
+            });
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "memory_write".into(),
+                identity: "@zack/memory/notes".into(),
+                description: "Write notes.".into(),
+                source: "agent_binding".into(),
+            });
+        let mut empty_context = context_knowledge_snapshot("@zack/empty-context");
+        empty_context.documents.clear();
+        request.effective_phase.active_knowledge.push(empty_context);
+        request
+            .effective_phase
+            .active_memory
+            .push(MemorySpaceRuntimeSnapshot {
+                package: "@zack/memory".into(),
+                package_version: "0.1.0".into(),
+                space: "notes".into(),
+                model: MemorySpaceModel::Collection,
+                description: "Notes.".into(),
+                root: None,
+                runtime: "local".into(),
+                source: "agent_binding".into(),
+                state: "available".into(),
+                readiness_reason: None,
+                binding_scope: "global".into(),
+                scope_keys: vec!["user".into()],
+                retrieval_modes: vec![MemoryRetrievalMode::Key],
+                semantic: None,
+                append_only: false,
+                record_types: Vec::new(),
+            });
+
+        let snapshot = runtime.inspect_request(&request).expect("snapshot");
+
+        assert!(
+            snapshot
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("Tool `@zack/missing-tool`"))
+        );
+        assert!(
+            snapshot
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("Knowledge package `@zack/empty-context`"))
+        );
+        assert!(
+            snapshot
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("Memory write `@zack/memory/notes`"))
+        );
+    }
+
+    #[test]
+    fn recursive_memory_filter_paths_use_open_provider_schema_with_diagnostic() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.model = Some(selection("openai"));
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "memory_read".into(),
+                identity: "@zack/memory/notes".into(),
+                description: "Read notes.".into(),
+                source: "agent_binding".into(),
+            });
+        let mut memory = memory_snapshot(
+            "@zack/memory",
+            "notes",
+            MemorySpaceModel::Collection,
+            vec![MemoryRetrievalMode::Filter],
+        );
+        memory.record_types[0].content_schema = json!({
+            "type": "object",
+            "$defs": {
+                "node": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "left": { "$ref": "#/$defs/node" },
+                        "right": { "$ref": "#/$defs/node" }
+                    }
+                }
+            },
+            "properties": {
+                "root": { "$ref": "#/$defs/node" }
+            }
+        });
+        request.effective_phase.active_memory.push(memory);
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+        let filter_alias = request
+            .prompt
+            .action_aliases
+            .iter()
+            .find(|alias| {
+                alias.action_kind == "memory_read"
+                    && alias.identity == "@zack/memory/notes"
+                    && alias.provider_shape.as_deref() == Some("filter")
+            })
+            .expect("recursive contracts should keep filter action with open fallback schema");
+
+        let schema = action_parameters_schema(filter_alias, &request);
+        assert_eq!(
+            schema["properties"]["filter"]["additionalProperties"],
+            json!(true)
+        );
+        assert!(
+            schema["properties"]["filter"]
+                .get("properties")
+                .is_none_or(Value::is_null)
+        );
+
+        let snapshot = runtime.inspect_request(&request).expect("snapshot");
+        assert!(
+            snapshot.diagnostics.iter().any(
+                |diagnostic| diagnostic.contains("recursive or oversized content filter paths")
+            )
+        );
+    }
+
+    #[test]
+    fn zero_declared_filter_paths_omit_filter_action_with_diagnostic() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.model = Some(selection("openai"));
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "memory_read".into(),
+                identity: "@zack/memory/notes".into(),
+                description: "Read notes.".into(),
+                source: "agent_binding".into(),
+            });
+        let mut memory = memory_snapshot(
+            "@zack/memory",
+            "notes",
+            MemorySpaceModel::Collection,
+            vec![MemoryRetrievalMode::Filter, MemoryRetrievalMode::Semantic],
+        );
+        memory.record_types[0].content_schema = json!({
+            "type": "object",
+            "properties": {}
+        });
+        request.effective_phase.active_memory.push(memory);
+        request.prompt.action_aliases =
+            crate::harness_runtime::model::provider_action_aliases(&request.effective_phase);
+
+        assert!(!request.prompt.action_aliases.iter().any(|alias| {
+            alias.action_kind == "memory_read" && alias.provider_shape.as_deref() == Some("filter")
+        }));
+        let semantic_alias = request
+            .prompt
+            .action_aliases
+            .iter()
+            .find(|alias| {
+                alias.action_kind == "memory_read"
+                    && alias.provider_shape.as_deref() == Some("semantic")
+            })
+            .expect("semantic alias");
+        let semantic_schema = action_parameters_schema(semantic_alias, &request);
+        assert!(
+            semantic_schema["properties"]
+                .as_object()
+                .expect("semantic properties")
+                .get("filter")
+                .is_none()
+        );
+        let semantic_tool = provider_action_tools(&request)
+            .into_iter()
+            .find(|tool| tool.alias == semantic_alias.alias)
+            .expect("semantic provider tool");
+        assert!(
+            semantic_tool
+                .description
+                .contains("semantic read; provide query and do not provide record_id or filter")
+        );
+        assert!(
+            !semantic_tool
+                .description
+                .contains("optionally provide filter")
+        );
+
+        let snapshot = runtime.inspect_request(&request).expect("snapshot");
+        assert!(
+            snapshot
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("filter action is not advertised"))
+        );
+    }
+
+    #[test]
+    fn native_provider_request_omits_turn_backed_prompt_components() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.prompt.sections = vec![
+            PromptSection {
+                number: 1,
+                title: "HARNESS CONTROL".into(),
+                content: "Harness authority: propose semantic actions only.\nRepair feedback from previous turn: add query".into(),
+            },
+            PromptSection {
+                number: 3,
+                title: crate::harness_runtime::model::CONSUMER_RUN_CONTEXT_SECTION_TITLE.into(),
+                content: "Run input:\nWrite one note.\n\nConsumer Context snapshot:\n  state: NotConfigured".into(),
+            },
+            PromptSection {
+                number: 5,
+                title: crate::harness_runtime::model::EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE.into(),
+                content: "- phase_complete [phase_completion] review/completion".into(),
+            },
+            PromptSection {
+                number: 6,
+                title: crate::harness_runtime::model::CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE.into(),
+                content: "- UserInput: \"Write one note.\"".into(),
+            },
+        ];
+        request.ordered_turns = vec![
+            ModelRequestTurn::UserInput {
+                content: "Write one note.".into(),
+            },
+            ModelRequestTurn::RepairFeedback {
+                content: "add query".into(),
+            },
+        ];
+
+        let provider_request = runtime.provider_request(&request);
+
+        assert_eq!(provider_request.turn_strategy, "native_action_result_turns");
+        assert_eq!(provider_request.turns, request.ordered_turns);
+        assert!(!provider_request.prompt.contains("Write one note."));
+        assert!(
+            !provider_request
+                .prompt
+                .contains("CURRENT PHASE-LOCAL TRANSCRIPT")
+        );
+        assert!(
+            !provider_request
+                .prompt
+                .contains("EFFECTIVE CAPABILITY CATALOG")
+        );
+        assert!(
+            !provider_request
+                .prompt
+                .contains("Repair feedback from previous turn: add query")
+        );
+        assert!(
+            provider_request
+                .prompt
+                .contains("Consumer Context snapshot:")
+        );
+        assert!(
+            request
+                .prompt
+                .render_text()
+                .contains("CURRENT PHASE-LOCAL TRANSCRIPT")
+        );
+        assert!(request.prompt.render_text().contains("Write one note."));
+    }
+
+    #[test]
+    fn native_provider_request_preserves_before_model_request_hook_context() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.prompt.sections = vec![
+            PromptSection {
+                number: 1,
+                title: "HARNESS CONTROL".into(),
+                content: "Harness authority: propose semantic actions only.\nRepair feedback from previous turn: add query".into(),
+            },
+            PromptSection {
+                number: 3,
+                title: crate::harness_runtime::model::CONSUMER_RUN_CONTEXT_SECTION_TITLE.into(),
+                content: "Run input:\nWrite one note.\n\nConsumer Context snapshot:\n  state: NotConfigured".into(),
+            },
+            PromptSection {
+                number: 5,
+                title: crate::harness_runtime::model::EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE
+                    .into(),
+                content: "- phase_complete [phase_completion] review/completion".into(),
+            },
+            PromptSection {
+                number: 6,
+                title: crate::harness_runtime::model::CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE
+                    .into(),
+                content: "- UserInput: \"Write one note.\"\n- RepairFeedback: \"add query\"".into(),
+            },
+        ];
+        request.ordered_turns = vec![
+            ModelRequestTurn::UserInput {
+                content: "Write one note.".into(),
+            },
+            ModelRequestTurn::RepairFeedback {
+                content: "add query".into(),
+            },
+        ];
+        apply_before_model_request_decision(
+            &mut request,
+            BeforeModelRequestDecision {
+                context_sections: vec![BeforeModelRequestContextSection {
+                    title: "Policy Note".into(),
+                    content: "Prefer the safest concise answer.".into(),
+                }],
+                ..BeforeModelRequestDecision::default()
+            },
+        )
+        .unwrap();
+
+        let provider_request = runtime.provider_request(&request);
+        let openai_body = Value::Object(openai_request_body(&provider_request));
+        let openai_messages = openai_body["messages"].as_array().unwrap();
+
+        assert_eq!(provider_request.turn_strategy, "native_action_result_turns");
+        assert_eq!(provider_request.turns, request.ordered_turns);
+        assert!(provider_request.prompt.contains("Hook Context:"));
+        assert!(provider_request.prompt.contains("Policy Note:"));
+        assert!(
+            provider_request
+                .prompt
+                .contains("Prefer the safest concise answer.")
+        );
+        assert!(
+            !provider_request
+                .prompt
+                .contains("Run input:\nWrite one note.")
+        );
+        assert!(
+            !provider_request
+                .prompt
+                .contains("CURRENT PHASE-LOCAL TRANSCRIPT")
+        );
+        assert!(
+            !provider_request
+                .prompt
+                .contains("Repair feedback from previous turn: add query")
+        );
+        assert_eq!(openai_messages[0]["role"], "system");
+        assert!(
+            openai_messages[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Prefer the safest concise answer.")
+        );
+        assert_eq!(openai_messages[1]["role"], "user");
+        assert_eq!(openai_messages[1]["content"], "Write one note.");
+        assert_eq!(openai_messages[2]["role"], "user");
+        assert_eq!(
+            openai_messages[2]["content"],
+            "Repair feedback from previous turn: add query"
+        );
+    }
+
+    #[test]
+    fn provider_request_retains_prompt_history_when_native_turns_are_unavailable() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.prompt.action_aliases.clear();
+        request.effective_phase.capability_catalog.clear();
+        request.prompt.sections.push(PromptSection {
+            number: 3,
+            title: crate::harness_runtime::model::CONSUMER_RUN_CONTEXT_SECTION_TITLE.into(),
+            content: "Run input:\nFallback input.".into(),
+        });
+        request.prompt.sections.push(PromptSection {
+            number: 6,
+            title: crate::harness_runtime::model::CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE
+                .into(),
+            content: "- RepairFeedback: \"retry\"".into(),
+        });
+        request.ordered_turns = vec![ModelRequestTurn::UserInput {
+            content: "Fallback input.".into(),
+        }];
+
+        let provider_request = runtime.provider_request(&request);
+
+        assert_eq!(provider_request.turn_strategy, "prompt_text_fallback");
+        assert!(provider_request.turns.is_empty());
+        assert!(
+            provider_request
+                .prompt
+                .contains("Run input:\nFallback input.")
+        );
+        assert!(
+            provider_request
+                .prompt
+                .contains("CURRENT PHASE-LOCAL TRANSCRIPT")
+        );
+    }
+
+    #[test]
+    fn built_in_provider_bodies_preserve_native_action_result_correlation() {
+        let request = correlated_provider_request("openai");
+        let openai_body = Value::Object(openai_request_body(&request));
+        let openai_messages = openai_body["messages"].as_array().unwrap();
+        assert_eq!(openai_messages[0]["role"], "system");
+        assert_eq!(openai_messages[1]["role"], "user");
+        assert_eq!(openai_messages[1]["content"], "Write one note.");
+        assert_eq!(openai_messages[3]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(
+            openai_messages[3]["tool_calls"][0]["function"]["name"],
+            "memory_write_notes_note_abcd1234"
+        );
+        assert_eq!(openai_messages[4]["role"], "tool");
+        assert_eq!(openai_messages[4]["tool_call_id"], "call_1");
+        assert_eq!(
+            openai_messages[5]["content"],
+            "Repair feedback from previous turn: retry with record_type"
+        );
+
+        let request = correlated_provider_request("anthropic");
+        let anthropic_body = Value::Object(anthropic_request_body(&request));
+        assert_eq!(anthropic_body["system"], "Provider control.");
+        let anthropic_messages = anthropic_body["messages"].as_array().unwrap();
+        assert_eq!(anthropic_messages[0]["role"], "user");
+        assert_eq!(anthropic_messages[2]["content"][0]["type"], "tool_use");
+        assert_eq!(anthropic_messages[2]["content"][0]["id"], "call_1");
+        assert_eq!(
+            anthropic_messages[2]["content"][0]["name"],
+            "memory_write_notes_note_abcd1234"
+        );
+        assert_eq!(anthropic_messages[3]["content"][0]["type"], "tool_result");
+        assert_eq!(anthropic_messages[3]["content"][0]["tool_use_id"], "call_1");
+
+        let request = correlated_provider_request("ollama");
+        let ollama_body = Value::Object(ollama_request_body(&request));
+        let ollama_messages = ollama_body["messages"].as_array().unwrap();
+        assert_eq!(ollama_messages[3]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(ollama_messages[4]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn split_memory_read_aliases_preserve_native_action_result_correlation() {
+        let request = correlated_memory_read_provider_request("openai");
+        let openai_body = Value::Object(openai_request_body(&request));
+        let openai_messages = openai_body["messages"].as_array().unwrap();
+        assert_eq!(openai_messages[2]["tool_calls"][0]["id"], "call_read_1");
+        assert_eq!(
+            openai_messages[2]["tool_calls"][0]["function"]["name"],
+            "memory_read_notes_chronological_note_abcd1234"
+        );
+        assert_eq!(openai_messages[3]["role"], "tool");
+        assert_eq!(openai_messages[3]["tool_call_id"], "call_read_1");
+
+        let request = correlated_memory_read_provider_request("anthropic");
+        let anthropic_body = Value::Object(anthropic_request_body(&request));
+        let anthropic_messages = anthropic_body["messages"].as_array().unwrap();
+        assert_eq!(anthropic_messages[1]["content"][0]["type"], "tool_use");
+        assert_eq!(anthropic_messages[1]["content"][0]["id"], "call_read_1");
+        assert_eq!(
+            anthropic_messages[1]["content"][0]["name"],
+            "memory_read_notes_chronological_note_abcd1234"
+        );
+        assert_eq!(anthropic_messages[2]["content"][0]["type"], "tool_result");
+        assert_eq!(
+            anthropic_messages[2]["content"][0]["tool_use_id"],
+            "call_read_1"
+        );
+    }
+
+    #[test]
+    fn built_in_provider_body_degrades_orphaned_action_result_to_text() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.ordered_turns = model_request_turns(&[TranscriptEntry {
+            kind: TranscriptEntryKind::ActionResult,
+            content: json!({
+                "action_kind": "agentpm_tool",
+                "identity": "@zack/search",
+                "provider_call_id": "call_orphan",
+                "result": { "ok": true }
+            }),
+            action_succeeded: Some(true),
+        }]);
+
+        let provider_request = runtime.provider_request(&request);
+        let openai_body = Value::Object(openai_request_body(&provider_request));
+        let openai_messages = openai_body["messages"].as_array().unwrap();
+
+        assert!(
+            openai_messages
+                .iter()
+                .all(|message| message["role"] != "tool")
+        );
+        assert!(openai_messages.iter().any(|message| {
+            message["role"] == "user"
+                && message["content"].as_str().is_some_and(|content| {
+                    content.contains("Previous semantic action result [agentpm_tool @zack/search]")
+                })
+        }));
+    }
+
+    #[test]
+    fn ollama_does_not_serialize_tools_without_structured_action_capability() {
+        let transport = SharedMockTransport::new(vec![ProviderResponse {
+            text: json!({ "outcome": "ready" }).to_string(),
+            action_calls: Vec::new(),
+            usage: RunUsage::default(),
+            finish_reason: Some("stop".into()),
+            metadata: BTreeMap::new(),
+        }]);
+        let requests = transport.requests.clone();
+        let mut runtime = BuiltInModelRuntime {
+            selection: selection("ollama"),
+            capabilities: ModelCapabilityAdvertisement {
+                semantic_actions: false,
+                structured_output: true,
+                ..ModelCapabilityAdvertisement::default()
+            },
+            transport: Box::new(transport),
+        };
+        let mut request = model_request();
+        request.model = Some(selection("ollama"));
+
+        let err = runtime.generate(request).unwrap_err();
+
+        assert!(err.message.contains("does not advertise"));
+        assert!(requests.borrow().is_empty());
     }
 
     #[test]
@@ -1668,14 +4608,14 @@ mod tests {
 
         let openai_tools = openai_tool_definitions(&tools);
         assert_eq!(openai_tools[0]["type"], "function");
-        assert_eq!(openai_tools[0]["function"]["name"], "action_1");
+        assert_eq!(openai_tools[0]["function"]["name"], "phase_complete");
         assert_eq!(
             openai_tools[0]["function"]["parameters"]["properties"]["outcome"]["enum"],
             json!(["ready"])
         );
 
         let anthropic_tools = anthropic_tool_definitions(&tools);
-        assert_eq!(anthropic_tools[0]["name"], "action_1");
+        assert_eq!(anthropic_tools[0]["name"], "phase_complete");
         assert_eq!(
             anthropic_tools[0]["input_schema"]["properties"]["outcome"]["enum"],
             json!(["ready"])
@@ -1989,15 +4929,23 @@ for line in sys.stdin:
             runtime,
             model: Some(selection("openai")),
             prompt: LogicalPrompt {
-                sections: vec![PromptSection {
-                    number: 5,
-                    title: "EFFECTIVE CAPABILITY CATALOG".into(),
-                    content: "- action_1 [phase_completion] review/completion".into(),
-                }],
+                sections: vec![
+                    PromptSection {
+                        number: 1,
+                        title: "HARNESS CONTROL".into(),
+                        content: "Harness authority: propose semantic actions only.".into(),
+                    },
+                    PromptSection {
+                        number: 5,
+                        title: "EFFECTIVE CAPABILITY CATALOG".into(),
+                        content: "- phase_complete [phase_completion] review/completion".into(),
+                    },
+                ],
                 action_aliases: vec![crate::harness_runtime::model::ActionAlias {
-                    alias: "action_1".into(),
+                    alias: "phase_complete".into(),
                     action_kind: capability.action_kind.clone(),
                     identity: capability.identity.clone(),
+                    provider_shape: None,
                 }],
                 completion: CompletionContract {
                     phase_id: "review".into(),
@@ -2006,6 +4954,7 @@ for line in sys.stdin:
                 },
                 diagnostics: Vec::new(),
             },
+            ordered_turns: Vec::new(),
             run_id: "run-test".into(),
             phase_execution_id: "phase-exec-test".into(),
             phase_id: "review".into(),
@@ -2024,6 +4973,8 @@ for line in sys.stdin:
                 active_tools: Vec::new(),
                 active_skills: Vec::new(),
                 active_knowledge: Vec::new(),
+                active_memory: Vec::new(),
+                active_memory_operations: Vec::new(),
                 capability_catalog: vec![capability],
                 suppressed_capabilities: Vec::new(),
             },
@@ -2082,18 +5033,125 @@ for line in sys.stdin:
             alias: alias.into(),
             action_kind: action_kind.into(),
             identity: identity.into(),
+            provider_shape: None,
+        }
+    }
+
+    fn action_alias_with_shape(
+        alias: &str,
+        action_kind: &str,
+        identity: &str,
+        provider_shape: &str,
+    ) -> ActionAlias {
+        ActionAlias {
+            alias: alias.into(),
+            action_kind: action_kind.into(),
+            identity: identity.into(),
+            provider_shape: Some(provider_shape.into()),
+        }
+    }
+
+    fn memory_snapshot(
+        package: &str,
+        space: &str,
+        model: MemorySpaceModel,
+        retrieval_modes: Vec<MemoryRetrievalMode>,
+    ) -> MemorySpaceRuntimeSnapshot {
+        MemorySpaceRuntimeSnapshot {
+            package: package.into(),
+            package_version: "0.1.0".into(),
+            space: space.into(),
+            model,
+            description: format!("{space} memory"),
+            root: None,
+            runtime: "local".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+            readiness_reason: None,
+            binding_scope: "global".into(),
+            scope_keys: vec!["user".into()],
+            retrieval_modes,
+            semantic: None,
+            append_only: false,
+            record_types: vec![MemoryRecordTypeRuntimeSnapshot {
+                name: "note".into(),
+                schema_version: "1.0.0".into(),
+                content_schema: json!({
+                    "type": "object",
+                    "additionalProperties": true
+                }),
+            }],
         }
     }
 
     fn decode_provider_call(alias: ActionAlias, arguments: Value) -> SemanticAction {
         semantic_action_from_provider_call(
             &ProviderActionCall {
+                id: None,
                 alias: alias.alias.clone(),
                 arguments,
             },
             &[alias],
         )
         .expect("provider action call should decode")
+    }
+
+    fn correlated_provider_request(provider: &str) -> ProviderRequest {
+        ProviderRequest {
+            selection: selection(provider),
+            prompt: "Provider control.".into(),
+            include_capability_catalog: false,
+            turn_strategy: "native_action_result_turns".into(),
+            turns: vec![
+                ModelRequestTurn::UserInput {
+                    content: "Write one note.".into(),
+                },
+                ModelRequestTurn::AssistantContent {
+                    content: "Writing now.".into(),
+                },
+                ModelRequestTurn::SemanticActionCall {
+                    provider_call_id: Some("call_1".into()),
+                    provider_alias: Some("memory_write_notes_note_abcd1234".into()),
+                    action_kind: "memory_write".into(),
+                    identity: "@zack/memory/notes".into(),
+                    arguments: json!({
+                        "operation": "create",
+                        "record_type": "note",
+                        "content": { "body": "launch" }
+                    }),
+                },
+                ModelRequestTurn::SemanticActionResult {
+                    provider_call_id: Some("call_1".into()),
+                    action_kind: "memory_write".into(),
+                    identity: "@zack/memory/notes".into(),
+                    result: json!({ "ok": true, "record_id": "mem-1" }),
+                    action_succeeded: Some(true),
+                },
+                ModelRequestTurn::RepairFeedback {
+                    content: "retry with record_type".into(),
+                },
+            ],
+            action_aliases: BTreeMap::from([(
+                "memory_write_notes_note_abcd1234".into(),
+                "@zack/memory/notes".into(),
+            )]),
+            actions: vec![ProviderActionTool {
+                alias: "memory_write_notes_note_abcd1234".into(),
+                action_kind: "memory_write".into(),
+                identity: "@zack/memory/notes".into(),
+                description: "Write notes.".into(),
+                parameters: json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "operation": { "type": "string" },
+                        "record_type": { "type": "string" },
+                        "content": { "type": "object" }
+                    },
+                    "required": ["operation", "record_type"]
+                }),
+            }],
+        }
     }
 
     struct SharedMockTransport {
@@ -2120,6 +5178,62 @@ for line in sys.stdin:
                 return Err(ModelRuntimeFailure::new("shared mock exhausted"));
             }
             Ok(self.responses.remove(0))
+        }
+    }
+
+    fn correlated_memory_read_provider_request(provider: &str) -> ProviderRequest {
+        ProviderRequest {
+            selection: selection(provider),
+            prompt: "Provider control.".into(),
+            include_capability_catalog: false,
+            turn_strategy: "native_action_result_turns".into(),
+            turns: vec![
+                ModelRequestTurn::UserInput {
+                    content: "Check notes.".into(),
+                },
+                ModelRequestTurn::SemanticActionCall {
+                    provider_call_id: Some("call_read_1".into()),
+                    provider_alias: Some("memory_read_notes_chronological_note_abcd1234".into()),
+                    action_kind: "memory_read".into(),
+                    identity: "@zack/memory/notes".into(),
+                    arguments: json!({
+                        "limit": 5,
+                        "record_type": "note"
+                    }),
+                },
+                ModelRequestTurn::SemanticActionResult {
+                    provider_call_id: Some("call_read_1".into()),
+                    action_kind: "memory_read".into(),
+                    identity: "@zack/memory/notes".into(),
+                    result: json!({
+                        "ok": true,
+                        "count": 0,
+                        "records": []
+                    }),
+                    action_succeeded: Some(true),
+                },
+            ],
+            action_aliases: BTreeMap::from([(
+                "memory_read_notes_chronological_note_abcd1234".into(),
+                "@zack/memory/notes".into(),
+            )]),
+            actions: vec![ProviderActionTool {
+                alias: "memory_read_notes_chronological_note_abcd1234".into(),
+                action_kind: "memory_read".into(),
+                identity: "@zack/memory/notes".into(),
+                description: "Chronological Memory read.".into(),
+                parameters: json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "limit": { "type": "integer", "minimum": 1 },
+                        "record_type": {
+                            "type": "string",
+                            "enum": ["note"]
+                        }
+                    }
+                }),
+            }],
         }
     }
 }

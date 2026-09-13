@@ -4,12 +4,13 @@ pub(crate) mod action;
 pub(crate) mod approval;
 pub(crate) mod hook;
 pub(crate) mod knowledge;
+pub(crate) mod memory;
 pub(crate) mod model;
 pub(crate) mod provider;
 pub(crate) mod service;
 pub(crate) mod tool;
 
-pub use action::{ActionDispatchResult, ActionDispatcher, SemanticAction};
+pub use action::{ActionDispatchResult, ActionDispatcher, SemanticAction, SemanticActionProposal};
 pub use approval::{ApprovalController, ApprovalDecision, ConfiguredApprovalController};
 pub use hook::{
     BeforeToolCallHook, ConfiguredHookRuntime, HookRuntime, NoopHookRuntime,
@@ -20,13 +21,16 @@ pub use knowledge::{
     KnowledgeRuntime, LocalKnowledgeRuntime, NoopKnowledgeRuntime, RoutingEmbeddingProvider,
     ServiceEmbeddingProvider,
 };
+pub use memory::CustomMemoryRuntime;
 pub use model::{
     CapabilityDescriptor, ConsumerContextSnapshot, KnowledgeEmbeddingSnapshot,
-    KnowledgeRuntimeSnapshot, ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest,
-    ModelRuntime, ModelRuntimeFailure, ModelTurn, PackageSnapshot, ProfileSnapshot,
-    PromptAssemblyInput, RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot,
-    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry,
-    TranscriptEntryKind, assemble_logical_prompt,
+    KnowledgeRuntimeSnapshot, MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
+    MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelCapabilityAdvertisement,
+    ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure,
+    ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProfileSnapshot, PromptAssemblyInput,
+    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot, SkillResourceSnapshot,
+    SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind,
+    assemble_logical_prompt, model_request_turns,
 };
 pub use provider::{BuiltInModelRuntime, ProcessModelRuntime};
 pub use service::{HostServiceInvoker, ServiceLifecycleEmitter, ServiceLifecycleEvents};

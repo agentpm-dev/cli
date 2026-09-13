@@ -5,33 +5,38 @@ use crate::harness_plan::{
 use crate::harness_runtime::{
     ActionDispatcher, AgentPmActionDispatcher, ApprovalController, BuiltInModelRuntime,
     CompositeKnowledgeRuntime, ConfiguredApprovalController, ConfiguredHookRuntime,
-    ConsumerContextSnapshot, CustomKnowledgeRuntime, HookRuntime, HostServiceInvoker,
-    KnowledgeEmbeddingSnapshot, KnowledgeRuntime, KnowledgeRuntimeSnapshot, LocalKnowledgeRuntime,
-    ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
-    ModelRuntimeFailure, ModelTurn, PackageSnapshot, ProcessModelRuntime, RoutingEmbeddingProvider,
-    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceEmbeddingProvider, ServiceLifecycleEmitter,
-    ServiceLifecycleEvents, ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot,
-    ToolRuntimeSnapshot,
+    ConsumerContextSnapshot, CustomKnowledgeRuntime, CustomMemoryRuntime, HookRuntime,
+    HostServiceInvoker, KnowledgeEmbeddingSnapshot, KnowledgeRuntime, KnowledgeRuntimeSnapshot,
+    LocalKnowledgeRuntime, MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
+    MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelCapabilityAdvertisement,
+    ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure,
+    ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProcessModelRuntime,
+    RoutingEmbeddingProvider, RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceEmbeddingProvider,
+    ServiceLifecycleEmitter, ServiceLifecycleEvents, ServiceReadinessSnapshot,
+    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::manifest::{
-    load_manifest_value, parse_knowledge_manifest, parse_loop_manifest, parse_skill_manifest,
-    parse_tool_manifest,
+    AgentManifest, AgentMemoryBinding, MemoryManifest, MemoryOperation, MemoryOperationRef,
+    MemoryOperationTarget, MemoryRetrievalMode, MemorySourceHandling, MemoryTransformOutputMode,
+    MemoryTrigger, load_manifest_value, parse_knowledge_manifest, parse_loop_manifest,
+    parse_memory_manifest, parse_skill_manifest, parse_tool_manifest,
 };
 use crate::prelude::*;
 use crate::{
     harness_config::{HarnessHookId, HarnessTraceLevel},
     harness_engine::{
-        HarnessEngine, HarnessEngineOptions, HarnessRunResult, HarnessRuntimeServices,
-        HarnessSession, RuntimeTerminalResult,
+        EngineControlIngress, HarnessEngine, HarnessEngineOptions, HarnessRunResult,
+        HarnessRuntimeServices, HarnessSession, MemoryOperationControlError,
+        MemoryOperationInvocationResult, RuntimeTerminalResult,
     },
     harness_observability::{
         HarnessEventEnvelope, HarnessEventSink, HarnessTerminalStatus, JsonlTraceSink,
-        RunOutputPaths, allocate_harness_run_id, apply_content_policy,
-        apply_content_policy_to_value,
+        MemoryWriteReviewReportSummary, RunOutputPaths, RunReport, allocate_harness_run_id,
+        apply_content_policy, apply_content_policy_to_value,
     },
     harness_runtime::SdkHostHookRegistration,
 };
-use anyhow::{anyhow, bail};
+use anyhow::{Context, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -45,6 +50,22 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use crate::semver::types::PackageKind;
+
+mod custom_memory;
+mod host_services;
+mod runtime_snapshot;
+
+use custom_memory::{
+    activate_custom_memory_runtime_for_plan, apply_custom_memory_activation_to_runtime,
+    custom_memory_routes,
+};
+use host_services::{
+    host_service_registration_response, missing_required_host_services, register_host_service,
+    required_host_services,
+};
+#[cfg(test)]
+use runtime_snapshot::knowledge_snapshots_from_plan;
+use runtime_snapshot::runtime_snapshot_from_plan;
 
 #[derive(Args, Debug, Clone)]
 pub struct HarnessArgs {
@@ -315,8 +336,8 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
             "memory_operation" => {
                 bridge.write_error(
                     id.as_deref(),
-                    "memory_operation_unavailable",
-                    "external Memory-operation control requests are reserved until the Memory runtime milestone",
+                    "memory_operation_no_active_run",
+                    "external Memory-operation control requires an active Harness Run",
                 )?;
             }
             "shutdown" => {
@@ -356,6 +377,13 @@ fn execute_machine_run(
         Some(&service_events),
     );
     apply_custom_knowledge_activation_to_runtime(&mut runtime, &custom_knowledge);
+    let custom_memory = activate_custom_memory_runtime_for_plan(
+        plan,
+        &runtime,
+        Some(bridge.clone()),
+        Some(&service_events),
+    );
+    apply_custom_memory_activation_to_runtime(&mut runtime, &custom_memory);
     let mut dispatcher = AgentPmActionDispatcher::from_runtime(&runtime)?
         .with_cancellation_token(bridge.cancellation_token());
     let mut knowledge = knowledge_runtime_for_machine_plan(
@@ -399,14 +427,17 @@ fn execute_machine_run(
     } else {
         approval_controller_from_plan(plan, Some(Box::new(bridge.clone())), Some(&service_events))?
     };
-    let mut engine = HarnessEngine::new(
-        loop_manifest,
-        HarnessEngineOptions::new(plan.config.config.runtime.limits.clone()),
-    );
+    let engine_options = harness_engine_options_from_plan(plan);
+    let mut engine = HarnessEngine::new(loop_manifest, engine_options);
+    engine.set_control_ingress(Box::new(bridge.clone()));
+    let memory_embedding_provider =
+        embedding_provider_for_plan(plan, Some(bridge.clone()), Some(&service_events));
     let mut services = HarnessRuntimeServices {
         model: model.as_mut(),
         dispatcher: &mut dispatcher,
         knowledge: knowledge.as_mut(),
+        memory: custom_memory.runtime,
+        embedding_provider: memory_embedding_provider,
         approvals: approvals.as_mut(),
         hooks: &mut hooks,
         service_events: Some(&mut service_events),
@@ -462,10 +493,26 @@ struct MachineError {
     message: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct MachineMemoryOperationRequest {
+    package: String,
+    operation: String,
+    #[serde(default)]
+    current_resolved_scope: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct HostServiceRegistration {
     role: String,
     registry_id: String,
+}
+
+fn harness_engine_options_from_plan(plan: &ResolvedHarnessPlan) -> HarnessEngineOptions {
+    let mut options = HarnessEngineOptions::new(plan.config.config.runtime.limits.clone());
+    if let Some(write_review) = &plan.config.config.memory.write_review {
+        options = options.with_memory_write_review_points(write_review.points.clone());
+    }
+    options
 }
 
 #[derive(Clone)]
@@ -482,6 +529,8 @@ struct MachineHostBridge {
     host_service_lifecycle: Option<ServiceLifecycleEmitter>,
     sdk_host_hooks: Vec<SdkHostHookRegistration>,
     sdk_approval_controller: bool,
+    pending_memory_operation_control: Option<MachineEnvelope>,
+    memory_operation_control_in_flight: bool,
     request_counter: u64,
     active_run: Arc<AtomicBool>,
     cancellation_requested: Arc<AtomicBool>,
@@ -504,6 +553,8 @@ impl MachineHostBridgeHandle {
                 host_service_lifecycle: None,
                 sdk_host_hooks: Vec::new(),
                 sdk_approval_controller: false,
+                pending_memory_operation_control: None,
+                memory_operation_control_in_flight: false,
                 request_counter: 0,
                 active_run,
                 cancellation_requested,
@@ -639,6 +690,31 @@ impl MachineHostBridgeHandle {
             .writer
             .clone()
     }
+
+    fn take_memory_operation_control(&self) -> Result<Option<MachineEnvelope>> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .take_memory_operation_control()
+    }
+
+    fn complete_memory_operation_control(
+        &self,
+        id: Option<&str>,
+        result: Result<MemoryOperationInvocationResult>,
+    ) -> Result<()> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .complete_memory_operation_control(id, result)
+    }
+
+    fn flush_memory_operation_controls(&self, code: &str, message: &str) -> Result<()> {
+        self.inner
+            .lock()
+            .expect("machine bridge poisoned")
+            .flush_memory_operation_controls(code, message)
+    }
 }
 
 impl HostServiceInvoker for MachineHostBridgeHandle {
@@ -665,6 +741,42 @@ impl HostServiceInvoker for MachineHostBridgeHandle {
     }
 }
 
+impl EngineControlIngress for MachineHostBridgeHandle {
+    fn service_memory_operation_controls(
+        &mut self,
+        engine: &mut HarnessEngine,
+        session: &mut HarnessSession,
+        model: &mut dyn ModelRuntime,
+        hooks: &mut dyn HookRuntime,
+    ) -> Result<()> {
+        while let Some(frame) = self.take_memory_operation_control()? {
+            let result = match serde_json::from_value::<MachineMemoryOperationRequest>(
+                frame.payload.clone(),
+            ) {
+                Ok(request) => engine.invoke_memory_operation(
+                    session,
+                    &request.package,
+                    &request.operation,
+                    request.current_resolved_scope,
+                    model,
+                    hooks,
+                ),
+                Err(err) => Err(MemoryOperationControlError {
+                    code: "memory_operation_invalid_request",
+                    message: format!("invalid memory_operation request payload: {err}"),
+                }
+                .into()),
+            };
+            self.complete_memory_operation_control(frame.id.as_deref(), result)?;
+        }
+        Ok(())
+    }
+
+    fn flush_memory_operation_controls(&mut self, code: &str, message: &str) -> Result<()> {
+        MachineHostBridgeHandle::flush_memory_operation_controls(self, code, message)
+    }
+}
+
 impl MachineHostBridge {
     fn recv_control_request(&mut self) -> Result<Option<MachineEnvelope>> {
         loop {
@@ -678,6 +790,87 @@ impl MachineHostBridge {
                 continue;
             }
             return Ok(Some(frame));
+        }
+    }
+
+    fn take_memory_operation_control(&mut self) -> Result<Option<MachineEnvelope>> {
+        if self.pending_memory_operation_control.is_none() {
+            self.collect_available_active_control_frames()?;
+        }
+        if self.memory_operation_control_in_flight {
+            return Ok(None);
+        }
+        let Some(frame) = self.pending_memory_operation_control.take() else {
+            return Ok(None);
+        };
+        self.memory_operation_control_in_flight = true;
+        Ok(Some(frame))
+    }
+
+    fn complete_memory_operation_control(
+        &mut self,
+        id: Option<&str>,
+        result: Result<MemoryOperationInvocationResult>,
+    ) -> Result<()> {
+        self.memory_operation_control_in_flight = false;
+        match result {
+            Ok(result) => self.writer.write_response(id, json!(result)),
+            Err(err) => {
+                if self.cancellation_requested.load(Ordering::SeqCst) {
+                    return self.writer.write_error(
+                        id,
+                        "memory_operation_cancelled",
+                        "external Memory operation was cancelled with the active Run",
+                    );
+                }
+                if let Some(control_error) = err.downcast_ref::<MemoryOperationControlError>() {
+                    self.writer
+                        .write_error(id, control_error.code, control_error.message.clone())
+                } else {
+                    self.writer.write_error(
+                        id,
+                        "memory_operation_failed",
+                        format!("external Memory operation failed: {err}"),
+                    )
+                }
+            }
+        }
+    }
+
+    fn flush_memory_operation_controls(&mut self, code: &str, message: &str) -> Result<()> {
+        if let Some(frame) = self.pending_memory_operation_control.take() {
+            self.writer
+                .write_error(frame.id.as_deref(), code, message)?;
+        }
+        if self.memory_operation_control_in_flight
+            && self.cancellation_requested.load(Ordering::SeqCst)
+        {
+            self.memory_operation_control_in_flight = false;
+        }
+        Ok(())
+    }
+
+    fn collect_available_active_control_frames(&mut self) -> Result<()> {
+        loop {
+            let frame = match self.receiver.try_recv() {
+                Ok(Ok(frame)) => frame,
+                Ok(Err(message)) => {
+                    self.writer.write_error(None, "malformed_json", message)?;
+                    continue;
+                }
+                Err(mpsc::TryRecvError::Empty) => return Ok(()),
+                Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            };
+            if let Err(err) = validate_machine_frame_base(&frame) {
+                self.writer
+                    .write_error(frame.id.as_deref(), "protocol_error", err)?;
+                continue;
+            }
+            if frame.kind == MachineFrameKind::Request && self.active_run.load(Ordering::SeqCst) {
+                self.handle_control_request_during_active_run(frame)?;
+            } else {
+                self.pending.push_back(frame);
+            }
         }
     }
 
@@ -794,6 +987,10 @@ impl MachineHostBridge {
         match frame.method.as_deref().unwrap_or_default() {
             "cancel_run" => {
                 self.cancellation_requested.store(true, Ordering::SeqCst);
+                self.flush_memory_operation_controls(
+                    "memory_operation_cancelled",
+                    "external Memory operation was cancelled with the active Run",
+                )?;
                 self.writer.write_response(
                     id.as_deref(),
                     json!({
@@ -816,6 +1013,9 @@ impl MachineHostBridge {
                     "preflight control is unavailable while a Run is active",
                 )?;
             }
+            "memory_operation" => {
+                self.enqueue_memory_operation_control(frame)?;
+            }
             other => {
                 self.writer.write_error(
                     id.as_deref(),
@@ -824,6 +1024,20 @@ impl MachineHostBridge {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    fn enqueue_memory_operation_control(&mut self, frame: MachineEnvelope) -> Result<()> {
+        if self.memory_operation_control_in_flight
+            || self.pending_memory_operation_control.is_some()
+        {
+            return self.writer.write_error(
+                frame.id.as_deref(),
+                "memory_operation_busy",
+                "another external Memory operation is already pending or running in this Session",
+            );
+        }
+        self.pending_memory_operation_control = Some(frame);
         Ok(())
     }
 
@@ -1086,440 +1300,6 @@ fn validate_machine_request(request: &MachineEnvelope) -> std::result::Result<()
     Ok(())
 }
 
-fn register_host_service(
-    plan: &ResolvedHarnessPlan,
-    bridge: &MachineHostBridgeHandle,
-    payload: &Value,
-) -> std::result::Result<HostServiceRegistration, String> {
-    let role = payload
-        .get("role")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "host service registration requires payload.role".to_string())?
-        .to_string();
-    let registry_id = payload
-        .get("registry_id")
-        .or_else(|| payload.get("id"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            "host service registration requires payload.registry_id or payload.id".to_string()
-        })?
-        .to_string();
-    let service = HostServiceRegistration { role, registry_id };
-    let capabilities = payload
-        .get("capabilities")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    validate_host_service_readiness(&service, payload)?;
-    if !configured_host_services(plan).contains(&service) {
-        if service.role == "hook" {
-            let registrations = sdk_host_hook_registrations(&service.registry_id, payload)?;
-            if registrations.is_empty() {
-                return Err(
-                    "SDK hook registration requires payload.hooks with at least one Hook ID".into(),
-                );
-            }
-            bridge.register_host_service(&service, capabilities);
-            bridge.register_sdk_host_hooks(registrations);
-            return Ok(service);
-        }
-        if service.role == "approval" && service.registry_id == "controller" {
-            crate::harness_runtime::approval::approval_capabilities_from_initialization(
-                &capabilities,
-                "controller",
-            )
-            .map_err(|err| err.to_string())?;
-            bridge.register_host_service(&service, capabilities);
-            bridge.register_sdk_approval_controller();
-            return Ok(service);
-        }
-        return Err(format!(
-            "host service `{}` with registry ID `{}` is not configured",
-            service.role, service.registry_id
-        ));
-    }
-    validate_configured_host_service_registration(plan, &service, payload, &capabilities)?;
-    bridge.register_host_service(&service, capabilities);
-    Ok(service)
-}
-
-fn host_service_registration_response(service: &HostServiceRegistration) -> Value {
-    let (active, reason) = host_service_activation_status(service);
-    json!({
-        "registered": true,
-        "service": service,
-        "active": active,
-        "reason": reason,
-    })
-}
-
-fn host_service_activation_status(
-    service: &HostServiceRegistration,
-) -> (bool, Option<&'static str>) {
-    match service.role.as_str() {
-        "embedding" | "knowledge" => (true, None),
-        "memory" => (
-            false,
-            Some("MemoryRuntime host dispatch is reserved until Milestone 14"),
-        ),
-        _ => (true, None),
-    }
-}
-
-fn validate_host_service_readiness(
-    service: &HostServiceRegistration,
-    payload: &Value,
-) -> std::result::Result<(), String> {
-    if payload
-        .get("ready")
-        .and_then(Value::as_bool)
-        .is_some_and(|ready| !ready)
-    {
-        return Err(format!(
-            "host service `{}` with registry ID `{}` registered but reported not ready",
-            service.role, service.registry_id
-        ));
-    }
-    Ok(())
-}
-
-fn validate_configured_host_service_registration(
-    plan: &ResolvedHarnessPlan,
-    service: &HostServiceRegistration,
-    payload: &Value,
-    capabilities: &Value,
-) -> std::result::Result<(), String> {
-    match service.role.as_str() {
-        "hook" => validate_configured_host_hook_registration(plan, service, payload, capabilities),
-        "embedding" => crate::harness_runtime::knowledge::validate_embedding_provider_capabilities(
-            capabilities,
-            &service.registry_id,
-        )
-        .map_err(|err| err.to_string()),
-        "knowledge" => {
-            let routes = custom_knowledge_routes(plan);
-            let mapped_packages = knowledge_snapshots_from_plan(plan)
-                .into_iter()
-                .filter(|package| routes.get(&package.name) == Some(&service.registry_id))
-                .collect::<Vec<_>>();
-            crate::harness_runtime::knowledge::validate_knowledge_runtime_capabilities(
-                capabilities,
-                &service.registry_id,
-                &mapped_packages,
-            )
-            .map_err(|err| err.to_string())
-        }
-        "approval" if service.registry_id == "controller" => {
-            crate::harness_runtime::approval::approval_capabilities_from_initialization(
-                capabilities,
-                "controller",
-            )
-            .map_err(|err| err.to_string())?;
-            Ok(())
-        }
-        _ => Ok(()),
-    }
-}
-
-fn validate_configured_host_hook_registration(
-    plan: &ResolvedHarnessPlan,
-    service: &HostServiceRegistration,
-    payload: &Value,
-    capabilities: &Value,
-) -> std::result::Result<(), String> {
-    let expected_hooks = configured_host_hook_ids(plan, &service.registry_id);
-    if expected_hooks.is_empty() {
-        return Ok(());
-    }
-    let Some(advertised_hooks) = payload
-        .get("hooks")
-        .or_else(|| capabilities.get("hooks"))
-        .cloned()
-    else {
-        return Err(format!(
-            "host hook service `{}` must advertise payload.hooks or capabilities.hooks",
-            service.registry_id
-        ));
-    };
-    crate::harness_runtime::hook::validate_hook_service_initialization(
-        &json!({
-            "registry_id": service.registry_id.clone(),
-            "hooks": advertised_hooks,
-        }),
-        &service.registry_id,
-        &expected_hooks,
-    )
-    .map_err(|err| err.to_string())
-}
-
-fn configured_host_hook_ids(
-    plan: &ResolvedHarnessPlan,
-    implementation: &str,
-) -> Vec<HarnessHookId> {
-    let mut hook_ids = Vec::new();
-    for binding in plan
-        .config
-        .config
-        .hooks
-        .bindings
-        .iter()
-        .filter(|binding| binding.implementation == implementation)
-    {
-        if !hook_ids.contains(&binding.hook) {
-            hook_ids.push(binding.hook.clone());
-        }
-    }
-    hook_ids
-}
-
-fn sdk_host_hook_registrations(
-    registry_id: &str,
-    payload: &Value,
-) -> std::result::Result<Vec<SdkHostHookRegistration>, String> {
-    let hooks = payload
-        .get("hooks")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "SDK hook registration requires payload.hooks".to_string())?;
-    let request_timeout_ms = payload
-        .get("request_timeout_ms")
-        .and_then(Value::as_u64)
-        .unwrap_or(SDK_HOST_REQUEST_TIMEOUT_MS);
-    let mut registrations = Vec::new();
-    for hook in hooks {
-        let Some(hook) = hook.as_str() else {
-            return Err("SDK hook registration payload.hooks entries must be strings".into());
-        };
-        let hook: HarnessHookId =
-            serde_json::from_value(Value::String(hook.to_string())).map_err(|err| {
-                format!("SDK hook registration contains unsupported Hook ID `{hook}`: {err}")
-            })?;
-        registrations.push(SdkHostHookRegistration {
-            registry_id: registry_id.to_string(),
-            hook,
-            request_timeout_ms,
-        });
-    }
-    Ok(registrations)
-}
-
-fn missing_required_host_services(
-    plan: &ResolvedHarnessPlan,
-    bridge: &MachineHostBridgeHandle,
-) -> Vec<HostServiceRegistration> {
-    required_host_services(plan)
-        .into_iter()
-        .filter(|service| !bridge.has_host_service(service))
-        .collect()
-}
-
-fn required_host_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
-    let mut services = Vec::new();
-    if let Some(model) = &plan.config.config.model
-        && matches!(
-            plan.config
-                .config
-                .providers
-                .models
-                .get(&model.provider)
-                .map(|entry| &entry.implementation),
-            Some(crate::harness_config::HarnessImplementation::Host { .. })
-        )
-    {
-        services.push(HostServiceRegistration {
-            role: "model".into(),
-            registry_id: model.provider.clone(),
-        });
-    }
-    services.extend(host_hook_services(plan));
-    if matches!(
-        plan.config
-            .config
-            .approvals
-            .controller
-            .as_ref()
-            .map(|controller| &controller.implementation),
-        Some(crate::harness_config::HarnessImplementation::Host { .. })
-    ) {
-        services.push(HostServiceRegistration {
-            role: "approval".into(),
-            registry_id: "controller".into(),
-        });
-    }
-    services.extend(required_host_embedding_services(plan));
-    services.extend(required_host_knowledge_services(plan));
-    dedupe_host_services(services)
-}
-
-fn required_host_embedding_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
-    plan.config
-        .config
-        .knowledge
-        .embedding_matches
-        .iter()
-        .filter_map(|item| {
-            let entry = plan
-                .config
-                .config
-                .providers
-                .embeddings
-                .get(&item.embedding_provider)?;
-            matches!(
-                entry.implementation,
-                crate::harness_config::HarnessImplementation::Host { .. }
-            )
-            .then(|| HostServiceRegistration {
-                role: "embedding".into(),
-                registry_id: item.embedding_provider.clone(),
-            })
-        })
-        .collect()
-}
-
-fn required_host_knowledge_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
-    plan.config
-        .config
-        .knowledge
-        .packages
-        .values()
-        .filter_map(|mapping| {
-            let entry = plan
-                .config
-                .config
-                .knowledge
-                .runtimes
-                .get(&mapping.runtime)?;
-            matches!(
-                entry.implementation,
-                crate::harness_config::HarnessImplementation::Host { .. }
-            )
-            .then(|| HostServiceRegistration {
-                role: "knowledge".into(),
-                registry_id: mapping.runtime.clone(),
-            })
-        })
-        .collect()
-}
-
-fn configured_host_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
-    let mut services = Vec::new();
-    services.extend(
-        plan.config
-            .config
-            .providers
-            .models
-            .iter()
-            .filter(|(_, entry)| {
-                matches!(
-                    entry.implementation,
-                    crate::harness_config::HarnessImplementation::Host { .. }
-                )
-            })
-            .map(|(id, _)| HostServiceRegistration {
-                role: "model".into(),
-                registry_id: id.clone(),
-            }),
-    );
-    services.extend(host_hook_services(plan));
-    services.extend(
-        plan.config
-            .config
-            .providers
-            .embeddings
-            .iter()
-            .filter(|(_, entry)| {
-                matches!(
-                    entry.implementation,
-                    crate::harness_config::HarnessImplementation::Host { .. }
-                )
-            })
-            .map(|(id, _)| HostServiceRegistration {
-                role: "embedding".into(),
-                registry_id: id.clone(),
-            }),
-    );
-    services.extend(
-        plan.config
-            .config
-            .knowledge
-            .runtimes
-            .iter()
-            .filter(|(_, entry)| {
-                matches!(
-                    entry.implementation,
-                    crate::harness_config::HarnessImplementation::Host { .. }
-                )
-            })
-            .map(|(id, _)| HostServiceRegistration {
-                role: "knowledge".into(),
-                registry_id: id.clone(),
-            }),
-    );
-    services.extend(
-        plan.config
-            .config
-            .memory
-            .runtimes
-            .iter()
-            .filter(|(_, entry)| {
-                matches!(
-                    entry.implementation,
-                    crate::harness_config::HarnessImplementation::Host { .. }
-                )
-            })
-            .map(|(id, _)| HostServiceRegistration {
-                role: "memory".into(),
-                registry_id: id.clone(),
-            }),
-    );
-    if matches!(
-        plan.config
-            .config
-            .approvals
-            .controller
-            .as_ref()
-            .map(|controller| &controller.implementation),
-        Some(crate::harness_config::HarnessImplementation::Host { .. })
-    ) {
-        services.push(HostServiceRegistration {
-            role: "approval".into(),
-            registry_id: "controller".into(),
-        });
-    }
-    dedupe_host_services(services)
-}
-
-fn host_hook_services(plan: &ResolvedHarnessPlan) -> Vec<HostServiceRegistration> {
-    plan.config
-        .config
-        .hooks
-        .bindings
-        .iter()
-        .filter_map(|binding| {
-            let entry = plan
-                .config
-                .config
-                .hooks
-                .implementations
-                .get(&binding.implementation)?;
-            matches!(
-                entry.implementation,
-                crate::harness_config::HarnessImplementation::Host { .. }
-            )
-            .then(|| HostServiceRegistration {
-                role: "hook".into(),
-                registry_id: binding.implementation.clone(),
-            })
-        })
-        .collect()
-}
-
-fn dedupe_host_services(services: Vec<HostServiceRegistration>) -> Vec<HostServiceRegistration> {
-    let mut seen = BTreeSet::new();
-    services
-        .into_iter()
-        .filter(|service| seen.insert((service.role.clone(), service.registry_id.clone())))
-        .collect()
-}
-
 fn run_headless_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result<()> {
     let input = read_run_input(args.input.as_deref(), args.input_file.as_ref())?;
     let selection = model_selection(plan)?;
@@ -1543,6 +1323,7 @@ fn run_headless_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Resul
         &mut hooks,
         Some(&mut service_events),
     )?;
+    print_memory_write_review_warnings(&terminal);
     match terminal.status {
         crate::harness_observability::HarnessTerminalStatus::Ended
         | crate::harness_observability::HarnessTerminalStatus::HandedOff => {
@@ -1609,6 +1390,28 @@ struct HostModelRuntime {
 impl ModelRuntime for HostModelRuntime {
     fn capabilities(&self) -> ModelCapabilityAdvertisement {
         self.capabilities.clone()
+    }
+
+    fn inspect_request(&self, request: &ModelRequest) -> Option<ModelRuntimeRequestSnapshot> {
+        let selection = request
+            .model
+            .clone()
+            .unwrap_or_else(|| self.selection.clone());
+        let prompt = request.prompt.render_text();
+        Some(ModelRuntimeRequestSnapshot {
+            runtime_kind: "host".into(),
+            request_kind: "canonical_model_request".into(),
+            provider: selection.provider,
+            model: selection.model,
+            action_descriptors: request.prompt.action_aliases.len(),
+            structured_actions: None,
+            capability_catalog_in_prompt: request.prompt.has_capability_catalog_section(),
+            action_aliases: request.prompt.action_aliases.clone(),
+            turn_strategy: "canonical_request".into(),
+            ordered_turns: request.ordered_turns.clone(),
+            diagnostics: request.prompt.diagnostics.clone(),
+            prompt,
+        })
     }
 
     fn generate(
@@ -1752,6 +1555,36 @@ fn print_terminal_output(terminal: &RuntimeTerminalResult) -> Result<()> {
     Ok(())
 }
 
+fn print_memory_write_review_warnings(terminal: &RuntimeTerminalResult) {
+    for warning in terminal_memory_write_review_warning_lines(terminal) {
+        eprintln!("{warning}");
+    }
+}
+
+fn terminal_memory_write_review_warning_lines(terminal: &RuntimeTerminalResult) -> Vec<String> {
+    memory_write_review_warning_lines(&terminal.report)
+}
+
+fn memory_write_review_warning_lines(report: &RunReport) -> Vec<String> {
+    report
+        .memory_write_review_summaries
+        .iter()
+        .filter(|summary| summary.status == "failed")
+        .map(memory_write_review_warning_line)
+        .collect()
+}
+
+fn memory_write_review_warning_line(summary: &MemoryWriteReviewReportSummary) -> String {
+    format!(
+        "Warning: Memory write review at {} {}: {}. Memory writes attempted/completed: {}/{}. Intended Memory may not have been written.",
+        summary.point,
+        summary.status,
+        summary.reason,
+        summary.memory_writes_attempted,
+        summary.memory_writes_completed
+    )
+}
+
 fn terminal_status_error_message(
     terminal: &RuntimeTerminalResult,
     status: crate::harness_observability::HarnessTerminalStatus,
@@ -1834,6 +1667,11 @@ fn execute_headless_plan_with_hooks(
         activate_custom_knowledge_runtime_for_plan(plan, &runtime, None, service_events_ref)
     };
     apply_custom_knowledge_activation_to_runtime(&mut runtime, &custom_knowledge);
+    let custom_memory = {
+        let service_events_ref = service_events.as_deref();
+        activate_custom_memory_runtime_for_plan(plan, &runtime, None, service_events_ref)
+    };
+    apply_custom_memory_activation_to_runtime(&mut runtime, &custom_memory);
     let mut knowledge = {
         let service_events_ref = service_events.as_deref();
         knowledge_runtime_for_headless_plan(
@@ -1843,10 +1681,16 @@ fn execute_headless_plan_with_hooks(
             service_events_ref,
         )
     };
+    let memory_embedding_provider = {
+        let service_events_ref = service_events.as_deref();
+        embedding_provider_for_plan(plan, None, service_events_ref)
+    };
     let mut services = HarnessRuntimeServices {
         model,
         dispatcher,
         knowledge: knowledge.as_mut(),
+        memory: custom_memory.runtime,
+        embedding_provider: memory_embedding_provider,
         approvals: approvals.as_mut(),
         hooks,
         service_events,
@@ -1875,10 +1719,8 @@ fn execute_headless_plan_with_services(
             plan.config.config.trace.clone(),
         )?));
     }
-    let mut engine = HarnessEngine::new(
-        loop_manifest,
-        HarnessEngineOptions::new(plan.config.config.runtime.limits.clone()),
-    );
+    let engine_options = harness_engine_options_from_plan(plan);
+    let mut engine = HarnessEngine::new(loop_manifest, engine_options);
     let result = engine.execute_run_with_id(&mut session, run_id, input, services)?;
     let HarnessRunResult::Terminal(result) = result else {
         bail!("Harness --headless cannot wait for interactive approval");
@@ -2107,27 +1949,46 @@ fn embedding_provider_for_plan(
     let mut providers: BTreeMap<String, Box<dyn crate::harness_runtime::EmbeddingProvider>> =
         BTreeMap::new();
     let mut routes = BTreeMap::new();
-    for item in &plan.config.config.knowledge.embedding_matches {
+    let mut route_specs = plan
+        .config
+        .config
+        .knowledge
+        .embedding_matches
+        .iter()
+        .map(|item| {
+            (
+                item.embedding_provider.clone(),
+                item.r#match.provider.clone(),
+                item.r#match.model.clone(),
+                item.r#match.dimensions,
+                item.r#match.normalized,
+            )
+        })
+        .collect::<Vec<_>>();
+    if let Some(semantic) = &plan.config.config.memory.local.semantic {
+        route_specs.push((
+            semantic.embedding_provider.clone(),
+            semantic.embedding_provider.clone(),
+            semantic.model.clone(),
+            semantic.dimensions,
+            true,
+        ));
+    }
+    for (embedding_provider_id, provider, model, dimensions, normalized) in route_specs {
         let Some(entry) = plan
             .config
             .config
             .providers
             .embeddings
-            .get(&item.embedding_provider)
+            .get(&embedding_provider_id)
         else {
             continue;
         };
         routes.insert(
-            format!(
-                "{}\n{}\n{}\n{}",
-                item.r#match.provider,
-                item.r#match.model,
-                item.r#match.dimensions,
-                item.r#match.normalized
-            ),
-            item.embedding_provider.clone(),
+            format!("{provider}\n{model}\n{dimensions}\n{normalized}"),
+            embedding_provider_id.clone(),
         );
-        if providers.contains_key(&item.embedding_provider) {
+        if providers.contains_key(&embedding_provider_id) {
             continue;
         }
         let provider: Result<Box<dyn crate::harness_runtime::EmbeddingProvider>> =
@@ -2135,7 +1996,7 @@ fn embedding_provider_for_plan(
                 crate::harness_config::HarnessImplementation::Process { .. } => {
                     ServiceEmbeddingProvider::process(
                         &plan.workspace_root,
-                        &item.embedding_provider,
+                        &embedding_provider_id,
                         entry,
                         service_events.map(ServiceLifecycleEvents::emitter),
                     )
@@ -2148,7 +2009,7 @@ fn embedding_provider_for_plan(
                         continue;
                     };
                     ServiceEmbeddingProvider::host(
-                        &item.embedding_provider,
+                        &embedding_provider_id,
                         entry,
                         Box::new(bridge),
                         service_events.map(ServiceLifecycleEvents::emitter),
@@ -2159,7 +2020,7 @@ fn embedding_provider_for_plan(
                 }
             };
         if let Ok(provider) = provider {
-            providers.insert(item.embedding_provider.clone(), provider);
+            providers.insert(embedding_provider_id, provider);
         }
     }
     if providers.is_empty() {
@@ -2221,395 +2082,6 @@ fn load_plan_loop(plan: &ResolvedHarnessPlan) -> Result<crate::manifest::LoopMan
     let manifest_path = loop_package.root.join("agent.json");
     let (value, _) = load_manifest_value(&manifest_path)?;
     parse_loop_manifest(&value)
-}
-
-fn runtime_snapshot_from_plan(plan: &ResolvedHarnessPlan) -> RuntimeSnapshot {
-    RuntimeSnapshot {
-        session_id: String::new(),
-        workspace_root: plan.workspace_root.clone(),
-        state_dir: plan.state_dir.clone(),
-        agent: plan.selected_agent.as_ref().map(|agent| PackageSnapshot {
-            kind: "agent".into(),
-            name: agent.name.clone(),
-            version: agent.version.clone(),
-            root: agent.manifest_path.parent().map(PathBuf::from),
-        }),
-        loop_package: plan.loop_package.as_ref().map(package_snapshot),
-        package_graph: plan.package_graph.values().map(package_snapshot).collect(),
-        runtime_config_sources: BTreeMap::from([(
-            "state_dir".into(),
-            format!("{:?}", plan.config.state_dir_source.kind),
-        )]),
-        runtime_scopes: plan.runtime_scopes.clone(),
-        consumer_context: Some(ConsumerContextSnapshot {
-            state: format!("{:?}", plan.consumer_context.state),
-            file: plan.consumer_context.file.clone(),
-            path: plan.consumer_context.path.clone(),
-            content: None,
-            byte_size: plan.consumer_context.byte_size,
-            approximate_tokens: plan.consumer_context.approximate_tokens,
-            sha256: plan.consumer_context.sha256.clone(),
-        }),
-        services: plan
-            .capabilities
-            .iter()
-            .filter(|capability| capability.kind == "model_provider")
-            .map(|capability| ServiceReadinessSnapshot {
-                kind: capability.kind.clone(),
-                identity: capability.identity.clone(),
-                state: format!("{:?}", capability.state),
-            })
-            .collect(),
-        hook_registrations: plan
-            .config
-            .config
-            .hooks
-            .bindings
-            .iter()
-            .map(|binding| format!("{:?}:{}", binding.hook, binding.implementation))
-            .collect(),
-        profiles: plan.profiles.values().cloned().collect(),
-        profile_bindings: plan.profile_bindings.clone(),
-        tools: tool_snapshots_from_plan(plan),
-        skills: skill_snapshots_from_plan(plan),
-        knowledge: knowledge_snapshots_from_plan(plan),
-        capability_candidates: plan
-            .capabilities
-            .iter()
-            .map(|capability| RuntimeCapabilitySnapshot {
-                kind: capability.kind.clone(),
-                identity: capability.identity.clone(),
-                scope: capability.scope.clone(),
-                source: capability.source.clone(),
-                state: capability_state_label(capability.state).into(),
-            })
-            .collect(),
-        model: plan
-            .config
-            .config
-            .model
-            .as_ref()
-            .map(|model| ModelProviderSelection {
-                provider: model.provider.clone(),
-                model: model.model.clone(),
-                options: model.options.clone(),
-            }),
-    }
-}
-
-fn tool_snapshots_from_plan(plan: &ResolvedHarnessPlan) -> Vec<ToolRuntimeSnapshot> {
-    let bound_tools = plan
-        .capabilities
-        .iter()
-        .filter(|capability| capability.kind == "tool")
-        .map(|capability| {
-            (
-                capability.identity.clone(),
-                (
-                    capability_state_label(capability.state).to_string(),
-                    capability.source.clone(),
-                ),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    plan.package_graph
-        .values()
-        .filter(|package| package.kind == PackageKind::Tool)
-        .filter_map(|package| {
-            let (state, source) = bound_tools.get(&package.name)?;
-            let path = package.root.join("agent.json");
-            let manifest = load_manifest_value(&path)
-                .and_then(|(value, _)| parse_tool_manifest(&value))
-                .ok()?;
-            Some(ToolRuntimeSnapshot {
-                name: package.name.clone(),
-                version: package.version.clone(),
-                description: manifest
-                    .description
-                    .unwrap_or_else(|| "AgentPM Tool capability.".into()),
-                root: Some(package.root.clone()),
-                input_schema: manifest.inputs,
-                state: state.clone(),
-                source: source.clone(),
-            })
-        })
-        .collect()
-}
-
-fn skill_snapshots_from_plan(plan: &ResolvedHarnessPlan) -> Vec<SkillRuntimeSnapshot> {
-    let bound_skills = plan
-        .capabilities
-        .iter()
-        .filter(|capability| capability.kind == "skill")
-        .map(|capability| {
-            (
-                capability.identity.clone(),
-                (
-                    capability_state_label(capability.state).to_string(),
-                    capability.source.clone(),
-                ),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    plan.package_graph
-        .values()
-        .filter(|package| package.kind == PackageKind::Skill)
-        .filter_map(|package| {
-            let (state, source) = bound_skills.get(&package.name)?;
-            let path = package.root.join("agent.json");
-            let manifest = load_manifest_value(&path)
-                .and_then(|(value, _)| parse_skill_manifest(&value))
-                .ok()?;
-            let mut resources = vec![SkillResourceSnapshot {
-                id: "entrypoint".into(),
-                path: manifest.skill.entrypoint.clone(),
-                kind: "entrypoint".into(),
-            }];
-            resources.extend(manifest.skill.references.iter().map(|reference| {
-                SkillResourceSnapshot {
-                    id: reference.clone(),
-                    path: reference.clone(),
-                    kind: "reference".into(),
-                }
-            }));
-            Some(SkillRuntimeSnapshot {
-                name: package.name.clone(),
-                version: package.version.clone(),
-                description: manifest
-                    .description
-                    .unwrap_or_else(|| "AgentPM Skill resource.".into()),
-                root: Some(package.root.clone()),
-                resources,
-                state: state.clone(),
-                source: source.clone(),
-            })
-        })
-        .collect()
-}
-
-fn knowledge_snapshots_from_plan(plan: &ResolvedHarnessPlan) -> Vec<KnowledgeRuntimeSnapshot> {
-    let bound_knowledge = plan
-        .capabilities
-        .iter()
-        .filter(|capability| capability.kind == "knowledge")
-        .map(|capability| {
-            (
-                capability.identity.clone(),
-                (
-                    capability_state_label(capability.state).to_string(),
-                    capability.source.clone(),
-                ),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    plan.package_graph
-        .values()
-        .filter(|package| package.kind == PackageKind::Knowledge)
-        .filter_map(|package| {
-            let (candidate_state, source) = bound_knowledge.get(&package.name)?;
-            let path = package.root.join("agent.json");
-            let manifest = load_manifest_value(&path)
-                .and_then(|(value, _)| parse_knowledge_manifest(&value))
-                .ok()?;
-            let (runtime, state, readiness_reason) =
-                knowledge_runtime_readiness(plan, package, &manifest, candidate_state);
-            let mut snapshot = crate::harness_runtime::knowledge::knowledge_snapshot_from_manifest(
-                &package.root,
-                &manifest,
-                source.clone(),
-                runtime,
-                state,
-                readiness_reason,
-            );
-            snapshot.name = package.name.clone();
-            Some(snapshot)
-        })
-        .collect()
-}
-
-fn knowledge_runtime_readiness(
-    plan: &ResolvedHarnessPlan,
-    package: &ResolvedPackageInfo,
-    manifest: &crate::manifest::KnowledgeManifest,
-    candidate_state: &str,
-) -> (String, String, Option<String>) {
-    if candidate_state != "available" {
-        return (
-            "none".into(),
-            candidate_state.to_string(),
-            Some(format!(
-                "Knowledge binding readiness state is {candidate_state}"
-            )),
-        );
-    }
-    if let Some(mapping) = plan.config.config.knowledge.packages.get(&package.name) {
-        return configured_knowledge_runtime_readiness(plan, &mapping.runtime);
-    }
-    match manifest.knowledge.mode.as_str() {
-        "context" => {
-            match crate::commands::knowledge::build_context_mode(&package.root, manifest) {
-                Ok(result) => {
-                    let mut mismatches = Vec::new();
-                    match manifest.knowledge.context.as_ref() {
-                        Some(context) => {
-                            if context.document_count != Some(result.document_count) {
-                                mismatches.push("knowledge.context.document_count");
-                            }
-                            if context.total_bytes != Some(result.total_bytes) {
-                                mismatches.push("knowledge.context.total_bytes");
-                            }
-                            if context.content_hash.as_deref() != Some(result.content_hash.as_str())
-                            {
-                                mismatches.push("knowledge.context.content_hash");
-                            }
-                        }
-                        None => mismatches.push("knowledge.context"),
-                    }
-                    if mismatches.is_empty() {
-                        ("local".into(), "available".into(), None)
-                    } else {
-                        (
-                            "local".into(),
-                            "unavailable".into(),
-                            Some(format!(
-                                "context Knowledge metadata is stale or malformed: {}",
-                                mismatches.join(", ")
-                            )),
-                        )
-                    }
-                }
-                Err(err) => ("local".into(), "unavailable".into(), Some(err.to_string())),
-            }
-        }
-        "vector" => match crate::commands::knowledge::local_vector_readiness(&package.root) {
-            Ok(readiness) => {
-                let space = KnowledgeEmbeddingSnapshot {
-                    id: readiness.embedding_id,
-                    provider: readiness.provider,
-                    model: readiness.model,
-                    dimensions: readiness.dimensions,
-                    metric: readiness.metric,
-                    normalized: readiness.normalized,
-                };
-                match compatible_embedding_provider_id(plan, &space) {
-                    Some(provider_id)
-                        if configured_embedding_provider_is_realizable(plan, &provider_id) =>
-                    {
-                        ("local".into(), "available".into(), None)
-                    }
-                    Some(provider_id) => (
-                        "local".into(),
-                        "unavailable".into(),
-                        Some(format!(
-                            "installed vector artifacts are coherent but EmbeddingProvider `{provider_id}` is unavailable for the current execution surface"
-                        )),
-                    ),
-                    None => (
-                        "local".into(),
-                        "unavailable".into(),
-                        Some(format!(
-                            "installed vector artifacts are coherent but no compatible EmbeddingProvider is configured for {}/{}/dimensions={}/normalized={}",
-                            space.provider, space.model, space.dimensions, space.normalized
-                        )),
-                    ),
-                }
-            }
-            Err(err) => (
-                "local".into(),
-                "unavailable".into(),
-                Some(format!("installed vector artifact integrity failed: {err}")),
-            ),
-        },
-        other => (
-            "none".into(),
-            "unavailable".into(),
-            Some(format!("unsupported Knowledge mode `{other}`")),
-        ),
-    }
-}
-
-fn configured_knowledge_runtime_readiness(
-    plan: &ResolvedHarnessPlan,
-    runtime_id: &str,
-) -> (String, String, Option<String>) {
-    let Some(_entry) = plan.config.config.knowledge.runtimes.get(runtime_id) else {
-        return (
-            runtime_id.to_string(),
-            "unavailable".into(),
-            Some(format!(
-                "knowledge.packages references undefined KnowledgeRuntime `{runtime_id}`"
-            )),
-        );
-    };
-    match configured_runtime_candidate_state(plan, "knowledge_runtime", runtime_id) {
-        Some(
-            CapabilityState::Unavailable
-            | CapabilityState::Suppressed
-            | CapabilityState::NotConfigured,
-        ) => (
-            runtime_id.to_string(),
-            "unavailable".into(),
-            Some(format!(
-                "configured KnowledgeRuntime `{runtime_id}` is unavailable for the current execution surface"
-            )),
-        ),
-        Some(CapabilityState::Available | CapabilityState::Pending) | None => {
-            (runtime_id.to_string(), "available".into(), None)
-        }
-    }
-}
-
-fn configured_embedding_provider_is_realizable(
-    plan: &ResolvedHarnessPlan,
-    provider_id: &str,
-) -> bool {
-    matches!(
-        configured_runtime_candidate_state(plan, "embedding_provider", provider_id),
-        Some(CapabilityState::Available | CapabilityState::Pending) | None
-    )
-}
-
-fn configured_runtime_candidate_state(
-    plan: &ResolvedHarnessPlan,
-    kind: &str,
-    identity: &str,
-) -> Option<CapabilityState> {
-    plan.capabilities
-        .iter()
-        .find(|capability| capability.kind == kind && capability.identity == identity)
-        .map(|capability| capability.state)
-}
-
-fn compatible_embedding_provider_id(
-    plan: &ResolvedHarnessPlan,
-    space: &KnowledgeEmbeddingSnapshot,
-) -> Option<String> {
-    plan.config
-        .config
-        .knowledge
-        .embedding_matches
-        .iter()
-        .find(|item| crate::harness_runtime::knowledge::embedding_key_matches(space, &item.r#match))
-        .map(|item| item.embedding_provider.clone())
-}
-
-fn capability_state_label(state: CapabilityState) -> &'static str {
-    match state {
-        CapabilityState::Available => "available",
-        CapabilityState::Pending => "pending",
-        CapabilityState::Unavailable => "unavailable",
-        CapabilityState::Suppressed => "suppressed",
-        CapabilityState::NotConfigured => "not_configured",
-    }
-}
-
-fn package_snapshot(package: &ResolvedPackageInfo) -> PackageSnapshot {
-    PackageSnapshot {
-        kind: format!("{:?}", package.kind),
-        name: package.name.clone(),
-        version: package.version.clone(),
-        root: Some(package.root.clone()),
-    }
 }
 
 fn parse_scope(raw: &str) -> Result<(String, String)> {
@@ -2807,1788 +2279,4 @@ fn human_preflight_verbose_enabled(cli_verbose: bool, plan: &ResolvedHarnessPlan
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::harness_config::{
-        HarnessApprovalController, HarnessConfig, HarnessConfigSource, HarnessHookBinding,
-        HarnessHookFailurePolicy, HarnessHookId, HarnessImplementation, HarnessImplementationEntry,
-        HarnessRuntimeMapping, HarnessTraceConfig, HarnessTraceContent, HarnessTraceLevel,
-        ResolvedHarnessConfig,
-    };
-    use crate::harness_observability::{
-        HarnessTerminalStatus, ReportPackageIdentity, RunReport, RunUsage,
-    };
-    use crate::harness_runtime::SemanticAction;
-    use crate::harness_runtime::action::ScriptedActionDispatcher;
-    use crate::harness_runtime::action::SemanticActionProposal;
-    use crate::harness_runtime::model::{
-        ModelCapabilityAdvertisement, ModelRuntimeFailure, ModelTurn, ScriptedModelRuntime,
-    };
-    use crate::semver::types::PackageKind;
-    use serde_json::json;
-    use std::fs;
-    use std::path::Path;
-
-    #[test]
-    fn parse_scope_requires_key_value_pair() {
-        assert_eq!(
-            parse_scope("user=user-1").unwrap(),
-            ("user".to_string(), "user-1".to_string())
-        );
-        assert!(parse_scope("user").is_err());
-        assert!(parse_scope("=user-1").is_err());
-        assert!(parse_scope("user=").is_err());
-    }
-
-    #[test]
-    fn capability_counts_describe_pending_runtime_activation() {
-        let root = temp_dir("capability-count-labels");
-        let mut plan = minimal_plan(&root);
-        plan.capabilities
-            .push(crate::harness_plan::StaticCapabilityCandidate {
-                kind: "knowledge".into(),
-                identity: "@zack/manual-context".into(),
-                scope: "global".into(),
-                source: "agent_binding".into(),
-                state: CapabilityState::Available,
-            });
-        plan.capabilities
-            .push(crate::harness_plan::StaticCapabilityCandidate {
-                kind: "model_provider".into(),
-                identity: "openai/gpt-4o-mini".into(),
-                scope: "session".into(),
-                source: "harness_config".into(),
-                state: CapabilityState::Pending,
-            });
-
-        let counts = capability_counts(&plan);
-        assert_eq!(counts.get("available"), Some(&1));
-        assert_eq!(counts.get("pending runtime activation"), Some(&1));
-        assert!(!counts.contains_key("pending"));
-    }
-
-    #[test]
-    fn verbose_static_capability_details_list_available_and_pending_identities() {
-        let root = temp_dir("verbose-static-capability-details");
-        let mut plan = minimal_plan(&root);
-        plan.capabilities
-            .push(crate::harness_plan::StaticCapabilityCandidate {
-                kind: "knowledge".into(),
-                identity: "@zack/manual-vector".into(),
-                scope: "global".into(),
-                source: "agent_binding".into(),
-                state: CapabilityState::Available,
-            });
-        plan.capabilities
-            .push(crate::harness_plan::StaticCapabilityCandidate {
-                kind: "embedding_provider".into(),
-                identity: "toy-embedder".into(),
-                scope: "session".into(),
-                source: "harness_config".into(),
-                state: CapabilityState::Pending,
-            });
-
-        let details = static_capability_detail_lines(&plan);
-        assert_eq!(
-            details,
-            vec![
-                "  - available: knowledge `@zack/manual-vector` (scopes: global, sources: agent_binding)",
-                "  - pending runtime activation: embedding_provider `toy-embedder` (scopes: session, sources: harness_config)",
-            ]
-        );
-    }
-
-    #[test]
-    fn verbose_static_capability_details_combine_scopes_for_counted_identity() {
-        let root = temp_dir("verbose-static-capability-combined-scopes");
-        let mut plan = minimal_plan(&root);
-        for scope in ["phase:no-knowledge", "phase:research"] {
-            plan.capabilities
-                .push(crate::harness_plan::StaticCapabilityCandidate {
-                    kind: "knowledge".into(),
-                    identity: "@zack/manual-context".into(),
-                    scope: scope.into(),
-                    source: "agent_binding".into(),
-                    state: CapabilityState::Available,
-                });
-        }
-
-        let counts = capability_counts(&plan);
-        let details = static_capability_detail_lines(&plan);
-        assert_eq!(counts.get("available"), Some(&1));
-        assert_eq!(
-            details,
-            vec![
-                "  - available: knowledge `@zack/manual-context` (scopes: phase:no-knowledge, phase:research, sources: agent_binding)",
-            ]
-        );
-    }
-
-    #[test]
-    fn trace_verbose_enables_human_preflight_verbose_details() {
-        let root = temp_dir("trace-verbose-human-preflight");
-        let mut plan = minimal_plan(&root);
-
-        assert!(!human_preflight_verbose_enabled(false, &plan));
-        assert!(human_preflight_verbose_enabled(true, &plan));
-
-        plan.config.config.trace.level = HarnessTraceLevel::Verbose;
-        assert!(human_preflight_verbose_enabled(false, &plan));
-    }
-
-    #[test]
-    fn default_surface_is_tui_with_explicit_headless_and_machine_modes() {
-        let default_args = HarnessArgs {
-            agent: None,
-            config: None,
-            state_dir: None,
-            scopes: Vec::new(),
-            machine: false,
-            headless: false,
-            json: false,
-            verbose: false,
-            input: None,
-            input_file: None,
-            report: None,
-        };
-        assert_eq!(default_args.surface(), HarnessExecutionSurface::Tui);
-
-        let headless_args = HarnessArgs {
-            headless: true,
-            ..default_args.clone()
-        };
-        assert_eq!(headless_args.surface(), HarnessExecutionSurface::Headless);
-
-        let machine_args = HarnessArgs {
-            machine: true,
-            ..default_args
-        };
-        assert_eq!(machine_args.surface(), HarnessExecutionSurface::Machine);
-    }
-
-    #[test]
-    fn headless_and_machine_preflight_avoid_stdout_reserved_for_payloads() {
-        assert_eq!(
-            PreflightOutputStream::for_surface(HarnessExecutionSurface::Headless),
-            PreflightOutputStream::Stderr
-        );
-        assert_eq!(
-            PreflightOutputStream::for_surface(HarnessExecutionSurface::Tui),
-            PreflightOutputStream::Stdout
-        );
-        assert_eq!(
-            PreflightOutputStream::for_surface(HarnessExecutionSurface::Machine),
-            PreflightOutputStream::Stderr
-        );
-        let args = HarnessArgs {
-            agent: None,
-            config: None,
-            state_dir: None,
-            scopes: Vec::new(),
-            machine: false,
-            headless: true,
-            json: true,
-            verbose: false,
-            input: None,
-            input_file: None,
-            report: None,
-        };
-        let err = validate_surface_flags(HarnessExecutionSurface::Headless, &args).unwrap_err();
-        assert!(err.to_string().contains("--json cannot be combined"));
-    }
-
-    #[test]
-    fn machine_protocol_rejects_wrong_version_and_non_request_input() {
-        let mut request = MachineEnvelope {
-            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
-            version: AGENTPM_HARNESS_MACHINE_VERSION,
-            kind: MachineFrameKind::Request,
-            id: Some("req-1".into()),
-            method: Some("initialize".into()),
-            payload: json!({}),
-            error: None,
-        };
-        assert!(validate_machine_request(&request).is_ok());
-        request.version = 2;
-        assert!(
-            validate_machine_request(&request)
-                .unwrap_err()
-                .contains("unsupported protocol version")
-        );
-        request.version = AGENTPM_HARNESS_MACHINE_VERSION;
-        request.kind = MachineFrameKind::Event;
-        assert!(
-            validate_machine_request(&request)
-                .unwrap_err()
-                .contains("kind `request`")
-        );
-    }
-
-    #[test]
-    fn machine_json_flag_is_rejected_because_stdout_is_protocol_only() {
-        let args = HarnessArgs {
-            agent: None,
-            config: None,
-            state_dir: None,
-            scopes: Vec::new(),
-            machine: true,
-            headless: false,
-            json: true,
-            verbose: false,
-            input: None,
-            input_file: None,
-            report: None,
-        };
-        let err = validate_surface_flags(HarnessExecutionSurface::Machine, &args).unwrap_err();
-        assert!(err.to_string().contains("protocol frames"));
-    }
-
-    #[test]
-    fn host_service_requirements_include_selected_model_hooks_and_approval() {
-        let root = temp_dir("host-service-requirements");
-        let mut plan = minimal_plan(&root);
-        plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
-            provider: "host-model".into(),
-            model: "model-1".into(),
-            options: json!({}),
-        });
-        plan.config.config.providers.models.insert(
-            "host-model".into(),
-            HarnessImplementationEntry {
-                implementation: HarnessImplementation::Host {
-                    request_timeout_ms: 1_000,
-                },
-            },
-        );
-        plan.config.config.hooks.implementations.insert(
-            "host-hooks".into(),
-            HarnessImplementationEntry {
-                implementation: HarnessImplementation::Host {
-                    request_timeout_ms: 1_000,
-                },
-            },
-        );
-        plan.config.config.hooks.bindings.push(HarnessHookBinding {
-            hook: HarnessHookId::BeforeToolCall,
-            implementation: "host-hooks".into(),
-            failure_policy: HarnessHookFailurePolicy::Closed,
-        });
-        plan.config.config.approvals.controller = Some(HarnessApprovalController {
-            implementation: HarnessImplementation::Host {
-                request_timeout_ms: 1_000,
-            },
-        });
-
-        let required = required_host_services(&plan);
-        assert!(required.contains(&host_service("model", "host-model")));
-        assert!(required.contains(&host_service("hook", "host-hooks")));
-        assert!(required.contains(&host_service("approval", "controller")));
-    }
-
-    #[test]
-    fn mapped_knowledge_runtime_readiness_requires_realizable_runtime() {
-        let root = temp_dir("mapped-knowledge-runtime-readiness");
-        let knowledge_root = root.join(".agentpm/knowledge/@zack/guide/0.1.0");
-        write_json(
-            &knowledge_root.join("agent.json"),
-            json!({
-                "kind": "knowledge",
-                "name": "@zack/guide",
-                "version": "0.1.0",
-                "description": "Guide.",
-                "knowledge": {
-                    "mode": "context",
-                    "content_type": "text/markdown",
-                    "documents": [
-                        { "path": "knowledge/docs/guide.md", "content_type": "text/markdown" }
-                    ]
-                }
-            }),
-        );
-        let mut plan = minimal_plan(&root);
-        plan.package_graph.insert(
-            "knowledge:@zack/guide@0.1.0".into(),
-            ResolvedPackageInfo {
-                key: "knowledge:@zack/guide@0.1.0".into(),
-                kind: PackageKind::Knowledge,
-                name: "@zack/guide".into(),
-                version: "0.1.0".into(),
-                root: knowledge_root,
-            },
-        );
-        plan.capabilities
-            .push(crate::harness_plan::StaticCapabilityCandidate {
-                kind: "knowledge".into(),
-                identity: "@zack/guide".into(),
-                scope: "global".into(),
-                source: "agent_binding".into(),
-                state: CapabilityState::Available,
-            });
-        plan.capabilities
-            .push(crate::harness_plan::StaticCapabilityCandidate {
-                kind: "knowledge_runtime".into(),
-                identity: "remote-knowledge".into(),
-                scope: "session".into(),
-                source: "harness_config".into(),
-                state: CapabilityState::Unavailable,
-            });
-        plan.config.config.knowledge.runtimes.insert(
-            "remote-knowledge".into(),
-            HarnessImplementationEntry {
-                implementation: HarnessImplementation::Host {
-                    request_timeout_ms: 1_000,
-                },
-            },
-        );
-        plan.config.config.knowledge.packages.insert(
-            "@zack/guide".into(),
-            HarnessRuntimeMapping {
-                runtime: "remote-knowledge".into(),
-            },
-        );
-
-        let runtime = runtime_snapshot_from_plan(&plan);
-        assert_eq!(runtime.knowledge.len(), 1);
-        assert_eq!(runtime.knowledge[0].runtime, "remote-knowledge");
-        assert_eq!(runtime.knowledge[0].state, "unavailable");
-        assert!(
-            runtime.knowledge[0]
-                .readiness_reason
-                .as_deref()
-                .unwrap_or_default()
-                .contains("configured KnowledgeRuntime `remote-knowledge` is unavailable")
-        );
-    }
-
-    #[test]
-    fn custom_knowledge_activation_failure_suppresses_mapped_package() {
-        let root = temp_dir("custom-knowledge-activation-failure");
-        let knowledge_root = root.join(".agentpm/knowledge/@zack/guide/0.1.0");
-        write_json(
-            &knowledge_root.join("agent.json"),
-            json!({
-                "kind": "knowledge",
-                "name": "@zack/guide",
-                "version": "0.1.0",
-                "description": "Guide.",
-                "knowledge": {
-                    "mode": "context",
-                    "content_type": "text/markdown",
-                    "documents": [
-                        { "path": "knowledge/docs/guide.md", "content_type": "text/markdown" }
-                    ]
-                }
-            }),
-        );
-        let mut plan = minimal_plan(&root);
-        plan.package_graph.insert(
-            "knowledge:@zack/guide@0.1.0".into(),
-            ResolvedPackageInfo {
-                key: "knowledge:@zack/guide@0.1.0".into(),
-                kind: PackageKind::Knowledge,
-                name: "@zack/guide".into(),
-                version: "0.1.0".into(),
-                root: knowledge_root,
-            },
-        );
-        plan.capabilities
-            .push(crate::harness_plan::StaticCapabilityCandidate {
-                kind: "knowledge".into(),
-                identity: "@zack/guide".into(),
-                scope: "global".into(),
-                source: "agent_binding".into(),
-                state: CapabilityState::Available,
-            });
-        plan.capabilities
-            .push(crate::harness_plan::StaticCapabilityCandidate {
-                kind: "knowledge_runtime".into(),
-                identity: "remote-knowledge".into(),
-                scope: "session".into(),
-                source: "harness_config".into(),
-                state: CapabilityState::Available,
-            });
-        plan.config.config.knowledge.runtimes.insert(
-            "remote-knowledge".into(),
-            HarnessImplementationEntry {
-                implementation: HarnessImplementation::Process {
-                    command: "__agentpm_missing_knowledge_runtime__".into(),
-                    args: Vec::new(),
-                    cwd: None,
-                    env: Vec::new(),
-                    startup_timeout_ms: 100,
-                    request_timeout_ms: 100,
-                    restart: Default::default(),
-                },
-            },
-        );
-        plan.config.config.knowledge.packages.insert(
-            "@zack/guide".into(),
-            HarnessRuntimeMapping {
-                runtime: "remote-knowledge".into(),
-            },
-        );
-
-        let mut runtime = runtime_snapshot_from_plan(&plan);
-        assert_eq!(runtime.knowledge.len(), 1);
-        assert_eq!(runtime.knowledge[0].state, "available");
-
-        let activation = activate_custom_knowledge_runtime_for_plan(&plan, &runtime, None, None);
-        assert!(activation.runtime.is_none());
-        apply_custom_knowledge_activation_to_runtime(&mut runtime, &activation);
-
-        assert_eq!(runtime.knowledge[0].runtime, "remote-knowledge");
-        assert_eq!(runtime.knowledge[0].state, "unavailable");
-        assert!(
-            runtime.knowledge[0]
-                .readiness_reason
-                .as_deref()
-                .unwrap_or_default()
-                .contains("configured KnowledgeRuntime `remote-knowledge` could not start")
-        );
-    }
-
-    #[test]
-    fn custom_knowledge_activation_isolates_unhealthy_runtime() {
-        let root = temp_dir("custom-knowledge-activation-isolates-runtime");
-        let healthy_root = root.join(".agentpm/knowledge/@zack/healthy/0.1.0");
-        let unhealthy_root = root.join(".agentpm/knowledge/@zack/unhealthy/0.1.0");
-        for (package_root, name, description) in [
-            (&healthy_root, "@zack/healthy", "Healthy guide."),
-            (&unhealthy_root, "@zack/unhealthy", "Unhealthy guide."),
-        ] {
-            write_json(
-                &package_root.join("agent.json"),
-                json!({
-                    "kind": "knowledge",
-                    "name": name,
-                    "version": "0.1.0",
-                    "description": description,
-                    "knowledge": {
-                        "mode": "context",
-                        "content_type": "text/markdown",
-                        "documents": [
-                            { "path": "knowledge/docs/guide.md", "content_type": "text/markdown" }
-                        ]
-                    }
-                }),
-            );
-        }
-        let mut plan = minimal_plan(&root);
-        for (name, package_root) in [
-            ("@zack/healthy", healthy_root),
-            ("@zack/unhealthy", unhealthy_root),
-        ] {
-            plan.package_graph.insert(
-                format!("knowledge:{name}@0.1.0"),
-                ResolvedPackageInfo {
-                    key: format!("knowledge:{name}@0.1.0"),
-                    kind: PackageKind::Knowledge,
-                    name: name.into(),
-                    version: "0.1.0".into(),
-                    root: package_root,
-                },
-            );
-            plan.capabilities
-                .push(crate::harness_plan::StaticCapabilityCandidate {
-                    kind: "knowledge".into(),
-                    identity: name.into(),
-                    scope: "global".into(),
-                    source: "agent_binding".into(),
-                    state: CapabilityState::Available,
-                });
-        }
-        for runtime_id in ["healthy-knowledge", "unhealthy-knowledge"] {
-            plan.capabilities
-                .push(crate::harness_plan::StaticCapabilityCandidate {
-                    kind: "knowledge_runtime".into(),
-                    identity: runtime_id.into(),
-                    scope: "session".into(),
-                    source: "harness_config".into(),
-                    state: CapabilityState::Available,
-                });
-        }
-        plan.config.config.knowledge.runtimes.insert(
-            "healthy-knowledge".into(),
-            HarnessImplementationEntry {
-                implementation: HarnessImplementation::Host {
-                    request_timeout_ms: 1_000,
-                },
-            },
-        );
-        plan.config.config.knowledge.runtimes.insert(
-            "unhealthy-knowledge".into(),
-            HarnessImplementationEntry {
-                implementation: HarnessImplementation::Process {
-                    command: "__agentpm_missing_knowledge_runtime__".into(),
-                    args: Vec::new(),
-                    cwd: None,
-                    env: Vec::new(),
-                    startup_timeout_ms: 100,
-                    request_timeout_ms: 100,
-                    restart: Default::default(),
-                },
-            },
-        );
-        plan.config.config.knowledge.packages.insert(
-            "@zack/healthy".into(),
-            HarnessRuntimeMapping {
-                runtime: "healthy-knowledge".into(),
-            },
-        );
-        plan.config.config.knowledge.packages.insert(
-            "@zack/unhealthy".into(),
-            HarnessRuntimeMapping {
-                runtime: "unhealthy-knowledge".into(),
-            },
-        );
-        let (bridge, _, _) = buffered_machine_bridge();
-        bridge.register_host_service(
-            &host_service("knowledge", "healthy-knowledge"),
-            json!({
-                "ready": true,
-                "registry_id": "healthy-knowledge",
-                "modes": ["context_document"],
-                "features": [],
-                "packages": [
-                    {
-                        "package": "@zack/healthy",
-                        "version": "0.1.0",
-                        "ready": true
-                    }
-                ]
-            }),
-        );
-
-        let mut runtime = runtime_snapshot_from_plan(&plan);
-        let activation =
-            activate_custom_knowledge_runtime_for_plan(&plan, &runtime, Some(bridge), None);
-        assert!(activation.runtime.is_some());
-        apply_custom_knowledge_activation_to_runtime(&mut runtime, &activation);
-
-        let healthy = runtime
-            .knowledge
-            .iter()
-            .find(|package| package.name == "@zack/healthy")
-            .unwrap();
-        assert_eq!(healthy.runtime, "healthy-knowledge");
-        assert_eq!(healthy.state, "available");
-        assert!(healthy.readiness_reason.is_none());
-
-        let unhealthy = runtime
-            .knowledge
-            .iter()
-            .find(|package| package.name == "@zack/unhealthy")
-            .unwrap();
-        assert_eq!(unhealthy.runtime, "unhealthy-knowledge");
-        assert_eq!(unhealthy.state, "unavailable");
-        assert!(
-            unhealthy
-                .readiness_reason
-                .as_deref()
-                .unwrap_or_default()
-                .contains("configured KnowledgeRuntime `unhealthy-knowledge` could not start")
-        );
-    }
-
-    #[test]
-    fn knowledge_snapshot_uses_resolved_package_identity_for_scoped_installs() {
-        let root = temp_dir("knowledge-snapshot-scoped-installed-package");
-        let knowledge_root = root.join(".agentpm/knowledge/zack/guide/0.1.0");
-        fs::create_dir_all(knowledge_root.join("knowledge/docs")).unwrap();
-        fs::write(
-            knowledge_root.join("knowledge/docs/guide.md"),
-            "# Guide\n\nScoped installed Knowledge package.\n",
-        )
-        .unwrap();
-        write_json(
-            &knowledge_root.join("agent.json"),
-            json!({
-                "kind": "knowledge",
-                "name": "guide",
-                "version": "0.1.0",
-                "description": "Schema-valid unscoped Knowledge manifest.",
-                "knowledge": {
-                    "mode": "context",
-                    "documents": [
-                        { "path": "knowledge/docs/guide.md", "content_type": "text/markdown" }
-                    ]
-                }
-            }),
-        );
-        crate::commands::knowledge::execute_knowledge_build(
-            &knowledge_root.join("agent.json"),
-            crate::commands::knowledge::KnowledgeBuildMode::Write,
-        )
-        .unwrap();
-
-        let mut plan = minimal_plan(&root);
-        plan.package_graph.insert(
-            "knowledge:@zack/guide@0.1.0".into(),
-            crate::harness_plan::ResolvedPackageInfo {
-                key: "knowledge:@zack/guide@0.1.0".into(),
-                kind: PackageKind::Knowledge,
-                name: "@zack/guide".into(),
-                version: "0.1.0".into(),
-                root: knowledge_root,
-            },
-        );
-        plan.capabilities
-            .push(crate::harness_plan::StaticCapabilityCandidate {
-                kind: "knowledge".into(),
-                identity: "@zack/guide".into(),
-                scope: "phase:research".into(),
-                source: "agent_binding".into(),
-                state: CapabilityState::Available,
-            });
-
-        let snapshots = knowledge_snapshots_from_plan(&plan);
-        assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].name, "@zack/guide");
-        assert_eq!(snapshots[0].version, "0.1.0");
-        assert_eq!(snapshots[0].state, "available");
-        assert_eq!(snapshots[0].mode, "context");
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn machine_registration_accepts_unconfigured_sdk_hooks_and_approval() {
-        let root = temp_dir("sdk-host-service-registration");
-        let plan = minimal_plan(&root);
-        let (bridge, _, _) = buffered_machine_bridge();
-
-        let hook_service = register_host_service(
-            &plan,
-            &bridge,
-            &json!({
-                "role": "hook",
-                "registry_id": "sdk-hooks",
-                "hooks": ["before_tool_call", "before_model_request"]
-            }),
-        )
-        .unwrap();
-        let approval_service = register_host_service(
-            &plan,
-            &bridge,
-            &json!({
-                "role": "approval",
-                "registry_id": "controller"
-            }),
-        )
-        .unwrap();
-
-        assert_eq!(hook_service, host_service("hook", "sdk-hooks"));
-        assert_eq!(approval_service, host_service("approval", "controller"));
-        assert!(bridge.has_host_service(&hook_service));
-        assert!(bridge.has_host_service(&approval_service));
-        assert!(bridge.has_sdk_approval_controller());
-        let hooks = bridge.sdk_host_hooks();
-        assert_eq!(hooks.len(), 2);
-        assert!(
-            hooks.iter().any(|hook| hook.registry_id == "sdk-hooks"
-                && hook.hook == HarnessHookId::BeforeToolCall)
-        );
-        assert!(hooks.iter().any(|hook| hook.registry_id == "sdk-hooks"
-            && hook.hook == HarnessHookId::BeforeModelRequest));
-    }
-
-    #[test]
-    fn machine_registration_rejects_unconfigured_host_provider() {
-        let root = temp_dir("unconfigured-host-provider-registration");
-        let plan = minimal_plan(&root);
-        let (bridge, _, _) = buffered_machine_bridge();
-
-        let err = register_host_service(
-            &plan,
-            &bridge,
-            &json!({
-                "role": "model",
-                "registry_id": "sdk-model"
-            }),
-        )
-        .unwrap_err();
-
-        assert!(err.contains("is not configured"));
-    }
-
-    #[test]
-    fn host_registration_response_marks_milestone_twelve_roles_active() {
-        let embedding = host_service_registration_response(&host_service("embedding", "embedder"));
-        assert_eq!(embedding["registered"], json!(true));
-        assert_eq!(embedding["active"], json!(true));
-        assert!(embedding["reason"].is_null());
-
-        let knowledge = host_service_registration_response(&host_service("knowledge", "kb"));
-        assert_eq!(knowledge["active"], json!(true));
-        assert!(knowledge["reason"].is_null());
-
-        let memory = host_service_registration_response(&host_service("memory", "store"));
-        assert_eq!(memory["active"], json!(false));
-        assert!(memory["reason"].as_str().unwrap().contains("Milestone 14"));
-
-        let model = host_service_registration_response(&host_service("model", "host-model"));
-        assert_eq!(model["active"], json!(true));
-        assert!(model["reason"].is_null());
-    }
-
-    #[test]
-    fn host_model_runtime_uses_machine_host_service_contract() {
-        let selection = ModelProviderSelection {
-            provider: "host-model".into(),
-            model: "model-1".into(),
-            options: json!({}),
-        };
-        let expected_turn = ModelTurn {
-            assistant_content: Some("from host".into()),
-            actions: Vec::new(),
-            usage: RunUsage::default(),
-            finish_reason: Some("stop".into()),
-            provider_metadata: BTreeMap::new(),
-        };
-        let mut runtime = HostModelRuntime {
-            selection: selection.clone(),
-            invoker: Box::new(FakeHostInvoker {
-                response: serde_json::to_value(&expected_turn).unwrap(),
-                capabilities: None,
-            }),
-            capabilities: host_model_capabilities_from_registration(
-                &host_model_capabilities(),
-                "host-model",
-                "model-1",
-            )
-            .unwrap(),
-            request_timeout_ms: 1_000,
-        };
-
-        let turn = runtime.generate(empty_model_request(selection)).unwrap();
-        assert_eq!(turn, expected_turn);
-    }
-
-    #[test]
-    fn host_model_runtime_defaults_missing_or_partial_usage() {
-        let selection = ModelProviderSelection {
-            provider: "host-model".into(),
-            model: "model-1".into(),
-            options: json!({}),
-        };
-        let capabilities = host_model_capabilities_from_registration(
-            &host_model_capabilities(),
-            "host-model",
-            "model-1",
-        )
-        .unwrap();
-        let mut missing_usage = HostModelRuntime {
-            selection: selection.clone(),
-            invoker: Box::new(FakeHostInvoker {
-                response: json!({
-                    "assistant_content": "from host",
-                    "actions": [],
-                    "finish_reason": "stop",
-                    "provider_metadata": {}
-                }),
-                capabilities: None,
-            }),
-            capabilities: capabilities.clone(),
-            request_timeout_ms: 1_000,
-        };
-        let turn = missing_usage
-            .generate(empty_model_request(selection.clone()))
-            .unwrap();
-        assert_eq!(turn.usage, RunUsage::default());
-
-        let mut partial_usage = HostModelRuntime {
-            selection: selection.clone(),
-            invoker: Box::new(FakeHostInvoker {
-                response: json!({
-                    "assistant_content": "from host",
-                    "actions": [],
-                    "usage": {
-                        "tokens": {
-                            "input_tokens": 7
-                        },
-                        "embedding_requests": 2
-                    }
-                }),
-                capabilities: None,
-            }),
-            capabilities,
-            request_timeout_ms: 1_000,
-        };
-        let turn = partial_usage
-            .generate(empty_model_request(selection.clone()))
-            .unwrap();
-        assert_eq!(turn.usage.tokens.input_tokens, Some(7));
-        assert_eq!(turn.usage.tokens.output_tokens, None);
-        assert_eq!(turn.usage.tokens.total_tokens, None);
-        assert_eq!(turn.usage.embedding_requests, 2);
-        assert_eq!(turn.usage.knowledge_requests, 0);
-        assert_eq!(
-            turn.usage.cost,
-            crate::harness_observability::CostUsage::default()
-        );
-    }
-
-    #[test]
-    fn host_model_runtime_uses_registered_capability_advertisement() {
-        let root = temp_dir("host-model-capability-advertisement");
-        let mut plan = minimal_plan(&root);
-        plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
-            provider: "host-model".into(),
-            model: "model-1".into(),
-            options: json!({}),
-        });
-        plan.config.config.providers.models.insert(
-            "host-model".into(),
-            HarnessImplementationEntry {
-                implementation: HarnessImplementation::Host {
-                    request_timeout_ms: 1_000,
-                },
-            },
-        );
-        let (bridge, _, _) = buffered_machine_bridge();
-        register_host_service(
-            &plan,
-            &bridge,
-            &json!({
-                "role": "model",
-                "registry_id": "host-model",
-                "capabilities": {
-                    "provider": "host-model",
-                    "model": "model-1",
-                    "semantic_actions": false,
-                    "structured_output": true,
-                    "multimodal_input": false,
-                    "usage_reporting": true
-                }
-            }),
-        )
-        .unwrap();
-
-        let runtime = model_runtime_from_plan(
-            &plan,
-            ModelProviderSelection {
-                provider: "host-model".into(),
-                model: "model-1".into(),
-                options: json!({}),
-            },
-            Some(Box::new(bridge)),
-            None,
-        )
-        .unwrap();
-        let err = validate_model_capabilities(runtime.as_ref()).unwrap_err();
-        assert!(err.to_string().contains("semantic action support"));
-    }
-
-    #[test]
-    fn host_model_capabilities_reject_mismatched_model_identity() {
-        let err = host_model_capabilities_from_registration(
-            &json!({
-                "provider": "host-model",
-                "model": "other-model",
-                "semantic_actions": true,
-                "structured_output": true,
-                "multimodal_input": false,
-                "usage_reporting": true
-            }),
-            "host-model",
-            "model-1",
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("expected `model-1`"));
-    }
-
-    #[test]
-    fn host_service_registration_rejects_not_ready() {
-        let root = temp_dir("host-service-not-ready");
-        let plan = minimal_plan(&root);
-        let (bridge, _sender, _output) = buffered_machine_bridge();
-
-        let err = register_host_service(
-            &plan,
-            &bridge,
-            &json!({
-                "role": "approval",
-                "registry_id": "controller",
-                "ready": false
-            }),
-        )
-        .unwrap_err();
-
-        assert!(err.contains("reported not ready"));
-    }
-
-    #[test]
-    fn configured_host_hook_registration_validates_advertised_hooks() {
-        let root = temp_dir("configured-host-hook-registration");
-        let mut plan = minimal_plan(&root);
-        plan.config.config.hooks.implementations.insert(
-            "host-hooks".into(),
-            HarnessImplementationEntry {
-                implementation: HarnessImplementation::Host {
-                    request_timeout_ms: 1_000,
-                },
-            },
-        );
-        plan.config.config.hooks.bindings.push(HarnessHookBinding {
-            hook: HarnessHookId::BeforeToolCall,
-            implementation: "host-hooks".into(),
-            failure_policy: HarnessHookFailurePolicy::Closed,
-        });
-        let (bridge, _sender, _output) = buffered_machine_bridge();
-
-        let err = register_host_service(
-            &plan,
-            &bridge,
-            &json!({
-                "role": "hook",
-                "registry_id": "host-hooks",
-                "hooks": ["before_model_request"]
-            }),
-        )
-        .unwrap_err();
-        assert!(err.contains("does not advertise configured hook `before_tool_call`"));
-
-        register_host_service(
-            &plan,
-            &bridge,
-            &json!({
-                "role": "hook",
-                "registry_id": "host-hooks",
-                "capabilities": {
-                    "hooks": ["before_tool_call"]
-                }
-            }),
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn configured_host_approval_rejects_missing_request_capability() {
-        let controller = HarnessApprovalController {
-            implementation: HarnessImplementation::Host {
-                request_timeout_ms: 1_000,
-            },
-        };
-
-        let err = match ConfiguredApprovalController::host(
-            &controller,
-            None,
-            Box::new(FakeHostInvoker {
-                response: json!({ "decision": "approve" }),
-                capabilities: Some(json!({
-                    "approval": false
-                })),
-            }),
-        ) {
-            Ok(_) => panic!("host approval controller should reject missing request capability"),
-            Err(err) => err,
-        };
-
-        assert!(
-            err.to_string()
-                .contains("does not advertise request_approval support")
-        );
-    }
-
-    #[test]
-    fn host_service_request_frames_bypass_trace_content_redaction() {
-        let writer = MachineProtocolWriter::stdout(HarnessTraceContent::Redacted);
-        let host_request = MachineEnvelope {
-            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
-            version: AGENTPM_HARNESS_MACHINE_VERSION,
-            kind: MachineFrameKind::Request,
-            id: Some("host-hook-1".into()),
-            method: Some("host_service".into()),
-            payload: json!({
-                "role": "hook",
-                "registry_id": "host-hooks",
-                "method": "before_tool_call",
-                "payload": {
-                    "hook": "before_tool_call",
-                    "input": {
-                        "phase_id": "classify",
-                        "tool": "@zack/search",
-                        "arguments": {
-                            "query": "visible to host implementation"
-                        }
-                    }
-                }
-            }),
-            error: None,
-        };
-
-        let redacted = writer.frame_value(host_request.clone(), true).unwrap();
-        assert_eq!(redacted["payload"]["payload"]["input"], json!("[redacted]"));
-
-        let unredacted = writer.frame_value(host_request, false).unwrap();
-        assert_eq!(
-            unredacted["payload"]["payload"]["input"]["arguments"]["query"],
-            json!("visible to host implementation")
-        );
-    }
-
-    #[test]
-    fn machine_bridge_rejects_start_run_while_active_without_blocking_host_service_response() {
-        let (bridge, sender, output) = buffered_machine_bridge();
-        bridge.register_host_service(
-            &host_service("model", "host-model"),
-            host_model_capabilities(),
-        );
-        bridge.set_active_run(true);
-        let mut bridge_for_thread = bridge.clone();
-        let waiter = std::thread::spawn(move || {
-            bridge_for_thread.invoke_host_service(
-                "model",
-                "host-model",
-                "generate",
-                json!({ "input": "visible" }),
-                1_000,
-            )
-        });
-
-        sender
-            .send(Ok(machine_request(
-                "start-while-active",
-                "start_run",
-                json!({ "input": "second run" }),
-            )))
-            .unwrap();
-        sender
-            .send(Ok(machine_response(
-                "host-model-host-model-1",
-                json!({ "ok": true }),
-            )))
-            .unwrap();
-
-        assert_eq!(waiter.join().unwrap().unwrap(), json!({ "ok": true }));
-        let frames = machine_frames_from_buffer(&output);
-        assert!(frames.iter().any(|frame| {
-            frame["id"] == "start-while-active"
-                && frame["kind"] == "error"
-                && frame["error"]["code"] == "session_busy"
-        }));
-    }
-
-    #[test]
-    fn machine_bridge_cancel_run_interrupts_active_host_service_wait() {
-        let (bridge, sender, output) = buffered_machine_bridge();
-        bridge.register_host_service(
-            &host_service("model", "host-model"),
-            host_model_capabilities(),
-        );
-        bridge.set_active_run(true);
-        let mut bridge_for_thread = bridge.clone();
-        let waiter = std::thread::spawn(move || {
-            bridge_for_thread.invoke_host_service(
-                "model",
-                "host-model",
-                "generate",
-                json!({ "input": "visible" }),
-                1_000,
-            )
-        });
-
-        sender
-            .send(Ok(machine_request("cancel-1", "cancel_run", json!({}))))
-            .unwrap();
-
-        let err = waiter.join().unwrap().unwrap_err();
-        assert!(err.to_string().contains("run cancellation requested"));
-        assert!(bridge.cancellation_token().load(Ordering::SeqCst));
-        let frames = machine_frames_from_buffer(&output);
-        assert!(frames.iter().any(|frame| {
-            frame["id"] == "cancel-1"
-                && frame["kind"] == "response"
-                && frame["payload"]["accepted"] == true
-        }));
-    }
-
-    #[test]
-    fn machine_bridge_emits_host_service_failure_events() {
-        let (bridge, sender, _output) = buffered_machine_bridge();
-        bridge.register_host_service(
-            &host_service("model", "host-model"),
-            host_model_capabilities(),
-        );
-        let mut service_events = ServiceLifecycleEvents::new();
-        bridge.set_host_service_lifecycle_emitter(service_events.emitter());
-        let mut bridge_for_thread = bridge.clone();
-        let waiter = std::thread::spawn(move || {
-            bridge_for_thread.invoke_host_service(
-                "model",
-                "host-model",
-                "generate",
-                json!({ "input": "visible" }),
-                1_000,
-            )
-        });
-
-        sender
-            .send(Ok(machine_error(
-                "host-model-host-model-1",
-                "host_failure",
-                "host model failed",
-            )))
-            .unwrap();
-
-        let err = waiter.join().unwrap().unwrap_err();
-        assert!(err.to_string().contains("host model failed"));
-        let events = service_events.drain();
-        assert!(events.iter().any(|event| {
-            event.event_type == crate::harness_observability::HarnessEventType::ServiceUnhealthy
-                && event.service == "model"
-                && event.registry_id == "host-model"
-        }));
-        assert!(events.iter().any(|event| {
-            event.event_type == crate::harness_observability::HarnessEventType::ServiceFailed
-                && event.service == "model"
-                && event.registry_id == "host-model"
-        }));
-    }
-
-    #[test]
-    fn machine_bridge_accepts_shutdown_control_request() {
-        let (bridge, sender, output) = buffered_machine_bridge();
-        sender
-            .send(Ok(machine_request("shutdown-1", "shutdown", json!({}))))
-            .unwrap();
-
-        let request = bridge.recv_control_request().unwrap().unwrap();
-        assert_eq!(request.method.as_deref(), Some("shutdown"));
-        bridge
-            .write_response(request.id.as_deref(), json!({ "shutdown": true }))
-            .unwrap();
-
-        let frames = machine_frames_from_buffer(&output);
-        assert!(frames.iter().any(|frame| {
-            frame["id"] == "shutdown-1"
-                && frame["kind"] == "response"
-                && frame["payload"]["shutdown"] == true
-        }));
-    }
-
-    #[test]
-    fn host_approval_controller_decodes_machine_host_decision() {
-        let controller = HarnessApprovalController {
-            implementation: HarnessImplementation::Host {
-                request_timeout_ms: 1_000,
-            },
-        };
-        let mut runtime = ConfiguredApprovalController::host(
-            &controller,
-            None,
-            Box::new(FakeHostInvoker {
-                response: json!({ "decision": "deny" }),
-                capabilities: None,
-            }),
-        )
-        .unwrap()
-        .unwrap();
-        let decision = runtime.request_approval(&crate::manifest::LoopCheckpoint {
-            id: "approve-review".into(),
-            r#type: "approval".into(),
-            before_phase: "review".into(),
-            on_reject: "$handoff".into(),
-        });
-        assert_eq!(decision, crate::harness_runtime::ApprovalDecision::Deny);
-    }
-
-    #[test]
-    fn model_selection_requires_configured_model_for_headless_execution() {
-        let root = temp_dir("missing-model-selection");
-        let plan = minimal_plan(&root);
-        let err = model_selection(&plan).unwrap_err();
-        assert!(err.to_string().contains("requires model.provider"));
-    }
-
-    #[test]
-    fn failed_headless_terminal_status_includes_terminal_error_detail() {
-        let terminal = RuntimeTerminalResult {
-            status: HarnessTerminalStatus::Failed,
-            output: Some(json!({ "error": "OPENAI_API_KEY is required for provider `openai`" })),
-            report: minimal_run_report("run-1"),
-        };
-        let message =
-            terminal_status_error_message(&terminal, HarnessTerminalStatus::Failed).unwrap();
-        assert!(message.contains("terminal status Failed"));
-        assert!(message.contains("OPENAI_API_KEY"));
-    }
-
-    #[test]
-    fn model_capability_validation_rejects_missing_semantic_or_structured_support() {
-        let runtime = UnsupportedModelRuntime {
-            semantic_actions: false,
-            structured_output: true,
-        };
-        let err = validate_model_capabilities(&runtime).unwrap_err();
-        assert!(err.to_string().contains("semantic action support"));
-
-        let runtime = UnsupportedModelRuntime {
-            semantic_actions: true,
-            structured_output: false,
-        };
-        let err = validate_model_capabilities(&runtime).unwrap_err();
-        assert!(err.to_string().contains("structured output support"));
-    }
-
-    #[tokio::test]
-    async fn headless_worker_constructs_blocking_provider_outside_tokio_runtime() {
-        run_headless_worker(|| {
-            let _runtime = BuiltInModelRuntime::from_selection(ModelProviderSelection {
-                provider: "openai".into(),
-                model: "gpt-4o-mini".into(),
-                options: json!({}),
-            })
-            .map_err(|err| anyhow!(err.message))?;
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    #[test]
-    fn headless_execution_runs_one_engine_run_and_writes_report() {
-        let root = temp_dir("headless-exec");
-        let loop_root = root.join(".agentpm/loops/zack/review-loop/0.1.0");
-        write_json(
-            &loop_root.join("agent.json"),
-            json!({
-                "kind": "loop",
-                "name": "@zack/review-loop",
-                "version": "0.1.0",
-                "loop": {
-                    "entry_phase": "respond",
-                    "phases": [
-                        { "id": "respond", "objective": "Respond to the request." }
-                    ],
-                    "transitions": [
-                        { "from": "respond", "on": "complete", "to": "$end" }
-                    ]
-                }
-            }),
-        );
-        let mut plan = minimal_plan(&root);
-        plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
-            provider: "ollama".into(),
-            model: "test-model".into(),
-            options: json!({}),
-        });
-        plan.config.config.trace = HarnessTraceConfig {
-            enabled: true,
-            level: HarnessTraceLevel::Verbose,
-            content: HarnessTraceContent::Full,
-        };
-        plan.loop_package = Some(ResolvedPackageInfo {
-            key: "loop:@zack/review-loop@0.1.0".into(),
-            kind: PackageKind::Loop,
-            name: "@zack/review-loop".into(),
-            version: "0.1.0".into(),
-            root: loop_root,
-        });
-        let report_path = root.join("custom-report.json");
-        let mut model = ScriptedModelRuntime::new(vec![ModelTurn {
-            assistant_content: Some("final response".into()),
-            actions: Vec::new(),
-            usage: RunUsage::default(),
-            finish_reason: Some("stop".into()),
-            provider_metadata: BTreeMap::new(),
-        }]);
-        let mut dispatcher = ScriptedActionDispatcher::default();
-        let result = execute_headless_plan(
-            &plan,
-            "write a response".into(),
-            Some(&report_path),
-            &mut model,
-            &mut dispatcher,
-        )
-        .unwrap();
-        assert_eq!(result.status, HarnessTerminalStatus::Ended);
-        assert_eq!(result.output, Some(json!("final response")));
-        assert!(report_path.exists());
-        let events_path = plan
-            .state_dir
-            .join("runs")
-            .join(&result.report.run_id)
-            .join("events.jsonl");
-        assert_eq!(
-            result.report.trace_path.as_deref(),
-            Some(events_path.to_string_lossy().as_ref())
-        );
-        let report_json: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&report_path).unwrap()).unwrap();
-        assert_eq!(
-            report_json["trace_path"],
-            events_path.to_string_lossy().as_ref()
-        );
-        let events = fs::read_to_string(&events_path).unwrap();
-        assert!(events.contains("\"event_type\":\"run_started\""));
-        assert!(events.contains("\"event_type\":\"run_completed\""));
-        let parsed_events = events
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect::<Vec<serde_json::Value>>();
-        let prompt_event = parsed_events
-            .iter()
-            .find(|event: &&serde_json::Value| event["event_type"] == "prompt_prepared")
-            .unwrap();
-        let prompt = prompt_event["payload"]["fields"]["prompt"]
-            .as_str()
-            .unwrap();
-        assert!(prompt.contains("Harness authority"));
-        assert!(prompt.contains("write a response"));
-        let model_completed = parsed_events
-            .iter()
-            .find(|event: &&serde_json::Value| event["event_type"] == "model_request_completed")
-            .unwrap();
-        assert_eq!(
-            model_completed["payload"]["fields"]["assistant_content"],
-            "final response"
-        );
-        assert_eq!(
-            model_completed["payload"]["fields"]["finish_reason"],
-            "stop"
-        );
-        let phase_result = parsed_events
-            .iter()
-            .find(|event: &&serde_json::Value| event["event_type"] == "phase_result_ready")
-            .unwrap();
-        assert_eq!(phase_result["payload"]["output"], "final response");
-        assert_eq!(model.requests.len(), 1);
-        assert_eq!(model.requests[0].prompt.sections.len(), 6);
-    }
-
-    #[test]
-    fn headless_execution_runs_three_phase_loop_and_writes_report() {
-        let root = temp_dir("headless-three-phase");
-        let loop_root = root.join(".agentpm/loops/zack/review-loop/0.1.0");
-        write_json(
-            &loop_root.join("agent.json"),
-            json!({
-                "kind": "loop",
-                "name": "@zack/review-loop",
-                "version": "0.1.0",
-                "loop": {
-                    "entry_phase": "assess",
-                    "phases": [
-                        {
-                            "id": "assess",
-                            "objective": "Assess the request.",
-                            "outcomes": [
-                                { "id": "draft", "description": "Draft a response." }
-                            ]
-                        },
-                        {
-                            "id": "draft",
-                            "objective": "Draft the response.",
-                            "outcomes": [
-                                { "id": "review", "description": "Review the response." }
-                            ]
-                        },
-                        { "id": "review", "objective": "Review the response." }
-                    ],
-                    "transitions": [
-                        { "from": "assess", "on": "draft", "to": "draft" },
-                        { "from": "draft", "on": "review", "to": "review" },
-                        { "from": "review", "on": "complete", "to": "$end" }
-                    ]
-                }
-            }),
-        );
-        let mut plan = minimal_plan(&root);
-        plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
-            provider: "ollama".into(),
-            model: "test-model".into(),
-            options: json!({}),
-        });
-        plan.loop_package = Some(ResolvedPackageInfo {
-            key: "loop:@zack/review-loop@0.1.0".into(),
-            kind: PackageKind::Loop,
-            name: "@zack/review-loop".into(),
-            version: "0.1.0".into(),
-            root: loop_root,
-        });
-        let mut model = ScriptedModelRuntime::new(vec![
-            phase_completion_turn(Some("draft"), Some(json!({ "assessment": "ok" }))),
-            phase_completion_turn(Some("review"), Some(json!({ "draft": "ready" }))),
-            phase_completion_turn(None, Some(json!({ "final": "approved" }))),
-        ]);
-        let mut dispatcher = ScriptedActionDispatcher::default();
-        let result = execute_headless_plan(
-            &plan,
-            "prepare a response".into(),
-            None,
-            &mut model,
-            &mut dispatcher,
-        )
-        .unwrap();
-
-        assert_eq!(result.status, HarnessTerminalStatus::Ended);
-        assert_eq!(result.output, Some(json!({ "final": "approved" })));
-        assert_eq!(result.report.phase_summaries.len(), 3);
-        assert_eq!(model.requests.len(), 3);
-    }
-
-    #[test]
-    fn headless_execution_reports_approval_required_terminal_status() {
-        let root = temp_dir("headless-approval-required");
-        let loop_root = root.join(".agentpm/loops/zack/review-loop/0.1.0");
-        write_json(
-            &loop_root.join("agent.json"),
-            json!({
-                "kind": "loop",
-                "name": "@zack/review-loop",
-                "version": "0.1.0",
-                "loop": {
-                    "entry_phase": "assess",
-                    "checkpoints": [
-                        {
-                            "id": "approve-review",
-                            "type": "approval",
-                            "before_phase": "review",
-                            "on_reject": "$handoff"
-                        }
-                    ],
-                    "phases": [
-                        {
-                            "id": "assess",
-                            "objective": "Assess the request.",
-                            "outcomes": [
-                                { "id": "review", "description": "Review the response." }
-                            ]
-                        },
-                        { "id": "review", "objective": "Review the response." }
-                    ],
-                    "transitions": [
-                        { "from": "assess", "on": "review", "to": "review" },
-                        { "from": "review", "on": "complete", "to": "$end" }
-                    ]
-                }
-            }),
-        );
-        let mut plan = minimal_plan(&root);
-        plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
-            provider: "ollama".into(),
-            model: "test-model".into(),
-            options: json!({}),
-        });
-        plan.loop_package = Some(ResolvedPackageInfo {
-            key: "loop:@zack/review-loop@0.1.0".into(),
-            kind: PackageKind::Loop,
-            name: "@zack/review-loop".into(),
-            version: "0.1.0".into(),
-            root: loop_root,
-        });
-        let report_path = root.join("approval-report.json");
-        let mut model = ScriptedModelRuntime::new(vec![phase_completion_turn(
-            Some("review"),
-            Some(json!({ "assessment": "needs review" })),
-        )]);
-        let mut dispatcher = ScriptedActionDispatcher::default();
-        let result = execute_headless_plan(
-            &plan,
-            "prepare a response".into(),
-            Some(&report_path),
-            &mut model,
-            &mut dispatcher,
-        )
-        .unwrap();
-
-        assert_eq!(result.status, HarnessTerminalStatus::ApprovalRequired);
-        assert!(report_path.exists());
-        assert_eq!(model.requests.len(), 1);
-    }
-
-    fn phase_completion_turn(
-        outcome: Option<&str>,
-        output: Option<serde_json::Value>,
-    ) -> ModelTurn {
-        ModelTurn {
-            assistant_content: None,
-            actions: vec![SemanticActionProposal::new(
-                "complete",
-                SemanticAction::PhaseCompletion {
-                    outcome: outcome.map(str::to_string),
-                    output,
-                },
-            )],
-            usage: RunUsage::default(),
-            finish_reason: Some("stop".into()),
-            provider_metadata: BTreeMap::new(),
-        }
-    }
-
-    fn temp_dir(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "agentpm-harness-command-{name}-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    fn minimal_run_report(run_id: &str) -> RunReport {
-        RunReport {
-            report_version: crate::harness_observability::HARNESS_REPORT_SCHEMA_VERSION,
-            session_id: "session-1".into(),
-            run_id: run_id.into(),
-            agent: ReportPackageIdentity {
-                name: "@zack/test-agent".into(),
-                version: "0.1.0".into(),
-            },
-            loop_package: ReportPackageIdentity {
-                name: "@zack/review-loop".into(),
-                version: "0.1.0".into(),
-            },
-            started_at: chrono::Utc::now(),
-            ended_at: None,
-            duration_ms: None,
-            terminal_status: HarnessTerminalStatus::Failed,
-            terminal_output: None,
-            preflight_status: PreflightStatus::Ready,
-            diagnostics: Vec::new(),
-            runtime: Default::default(),
-            runtime_sources: BTreeMap::new(),
-            consumer_context: None,
-            scope_summaries: Vec::new(),
-            phase_summaries: Vec::new(),
-            checkpoint_summaries: Vec::new(),
-            action_summaries: Vec::new(),
-            tool_summaries: Vec::new(),
-            mcp_summaries: Vec::new(),
-            knowledge_summaries: Vec::new(),
-            memory_summaries: Vec::new(),
-            usage: RunUsage::default(),
-            retry_count: 0,
-            repair_count: 0,
-            error_count: 0,
-            approval_summary: BTreeMap::new(),
-            cancellation_summary: BTreeMap::new(),
-            trace_path: None,
-        }
-    }
-
-    fn minimal_plan(root: &Path) -> ResolvedHarnessPlan {
-        let config = HarnessConfig {
-            version: 1,
-            ..HarnessConfig::default()
-        };
-        ResolvedHarnessPlan {
-            workspace_root: root.to_path_buf(),
-            lock_path: root.join("agent.lock"),
-            state_dir: root.join(".agentpm-state"),
-            config: ResolvedHarnessConfig {
-                workspace_root: root.to_path_buf(),
-                config_path: None,
-                config,
-                state_dir: root.join(".agentpm-state"),
-                state_dir_source: HarnessConfigSource::cli_override(),
-            },
-            selected_agent: Some(crate::harness_plan::ResolvedAgentRoot {
-                root_key: "local:agent:agent.json".into(),
-                name: "@zack/test-agent".into(),
-                version: "0.1.0".into(),
-                manifest_path: root.join("agent.json"),
-                package_key: None,
-                tools: Vec::new(),
-                skills: Vec::new(),
-                knowledge: Vec::new(),
-                memory: Vec::new(),
-                profiles: Vec::new(),
-                loop_key: "loop:@zack/review-loop@0.1.0".into(),
-            }),
-            loop_package: None,
-            package_graph: BTreeMap::new(),
-            runtime_scopes: BTreeMap::new(),
-            consumer_context: crate::harness_plan::ConsumerContextReadiness {
-                state: CapabilityState::NotConfigured,
-                file: None,
-                path: None,
-                byte_size: None,
-                approximate_tokens: None,
-                sha256: None,
-            },
-            profile_bindings: crate::harness_runtime::model::ProfileBindingSnapshot::default(),
-            profiles: BTreeMap::new(),
-            capabilities: Vec::new(),
-            report: crate::harness_plan::PreflightReport {
-                status: PreflightStatus::Ready,
-                diagnostics: Vec::new(),
-            },
-        }
-    }
-
-    fn write_json(path: &Path, value: serde_json::Value) {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).unwrap();
-        }
-        fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-    }
-
-    fn host_service(role: &str, registry_id: &str) -> HostServiceRegistration {
-        HostServiceRegistration {
-            role: role.into(),
-            registry_id: registry_id.into(),
-        }
-    }
-
-    fn host_model_capabilities() -> Value {
-        json!({
-            "provider": "host-model",
-            "model": "model-1",
-            "semantic_actions": true,
-            "structured_output": true,
-            "multimodal_input": false,
-            "usage_reporting": true
-        })
-    }
-
-    type MachineBridgeFixture = (
-        MachineHostBridgeHandle,
-        mpsc::Sender<std::result::Result<MachineEnvelope, String>>,
-        Arc<Mutex<Vec<u8>>>,
-    );
-
-    fn buffered_machine_bridge() -> MachineBridgeFixture {
-        let (writer, output) = MachineProtocolWriter::buffer(HarnessTraceContent::Full);
-        let (sender, receiver) = mpsc::channel();
-        let cancellation_requested = Arc::new(AtomicBool::new(false));
-        let active_run = Arc::new(AtomicBool::new(false));
-        (
-            MachineHostBridgeHandle::new(writer, receiver, cancellation_requested, active_run),
-            sender,
-            output,
-        )
-    }
-
-    fn machine_request(id: &str, method: &str, payload: Value) -> MachineEnvelope {
-        MachineEnvelope {
-            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
-            version: AGENTPM_HARNESS_MACHINE_VERSION,
-            kind: MachineFrameKind::Request,
-            id: Some(id.into()),
-            method: Some(method.into()),
-            payload,
-            error: None,
-        }
-    }
-
-    fn machine_response(id: &str, payload: Value) -> MachineEnvelope {
-        MachineEnvelope {
-            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
-            version: AGENTPM_HARNESS_MACHINE_VERSION,
-            kind: MachineFrameKind::Response,
-            id: Some(id.into()),
-            method: None,
-            payload,
-            error: None,
-        }
-    }
-
-    fn machine_error(id: &str, code: &str, message: &str) -> MachineEnvelope {
-        MachineEnvelope {
-            protocol: AGENTPM_HARNESS_MACHINE_PROTOCOL.into(),
-            version: AGENTPM_HARNESS_MACHINE_VERSION,
-            kind: MachineFrameKind::Error,
-            id: Some(id.into()),
-            method: None,
-            payload: Value::Null,
-            error: Some(MachineError {
-                code: code.into(),
-                message: message.into(),
-            }),
-        }
-    }
-
-    fn machine_frames_from_buffer(output: &Arc<Mutex<Vec<u8>>>) -> Vec<Value> {
-        let output = output.lock().unwrap();
-        String::from_utf8_lossy(&output)
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect()
-    }
-
-    fn empty_model_request(selection: ModelProviderSelection) -> ModelRequest {
-        ModelRequest {
-            runtime: RuntimeSnapshot::empty("session-1".into()),
-            model: Some(selection),
-            prompt: crate::harness_runtime::model::LogicalPrompt {
-                sections: Vec::new(),
-                action_aliases: Vec::new(),
-                completion: crate::harness_runtime::model::CompletionContract {
-                    phase_id: "respond".into(),
-                    explicit_outcomes: Vec::new(),
-                    implicit_complete: true,
-                },
-                diagnostics: Vec::new(),
-            },
-            run_id: "run-1".into(),
-            phase_execution_id: "phase-exec-1".into(),
-            phase_id: "respond".into(),
-            phase_objective: "Respond.".into(),
-            run_input: "input".into(),
-            prior_phase_results: Vec::new(),
-            transcript: Vec::new(),
-            effective_phase: crate::harness_engine::EffectivePhase {
-                phase_id: "respond".into(),
-                tools_allowed: Some(false),
-                knowledge_allowed: None,
-                memory_read_allowed: None,
-                memory_write_allowed: None,
-                authored_profile_candidates: Vec::new(),
-                active_profiles: Vec::new(),
-                active_tools: Vec::new(),
-                active_skills: Vec::new(),
-                active_knowledge: Vec::new(),
-                capability_catalog: Vec::new(),
-                suppressed_capabilities: Vec::new(),
-            },
-            repair_feedback: None,
-        }
-    }
-
-    struct FakeHostInvoker {
-        response: Value,
-        capabilities: Option<Value>,
-    }
-
-    impl HostServiceInvoker for FakeHostInvoker {
-        fn invoke_host_service(
-            &mut self,
-            _role: &str,
-            _registry_id: &str,
-            _method: &str,
-            _payload: Value,
-            _timeout_ms: u64,
-        ) -> Result<Value> {
-            Ok(self.response.clone())
-        }
-
-        fn host_service_capabilities(&self, _role: &str, _registry_id: &str) -> Option<Value> {
-            self.capabilities.clone()
-        }
-    }
-
-    struct UnsupportedModelRuntime {
-        semantic_actions: bool,
-        structured_output: bool,
-    }
-
-    impl ModelRuntime for UnsupportedModelRuntime {
-        fn capabilities(&self) -> ModelCapabilityAdvertisement {
-            ModelCapabilityAdvertisement {
-                semantic_actions: self.semantic_actions,
-                structured_output: self.structured_output,
-                multimodal_input: false,
-                context_window_tokens: None,
-                usage_reporting: false,
-            }
-        }
-
-        fn generate(
-            &mut self,
-            _request: crate::harness_runtime::ModelRequest,
-        ) -> std::result::Result<ModelTurn, ModelRuntimeFailure> {
-            unreachable!("capability validation should fail before generation")
-        }
-    }
-}
+mod tests;

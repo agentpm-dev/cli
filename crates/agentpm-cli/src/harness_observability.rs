@@ -78,6 +78,7 @@ pub enum HarnessEventType {
     RunLimitReached,
     RunApprovalRequired,
     PromptPrepared,
+    ModelRuntimeRequestPrepared,
     ModelRequestStarted,
     ModelRequestCompleted,
     ModelRequestFailed,
@@ -115,9 +116,15 @@ pub enum HarnessEventType {
     MemoryWriteStarted,
     MemoryWriteCompleted,
     MemoryWriteFailed,
+    MemoryWriteReviewStarted,
+    MemoryWriteReviewCompleted,
+    MemoryWriteReviewSkipped,
+    MemoryWriteReviewFailed,
     MemoryTriggerEvaluated,
     MemoryOperationEligible,
     MemoryOperationStarted,
+    MemoryOperationSource,
+    MemoryOperationOutput,
     MemoryOperationCompleted,
     MemoryOperationFailed,
     HookStarted,
@@ -363,6 +370,7 @@ fn trace_level_includes(level: &HarnessTraceLevel, event_type: HarnessEventType)
         HarnessTraceLevel::Normal => !matches!(
             event_type,
             HarnessEventType::PromptPrepared
+                | HarnessEventType::ModelRuntimeRequestPrepared
                 | HarnessEventType::SemanticActionProposed
                 | HarnessEventType::ModelRepairRequested
         ),
@@ -452,7 +460,10 @@ fn is_content_key(key: &str) -> bool {
             | "arguments"
             | "argument"
             | "query"
+            | "filter"
+            | "scope"
             | "result"
+            | "provenance"
             | "vector"
             | "vectors"
             | "embedding_vector"
@@ -678,6 +689,19 @@ pub struct OperationReportSummary {
     pub count: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryWriteReviewReportSummary {
+    pub point: String,
+    pub phase_execution_id: String,
+    pub status: String,
+    pub reason: String,
+    pub model_calls: u64,
+    pub memory_reads_attempted: u64,
+    pub memory_reads_completed: u64,
+    pub memory_writes_attempted: u64,
+    pub memory_writes_completed: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunReport {
     pub report_version: u8,
@@ -707,6 +731,8 @@ pub struct RunReport {
     pub mcp_summaries: Vec<OperationReportSummary>,
     pub knowledge_summaries: Vec<OperationReportSummary>,
     pub memory_summaries: Vec<OperationReportSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory_write_review_summaries: Vec<MemoryWriteReviewReportSummary>,
     pub usage: RunUsage,
     pub retry_count: u64,
     pub repair_count: u64,
@@ -904,6 +930,7 @@ impl SyntheticHarnessRun {
             mcp_summaries: Vec::new(),
             knowledge_summaries: Vec::new(),
             memory_summaries: Vec::new(),
+            memory_write_review_summaries: Vec::new(),
             usage: self.usage,
             retry_count: 0,
             repair_count: 0,
@@ -1100,9 +1127,17 @@ mod tests {
             &HarnessTraceLevel::Normal,
             HarnessEventType::PromptPrepared
         ));
+        assert!(!trace_level_includes(
+            &HarnessTraceLevel::Normal,
+            HarnessEventType::ModelRuntimeRequestPrepared
+        ));
         assert!(trace_level_includes(
             &HarnessTraceLevel::Verbose,
             HarnessEventType::PromptPrepared
+        ));
+        assert!(trace_level_includes(
+            &HarnessTraceLevel::Verbose,
+            HarnessEventType::ModelRuntimeRequestPrepared
         ));
     }
 
@@ -1119,7 +1154,7 @@ mod tests {
             session_sequence: 1,
             run_sequence: Some(1),
             timestamp: Utc::now(),
-            event_type: HarnessEventType::PromptPrepared,
+            event_type: HarnessEventType::ModelRuntimeRequestPrepared,
             phase_execution_id: None,
             correlation_id: None,
             parent_event_id: None,
@@ -1321,6 +1356,52 @@ mod tests {
         assert!(none["payload"]["fields"].get("vector").is_none());
         assert!(none["payload"]["fields"].get("embedding_vector").is_none());
         assert_eq!(none["payload"]["fields"]["provider"], "manual");
+    }
+
+    #[test]
+    fn content_policy_redacts_memory_action_and_hook_content_fields() {
+        let event = HarnessEventEnvelope {
+            schema_version: HARNESS_EVENT_SCHEMA_VERSION,
+            event_id: "evt-1".into(),
+            session_id: "session-1".into(),
+            run_id: Some("run-1".into()),
+            session_sequence: 1,
+            run_sequence: Some(1),
+            timestamp: Utc::now(),
+            event_type: HarnessEventType::HookStarted,
+            phase_execution_id: Some("phase-exec-1".into()),
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Lifecycle {
+                message: "Hook `before_memory_write` started.".into(),
+                fields: BTreeMap::from([
+                    ("hook".into(), json!("before_memory_write")),
+                    ("package".into(), json!("@zack/memory")),
+                    ("space".into(), json!("notes")),
+                    ("query".into(), json!("secret query text")),
+                    ("filter".into(), json!({"body": "secret filter text"})),
+                    ("scope".into(), json!({"tenant": "secret-tenant"})),
+                    ("content".into(), json!({"body": "secret memory body"})),
+                    (
+                        "provenance".into(),
+                        json!({"provider": {"details": "secret provenance"}}),
+                    ),
+                ]),
+            },
+        };
+
+        let redacted = serde_json::to_value(
+            apply_content_policy(&event, &HarnessTraceContent::Redacted).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(redacted["payload"]["fields"]["hook"], "before_memory_write");
+        assert_eq!(redacted["payload"]["fields"]["package"], "@zack/memory");
+        assert_eq!(redacted["payload"]["fields"]["space"], "notes");
+        assert_eq!(redacted["payload"]["fields"]["query"], "[redacted]");
+        assert_eq!(redacted["payload"]["fields"]["filter"], "[redacted]");
+        assert_eq!(redacted["payload"]["fields"]["scope"], "[redacted]");
+        assert_eq!(redacted["payload"]["fields"]["content"], "[redacted]");
+        assert_eq!(redacted["payload"]["fields"]["provenance"], "[redacted]");
     }
 
     #[test]
@@ -1554,6 +1635,7 @@ mod tests {
             mcp_summaries: Vec::new(),
             knowledge_summaries: Vec::new(),
             memory_summaries: Vec::new(),
+            memory_write_review_summaries: Vec::new(),
             usage: RunUsage::default(),
             retry_count: 0,
             repair_count: 0,

@@ -158,6 +158,10 @@ pub struct BeforeMemoryReadHook {
     pub space: String,
     pub scope: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<Value>,
@@ -165,6 +169,7 @@ pub struct BeforeMemoryReadHook {
     pub limit: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    pub retrieval_modes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -185,7 +190,10 @@ pub struct BeforeMemoryWriteHook {
     pub phase_id: String,
     pub package: String,
     pub space: String,
+    pub operation: String,
     pub record_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_id: Option<String>,
     pub scope: Value,
     pub content: Value,
 }
@@ -1892,6 +1900,8 @@ for line in sys.stdin:
             active_tools: vec![tool("@zack/a")],
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
+            active_memory: Vec::new(),
+            active_memory_operations: Vec::new(),
             capability_catalog: vec![
                 descriptor("phase_completion", "classify/completion"),
                 descriptor("agentpm_tool", "@zack/a"),
@@ -2114,6 +2124,8 @@ for line in sys.stdin:
             active_tools: vec![tool("@zack/a"), tool("@zack/b")],
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
+            active_memory: Vec::new(),
+            active_memory_operations: Vec::new(),
             capability_catalog: vec![
                 descriptor("phase_completion", "classify/completion"),
                 descriptor("agentpm_tool", "@zack/a"),
@@ -2145,6 +2157,8 @@ for line in sys.stdin:
             active_tools: vec![tool("@zack/a")],
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
+            active_memory: Vec::new(),
+            active_memory_operations: Vec::new(),
             capability_catalog: vec![descriptor("agentpm_tool", "@zack/a")],
             suppressed_capabilities: Vec::new(),
         };
@@ -2266,6 +2280,8 @@ for line in sys.stdin:
                 tools: Vec::new(),
                 skills: Vec::new(),
                 knowledge: Vec::new(),
+                memory: Vec::new(),
+                memory_operations: Vec::new(),
                 capability_candidates: Vec::new(),
                 model: Some(selection.clone()),
             },
@@ -2291,6 +2307,7 @@ for line in sys.stdin:
                 },
                 diagnostics: Vec::new(),
             },
+            ordered_turns: Vec::new(),
             run_id: "run".into(),
             phase_execution_id: "phase-exec-1".into(),
             phase_id: "assess".into(),
@@ -2309,6 +2326,8 @@ for line in sys.stdin:
                 active_tools: Vec::new(),
                 active_skills: Vec::new(),
                 active_knowledge: Vec::new(),
+                active_memory: Vec::new(),
+                active_memory_operations: Vec::new(),
                 capability_catalog: Vec::new(),
                 suppressed_capabilities: Vec::new(),
             },

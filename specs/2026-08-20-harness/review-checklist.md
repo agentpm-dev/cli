@@ -27,6 +27,10 @@
 - Confirm omitted `output_mode` is backward-compatible `create`.
 - Confirm `replace_input` is semantically restricted to matching single input/output pairing.
 - Confirm flagship Memory examples/docs were updated where in-place transform is intended.
+- Confirm document singleton identity is one current logical record per exact Memory package/version + space + complete resolved scope tuple; `record_type` is not part of document identity, document spaces may permit multiple record types as alternative schemas for that singleton document, `create` rejects when a current document already exists, and `upsert` replacement may change the current record type.
+- Reject implementations that permit one simultaneous current document per record type within the same document space/scope.
+- Confirm Memory filter semantics are conjunctive dot-path matching over durable record content: a path segment descends into an object by key or into an array existentially, and a match occurs when any traversal reaches a value exactly equal to the filter value, making leaf-array containment a case of the same rule.
+- Reject MemoryRuntime implementations that advertise `filter` but return records outside the strict filter contract, including comparison operators, ranges, partial string matching, properties whose names contain a literal `.`, or backend-native richer query behavior.
 - Reject any additional portable manifest/schema changes that are not justified by `spec.md` or explicitly raised during implementation.
 
 ## Harness configuration
@@ -307,6 +311,7 @@
 - Confirm full content capture is separate from event occurrence metadata.
 - Confirm default trace content is redacted rather than full.
 - Confirm secrets are never captured even under full content mode.
+- Confirm native structured-action provider requests do not duplicate the detailed Effective Capability Catalog prose in prompt text by default, while verbose logical trace/report/debug rendering can still include Section 5 and lower trace levels avoid full prompt bodies by default.
 - Confirm decision events explain direct/inherited/runtime Tool origins, Loop suppression, readiness, and Hook influence.
 - Confirm every Run writes a versioned JSON report and JSONL event trace by default when trace enabled.
 - Confirm reports exist for failed/cancelled/approval-required Runs.

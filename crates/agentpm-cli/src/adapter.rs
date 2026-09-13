@@ -126,7 +126,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::process::{Command, Stdio};
+    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn invokes_descriptor_through_shared_runner_path() {
-        let python = available_command(&["python3", "python"]).expect("python required for tests");
+        let python = available_test_python().expect("python >=3.10 required for tests");
         let root = TestProject::new();
         root.write_lock(lock_for("@zack/adapter-echo", "0.1.0"));
         root.write_tool(
@@ -229,17 +229,44 @@ mod tests {
         assert_eq!(result.output["region"], "us-west-2");
     }
 
-    fn available_command(candidates: &[&str]) -> Option<String> {
-        candidates.iter().find_map(|candidate| {
-            Command::new(candidate)
-                .arg("--version")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .ok()
-                .filter(|s| s.success())
-                .map(|_| (*candidate).to_string())
-        })
+    fn available_test_python() -> Option<String> {
+        let mut candidates = Vec::new();
+        if let Ok(command) = std::env::var("AGENTPM_TEST_PYTHON") {
+            let command = command.trim();
+            if !command.is_empty() {
+                candidates.push(command.to_string());
+            }
+        }
+        candidates
+            .extend(["/opt/homebrew/bin/python3.13", "python3", "python"].map(str::to_string));
+        candidates
+            .into_iter()
+            .find(|candidate| python_version_at_least(candidate, 3, 10))
+    }
+
+    fn python_version_at_least(command: &str, major: u64, minor: u64) -> bool {
+        let Ok(output) = Command::new(command).arg("--version").output() else {
+            return false;
+        };
+        if !output.status.success() {
+            return false;
+        }
+        let mut version = String::from_utf8_lossy(&output.stdout).to_string();
+        version.push_str(&String::from_utf8_lossy(&output.stderr));
+        let Some(version) = version
+            .split_whitespace()
+            .find(|part| part.chars().next().is_some_and(|ch| ch.is_ascii_digit()))
+        else {
+            return false;
+        };
+        let mut parts = version.split('.');
+        let actual_major = parts.next().and_then(|part| part.parse::<u64>().ok());
+        let actual_minor = parts.next().and_then(|part| part.parse::<u64>().ok());
+        matches!(
+            (actual_major, actual_minor),
+            (Some(actual_major), Some(actual_minor))
+                if (actual_major, actual_minor) >= (major, minor)
+        )
     }
 
     fn lock_for(package: &str, version: &str) -> String {
