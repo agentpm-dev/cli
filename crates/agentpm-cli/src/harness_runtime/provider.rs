@@ -492,13 +492,11 @@ fn provider_schema_fallback_diagnostics(request: &ModelRequest) -> Vec<String> {
                     ));
                 }
             }
-            "memory_read" => {
-                if memory_read_filter_paths_incomplete(alias, request) {
-                    diagnostics.insert(format!(
-                        "provider-facing schema fallback for `{}`: Memory read `{}` has recursive or oversized content filter paths; filter is advertised as an open object and Harness validation remains authoritative.",
-                        alias.alias, alias.identity
-                    ));
-                }
+            "memory_read" if memory_read_filter_paths_incomplete(alias, request) => {
+                diagnostics.insert(format!(
+                    "provider-facing schema fallback for `{}`: Memory read `{}` has recursive or oversized content filter paths; filter is advertised as an open object and Harness validation remains authoritative.",
+                    alias.alias, alias.identity
+                ));
             }
             _ => {}
         }

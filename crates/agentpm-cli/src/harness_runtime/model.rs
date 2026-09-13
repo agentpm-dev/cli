@@ -1105,7 +1105,7 @@ fn memory_provider_action_alias(
     if let Some(memory) = memory {
         let provider_shape_contains_record_type =
             descriptor.action_kind == "memory_write" && provider_shape.is_some();
-        return provider_memory_alias_with_hash(
+        provider_memory_alias_with_hash(
             &descriptor.action_kind,
             &memory.space,
             provider_shape,
@@ -1118,16 +1118,16 @@ fn memory_provider_action_alias(
                 .map(|record_type| record_type.name.as_str()),
             Some(&package_signal(&memory.package)),
             descriptor,
-        );
+        )
     } else if let Some((package, space)) = split_memory_identity(&descriptor.identity) {
-        return provider_memory_alias_with_hash(
+        provider_memory_alias_with_hash(
             &descriptor.action_kind,
             space,
             provider_shape,
             None,
             Some(&package_signal(package)),
             descriptor,
-        );
+        )
     } else {
         let parts = vec![
             provider_safe_component(&descriptor.action_kind),

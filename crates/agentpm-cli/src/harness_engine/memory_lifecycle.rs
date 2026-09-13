@@ -474,6 +474,7 @@ impl HarnessEngine {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn evaluate_memory_lifecycle_intervals_at_phase_start(
         &self,
         session: &mut HarnessSession,
@@ -780,6 +781,7 @@ impl HarnessEngine {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn evaluate_lifecycle_trigger(
         &self,
         session: &mut HarnessSession,
@@ -1530,6 +1532,7 @@ impl HarnessEngine {
         Ok(count)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn read_lifecycle_sources(
         &self,
         session: &mut HarnessSession,
@@ -2184,6 +2187,7 @@ fn source_snapshot_for_lifecycle(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn active_record_count_for_lifecycle(
     session: &mut HarnessSession,
     custom_memory_runtime: &mut Option<CustomMemoryRuntime>,
