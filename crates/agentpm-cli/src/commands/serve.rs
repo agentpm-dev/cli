@@ -66,6 +66,7 @@ impl ServeArgs {
             build_router(Arc::new(AppState {
                 project_dir,
                 registry,
+                run_options: RunOptions::default(),
             })),
         )
         .await
@@ -103,6 +104,7 @@ impl ServeArgs {
 struct AppState {
     project_dir: PathBuf,
     registry: ToolRegistry,
+    run_options: RunOptions,
 }
 
 #[derive(Clone)]
@@ -319,14 +321,10 @@ async fn handle_tools_call(state: Arc<AppState>, params: Option<Value>) -> Resul
     })?;
     let project_dir = state.project_dir.clone();
     let descriptor = registration.descriptor.clone();
+    let run_options = state.run_options.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        invoke_descriptor(
-            &project_dir,
-            &descriptor,
-            &arguments,
-            &RunOptions::default(),
-        )
+        invoke_descriptor(&project_dir, &descriptor, &arguments, &run_options)
     })
     .await
     .map_err(|err| RpcError {
@@ -415,7 +413,7 @@ mod tests {
     use axum::http::Request;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::process::{Command, Stdio};
+    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower::util::ServiceExt;
@@ -424,13 +422,12 @@ mod tests {
 
     #[tokio::test]
     async fn lists_locked_tools_over_http_mcp() {
-        let python = available_command(&["python3", "python"]).expect("python required for tests");
         let root = TestProject::new();
         root.write_lock(lock_for("@zack/echo-json", "0.1.0"));
         root.write_tool(
             "@zack/echo-json",
             "0.1.0",
-            python_tool_manifest("echo-json", "0.1.0", python.as_str()),
+            python_tool_manifest("echo-json", "0.1.0", "python3"),
             python_echo_script("0.1.0"),
         );
 
@@ -474,23 +471,23 @@ mod tests {
 
     #[tokio::test]
     async fn calls_locked_tool_over_http_mcp() {
-        let python = available_command(&["python3", "python"]).expect("python required for tests");
+        let python = available_test_python().expect("python >=3.10 required for tests");
         let root = TestProject::new();
         root.write_lock(lock_for("@zack/echo-json", "0.1.0"));
         root.write_tool(
             "@zack/echo-json",
             "0.1.0",
-            python_tool_manifest("echo-json", "0.1.0", python.as_str()),
+            python_tool_manifest("echo-json", "0.1.0", "python3"),
             python_echo_script("0.1.0"),
         );
         root.write_tool(
             "@zack/echo-json",
             "0.2.0",
-            python_tool_manifest("echo-json", "0.2.0", python.as_str()),
+            python_tool_manifest("echo-json", "0.2.0", "python3"),
             python_echo_script("0.2.0"),
         );
 
-        let app = test_app(root.path());
+        let app = test_app_with_run_options(root.path(), test_python_run_options(python.as_str()));
 
         let response = app
             .oneshot(json_request(
@@ -521,13 +518,12 @@ mod tests {
 
     #[tokio::test]
     async fn returns_invalid_params_for_unknown_tool_name() {
-        let python = available_command(&["python3", "python"]).expect("python required for tests");
         let root = TestProject::new();
         root.write_lock(lock_for("@zack/echo-json", "0.1.0"));
         root.write_tool(
             "@zack/echo-json",
             "0.1.0",
-            python_tool_manifest("echo-json", "0.1.0", python.as_str()),
+            python_tool_manifest("echo-json", "0.1.0", "python3"),
             python_echo_script("0.1.0"),
         );
 
@@ -560,17 +556,17 @@ mod tests {
 
     #[tokio::test]
     async fn returns_runtime_error_for_missing_required_env() {
-        let python = available_command(&["python3", "python"]).expect("python required for tests");
+        let python = available_test_python().expect("python >=3.10 required for tests");
         let root = TestProject::new();
         root.write_lock(lock_for("@zack/requires-env", "0.1.0"));
         root.write_tool(
             "@zack/requires-env",
             "0.1.0",
-            python_required_env_manifest("requires-env", "0.1.0", python.as_str()),
+            python_required_env_manifest("requires-env", "0.1.0", "python3"),
             python_echo_script("0.1.0"),
         );
 
-        let app = test_app(root.path());
+        let app = test_app_with_run_options(root.path(), test_python_run_options(python.as_str()));
         let response = app
             .oneshot(json_request(
                 "/mcp",
@@ -599,17 +595,17 @@ mod tests {
 
     #[tokio::test]
     async fn returns_timeout_error_for_slow_tool() {
-        let python = available_command(&["python3", "python"]).expect("python required for tests");
+        let python = available_test_python().expect("python >=3.10 required for tests");
         let root = TestProject::new();
         root.write_lock(lock_for("@zack/slow-tool", "0.1.0"));
         root.write_tool(
             "@zack/slow-tool",
             "0.1.0",
-            python_timeout_manifest("slow-tool", "0.1.0", python.as_str(), 50),
+            python_timeout_manifest("slow-tool", "0.1.0", "python3", 50),
             python_sleep_script(200),
         );
 
-        let app = test_app(root.path());
+        let app = test_app_with_run_options(root.path(), test_python_run_options(python.as_str()));
         let response = app
             .oneshot(json_request(
                 "/mcp",
@@ -676,17 +672,52 @@ mod tests {
         assert!(body.is_empty(), "expected empty body for 204 response");
     }
 
-    fn available_command(candidates: &[&str]) -> Option<String> {
-        candidates.iter().find_map(|candidate| {
-            Command::new(candidate)
-                .arg("--version")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .ok()
-                .filter(|status| status.success())
-                .map(|_| (*candidate).to_string())
-        })
+    fn available_test_python() -> Option<String> {
+        let mut candidates = Vec::new();
+        if let Ok(command) = std::env::var("AGENTPM_TEST_PYTHON") {
+            let command = command.trim();
+            if !command.is_empty() {
+                candidates.push(command.to_string());
+            }
+        }
+        candidates
+            .extend(["/opt/homebrew/bin/python3.13", "python3", "python"].map(str::to_string));
+        candidates
+            .into_iter()
+            .find(|candidate| python_version_at_least(candidate, 3, 10))
+    }
+
+    fn python_version_at_least(command: &str, major: u64, minor: u64) -> bool {
+        let Ok(output) = Command::new(command).arg("--version").output() else {
+            return false;
+        };
+        if !output.status.success() {
+            return false;
+        }
+        let mut version = String::from_utf8_lossy(&output.stdout).to_string();
+        version.push_str(&String::from_utf8_lossy(&output.stderr));
+        let Some(version) = version
+            .split_whitespace()
+            .find(|part| part.chars().next().is_some_and(|ch| ch.is_ascii_digit()))
+        else {
+            return false;
+        };
+        let mut parts = version.split('.');
+        let actual_major = parts.next().and_then(|part| part.parse::<u64>().ok());
+        let actual_minor = parts.next().and_then(|part| part.parse::<u64>().ok());
+        matches!(
+            (actual_major, actual_minor),
+            (Some(actual_major), Some(actual_minor))
+                if (actual_major, actual_minor) >= (major, minor)
+        )
+    }
+
+    fn test_python_run_options(python: &str) -> RunOptions {
+        let mut options = RunOptions::default();
+        options
+            .env_overrides
+            .insert("AGENTPM_PYTHON".to_string(), python.to_string());
+        options
     }
 
     fn lock_for(package: &str, version: &str) -> String {
@@ -897,10 +928,15 @@ json.dump({{"ok": True}}, sys.stdout)
     }
 
     fn test_app(project_dir: &Path) -> Router {
+        test_app_with_run_options(project_dir, RunOptions::default())
+    }
+
+    fn test_app_with_run_options(project_dir: &Path, run_options: RunOptions) -> Router {
         let registry = build_registry(project_dir, &None).unwrap();
         let state = Arc::new(AppState {
             project_dir: project_dir.to_path_buf(),
             registry,
+            run_options,
         });
         build_router(state)
     }

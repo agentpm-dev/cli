@@ -3,7 +3,12 @@ use super::effective_phase::{
     memory_write_operation_label,
 };
 use super::*;
+use crate::harness_runtime::model::{
+    memory_content_filter_path_enumeration, memory_content_filter_paths,
+    memory_filter_shape_supported,
+};
 use crate::manifest::{MemoryRetrievalMode, MemorySpaceModel};
+use std::collections::BTreeSet;
 
 pub(super) fn validate_semantic_action(
     action: &SemanticAction,
@@ -203,6 +208,14 @@ pub(super) fn validate_semantic_action(
                             "Memory filter read must not include a query.",
                         ));
                     }
+                    if filter.is_empty() {
+                        return Err(memory_read_argument_feedback(
+                            phase,
+                            package,
+                            space,
+                            "Memory filter read requires at least one filter path.",
+                        ));
+                    }
                     validate_memory_filter_paths(memory, filter)?;
                 }
                 MemoryReadMode::Chronological => {
@@ -375,15 +388,19 @@ fn memory_read_argument_feedback(
             }
             MemoryRetrievalMode::Chronological => shapes
                 .push("chronological read: omit record_id, query, and filter; limit is optional"),
-            MemoryRetrievalMode::Filter => {
+            MemoryRetrievalMode::Filter if memory_filter_shape_supported(memory) => {
                 shapes.push("filter read: provide filter and omit record_id/query")
             }
+            MemoryRetrievalMode::Filter => {}
             MemoryRetrievalMode::FullText => {
                 shapes.push("full_text read: provide non-empty query and omit record_id/filter")
             }
-            MemoryRetrievalMode::Semantic => shapes.push(
+            MemoryRetrievalMode::Semantic if memory_filter_shape_supported(memory) => shapes.push(
                 "semantic read: provide non-empty query, optionally filter, and omit record_id",
             ),
+            MemoryRetrievalMode::Semantic => {
+                shapes.push("semantic read: provide non-empty query and omit record_id")
+            }
         }
     }
     if shapes.is_empty() {
@@ -466,24 +483,137 @@ pub(super) fn validate_memory_filter_paths(
     memory: &MemorySpaceRuntimeSnapshot,
     filter: &BTreeMap<String, Value>,
 ) -> Result<(), String> {
+    let declared_paths = memory_declared_filter_paths(memory);
+    let declared_paths_complete = memory_declared_filter_paths_complete(memory);
     for path in filter.keys() {
-        let segments = memory_filter_path_segments(path)?;
-        let known = memory.record_types.iter().any(|record_type| {
-            memory_schema_path_exists(
-                &record_type.content_schema,
-                &record_type.content_schema,
-                &segments,
-                0,
-            )
-        });
-        if !known {
-            return Err(format!(
+        memory_filter_path_segments(path)?;
+        if !memory_filter_path_declared(memory, path) {
+            let mut message = format!(
                 "Memory filter path `{path}` is not declared by any content contract for space `{}`.",
                 memory.space
-            ));
+            );
+            if !declared_paths_complete {
+                message.push_str(
+                    " Declared filter path list is incomplete because at least one content contract is recursive or too large to enumerate.",
+                );
+            } else if !declared_paths.is_empty() {
+                message.push_str(&format!(
+                    " Declared filter path(s): {}.",
+                    declared_paths
+                        .iter()
+                        .map(|path| format!("`{path}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if memory
+                .retrieval_modes
+                .iter()
+                .any(|mode| matches!(mode, MemoryRetrievalMode::Chronological))
+            {
+                message.push_str(
+                    " Use chronological Memory read to list records when no declared filter path fits.",
+                );
+            }
+            return Err(message);
         }
     }
     Ok(())
+}
+
+fn memory_declared_filter_paths(memory: &MemorySpaceRuntimeSnapshot) -> Vec<String> {
+    let mut paths = memory
+        .record_types
+        .iter()
+        .flat_map(|record_type| memory_content_filter_paths(&record_type.content_schema))
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn memory_declared_filter_paths_complete(memory: &MemorySpaceRuntimeSnapshot) -> bool {
+    memory.record_types.iter().all(|record_type| {
+        memory_content_filter_path_enumeration(&record_type.content_schema).complete
+    })
+}
+
+fn memory_filter_path_declared(memory: &MemorySpaceRuntimeSnapshot, path: &str) -> bool {
+    let segments = path.split('.').collect::<Vec<_>>();
+    fn schema_path_exists(
+        schema: &Value,
+        root_schema: &Value,
+        segments: &[&str],
+        active_refs: &mut BTreeSet<String>,
+        depth: usize,
+    ) -> bool {
+        if depth > 64 {
+            return false;
+        }
+        if segments.is_empty() {
+            return true;
+        }
+        let Some(object) = schema.as_object() else {
+            return false;
+        };
+        if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+            let Some(pointer) = reference.strip_prefix('#') else {
+                return false;
+            };
+            let Some(resolved_schema) = root_schema.pointer(pointer) else {
+                return false;
+            };
+            let ref_state = format!("{reference}\0{}", segments.join("."));
+            if !active_refs.insert(ref_state.clone()) {
+                return false;
+            }
+            let exists = schema_path_exists(
+                resolved_schema,
+                root_schema,
+                segments,
+                active_refs,
+                depth + 1,
+            );
+            active_refs.remove(&ref_state);
+            return exists;
+        }
+        for keyword in ["allOf", "anyOf", "oneOf"] {
+            if object
+                .get(keyword)
+                .and_then(Value::as_array)
+                .is_some_and(|schemas| {
+                    schemas.iter().any(|schema| {
+                        schema_path_exists(schema, root_schema, segments, active_refs, depth + 1)
+                    })
+                })
+            {
+                return true;
+            }
+        }
+        if object.get("items").is_some_and(|items| {
+            schema_path_exists(items, root_schema, segments, active_refs, depth + 1)
+        }) {
+            return true;
+        }
+        object
+            .get("properties")
+            .and_then(Value::as_object)
+            .and_then(|properties| properties.get(segments[0]))
+            .is_some_and(|child| {
+                schema_path_exists(child, root_schema, &segments[1..], active_refs, depth + 1)
+            })
+    }
+
+    memory.record_types.iter().any(|record_type| {
+        let mut active_refs = BTreeSet::new();
+        schema_path_exists(
+            &record_type.content_schema,
+            &record_type.content_schema,
+            &segments,
+            &mut active_refs,
+            0,
+        )
+    })
 }
 
 pub(super) fn memory_filter_path_segments(path: &str) -> Result<Vec<&str>, String> {
@@ -491,58 +621,6 @@ pub(super) fn memory_filter_path_segments(path: &str) -> Result<Vec<&str>, Strin
         return Err(format!("Memory filter path `{path}` is invalid."));
     }
     Ok(path.split('.').collect())
-}
-
-pub(super) fn memory_schema_path_exists(
-    schema: &Value,
-    root_schema: &Value,
-    segments: &[&str],
-    depth: usize,
-) -> bool {
-    if segments.is_empty() {
-        return true;
-    }
-    if depth > 64 {
-        return false;
-    }
-    let resolved_schema = resolve_schema_ref_for_memory_path(schema, root_schema).unwrap_or(schema);
-    let Some(object) = resolved_schema.as_object() else {
-        return false;
-    };
-    for keyword in ["allOf", "anyOf", "oneOf"] {
-        if object
-            .get(keyword)
-            .and_then(Value::as_array)
-            .is_some_and(|schemas| {
-                schemas.iter().any(|schema| {
-                    memory_schema_path_exists(schema, root_schema, segments, depth + 1)
-                })
-            })
-        {
-            return true;
-        }
-    }
-    if let Some(items) = object.get("items")
-        && memory_schema_path_exists(items, root_schema, segments, depth + 1)
-    {
-        return true;
-    }
-    object
-        .get("properties")
-        .and_then(Value::as_object)
-        .and_then(|properties| properties.get(segments[0]))
-        .is_some_and(|child| {
-            memory_schema_path_exists(child, root_schema, &segments[1..], depth + 1)
-        })
-}
-
-pub(super) fn resolve_schema_ref_for_memory_path<'a>(
-    schema: &'a Value,
-    root_schema: &'a Value,
-) -> Option<&'a Value> {
-    let reference = schema.as_object()?.get("$ref")?.as_str()?;
-    let pointer = reference.strip_prefix('#')?;
-    root_schema.pointer(pointer)
 }
 
 pub(super) fn validate_json_schema_value(schema: &Value, value: &Value) -> Result<(), String> {
@@ -679,6 +757,13 @@ mod tests {
             vec![MemoryRetrievalMode::Filter, MemoryRetrievalMode::FullText],
         );
 
+        let empty_filter_err = validate_semantic_action(
+            &memory_read(MemoryReadMode::Filter, None, BTreeMap::new(), None),
+            &phase,
+        )
+        .expect_err("filter read with empty filter should fail");
+        assert!(empty_filter_err.contains("Memory filter read requires at least one filter path"));
+
         let filter_err = validate_semantic_action(
             &memory_read(
                 MemoryReadMode::Filter,
@@ -721,5 +806,200 @@ mod tests {
             &phase,
         )
         .expect("semantic read with filter should remain valid");
+    }
+
+    #[test]
+    fn memory_filter_path_feedback_names_declared_paths_and_chronological_fallback() {
+        let mut phase = memory_phase(
+            MemorySpaceModel::Collection,
+            vec![
+                MemoryRetrievalMode::Filter,
+                MemoryRetrievalMode::Chronological,
+            ],
+        );
+        let schema = json!({
+            "type": "object",
+            "additionalProperties": true,
+            "$defs": {
+                "Owner": {
+                    "type": "object",
+                    "properties": {
+                        "team": { "type": "string" }
+                    }
+                }
+            },
+            "properties": {
+                "body": { "type": "string" },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" }
+                        }
+                    }
+                },
+                "owner": { "$ref": "#/$defs/Owner" },
+                "state": {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "phase": { "type": "string" }
+                            }
+                        }
+                    ]
+                },
+                "review": {
+                    "allOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "status": { "type": "string" }
+                            }
+                        }
+                    ]
+                }
+            }
+        });
+        phase.active_memory[0].record_types[0].content_schema = schema.clone();
+
+        for path in [
+            "body",
+            "tags",
+            "tags.name",
+            "owner.team",
+            "state.phase",
+            "review.status",
+        ] {
+            validate_semantic_action(
+                &memory_read(
+                    MemoryReadMode::Filter,
+                    None,
+                    BTreeMap::from([(path.to_string(), json!("value"))]),
+                    None,
+                ),
+                &phase,
+            )
+            .unwrap_or_else(|err| panic!("expected {path} to be declared: {err}"));
+        }
+
+        let err = validate_semantic_action(
+            &memory_read(
+                MemoryReadMode::Filter,
+                None,
+                BTreeMap::from([("extra".into(), json!("wrong"))]),
+                None,
+            ),
+            &phase,
+        )
+        .expect_err("undeclared filter path should fail");
+
+        assert!(err.contains("Memory filter path `extra` is not declared"));
+        assert!(err.contains("Declared filter path(s):"));
+        assert!(err.contains("`body`"));
+        assert!(err.contains("`tags.name`"));
+        assert!(err.contains("`owner.team`"));
+        assert!(err.contains("Use chronological Memory read to list records"));
+    }
+
+    #[test]
+    fn memory_filter_validation_handles_recursive_contracts_without_enumerating_all_paths() {
+        let mut phase = memory_phase(
+            MemorySpaceModel::Collection,
+            vec![
+                MemoryRetrievalMode::Filter,
+                MemoryRetrievalMode::Chronological,
+            ],
+        );
+        phase.active_memory[0].record_types[0].content_schema = json!({
+            "type": "object",
+            "$defs": {
+                "node": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "left": { "$ref": "#/$defs/node" },
+                        "right": { "$ref": "#/$defs/node" }
+                    }
+                }
+            },
+            "properties": {
+                "root": { "$ref": "#/$defs/node" }
+            }
+        });
+
+        validate_semantic_action(
+            &memory_read(
+                MemoryReadMode::Filter,
+                None,
+                BTreeMap::from([("root.left.name".into(), json!("release"))]),
+                None,
+            ),
+            &phase,
+        )
+        .expect("finite recursive filter path should validate");
+
+        let err = validate_semantic_action(
+            &memory_read(
+                MemoryReadMode::Filter,
+                None,
+                BTreeMap::from([("root.left.missing".into(), json!("release"))]),
+                None,
+            ),
+            &phase,
+        )
+        .expect_err("undeclared recursive filter path should fail");
+
+        assert!(err.contains("Memory filter path `root.left.missing` is not declared"));
+        assert!(err.contains("Declared filter path list is incomplete"));
+        assert!(err.contains("Use chronological Memory read to list records"));
+    }
+
+    #[test]
+    fn memory_filter_validation_cuts_combinator_ref_cycles_without_path_progress() {
+        let mut phase = memory_phase(
+            MemorySpaceModel::Collection,
+            vec![
+                MemoryRetrievalMode::Filter,
+                MemoryRetrievalMode::Chronological,
+            ],
+        );
+        phase.active_memory[0].record_types[0].content_schema = json!({
+            "type": "object",
+            "$defs": {
+                "a": {
+                    "anyOf": [
+                        { "$ref": "#/$defs/a" },
+                        { "$ref": "#/$defs/b" }
+                    ]
+                },
+                "b": {
+                    "anyOf": [
+                        { "$ref": "#/$defs/a" },
+                        { "$ref": "#/$defs/b" }
+                    ]
+                }
+            },
+            "anyOf": [
+                { "$ref": "#/$defs/a" },
+                { "$ref": "#/$defs/b" }
+            ]
+        });
+
+        let err = validate_semantic_action(
+            &memory_read(
+                MemoryReadMode::Filter,
+                None,
+                BTreeMap::from([("missing".into(), json!("release"))]),
+                None,
+            ),
+            &phase,
+        )
+        .expect_err("cyclic combinator refs should terminate and reject undeclared path");
+
+        assert!(err.contains("Memory filter path `missing` is not declared"));
+        assert!(err.contains("Declared filter path list is incomplete"));
+        assert!(err.contains("Use chronological Memory read to list records"));
     }
 }

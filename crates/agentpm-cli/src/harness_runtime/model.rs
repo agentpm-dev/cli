@@ -9,6 +9,7 @@ use crate::manifest::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 
@@ -21,6 +22,7 @@ pub(crate) const PERSISTENCE_REVIEW_TARGET_SELECTION_CONTROL: &str = "Choose the
 
 const PROVIDER_ACTION_ALIAS_MAX_LEN: usize = 64;
 const PROVIDER_ACTION_HASH_LEN: usize = 8;
+const MEMORY_FILTER_PATH_ENUMERATION_LIMIT: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -197,6 +199,143 @@ pub struct MemorySpaceRuntimeSnapshot {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub append_only: bool,
     pub record_types: Vec<MemoryRecordTypeRuntimeSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MemoryContentFilterPathEnumeration {
+    pub paths: Vec<String>,
+    pub complete: bool,
+}
+
+pub(crate) fn memory_content_filter_paths(schema: &Value) -> Vec<String> {
+    memory_content_filter_path_enumeration(schema).paths
+}
+
+pub(crate) fn memory_content_filter_path_enumeration(
+    schema: &Value,
+) -> MemoryContentFilterPathEnumeration {
+    let mut paths = BTreeSet::new();
+    let mut prefix = Vec::new();
+    let mut active_refs = BTreeSet::new();
+    let mut complete = true;
+    collect_memory_content_filter_paths(
+        schema,
+        schema,
+        &mut prefix,
+        &mut paths,
+        &mut active_refs,
+        &mut complete,
+        0,
+    );
+    MemoryContentFilterPathEnumeration {
+        paths: paths.into_iter().collect(),
+        complete,
+    }
+}
+
+fn collect_memory_content_filter_paths(
+    schema: &Value,
+    root_schema: &Value,
+    prefix: &mut Vec<String>,
+    paths: &mut BTreeSet<String>,
+    active_refs: &mut BTreeSet<String>,
+    complete: &mut bool,
+    depth: usize,
+) {
+    if paths.len() >= MEMORY_FILTER_PATH_ENUMERATION_LIMIT {
+        *complete = false;
+        return;
+    }
+    if depth > 64 {
+        *complete = false;
+        return;
+    }
+    if let Some((reference, resolved_schema)) =
+        resolve_schema_ref_for_memory_filter_path(schema, root_schema)
+    {
+        if !active_refs.insert(reference.to_string()) {
+            *complete = false;
+            return;
+        }
+        collect_memory_content_filter_paths(
+            resolved_schema,
+            root_schema,
+            prefix,
+            paths,
+            active_refs,
+            complete,
+            depth + 1,
+        );
+        active_refs.remove(reference);
+        return;
+    }
+    let resolved_schema = schema;
+    let Some(object) = resolved_schema.as_object() else {
+        return;
+    };
+
+    for keyword in ["allOf", "anyOf", "oneOf"] {
+        if let Some(schemas) = object.get(keyword).and_then(Value::as_array) {
+            for schema in schemas {
+                collect_memory_content_filter_paths(
+                    schema,
+                    root_schema,
+                    prefix,
+                    paths,
+                    active_refs,
+                    complete,
+                    depth + 1,
+                );
+            }
+        }
+    }
+
+    if let Some(items) = object.get("items") {
+        collect_memory_content_filter_paths(
+            items,
+            root_schema,
+            prefix,
+            paths,
+            active_refs,
+            complete,
+            depth + 1,
+        );
+    }
+
+    if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+        for (property, child) in properties {
+            if paths.len() >= MEMORY_FILTER_PATH_ENUMERATION_LIMIT {
+                *complete = false;
+                return;
+            }
+            if property.is_empty() || property.contains('.') {
+                continue;
+            }
+            prefix.push(property.clone());
+            paths.insert(prefix.join("."));
+            collect_memory_content_filter_paths(
+                child,
+                root_schema,
+                prefix,
+                paths,
+                active_refs,
+                complete,
+                depth + 1,
+            );
+            prefix.pop();
+        }
+    }
+}
+
+fn resolve_schema_ref_for_memory_filter_path<'a>(
+    schema: &'a Value,
+    root_schema: &'a Value,
+) -> Option<(&'a str, &'a Value)> {
+    let reference = schema.as_object()?.get("$ref")?.as_str()?;
+    let pointer = reference.strip_prefix('#')?;
+    root_schema
+        .pointer(pointer)
+        .map(|schema| (reference, schema))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -583,22 +722,7 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
     let capability_catalog = if input.effective_phase.capability_catalog.is_empty() {
         "No executable capability descriptors are available for this phase.".to_string()
     } else {
-        input
-            .effective_phase
-            .capability_catalog
-            .iter()
-            .zip(action_aliases.iter())
-            .map(|(descriptor, alias)| {
-                format!(
-                    "- {} [{}] {} — {}",
-                    alias.alias,
-                    descriptor.action_kind,
-                    descriptor.identity,
-                    descriptor.description
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        render_capability_catalog_lines(input.effective_phase, &action_aliases)
     };
 
     let transcript = if input.transcript.is_empty() {
@@ -649,6 +773,43 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         completion,
         diagnostics,
     }
+}
+
+fn render_capability_catalog_lines(
+    effective_phase: &EffectivePhase,
+    action_aliases: &[ActionAlias],
+) -> String {
+    action_aliases
+        .iter()
+        .map(|alias| {
+            let descriptor = effective_phase
+                .capability_catalog
+                .iter()
+                .find(|descriptor| {
+                    descriptor.action_kind == alias.action_kind
+                        && descriptor.identity == alias.identity
+                });
+            let action_kind = descriptor
+                .map(|descriptor| descriptor.action_kind.as_str())
+                .unwrap_or(alias.action_kind.as_str());
+            let identity = descriptor
+                .map(|descriptor| descriptor.identity.as_str())
+                .unwrap_or(alias.identity.as_str());
+            let description = descriptor
+                .map(|descriptor| descriptor.description.as_str())
+                .unwrap_or("Provider-facing action alias with no matching capability descriptor.");
+            let provider_shape = alias
+                .provider_shape
+                .as_deref()
+                .map(|shape| format!(" ({shape})"))
+                .unwrap_or_default();
+            format!(
+                "- {} [{}{}] {} — {}",
+                alias.alias, action_kind, provider_shape, identity, description
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -785,6 +946,8 @@ pub(crate) fn provider_action_aliases(effective_phase: &EffectivePhase) -> Vec<A
         .flat_map(|descriptor| {
             if descriptor.action_kind == "memory_read" {
                 memory_read_provider_action_aliases(descriptor, effective_phase)
+            } else if descriptor.action_kind == "memory_write" {
+                memory_write_provider_action_aliases(descriptor, effective_phase)
             } else {
                 vec![ActionAlias {
                     alias: provider_action_alias(descriptor, effective_phase, None),
@@ -795,6 +958,19 @@ pub(crate) fn provider_action_aliases(effective_phase: &EffectivePhase) -> Vec<A
             }
         })
         .collect()
+}
+
+fn single_provider_action_alias(
+    descriptor: &CapabilityDescriptor,
+    effective_phase: &EffectivePhase,
+    provider_shape: Option<&str>,
+) -> ActionAlias {
+    ActionAlias {
+        alias: provider_action_alias(descriptor, effective_phase, provider_shape),
+        action_kind: descriptor.action_kind.clone(),
+        identity: descriptor.identity.clone(),
+        provider_shape: provider_shape.map(str::to_string),
+    }
 }
 
 fn provider_action_alias(
@@ -825,26 +1001,26 @@ fn memory_read_provider_action_aliases(
         .iter()
         .find(|memory| memory_identity(&memory.package, &memory.space) == descriptor.identity)
     else {
-        return vec![ActionAlias {
-            alias: provider_action_alias(descriptor, effective_phase, None),
-            action_kind: descriptor.action_kind.clone(),
-            identity: descriptor.identity.clone(),
-            provider_shape: None,
-        }];
+        return vec![single_provider_action_alias(
+            descriptor,
+            effective_phase,
+            None,
+        )];
     };
 
     memory
         .retrieval_modes
         .iter()
-        .map(|mode| match mode {
+        .filter_map(|mode| match mode {
             MemoryRetrievalMode::Key if matches!(memory.model, MemorySpaceModel::Document) => {
-                "key_document"
+                Some("key_document")
             }
-            MemoryRetrievalMode::Key => "key_record",
-            MemoryRetrievalMode::Filter => "filter",
-            MemoryRetrievalMode::Chronological => "chronological",
-            MemoryRetrievalMode::FullText => "full_text",
-            MemoryRetrievalMode::Semantic => "semantic",
+            MemoryRetrievalMode::Key => Some("key_record"),
+            MemoryRetrievalMode::Filter if memory_filter_shape_supported(memory) => Some("filter"),
+            MemoryRetrievalMode::Filter => None,
+            MemoryRetrievalMode::Chronological => Some("chronological"),
+            MemoryRetrievalMode::FullText => Some("full_text"),
+            MemoryRetrievalMode::Semantic => Some("semantic"),
         })
         .map(|provider_shape| ActionAlias {
             alias: provider_action_alias(descriptor, effective_phase, Some(provider_shape)),
@@ -853,6 +1029,68 @@ fn memory_read_provider_action_aliases(
             provider_shape: Some(provider_shape.into()),
         })
         .collect()
+}
+
+pub(crate) fn memory_filter_shape_supported(memory: &MemorySpaceRuntimeSnapshot) -> bool {
+    memory.record_types.iter().any(|record_type| {
+        let enumeration = memory_content_filter_path_enumeration(&record_type.content_schema);
+        !enumeration.complete || !enumeration.paths.is_empty()
+    })
+}
+
+fn memory_write_provider_action_aliases(
+    descriptor: &CapabilityDescriptor,
+    effective_phase: &EffectivePhase,
+) -> Vec<ActionAlias> {
+    let Some(memory) = effective_phase
+        .active_memory
+        .iter()
+        .find(|memory| memory_identity(&memory.package, &memory.space) == descriptor.identity)
+    else {
+        return vec![single_provider_action_alias(
+            descriptor,
+            effective_phase,
+            None,
+        )];
+    };
+
+    if memory.record_types.is_empty() {
+        return vec![single_provider_action_alias(
+            descriptor,
+            effective_phase,
+            None,
+        )];
+    }
+
+    let mut aliases = Vec::new();
+    for record_type in &memory.record_types {
+        let create_shape = if memory.append_only {
+            format!("create_only_{}", record_type.name)
+        } else {
+            format!("create_or_upsert_{}", record_type.name)
+        };
+        aliases.push(single_provider_action_alias(
+            descriptor,
+            effective_phase,
+            Some(&create_shape),
+        ));
+        if !memory.append_only {
+            let update_shape = format!("update_{}", record_type.name);
+            aliases.push(single_provider_action_alias(
+                descriptor,
+                effective_phase,
+                Some(&update_shape),
+            ));
+        }
+    }
+    if !memory.append_only {
+        aliases.push(single_provider_action_alias(
+            descriptor,
+            effective_phase,
+            Some("delete_or_archive"),
+        ));
+    }
+    aliases
 }
 
 fn memory_provider_action_alias(
@@ -865,6 +1103,8 @@ fn memory_provider_action_alias(
         .iter()
         .find(|memory| memory_identity(&memory.package, &memory.space) == descriptor.identity);
     if let Some(memory) = memory {
+        let provider_shape_contains_record_type =
+            descriptor.action_kind == "memory_write" && provider_shape.is_some();
         return provider_memory_alias_with_hash(
             &descriptor.action_kind,
             &memory.space,
@@ -874,6 +1114,7 @@ fn memory_provider_action_alias(
                 .as_slice()
                 .first()
                 .filter(|_| memory.record_types.len() == 1)
+                .filter(|_| !provider_shape_contains_record_type)
                 .map(|record_type| record_type.name.as_str()),
             Some(&package_signal(&memory.package)),
             descriptor,
@@ -1324,6 +1565,8 @@ pub struct ModelRuntimeRequestSnapshot {
     pub turn_strategy: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ordered_turns: Vec<ModelRequestTurn>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<String>,
     pub prompt: String,
 }
 
@@ -1443,6 +1686,7 @@ impl ModelRuntime for ScriptedModelRuntime {
             action_aliases: request.prompt.action_aliases.clone(),
             turn_strategy: "canonical_request".into(),
             ordered_turns: request.ordered_turns.clone(),
+            diagnostics: request.prompt.diagnostics.clone(),
             prompt,
         })
     }
@@ -1523,6 +1767,41 @@ mod tests {
     }
 
     #[test]
+    fn memory_filter_path_enumeration_cuts_branching_recursive_refs() {
+        let schema = json!({
+            "type": "object",
+            "$defs": {
+                "node": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "left": { "$ref": "#/$defs/node" },
+                        "right": { "$ref": "#/$defs/node" }
+                    }
+                }
+            },
+            "properties": {
+                "root": { "$ref": "#/$defs/node" }
+            }
+        });
+
+        let enumeration = memory_content_filter_path_enumeration(&schema);
+
+        assert!(!enumeration.complete);
+        assert!(enumeration.paths.len() <= MEMORY_FILTER_PATH_ENUMERATION_LIMIT);
+        assert!(enumeration.paths.iter().any(|path| path == "root"));
+        assert!(enumeration.paths.iter().any(|path| path == "root.name"));
+        assert!(enumeration.paths.iter().any(|path| path == "root.left"));
+        assert!(enumeration.paths.iter().any(|path| path == "root.right"));
+        assert!(
+            !enumeration
+                .paths
+                .iter()
+                .any(|path| path == "root.left.left.left.name")
+        );
+    }
+
+    #[test]
     fn provider_action_aliases_are_semantic_provider_safe_and_stable() {
         let single_memory = memory_space("@zack/m16-reference-memory", "notes", ["note"]);
         let multi_memory = memory_space(
@@ -1549,7 +1828,7 @@ mod tests {
 
         let aliases = provider_action_aliases(&phase);
 
-        assert_eq!(aliases.len(), phase.capability_catalog.len());
+        assert_eq!(aliases.len(), 16);
         for alias in &aliases {
             assert!(
                 is_provider_safe_action_alias(&alias.alias),
@@ -1629,9 +1908,24 @@ mod tests {
             .find(|alias| {
                 alias.action_kind == "memory_write"
                     && alias.identity == "@zack/m16-reference-memory/notes"
+                    && alias.provider_shape.as_deref() == Some("create_or_upsert_note")
             })
             .expect("notes write alias");
-        assert!(notes_write.alias.starts_with("memory_write_notes_note_"));
+        assert!(
+            notes_write
+                .alias
+                .starts_with("memory_write_notes_create_or_upsert_note_")
+        );
+        assert!(aliases.iter().any(|alias| {
+            alias.action_kind == "memory_write"
+                && alias.identity == "@zack/m16-reference-memory/notes"
+                && alias.provider_shape.as_deref() == Some("update_note")
+        }));
+        assert!(aliases.iter().any(|alias| {
+            alias.action_kind == "memory_write"
+                && alias.identity == "@zack/m16-reference-memory/notes"
+                && alias.provider_shape.as_deref() == Some("delete_or_archive")
+        }));
         let notes_read = aliases
             .iter()
             .find(|alias| {
@@ -1650,11 +1944,27 @@ mod tests {
             .find(|alias| {
                 alias.action_kind == "memory_write"
                     && alias.identity == "@zack/m16-reference-memory/mixed_notes"
+                    && alias.provider_shape.as_deref() == Some("create_or_upsert_summary")
             })
             .expect("mixed write alias");
         assert!(mixed_write.alias.starts_with("memory_write_mixed_notes_"));
-        assert!(!mixed_write.alias.contains("summary"));
-        assert!(!mixed_write.alias.contains("preference"));
+        assert!(mixed_write.alias.contains("summary"));
+        assert!(aliases.iter().any(|alias| {
+            alias.action_kind == "memory_write"
+                && alias.identity == "@zack/m16-reference-memory/mixed_notes"
+                && alias.provider_shape.as_deref() == Some("create_or_upsert_preference")
+        }));
+        assert_eq!(
+            aliases
+                .iter()
+                .filter(|alias| {
+                    alias.action_kind == "memory_write"
+                        && alias.identity == "@zack/m16-reference-memory/mixed_notes"
+                        && alias.provider_shape.as_deref() == Some("delete_or_archive")
+                })
+                .count(),
+            1
+        );
 
         let mut expanded_phase = phase_with(
             vec![
@@ -1669,6 +1979,7 @@ mod tests {
             .find(|alias| {
                 alias.action_kind == "memory_write"
                     && alias.identity == "@zack/m16-reference-memory/notes"
+                    && alias.provider_shape.as_deref() == Some("create_or_upsert_note")
             })
             .expect("expanded notes write alias");
         assert_eq!(stable_alias.alias, notes_write.alias);
@@ -1678,6 +1989,7 @@ mod tests {
             .find(|alias| {
                 alias.action_kind == "memory_write"
                     && alias.identity == "@zack/m16-reference-memory/notes"
+                    && alias.provider_shape.as_deref() == Some("create_or_upsert_note")
             })
             .expect("reordered notes write alias");
         assert_eq!(reordered_alias.alias, notes_write.alias);
@@ -1686,6 +1998,12 @@ mod tests {
     #[test]
     fn memory_read_provider_aliases_split_by_flat_argument_shape() {
         let mut collection = memory_space("@zack/m16-reference-memory", "notes", ["note"]);
+        collection.record_types[0].content_schema = json!({
+            "type": "object",
+            "properties": {
+                "tag": { "type": "string" }
+            }
+        });
         collection.retrieval_modes = vec![
             MemoryRetrievalMode::Key,
             MemoryRetrievalMode::Chronological,
@@ -1748,6 +2066,126 @@ mod tests {
     }
 
     #[test]
+    fn memory_read_provider_aliases_drop_filter_shape_when_no_filter_paths_exist() {
+        let mut memory = memory_space("@zack/m16-reference-memory", "notes", ["note"]);
+        memory.record_types[0].content_schema = json!({
+            "type": "object",
+            "properties": {}
+        });
+        memory.retrieval_modes = vec![
+            MemoryRetrievalMode::Chronological,
+            MemoryRetrievalMode::Filter,
+            MemoryRetrievalMode::Semantic,
+        ];
+        let phase = phase_with(
+            vec![descriptor(
+                "memory_read",
+                "@zack/m16-reference-memory/notes",
+            )],
+            vec![memory],
+        );
+
+        let shapes = provider_action_aliases(&phase)
+            .into_iter()
+            .filter(|alias| alias.action_kind == "memory_read")
+            .map(|alias| alias.provider_shape.expect("provider shape"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(shapes, vec!["chronological", "semantic"]);
+    }
+
+    #[test]
+    fn memory_write_provider_aliases_do_not_confuse_record_type_prefixes_with_shapes() {
+        let mut memory = memory_space("@zack/m16-reference-memory", "notes", ["or_upsert_note"]);
+        memory.append_only = true;
+        let phase = phase_with(
+            vec![descriptor(
+                "memory_write",
+                "@zack/m16-reference-memory/notes",
+            )],
+            vec![memory],
+        );
+
+        let aliases = provider_action_aliases(&phase);
+
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(
+            aliases[0].provider_shape.as_deref(),
+            Some("create_only_or_upsert_note")
+        );
+        assert!(
+            aliases[0]
+                .alias
+                .starts_with("memory_write_notes_create_only_or_upsert_note_")
+        );
+        assert!(!aliases[0].alias.contains("create_or_upsert_"));
+    }
+
+    #[test]
+    fn capability_catalog_renders_each_expanded_alias_with_matching_descriptor() {
+        let mut memory = memory_space("@zack/m16-reference-memory", "notes", ["note"]);
+        memory.record_types[0].content_schema = json!({
+            "type": "object",
+            "properties": {
+                "tag": { "type": "string" }
+            }
+        });
+        memory.retrieval_modes = vec![
+            MemoryRetrievalMode::Key,
+            MemoryRetrievalMode::Chronological,
+            MemoryRetrievalMode::Filter,
+        ];
+        let phase = phase_with(
+            vec![
+                descriptor("phase_completion", "remember/completion"),
+                descriptor("memory_read", "@zack/m16-reference-memory/notes"),
+                descriptor("memory_write", "@zack/m16-reference-memory/notes"),
+            ],
+            vec![memory],
+        );
+
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &["done".into()],
+            run_input: "exercise aliases",
+            consumer_context: None,
+            prior_phase_results: &[],
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+        let catalog = prompt
+            .sections
+            .iter()
+            .find(|section| section.title == EFFECTIVE_CAPABILITY_CATALOG_SECTION_TITLE)
+            .expect("catalog section")
+            .content
+            .clone();
+
+        assert_eq!(prompt.action_aliases.len(), 7);
+        assert_eq!(catalog.lines().count(), prompt.action_aliases.len());
+        for alias in &prompt.action_aliases {
+            assert_eq!(catalog.matches(&alias.alias).count(), 1, "{alias:?}");
+            let line = catalog
+                .lines()
+                .find(|line| line.contains(&alias.alias))
+                .expect("catalog line for alias");
+            assert!(line.contains(&format!("[{}", alias.action_kind)));
+            assert!(line.contains(&alias.identity));
+            if let Some(provider_shape) = &alias.provider_shape {
+                assert!(line.contains(&format!("({provider_shape})")));
+            }
+        }
+        assert!(
+            catalog
+                .lines()
+                .any(|line| line.contains("[memory_read (chronological)]"))
+        );
+    }
+
+    #[test]
     fn memory_alias_truncation_preserves_space_and_fixed_record_type() {
         let memory = memory_space(
             "@very-long-scope/very-long-package-name-that-should-not-dominate",
@@ -1767,7 +2205,8 @@ mod tests {
         assert!(is_provider_safe_action_alias(alias));
         assert!(alias.len() <= 64);
         assert!(alias.contains("memory_write"));
-        assert!(alias.contains("launch_readiness_notes"));
+        assert!(alias.contains("launch_readiness"));
+        assert!(alias.contains("create"));
         assert!(alias.contains("note"));
     }
 
@@ -1790,7 +2229,8 @@ mod tests {
 
         assert!(is_provider_safe_action_alias(alias));
         assert!(alias.len() <= 64);
-        assert!(alias.starts_with("memory_write_conversation_state_notes_with_note_"));
+        assert!(alias.starts_with("memory_write_conversation_state_create_or_upsert_"));
+        assert!(alias.contains("note"));
     }
 
     #[test]
@@ -1853,7 +2293,8 @@ mod tests {
 
         assert!(is_provider_safe_action_alias(alias));
         assert!(alias.len() <= 64);
-        assert!(alias.starts_with("memory_write_conversation_state_note_package_signal_"));
+        assert!(alias.starts_with("memory_write_conversation_state_create_or_upsert_"));
+        assert!(alias.contains("note"));
         assert!(!alias.contains("package_signal_th"));
     }
 
@@ -2031,12 +2472,18 @@ mod tests {
         assert!(aliases.iter().any(|alias| {
             alias.action_kind == "memory_write"
                 && alias.identity == "@zack/memory/notes"
-                && alias.alias.starts_with("memory_write_notes_note_")
+                && alias.provider_shape.as_deref() == Some("create_or_upsert_note")
+                && alias
+                    .alias
+                    .starts_with("memory_write_notes_create_or_upsert_note_")
         }));
         assert!(aliases.iter().any(|alias| {
             alias.action_kind == "memory_write"
                 && alias.identity == "@zack/memory/current_note"
-                && alias.alias.starts_with("memory_write_current_note_note_")
+                && alias.provider_shape.as_deref() == Some("create_or_upsert_note")
+                && alias
+                    .alias
+                    .starts_with("memory_write_current_note_create_or_upsert_")
         }));
         assert!(
             aliases

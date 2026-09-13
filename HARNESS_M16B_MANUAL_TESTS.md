@@ -2400,6 +2400,12 @@ Record:
 
 This replaces the split-read fixture's Memory spaces with two long, similar collection spaces and adds a second phase. It is the M16c version of the Test 8 failure shape: similar collection surfaces plus a phase boundary, with split MemoryRead aliases active.
 
+If you deleted `harness-m16b-test` and want the shortest path back to Test 20, do this first:
+
+1. Run the top-level prerequisites and Setup block to recreate `M16B_WORK`.
+2. Run Test 9's workspace setup block and the helper block that writes `m16c_split_capture_server.py` and `m16c_assert_split_read.py`. You do not need to run Tests 10-19.
+3. Run Test 20 below, then continue with Tests 21-23.
+
 ```bash
 export M16C_SPLIT_MULTIPHASE_WORK="$HARNESS_M16B_TEST_BASE/m16c-split-read-multiphase-workspace"
 rm -rf "$M16C_SPLIT_MULTIPHASE_WORK"
@@ -2570,3 +2576,238 @@ Record:
 - if it enters `followup`, whether actions repeat across the phase boundary;
 - exact repeats and changed-argument repeats from `repeat-summary.txt`;
 - whether completion repair is still needed.
+
+### Test 22: Capture OpenAI M16c MemoryWrite And Filter Schemas
+
+Run this after Test 20. This deterministic capture checks the first OpenAI provider body for the M16c provider-facing Memory schemas:
+
+- `memory_write_*_create_or_upsert_note_*`
+- `memory_write_*_update_note_*`
+- `memory_write_*_delete_or_archive_*`
+- `memory_read_*_filter_note_*`
+
+It also prints the captured function names so you can inspect how alias truncation looks with the two long similar spaces.
+
+```bash
+cat > "$M16C_SPLIT_MULTIPHASE_WORK/scripts/m16c_assert_write_filter_schema.py" <<'PY'
+#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+body_log_path = Path(sys.argv[1])
+provider = sys.argv[2]
+
+SPACES = [
+    "launch_readiness_notes_with_native_turn_history_for_current_release",
+    "launch_readiness_notes_with_native_turn_history_for_followup_review",
+]
+
+def fail(message):
+    raise AssertionError(message)
+
+def load_jsonl(path):
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+def body_tools(body):
+    if provider == "openai":
+        return [
+            {
+                "name": (tool.get("function") or {}).get("name") or "",
+                "description": (tool.get("function") or {}).get("description") or "",
+                "schema": (tool.get("function") or {}).get("parameters") or {},
+            }
+            for tool in body.get("tools", [])
+        ]
+    return [
+        {
+            "name": tool.get("name") or "",
+            "description": tool.get("description") or "",
+            "schema": tool.get("input_schema") or {},
+        }
+        for tool in body.get("tools", [])
+    ]
+
+def find_tool(tools, space, kind, shape_text):
+    matches = [
+        tool for tool in tools
+        if tool["name"].startswith(kind)
+        and f"space `{space}`" in tool["description"]
+        and shape_text in tool["description"]
+    ]
+    if len(matches) != 1:
+        names = [tool["name"] for tool in matches]
+        fail(f"expected one {kind} tool for {space} / {shape_text}, saw {len(matches)}: {names}")
+    return matches[0]
+
+def require_props(schema, *keys):
+    properties = schema.get("properties") or {}
+    for key in keys:
+        if key not in properties:
+            fail(f"missing property `{key}` in schema {schema}")
+    return properties
+
+def forbid_props(schema, *keys):
+    properties = schema.get("properties") or {}
+    for key in keys:
+        if key in properties:
+            fail(f"unexpected property `{key}` in schema {schema}")
+
+def require_required(schema, *keys):
+    required = set(schema.get("required") or [])
+    for key in keys:
+        if key not in required:
+            fail(f"missing required `{key}` in schema {schema}")
+
+bodies = [row["body"] for row in load_jsonl(body_log_path)]
+if not bodies:
+    fail("capture server recorded no provider bodies")
+
+tools = body_tools(bodies[0])
+printed = []
+
+for space in SPACES:
+    create = find_tool(tools, space, "memory_write_", "Fixed write shape: create/upsert")
+    if "create_or_upsert_note" not in create["name"]:
+        fail(f"create/upsert alias should name the write shape: {create['name']}")
+    create_props = require_props(create["schema"], "operation", "content", "record_type")
+    require_required(create["schema"], "operation", "content")
+    forbid_props(create["schema"], "record_id")
+    if create_props["operation"].get("enum") != ["create", "upsert"]:
+        fail(f"create/upsert operation enum is wrong: {create_props['operation']}")
+    if create_props["record_type"].get("const") != "note":
+        fail(f"create/upsert record_type should be fixed to note: {create_props['record_type']}")
+    printed.append(create["name"])
+
+    update = find_tool(tools, space, "memory_write_", "Fixed write shape: update")
+    if "update_note" not in update["name"]:
+        fail(f"update alias should name the write shape: {update['name']}")
+    update_props = require_props(update["schema"], "operation", "record_id", "content", "record_type")
+    require_required(update["schema"], "operation", "record_id", "content")
+    if update_props["operation"].get("const") != "update":
+        fail(f"update operation should be fixed: {update_props['operation']}")
+    if update_props["record_type"].get("const") != "note":
+        fail(f"update record_type should be fixed to note: {update_props['record_type']}")
+    printed.append(update["name"])
+
+    delete = find_tool(tools, space, "memory_write_", "Fixed write shape: delete/archive")
+    if "delete_or_archive" not in delete["name"]:
+        fail(f"delete/archive alias should name the write shape: {delete['name']}")
+    delete_props = require_props(delete["schema"], "operation", "record_id", "record_type")
+    require_required(delete["schema"], "operation", "record_id", "record_type")
+    forbid_props(delete["schema"], "content")
+    if delete_props["operation"].get("enum") != ["delete", "archive"]:
+        fail(f"delete/archive operation enum is wrong: {delete_props['operation']}")
+    printed.append(delete["name"])
+
+    filter_read = find_tool(tools, space, "memory_read_", "Fixed read shape: filter read")
+    if "filter_note" not in filter_read["name"]:
+        fail(f"filter alias should name the read shape: {filter_read['name']}")
+    filter_props = require_props(filter_read["schema"], "filter", "limit", "record_type")
+    require_required(filter_read["schema"], "filter")
+    forbid_props(filter_read["schema"], "mode", "record_id", "query")
+    filter_schema = filter_props["filter"]
+    if filter_schema.get("additionalProperties") is not False:
+        fail(f"filter schema should be closed: {filter_schema}")
+    if filter_schema.get("minProperties") != 1:
+        fail(f"filter schema should require at least one declared path: {filter_schema}")
+    declared = sorted((filter_schema.get("properties") or {}).keys())
+    if declared != ["body", "tag"]:
+        fail(f"filter schema should expose exactly body/tag, saw {declared}")
+    printed.append(filter_read["name"])
+
+print(f"ok: {provider} MemoryWrite and filter provider schemas are shape-specific")
+print("captured aliases:")
+for name in printed:
+    print(f"- {name}")
+print(f"captured bodies: {body_log_path}")
+PY
+chmod +x "$M16C_SPLIT_MULTIPHASE_WORK/scripts/m16c_assert_write_filter_schema.py"
+
+mkdir -p "$M16B_RUNS/m16c-openai-write-filter-schema"
+rm -rf "$M16C_SPLIT_MULTIPHASE_WORK/.agentpm-state-m16c-split-multiphase-openai"
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_MULTIPHASE_WORK/scripts/m16c_split_capture_server.py" \
+  --provider openai \
+  --scenario schema \
+  --port 18088 \
+  --log "$M16B_RUNS/m16c-openai-write-filter-schema/bodies.jsonl" \
+  >"$M16B_RUNS/m16c-openai-write-filter-schema/server.stdout.txt" \
+  2>"$M16B_RUNS/m16c-openai-write-filter-schema/server.stderr.txt" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+until curl -fsS http://127.0.0.1:18088/health >/dev/null; do sleep 0.1; done
+
+export OPENAI_API_KEY="m16c-capture-key"
+export OPENAI_BASE_URL="http://127.0.0.1:18088/v1"
+
+REPORT="$M16B_RUNS/m16c-openai-write-filter-schema/report.json"
+(cd "$M16C_SPLIT_MULTIPHASE_WORK" && "$APM" harness \
+  --config agentpm.m16b.openai.harness.json \
+  --headless \
+  --scope user="m16c-openai-write-filter-schema" \
+  --input "Capture the M16c OpenAI Memory schema surface, then complete with outcome done." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-openai-write-filter-schema/stdout.txt" \
+  2>"$M16B_RUNS/m16c-openai-write-filter-schema/stderr.txt")
+
+kill "$SERVER_PID" 2>/dev/null || true
+trap - EXIT
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_MULTIPHASE_WORK/scripts/m16c_assert_write_filter_schema.py" \
+  "$M16B_RUNS/m16c-openai-write-filter-schema/bodies.jsonl" \
+  openai
+```
+
+Expected:
+
+- `bodies.jsonl` contains an OpenAI `/chat/completions` body with the split MemoryWrite function schemas;
+- both similar collection spaces have separate `create_or_upsert`, `update`, `delete_or_archive`, and `filter` functions;
+- filter schemas are closed to `body` and `tag`, with `minProperties: 1`;
+- write schemas have flat, shape-specific parameters and do not expose incompatible fields.
+
+### Test 23: Capture Anthropic M16c MemoryWrite And Filter Schemas
+
+Run this after Test 22. It repeats the same schema capture through the Anthropic provider body shape.
+
+```bash
+mkdir -p "$M16B_RUNS/m16c-anthropic-write-filter-schema"
+rm -rf "$M16C_SPLIT_MULTIPHASE_WORK/.agentpm-state-m16c-split-multiphase-anthropic"
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_MULTIPHASE_WORK/scripts/m16c_split_capture_server.py" \
+  --provider anthropic \
+  --scenario schema \
+  --port 18089 \
+  --log "$M16B_RUNS/m16c-anthropic-write-filter-schema/bodies.jsonl" \
+  >"$M16B_RUNS/m16c-anthropic-write-filter-schema/server.stdout.txt" \
+  2>"$M16B_RUNS/m16c-anthropic-write-filter-schema/server.stderr.txt" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+until curl -fsS http://127.0.0.1:18089/health >/dev/null; do sleep 0.1; done
+
+export ANTHROPIC_API_KEY="m16c-capture-key"
+export ANTHROPIC_BASE_URL="http://127.0.0.1:18089"
+
+REPORT="$M16B_RUNS/m16c-anthropic-write-filter-schema/report.json"
+(cd "$M16C_SPLIT_MULTIPHASE_WORK" && "$APM" harness \
+  --config agentpm.m16b.anthropic.harness.json \
+  --headless \
+  --scope user="m16c-anthropic-write-filter-schema" \
+  --input "Capture the M16c Anthropic Memory schema surface, then complete with outcome done." \
+  --report "$REPORT" \
+  >"$M16B_RUNS/m16c-anthropic-write-filter-schema/stdout.txt" \
+  2>"$M16B_RUNS/m16c-anthropic-write-filter-schema/stderr.txt")
+
+kill "$SERVER_PID" 2>/dev/null || true
+trap - EXIT
+
+"$AGENTPM_MANUAL_PYTHON" "$M16C_SPLIT_MULTIPHASE_WORK/scripts/m16c_assert_write_filter_schema.py" \
+  "$M16B_RUNS/m16c-anthropic-write-filter-schema/bodies.jsonl" \
+  anthropic
+```
+
+Expected:
+
+- `bodies.jsonl` contains an Anthropic `/v1/messages` body with the same split MemoryWrite and filter schemas;
+- `tools[*].name` exposes the readable provider aliases;
+- `tools[*].input_schema` matches the OpenAI `function.parameters` shape for MemoryWrite and filter reads.

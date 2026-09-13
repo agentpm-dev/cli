@@ -1409,6 +1409,7 @@ impl ModelRuntime for HostModelRuntime {
             action_aliases: request.prompt.action_aliases.clone(),
             turn_strategy: "canonical_request".into(),
             ordered_turns: request.ordered_turns.clone(),
+            diagnostics: request.prompt.diagnostics.clone(),
             prompt,
         })
     }
