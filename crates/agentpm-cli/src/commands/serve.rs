@@ -10,9 +10,11 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
+use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 const DEFAULT_MCP_HOST: &str = "127.0.0.1";
 const DEFAULT_MCP_PORT: u16 = 7331;
@@ -39,6 +41,10 @@ pub struct ServeArgs {
     /// Restrict exposure to a comma-separated list of package refs
     #[arg(long, value_name = "PACKAGE_REFS")]
     pub tools: Option<String>,
+
+    /// Emit machine-readable JSONL lifecycle and call events on stdout
+    #[arg(long)]
+    pub machine: bool,
 }
 
 impl ServeArgs {
@@ -55,22 +61,78 @@ impl ServeArgs {
                 .with_context(|| format!("invalid host address: {}", self.host))?,
             self.port,
         );
-        let listener = tokio::net::TcpListener::bind(addr)
-            .await
-            .with_context(|| format!("binding MCP server to {}", addr))?;
+        let machine_reporter = if self.machine {
+            let reporter = ServeMachineReporter::stdout();
+            reporter.emit(
+                "starting",
+                json!({
+                    "host": self.host,
+                    "port": self.port,
+                    "tools": registry.machine_tools(),
+                }),
+            )?;
+            Some(reporter)
+        } else {
+            None
+        };
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => listener,
+            Err(err) => {
+                if let Some(reporter) = &machine_reporter {
+                    let _ = reporter.emit(
+                        "error",
+                        json!({
+                            "stage": "bind",
+                            "message": err.to_string(),
+                        }),
+                    );
+                }
+                return Err(err).with_context(|| format!("binding MCP server to {}", addr));
+            }
+        };
         let bound = listener.local_addr().context("reading bound MCP address")?;
 
-        eprintln!("AgentPM MCP server listening on http://{bound}");
-        axum::serve(
+        let machine_reporter = if let Some(reporter) = machine_reporter {
+            reporter.emit(
+                "ready",
+                json!({
+                    "host": bound.ip().to_string(),
+                    "port": bound.port(),
+                    "endpoint": format!("http://{bound}/mcp"),
+                    "tools": registry.machine_tools(),
+                }),
+            )?;
+            Some(reporter)
+        } else {
+            eprintln!("AgentPM MCP server listening on http://{bound}");
+            None
+        };
+
+        let cancellation_requested = Arc::new(AtomicBool::new(false));
+        let run_options = RunOptions {
+            cancellation_requested: Some(Arc::clone(&cancellation_requested)),
+            ..RunOptions::default()
+        };
+
+        let result = axum::serve(
             listener,
             build_router(Arc::new(AppState {
                 project_dir,
                 registry,
-                run_options: RunOptions::default(),
+                run_options,
+                machine_reporter: machine_reporter.clone(),
             })),
         )
+        .with_graceful_shutdown(serve_shutdown_signal(
+            machine_reporter.clone(),
+            cancellation_requested,
+        ))
         .await
-        .context("running MCP server")
+        .context("running MCP server");
+        if let Some(reporter) = &machine_reporter {
+            let _ = reporter.emit("stopped", json!({ "reason": "server_stopped" }));
+        }
+        result
     }
 
     fn selected_tools(&self) -> Result<Option<BTreeSet<String>>> {
@@ -100,11 +162,44 @@ impl ServeArgs {
     }
 }
 
+async fn serve_shutdown_signal(
+    machine_reporter: Option<ServeMachineReporter>,
+    cancellation_requested: Arc<AtomicBool>,
+) {
+    wait_for_shutdown_signal().await;
+    cancellation_requested.store(true, Ordering::SeqCst);
+    if let Some(reporter) = &machine_reporter {
+        let _ = reporter.emit("stopping", json!({ "reason": "shutdown_signal" }));
+    }
+}
+
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() {
+    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
+        Ok(signal) => signal,
+        Err(_) => {
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        }
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = sigterm.recv() => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 #[derive(Clone)]
 struct AppState {
     project_dir: PathBuf,
     registry: ToolRegistry,
     run_options: RunOptions,
+    machine_reporter: Option<ServeMachineReporter>,
 }
 
 #[derive(Clone)]
@@ -159,8 +254,60 @@ impl ToolRegistry {
             .collect()
     }
 
+    fn machine_tools(&self) -> Vec<Value> {
+        self.tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "mcp_name": tool.mcp_name,
+                    "identity": tool.descriptor.package_ref,
+                    "version": tool.descriptor.resolved_version,
+                })
+            })
+            .collect()
+    }
+
     fn find(&self, name: &str) -> Option<&McpToolRegistration> {
         self.by_name.get(name)
+    }
+}
+
+#[derive(Clone)]
+struct ServeMachineReporter {
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    next_id: Arc<AtomicU64>,
+}
+
+impl ServeMachineReporter {
+    fn stdout() -> Self {
+        Self::with_writer(Box::new(io::stdout()))
+    }
+
+    fn with_writer(writer: Box<dyn Write + Send>) -> Self {
+        Self {
+            writer: Arc::new(Mutex::new(writer)),
+            next_id: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    fn next_call_id(&self) -> String {
+        format!("mcp-call-{}", self.next_id.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn emit(&self, event: &str, fields: Value) -> Result<()> {
+        let frame = json!({
+            "schema_version": 1,
+            "protocol": "agentpm-mcp-machine",
+            "version": 1,
+            "event": event,
+            "timestamp": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+            "fields": fields,
+        });
+        let mut writer = self.writer.lock().expect("MCP machine stdout poisoned");
+        serde_json::to_writer(&mut **writer, &frame)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
     }
 }
 
@@ -319,6 +466,25 @@ async fn handle_tools_call(state: Arc<AppState>, params: Option<Value>) -> Resul
         code: -32602,
         message: format!("unknown MCP tool: {name}"),
     })?;
+    let call_id = state
+        .machine_reporter
+        .as_ref()
+        .map(ServeMachineReporter::next_call_id);
+    if let (Some(reporter), Some(call_id)) = (&state.machine_reporter, &call_id) {
+        reporter
+            .emit(
+                "tool_call_started",
+                json!({
+                    "call_id": call_id,
+                    "mcp_name": registration.mcp_name,
+                    "identity": registration.descriptor.package_ref,
+                }),
+            )
+            .map_err(|err| RpcError {
+                code: -32603,
+                message: format!("failed to emit MCP machine event: {err}"),
+            })?;
+    }
     let project_dir = state.project_dir.clone();
     let descriptor = registration.descriptor.clone();
     let run_options = state.run_options.clone();
@@ -331,7 +497,40 @@ async fn handle_tools_call(state: Arc<AppState>, params: Option<Value>) -> Resul
         code: -32603,
         message: format!("failed to join MCP tool worker: {err}"),
     })?
-    .map_err(map_runner_error)?;
+    .map_err(|err| {
+        let rpc_error = map_runner_error(err);
+        if let (Some(reporter), Some(call_id)) = (&state.machine_reporter, &call_id) {
+            let _ = reporter.emit(
+                "tool_call_failed",
+                json!({
+                    "call_id": call_id,
+                    "mcp_name": registration.mcp_name,
+                    "identity": registration.descriptor.package_ref,
+                    "error": {
+                        "code": rpc_error.code,
+                        "message": rpc_error.message,
+                    }
+                }),
+            );
+        }
+        rpc_error
+    })?;
+
+    if let (Some(reporter), Some(call_id)) = (&state.machine_reporter, &call_id) {
+        reporter
+            .emit(
+                "tool_call_completed",
+                json!({
+                    "call_id": call_id,
+                    "mcp_name": registration.mcp_name,
+                    "identity": registration.descriptor.package_ref,
+                }),
+            )
+            .map_err(|err| RpcError {
+                code: -32603,
+                message: format!("failed to emit MCP machine event: {err}"),
+            })?;
+    }
 
     Ok(json!({
         "content": [{
@@ -412,9 +611,11 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use std::fs;
+    use std::io;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower::util::ServiceExt;
 
@@ -470,6 +671,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn selected_tools_filter_mcp_surface() {
+        let root = TestProject::new();
+        root.write_lock(lock_with_packages(&[
+            ("@zack/echo-json", "0.1.0"),
+            ("@zack/other-tool", "0.1.0"),
+        ]));
+        root.write_tool(
+            "@zack/echo-json",
+            "0.1.0",
+            python_tool_manifest("echo-json", "0.1.0", "python3"),
+            python_echo_script("0.1.0"),
+        );
+        root.write_tool(
+            "@zack/other-tool",
+            "0.1.0",
+            python_tool_manifest("other-tool", "0.1.0", "python3"),
+            python_echo_script("0.1.0"),
+        );
+        let selected = Some(BTreeSet::from(["@zack/other-tool".to_string()]));
+        let registry = build_registry(root.path(), &selected).unwrap();
+
+        let tools = registry.tools_list();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "zack__other_tool");
+    }
+
+    #[test]
+    fn rejects_normalized_mcp_tool_name_collisions() {
+        let descriptor_a = AdapterToolDescriptor {
+            package_ref: "@zack/foo-bar".into(),
+            resolved_version: "0.1.0".into(),
+            manifest_name: "foo-bar".into(),
+            manifest_version: "0.1.0".into(),
+            description: None,
+            input_schema: json!({ "type": "object" }),
+            output_schema: json!({ "type": "object" }),
+            environment_requirements: HashMap::new(),
+            runtime: None,
+        };
+        let descriptor_b = AdapterToolDescriptor {
+            package_ref: "@zack/foo_bar".into(),
+            resolved_version: "0.1.0".into(),
+            manifest_name: "foo_bar".into(),
+            manifest_version: "0.1.0".into(),
+            description: None,
+            input_schema: json!({ "type": "object" }),
+            output_schema: json!({ "type": "object" }),
+            environment_requirements: HashMap::new(),
+            runtime: None,
+        };
+
+        let err = match ToolRegistry::from_descriptors(vec![descriptor_a, descriptor_b]) {
+            Ok(_) => panic!("expected normalized MCP name collision"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("tool name collision"));
+    }
+
+    #[tokio::test]
     async fn calls_locked_tool_over_http_mcp() {
         let python = available_test_python().expect("python >=3.10 required for tests");
         let root = TestProject::new();
@@ -514,6 +776,58 @@ mod tests {
             "hello"
         );
         assert_eq!(body["result"]["isError"], false);
+    }
+
+    #[tokio::test]
+    async fn machine_mode_emits_ready_and_tool_call_events() {
+        let python = available_test_python().expect("python >=3.10 required for tests");
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/echo-json", "0.1.0"));
+        root.write_tool(
+            "@zack/echo-json",
+            "0.1.0",
+            python_tool_manifest("echo-json", "0.1.0", "python3"),
+            python_echo_script("0.1.0"),
+        );
+        let machine_output = Arc::new(Mutex::new(Vec::new()));
+        let reporter = ServeMachineReporter::with_writer(Box::new(TestWriter {
+            bytes: machine_output.clone(),
+        }));
+        let app = test_app_with_run_options_and_reporter(
+            root.path(),
+            test_python_run_options(python.as_str()),
+            Some(reporter),
+        );
+
+        let response = app
+            .oneshot(json_request(
+                "/mcp",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 30,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "zack__echo_json",
+                        "arguments": { "message": "hello" }
+                    }
+                }),
+            ))
+            .await
+            .unwrap();
+        let body = json_body(response).await;
+
+        assert_eq!(
+            body["result"]["structuredContent"]["input"]["message"],
+            "hello"
+        );
+        let output = String::from_utf8(machine_output.lock().unwrap().clone()).unwrap();
+        let events = output
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(events[0]["event"], "tool_call_started");
+        assert_eq!(events[0]["fields"]["mcp_name"], "zack__echo_json");
+        assert_eq!(events[1]["event"], "tool_call_completed");
     }
 
     #[tokio::test]
@@ -721,15 +1035,29 @@ mod tests {
     }
 
     fn lock_for(package: &str, version: &str) -> String {
+        lock_with_packages(&[(package, version)])
+    }
+
+    fn lock_with_packages(packages: &[(&str, &str)]) -> String {
+        let dependencies = packages
+            .iter()
+            .map(|(package, version)| {
+                format!(
+                    r#"
+    "{package}": {{
+      "version": "{version}",
+      "integrity": "abc"
+    }}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
             r#"{{
   "lockfile_version": 1,
   "generated": "2026-05-03T00:00:00Z",
   "dependencies": {{
-    "{package}": {{
-      "version": "{version}",
-      "integrity": "abc"
-    }}
+{dependencies}
   }}
 }}"#
         )
@@ -932,11 +1260,20 @@ json.dump({{"ok": True}}, sys.stdout)
     }
 
     fn test_app_with_run_options(project_dir: &Path, run_options: RunOptions) -> Router {
+        test_app_with_run_options_and_reporter(project_dir, run_options, None)
+    }
+
+    fn test_app_with_run_options_and_reporter(
+        project_dir: &Path,
+        run_options: RunOptions,
+        machine_reporter: Option<ServeMachineReporter>,
+    ) -> Router {
         let registry = build_registry(project_dir, &None).unwrap();
         let state = Arc::new(AppState {
             project_dir: project_dir.to_path_buf(),
             registry,
             run_options,
+            machine_reporter,
         });
         build_router(state)
     }
@@ -953,5 +1290,20 @@ json.dump({{"ok": True}}, sys.stdout)
     async fn json_body(response: axum::response::Response) -> Value {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&body).unwrap()
+    }
+
+    struct TestWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl io::Write for TestWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.bytes.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 }

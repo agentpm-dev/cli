@@ -39,6 +39,21 @@ pub(super) fn memory_summaries_for_actions(
     summaries
 }
 
+pub(super) fn mcp_export_summaries_for_runtime(
+    runtime: &RuntimeSnapshot,
+) -> Vec<OperationReportSummary> {
+    runtime
+        .mcp_exports
+        .iter()
+        .map(|surface| OperationReportSummary {
+            operation_kind: "mcp_export".into(),
+            identity: surface.id.clone(),
+            status: surface.state.clone(),
+            count: surface.tools.len().try_into().unwrap_or(0),
+        })
+        .collect()
+}
+
 pub(super) fn model_turn_trace_fields(turn: &ModelTurn) -> BTreeMap<String, Value> {
     let mut fields = BTreeMap::from([("semantic_actions".into(), json!(turn.actions.len()))]);
     if let Some(content) = &turn.assistant_content {

@@ -389,6 +389,16 @@ pub struct RuntimeCapabilitySnapshot {
     pub state: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpExportRuntimeSnapshot {
+    pub id: String,
+    pub host: String,
+    pub port: u16,
+    pub endpoint: String,
+    pub tools: Vec<String>,
+    pub state: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileSnapshot {
     pub name: String,
@@ -427,6 +437,8 @@ pub struct RuntimeSnapshot {
     pub memory: Vec<MemorySpaceRuntimeSnapshot>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory_operations: Vec<MemoryOperationRuntimeSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_exports: Vec<McpExportRuntimeSnapshot>,
     pub capability_candidates: Vec<RuntimeCapabilitySnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelProviderSelection>,
@@ -453,6 +465,7 @@ impl RuntimeSnapshot {
             knowledge: Vec::new(),
             memory: Vec::new(),
             memory_operations: Vec::new(),
+            mcp_exports: Vec::new(),
             capability_candidates: Vec::new(),
             model: None,
         }

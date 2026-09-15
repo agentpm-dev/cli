@@ -1,4 +1,6 @@
 use super::*;
+
+use crate::harness_runtime::McpExportRuntimeSnapshot;
 #[test]
 fn executes_multi_phase_loop_and_accumulates_session_usage() {
     let (result, session, model) = run_engine(
@@ -48,6 +50,55 @@ fn supports_cycles_and_phase_reentry() {
         phases,
         vec!["assess", "execute", "review", "execute", "review"]
     );
+}
+
+#[test]
+fn run_report_includes_mcp_export_runtime_summaries() {
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let mut runtime = RuntimeSnapshot::empty("session-test".into());
+    runtime.mcp_exports.push(McpExportRuntimeSnapshot {
+        id: "public-tools".into(),
+        host: "127.0.0.1".into(),
+        port: 18181,
+        endpoint: "http://127.0.0.1:18181/mcp".into(),
+        tools: vec!["@zack/search".into(), "@zack/fetch".into()],
+        state: "ready".into(),
+    });
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion("a", "execute"),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(
+        result.report.mcp_summaries,
+        vec![OperationReportSummary {
+            operation_kind: "mcp_export".into(),
+            identity: "public-tools".into(),
+            status: "ready".into(),
+            count: 2,
+        }]
+    );
+    assert!(result.report.action_summaries.iter().all(|action| {
+        action.action_kind != "mcp_export"
+            && action.identity != "public-tools"
+            && action.action_kind != "agentpm_tool"
+    }));
 }
 
 #[test]

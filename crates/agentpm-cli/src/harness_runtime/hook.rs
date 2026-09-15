@@ -2282,6 +2282,7 @@ for line in sys.stdin:
                 knowledge: Vec::new(),
                 memory: Vec::new(),
                 memory_operations: Vec::new(),
+                mcp_exports: Vec::new(),
                 capability_candidates: Vec::new(),
                 model: Some(selection.clone()),
             },

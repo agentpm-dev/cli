@@ -278,6 +278,8 @@ agentpm export --skill @zack/capitalize
 
 That interoperability flow keeps AgentPM as the source of truth for packaging and execution while making installed tools usable from other ecosystems.
 
+For Harness-managed MCP exports, `agentpm serve --mcp --machine --port 0` reserves stdout for JSONL lifecycle and Tool-call events. The first `ready` event includes the selected endpoint and normalized MCP Tool names, so hosts do not need to parse human stderr output. Harness config can tune managed export restart with `mcp.exports.restart.max_attempts` and `mcp.exports.restart.backoff_ms`; `max_attempts: 0` disables automatic restart. Restarted managed exports may bind a new ephemeral endpoint, so external clients should rediscover the surface after restart instead of reusing a cached URL. One-shot headless runs record final MCP export state in reports, but continuous in-run restart/rediscovery requires a machine-managed Harness Session or standalone `agentpm serve --mcp` hosting.
+
 ### Harness preflight
 
 For an installed Agent that declares a Loop, AgentPM can bootstrap the Harness plan and report static readiness before execution support is enabled:

@@ -24,13 +24,13 @@ pub use knowledge::{
 pub use memory::CustomMemoryRuntime;
 pub use model::{
     CapabilityDescriptor, ConsumerContextSnapshot, KnowledgeEmbeddingSnapshot,
-    KnowledgeRuntimeSnapshot, MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
-    MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelCapabilityAdvertisement,
-    ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure,
-    ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProfileSnapshot, PromptAssemblyInput,
-    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot, SkillResourceSnapshot,
-    SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind,
-    assemble_logical_prompt, model_request_turns,
+    KnowledgeRuntimeSnapshot, McpExportRuntimeSnapshot, MemoryOperationRefRuntimeSnapshot,
+    MemoryOperationRuntimeSnapshot, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
+    ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
+    ModelRuntimeFailure, ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProfileSnapshot,
+    PromptAssemblyInput, RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot,
+    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry,
+    TranscriptEntryKind, assemble_logical_prompt, model_request_turns,
 };
 pub use provider::{BuiltInModelRuntime, ProcessModelRuntime};
 pub use service::{HostServiceInvoker, ServiceLifecycleEmitter, ServiceLifecycleEvents};

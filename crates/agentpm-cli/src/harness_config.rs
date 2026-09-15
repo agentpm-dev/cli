@@ -178,7 +178,7 @@ pub enum HarnessImplementation {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct HarnessRestartPolicy {
     pub max_attempts: u32,
@@ -393,6 +393,7 @@ pub enum HarnessMcpHeaderValue {
 pub struct HarnessMcpExports {
     pub enabled: bool,
     pub host: String,
+    pub restart: HarnessRestartPolicy,
 }
 
 impl Default for HarnessMcpExports {
@@ -400,6 +401,7 @@ impl Default for HarnessMcpExports {
         Self {
             enabled: true,
             host: "127.0.0.1".into(),
+            restart: HarnessRestartPolicy::default(),
         }
     }
 }
@@ -1101,7 +1103,11 @@ mod tests {
                 },
                 "exports": {
                     "enabled": true,
-                    "host": "127.0.0.1"
+                    "host": "127.0.0.1",
+                    "restart": {
+                        "max_attempts": 3,
+                        "backoff_ms": 100
+                    }
                 }
             },
             "approvals": {
@@ -1157,6 +1163,8 @@ mod tests {
         assert_eq!(resolved.config_path.as_ref(), Some(&canonical_path));
         assert_eq!(resolved.config.trace.level, HarnessTraceLevel::Normal);
         assert_eq!(resolved.config.ui.branding.name, "AgentPM Harness");
+        assert_eq!(resolved.config.mcp.exports.restart.max_attempts, 1);
+        assert_eq!(resolved.config.mcp.exports.restart.backoff_ms, 250);
         assert_eq!(
             resolved.state_dir_source.kind,
             HarnessConfigSourceKind::ConfigFile
@@ -1166,7 +1174,11 @@ mod tests {
 
     #[test]
     fn complete_harness_config_validates_and_deserializes() {
-        assert_config_valid(complete_config());
+        let value = complete_config();
+        assert_config_valid(value.clone());
+        let config: HarnessConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(config.mcp.exports.restart.max_attempts, 3);
+        assert_eq!(config.mcp.exports.restart.backoff_ms, 100);
     }
 
     #[test]

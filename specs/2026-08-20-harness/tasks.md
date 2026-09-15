@@ -1074,28 +1074,28 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 
 ## Milestone 17: MCP Export and `agentpm serve --mcp` Machine Lifecycle
 > Scope note: realize Agent-authored `bindings.mcp` as outward AgentPM MCP server surfaces. Preserve the existing shared-runner MCP implementation while adding a stable machine lifecycle/event contract and Session-owned Harness management. Outward MCP remains independent of active Run phase semantics.
-- [ ] Add `agentpm serve --mcp --machine` with a documented versioned machine envelope and structured startup/ready/shutdown/error/event messages; protocol stdout must not require Harness to parse human stderr/stdout text.
-- [ ] Support `--port 0` and report the actual bound host/port/endpoint in machine readiness.
-- [ ] Preserve existing human `serve --mcp` behavior outside machine mode.
-- [ ] Keep default managed host loopback and honor `mcp.exports.host`; use ephemeral ports per logical surface rather than static config mapping.
-- [ ] Keep existing `serve --mcp` Tool invocation through the shared internal Tool runner; do **not** spawn public `agentpm run` per MCP request.
-- [ ] Ensure Milestone 7 runner hardening (schema/runtime/env/timeout/cancellation semantics) is inherited by MCP calls through the shared runner.
-- [ ] Add `serve --mcp` lifecycle cleanup for concurrent shared-runner Tool invocations: SIGINT/SIGTERM or managed Session shutdown must terminate any nested child process groups started by in-flight Tool calls without installing a permanent process-global `_exit` handler that bypasses graceful MCP/Harness cleanup.
-- [ ] Emit machine Tool-call started/completed/failed events containing canonical AgentPM identity and external MCP-safe normalized name.
+- [x] Add `agentpm serve --mcp --machine` with a documented versioned machine envelope and structured startup/ready/shutdown/error/event messages; protocol stdout must not require Harness to parse human stderr/stdout text.
+- [x] Support `--port 0` and report the actual bound host/port/endpoint in machine readiness.
+- [x] Preserve existing human `serve --mcp` behavior outside machine mode.
+- [x] Keep default managed host loopback and honor `mcp.exports.host`; use ephemeral ports per logical surface rather than static config mapping.
+- [x] Keep existing `serve --mcp` Tool invocation through the shared internal Tool runner; do **not** spawn public `agentpm run` per MCP request.
+- [x] Ensure Milestone 7 runner hardening (schema/runtime/env/timeout/cancellation semantics) is inherited by MCP calls through the shared runner.
+- [x] Add `serve --mcp` lifecycle cleanup for concurrent shared-runner Tool invocations: SIGINT/SIGTERM or managed Session shutdown must terminate any nested child process groups started by in-flight Tool calls without installing a permanent process-global `_exit` handler that bypasses graceful MCP/Harness cleanup.
+- [x] Emit machine Tool-call started/completed/failed events containing canonical AgentPM identity and external MCP-safe normalized name.
 
-- [ ] Add Harness McpRuntime export lifecycle that honors `mcp.exports.enabled`; when enabled, start one managed `agentpm serve --mcp --machine` subprocess per authored Agent `bindings.mcp` surface.
-- [ ] Pass exactly the top-level Agent Tools explicitly listed by that logical MCP surface; do not export Skill-transitive Tools by accident.
-- [ ] Treat a Tool being both phase-bound and MCP-exported as valid/non-redundant, and allow MCP-only exported Tools without making them phase capabilities.
-- [ ] Keep surfaces Session-owned and externally callable even when no Harness Run is active.
-- [ ] Validate MCP-normalized name collisions and surface Tool readiness before/at startup.
-- [ ] Suppress known runtime-incompatible Tools from the managed surface; expose the ready subset with strong diagnostics when non-empty and mark an empty surface unavailable.
-- [ ] Keep missing Tool env semantics authoritative at actual shared-runner invocation rather than pretending successful readiness guarantees env presence forever.
-- [ ] Keep outward calls outside active Run Tool Hooks, Loop `access.tools`, checkpoints, Tool retry policy, and phase transcripts.
-- [ ] Feed surface lifecycle and external call activity back through Harness events/preflight/report/TUI models without treating those calls as Run actions.
-- [ ] Apply managed-process restart policy: failed in-flight call is never replayed; optional restart restores only subsequent calls; exhausted restart makes the surface unavailable.
-- [ ] Ensure Session shutdown/cancellation terminates all Harness-owned MCP export subprocesses cleanly.
+- [x] Add Harness McpRuntime export lifecycle that honors `mcp.exports.enabled`; when enabled, start one managed `agentpm serve --mcp --machine` subprocess per authored Agent `bindings.mcp` surface.
+- [x] Pass exactly the top-level Agent Tools explicitly listed by that logical MCP surface; do not export Skill-transitive Tools by accident.
+- [x] Treat a Tool being both phase-bound and MCP-exported as valid/non-redundant, and allow MCP-only exported Tools without making them phase capabilities.
+- [x] Keep surfaces Session-owned and externally callable even when no Harness Run is active.
+- [x] Validate MCP-normalized name collisions and surface Tool readiness before/at startup.
+- [x] Suppress known runtime-incompatible Tools from the managed surface; expose the ready subset with strong diagnostics when non-empty and mark an empty surface unavailable.
+- [x] Keep missing Tool env semantics authoritative at actual shared-runner invocation rather than pretending successful readiness guarantees env presence forever.
+- [x] Keep outward calls outside active Run Tool Hooks, Loop `access.tools`, checkpoints, Tool retry policy, and phase transcripts.
+- [x] Feed surface lifecycle and external call activity back through Harness events/preflight/report/TUI models without treating those calls as Run actions.
+- [x] Apply managed-process restart policy: failed in-flight call is never replayed; optional restart restores only subsequent calls; exhausted restart makes the surface unavailable.
+- [x] Ensure Session shutdown/cancellation terminates all Harness-owned MCP export subprocesses cleanly.
 
-- [ ] Add tests for exports disabled/enabled, multiple surfaces, ephemeral ports/host, Tool filtering, normalized-name collisions, ready subset/empty surface behavior, call events, shared-runner failures, concurrent in-flight Tool cleanup on MCP server termination, process restart-without-replay, calls with no active Run, and cleanup.
+- [x] Add tests for exports disabled/enabled, multiple surfaces, ephemeral ports/host, Tool filtering, normalized-name collisions, ready subset/empty surface behavior, call events, shared-runner failures, concurrent in-flight Tool cleanup on MCP server termination, process restart-without-replay, calls with no active Run, and cleanup.
 
 ## Milestone 18: External MCP Import and Runtime Tool Augmentation
 > Scope note: let workspace runtime configuration add environment-specific MCP functionality to an already-published Agent. Imported MCP Tools become normal phase Tool capabilities only in explicitly configured scope and run through the same Harness Tool selection/validation/Hook/retry/failure pipeline as AgentPM Tools, while retaining distinct McpRuntime transport.

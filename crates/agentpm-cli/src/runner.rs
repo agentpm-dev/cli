@@ -42,6 +42,7 @@ const ERR_TOOL_OUTPUT_SCHEMA_INVALID: &str = "tool output failed schema validati
 const ERR_TOOL_OUTPUT_SCHEMA_MALFORMED: &str = "tool output schema is invalid";
 const ERR_TOOL_OUTPUT_LIMIT_EXCEEDED: &str = "tool output exceeded limit";
 const ERR_TOOL_TIMED_OUT: &str = "tool execution timed out";
+const ERR_TOOL_CANCELLED: &str = "tool execution cancelled";
 const ERR_TOOL_OUTPUT_NOT_JSON: &str = "tool stdout was not valid JSON";
 const ERR_TOOL_EXITED_UNSUCCESSFULLY: &str = "tool exited unsuccessfully";
 const ERR_ENTRYPOINT_CWD_MISSING: &str = "entrypoint cwd does not exist";
@@ -90,6 +91,8 @@ pub(crate) fn classify_runner_error(err: &anyhow::Error) -> RunnerErrorKind {
         RunnerErrorKind::Timeout
     } else if message.contains(ERR_TOOL_OUTPUT_LIMIT_EXCEEDED) {
         RunnerErrorKind::OutputLimit
+    } else if message.contains(ERR_TOOL_CANCELLED) {
+        RunnerErrorKind::Runtime
     } else if message.contains(ERR_TOOL_OUTPUT_NOT_JSON) {
         RunnerErrorKind::MalformedOutput
     } else if message.contains(ERR_REQUIRED_ENV_MISSING)
@@ -158,6 +161,7 @@ pub struct RunOptions {
     pub timeout_ms: Option<u64>,
     pub env_overrides: HashMap<String, String>,
     pub output_limit_bytes: usize,
+    pub cancellation_requested: Option<Arc<AtomicBool>>,
     #[cfg(unix)]
     pub cleanup_child_process_group_on_signal: bool,
 }
@@ -168,6 +172,7 @@ impl Default for RunOptions {
             timeout_ms: None,
             env_overrides: HashMap::new(),
             output_limit_bytes: DEFAULT_OUTPUT_LIMIT_BYTES,
+            cancellation_requested: None,
             #[cfg(unix)]
             cleanup_child_process_group_on_signal: false,
         }
@@ -422,6 +427,7 @@ pub fn run_installed_tool(
         &input_bytes,
         ExecuteLimits {
             timeout_ms: prepared.timeout_ms,
+            cancellation_requested: options.cancellation_requested.clone(),
             cleanup_child_process_group_on_signal,
             output_limit_bytes: options.output_limit_bytes,
         },
@@ -663,6 +669,7 @@ fn prepare_invocation(
     let interpreter = resolve_interpreter_command(
         entrypoint.command.as_str(),
         resolved.manifest.runtime.as_ref(),
+        &options.env_overrides,
     )?;
 
     let mut env: HashMap<String, String> = std::env::vars().collect();
@@ -721,7 +728,11 @@ fn prepare_invocation(
 }
 
 #[allow(dead_code)]
-fn resolve_interpreter_command(command: &str, runtime: Option<&RuntimeDecl>) -> Result<String> {
+fn resolve_interpreter_command(
+    command: &str,
+    runtime: Option<&RuntimeDecl>,
+    env_overrides: &HashMap<String, String>,
+) -> Result<String> {
     let requested = interpreter_family(command)
         .ok_or_else(|| anyhow!("unsupported entrypoint.command: {command}"))?;
 
@@ -745,7 +756,12 @@ fn resolve_interpreter_command(command: &str, runtime: Option<&RuntimeDecl>) -> 
     };
 
     let resolved = override_key
-        .and_then(|key| std::env::var(key).ok())
+        .and_then(|key| {
+            env_overrides
+                .get(key)
+                .cloned()
+                .or_else(|| std::env::var(key).ok())
+        })
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| command.to_string());
 
@@ -778,9 +794,11 @@ fn resolve_interpreter_command(command: &str, runtime: Option<&RuntimeDecl>) -> 
 
 #[allow(dead_code)]
 fn interpreter_family(command: &str) -> Option<String> {
-    match canonical_interpreter(command).as_str() {
+    let canonical = canonical_interpreter(command);
+    match canonical.as_str() {
         "node" | "nodejs" => Some("node".to_string()),
         "python" | "python3" => Some("python".to_string()),
+        _ if canonical.starts_with("python3.") => Some("python".to_string()),
         _ => None,
     }
 }
@@ -855,6 +873,7 @@ fn enforce_runtime_minimum_version(
 #[allow(dead_code)]
 struct ExecuteLimits {
     timeout_ms: u64,
+    cancellation_requested: Option<Arc<AtomicBool>>,
     cleanup_child_process_group_on_signal: bool,
     output_limit_bytes: usize,
 }
@@ -950,6 +969,27 @@ fn execute_with_timeout(
                 "{} after {} ms (stdout {} bytes, stderr {} bytes)",
                 ERR_TOOL_TIMED_OUT,
                 limits.timeout_ms,
+                stdout.len(),
+                stderr.len()
+            );
+        }
+
+        if limits
+            .cancellation_requested
+            .as_ref()
+            .is_some_and(|token| token.load(Ordering::SeqCst))
+        {
+            #[cfg(unix)]
+            {
+                let _ = kill_process_group(child.id());
+            }
+            let _ = child.kill();
+            child.wait().context("waiting for cancelled tool process")?;
+            let stdout = join_output_reader(stdout_reader)?;
+            let stderr = join_output_reader(stderr_reader)?;
+            bail!(
+                "{} (stdout {} bytes, stderr {} bytes)",
+                ERR_TOOL_CANCELLED,
                 stdout.len(),
                 stderr.len()
             );
@@ -1160,6 +1200,7 @@ fn preserve_failure_artifacts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1668,6 +1709,63 @@ mod tests {
         panic!("nested child process {child_pid} survived timeout cleanup");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_kills_nested_child_process_group() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/nested-cancel", "0.1.0"));
+        root.write_tool(
+            "@zack/nested-cancel",
+            "0.1.0",
+            tool_manifest("python3"),
+            python_nested_sleep_script(),
+        );
+        let pid_path = root
+            .tool_dir("@zack/nested-cancel", "0.1.0")
+            .join("child.pid");
+        let cancellation_requested = Arc::new(AtomicBool::new(false));
+        let options = RunOptions {
+            cancellation_requested: Some(Arc::clone(&cancellation_requested)),
+            ..RunOptions::default()
+        };
+        let project_dir = root.path().to_path_buf();
+        let handle = std::thread::spawn(move || {
+            run_installed_tool(
+                &project_dir,
+                &parse_tool_spec("@zack/nested-cancel").unwrap(),
+                &serde_json::json!({}),
+                &options,
+            )
+        });
+
+        for _ in 0..80 {
+            if pid_path.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(pid_path.exists(), "missing nested child pid file");
+        let child_pid = fs::read_to_string(&pid_path)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        cancellation_requested.store(true, Ordering::SeqCst);
+        let err = handle.join().unwrap().unwrap_err();
+        assert!(
+            format!("{err:#}").contains("tool execution cancelled"),
+            "{err:#}"
+        );
+
+        for _ in 0..20 {
+            if unsafe { libc::kill(child_pid, 0) } != 0 {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("nested child process {child_pid} survived cancellation cleanup");
+    }
+
     #[test]
     fn executes_simple_python_tool() {
         let python = available_command(&["python3", "python"]).expect("python required for tests");
@@ -1695,6 +1793,22 @@ mod tests {
 
         assert_eq!(result.output["input"]["message"], "hi");
         assert_eq!(result.output["envValue"], "");
+    }
+
+    #[test]
+    fn interpreter_resolution_uses_run_options_env_overrides() {
+        let mut options = RunOptions::default();
+        options.env_overrides.insert(
+            "AGENTPM_PYTHON".to_string(),
+            "/agentpm-test/missing/python3".to_string(),
+        );
+
+        let err = resolve_interpreter_command("python3", None, &options.env_overrides).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("interpreter not found or not executable"),
+            "{err:#}"
+        );
     }
 
     #[test]
