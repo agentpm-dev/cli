@@ -1411,6 +1411,24 @@ mod tests {
                             "transport": "stdio",
                             "command": "github-mcp-server",
                             "scope": {
+                                "mode": "global",
+                                "phases": ["review"]
+                            }
+                        }
+                    }
+                }
+            }),
+            "oneOf",
+        );
+        assert_config_invalid(
+            json!({
+                "version": 1,
+                "mcp": {
+                    "imports": {
+                        "github": {
+                            "transport": "stdio",
+                            "command": "github-mcp-server",
+                            "scope": {
                                 "mode": "phases",
                                 "phases": ["Review_Phase"]
                             }

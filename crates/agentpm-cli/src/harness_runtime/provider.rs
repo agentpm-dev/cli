@@ -498,6 +498,30 @@ fn provider_schema_fallback_diagnostics(request: &ModelRequest) -> Vec<String> {
                     alias.alias, alias.identity
                 ));
             }
+            "external_mcp_tool" => {
+                if let Some(tool) = request
+                    .effective_phase
+                    .active_mcp_tools
+                    .iter()
+                    .find(|tool| tool.identity == alias.identity)
+                {
+                    match mcp_provider_schema_degradation(&tool.input_schema) {
+                        Some(McpProviderSchemaDegradation::OpenFallback) => {
+                            diagnostics.insert(format!(
+                                "provider-facing schema fallback for `{}`: MCP Tool `{}` input schema uses unsupported composition or references that cannot be represented for the selected provider; arguments are advertised as an open object and Harness validates against the canonical MCP schema.",
+                                alias.alias, alias.identity
+                            ));
+                        }
+                        Some(McpProviderSchemaDegradation::Reduced) => {
+                            diagnostics.insert(format!(
+                                "provider-facing schema fallback for `{}`: MCP Tool `{}` input schema was reduced for provider compatibility; Harness validates against the canonical MCP schema.",
+                                alias.alias, alias.identity
+                            ));
+                        }
+                        None => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -629,17 +653,7 @@ fn action_parameters_schema(alias: &super::model::ActionAlias, request: &ModelRe
             "properties": {}
         }),
         "agentpm_tool" => agentpm_tool_parameters_schema(alias, request),
-        "external_mcp_tool" => json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "arguments": {
-                    "type": "object",
-                    "description": "JSON arguments for the selected Tool capability."
-                }
-            },
-            "required": ["arguments"]
-        }),
+        "external_mcp_tool" => external_mcp_tool_parameters_schema(alias, request),
         "skill_resource_read" => skill_resource_read_parameters_schema(alias, request),
         "knowledge_request" => knowledge_request_parameters_schema(alias, request),
         "memory_read" => memory_read_parameters_schema(alias, request),
@@ -1259,6 +1273,117 @@ fn agentpm_tool_parameters_schema(
     })
 }
 
+fn external_mcp_tool_parameters_schema(
+    alias: &super::model::ActionAlias,
+    request: &ModelRequest,
+) -> Value {
+    let input_schema = request
+        .effective_phase
+        .active_mcp_tools
+        .iter()
+        .find(|tool| tool.identity == alias.identity)
+        .map(|tool| provider_safe_mcp_input_schema(&tool.input_schema))
+        .unwrap_or_else(|| {
+            json!({
+                "type": "object",
+                "additionalProperties": true
+            })
+        });
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "arguments": input_schema
+        },
+        "required": ["arguments"]
+    })
+}
+
+fn provider_safe_mcp_input_schema(schema: &Value) -> Value {
+    match schema {
+        Value::Object(object) => {
+            let had_unsupported_wrapper = object.contains_key("$ref")
+                || object.contains_key("allOf")
+                || object.contains_key("anyOf")
+                || object.contains_key("oneOf");
+            let mut sanitized = serde_json::Map::new();
+            for (key, value) in object {
+                match key.as_str() {
+                    "$defs"
+                    | "$id"
+                    | "$schema"
+                    | "$ref"
+                    | "allOf"
+                    | "anyOf"
+                    | "oneOf"
+                    | "not"
+                    | "patternProperties"
+                    | "unevaluatedProperties" => {}
+                    "properties" => {
+                        if let Some(properties) = value.as_object() {
+                            let properties = properties
+                                .iter()
+                                .map(|(name, schema)| {
+                                    (name.clone(), provider_safe_mcp_input_schema(schema))
+                                })
+                                .collect();
+                            sanitized.insert(key.clone(), Value::Object(properties));
+                        }
+                    }
+                    "items" => {
+                        sanitized.insert(key.clone(), provider_safe_mcp_input_schema(value));
+                    }
+                    "additionalProperties" => {
+                        if value.is_boolean() {
+                            sanitized.insert(key.clone(), value.clone());
+                        } else {
+                            sanitized.insert(key.clone(), Value::Bool(true));
+                        }
+                    }
+                    _ => {
+                        sanitized.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            if sanitized.is_empty() && had_unsupported_wrapper {
+                json!({
+                    "type": "object",
+                    "additionalProperties": true
+                })
+            } else {
+                Value::Object(sanitized)
+            }
+        }
+        Value::Array(items) => {
+            Value::Array(items.iter().map(provider_safe_mcp_input_schema).collect())
+        }
+        _ => schema.clone(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpProviderSchemaDegradation {
+    Reduced,
+    OpenFallback,
+}
+
+fn mcp_provider_schema_degradation(schema: &Value) -> Option<McpProviderSchemaDegradation> {
+    let provider_schema = provider_safe_mcp_input_schema(schema);
+    if provider_schema == *schema {
+        return None;
+    }
+    if provider_schema
+        == json!({
+            "type": "object",
+            "additionalProperties": true
+        })
+    {
+        Some(McpProviderSchemaDegradation::OpenFallback)
+    } else {
+        Some(McpProviderSchemaDegradation::Reduced)
+    }
+}
+
 fn skill_resource_read_parameters_schema(
     alias: &super::model::ActionAlias,
     request: &ModelRequest,
@@ -1545,7 +1670,18 @@ fn semantic_action_from_provider_call(
                 .unwrap_or_else(|| json!({})),
         }),
         "external_mcp_tool" => {
-            let (server, tool) = split_identity(&alias.identity)?;
+            let server = alias.mcp_server.clone().ok_or_else(|| {
+                ModelRuntimeFailure::new(format!(
+                    "provider action alias `{}` is missing MCP server metadata",
+                    alias.alias
+                ))
+            })?;
+            let tool = alias.mcp_tool.clone().ok_or_else(|| {
+                ModelRuntimeFailure::new(format!(
+                    "provider action alias `{}` is missing MCP tool metadata",
+                    alias.alias
+                ))
+            })?;
             Ok(SemanticAction::ExternalMcpTool {
                 server,
                 tool,
@@ -2590,6 +2726,8 @@ mod tests {
             action_kind: "persistence_review_complete".into(),
             identity: "harness/persistence_review".into(),
             provider_shape: None,
+            mcp_server: None,
+            mcp_tool: None,
         }];
         let turn = normalize_provider_response(response, &aliases).unwrap();
         assert_eq!(turn.actions.len(), 1);
@@ -2600,11 +2738,79 @@ mod tests {
     }
 
     #[test]
+    fn provider_response_maps_duplicate_mcp_tool_names_through_structured_alias_metadata() {
+        let response = ProviderResponse {
+            text: String::new(),
+            action_calls: vec![ProviderActionCall {
+                id: Some("call-mcp-1".into()),
+                alias: "mcp_tool_search_linear".into(),
+                arguments: json!({ "arguments": { "query": "issue" } }),
+            }],
+            usage: RunUsage::default(),
+            finish_reason: Some("tool_calls".into()),
+            metadata: BTreeMap::new(),
+        };
+        let aliases = vec![
+            ActionAlias {
+                alias: "mcp_tool_search_github".into(),
+                action_kind: "external_mcp_tool".into(),
+                identity: "mcp:github/search".into(),
+                provider_shape: None,
+                mcp_server: Some("github".into()),
+                mcp_tool: Some("search".into()),
+            },
+            ActionAlias {
+                alias: "mcp_tool_search_linear".into(),
+                action_kind: "external_mcp_tool".into(),
+                identity: "mcp:linear/search".into(),
+                provider_shape: None,
+                mcp_server: Some("linear".into()),
+                mcp_tool: Some("search".into()),
+            },
+        ];
+
+        let turn = normalize_provider_response(response, &aliases).unwrap();
+
+        assert_eq!(turn.actions.len(), 1);
+        assert!(matches!(
+            &turn.actions[0].action,
+            SemanticAction::ExternalMcpTool {
+                server,
+                tool,
+                arguments
+            } if server == "linear"
+                && tool == "search"
+                && arguments == &json!({ "query": "issue" })
+        ));
+    }
+
+    #[test]
     fn action_parameter_schemas_use_resolved_tool_and_skill_metadata() {
         let mut request = model_request();
         let guide = vector_knowledge_snapshot("@zack/guide");
         request.runtime.knowledge.push(guide.clone());
         request.effective_phase.active_knowledge.push(guide);
+        let mcp_tool = crate::harness_runtime::McpImportRuntimeSnapshot {
+            server_id: "incident-data".into(),
+            tool_name: "search".into(),
+            identity: "mcp:incident-data/search".into(),
+            description: "Search incidents over MCP.".into(),
+            input_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "query": { "type": "string", "minLength": 1 }
+                },
+                "required": ["query"]
+            }),
+            transport: "http".into(),
+            scopes: vec!["global".into()],
+            endpoint: Some("https://mcp.example.com/mcp".into()),
+            state: "available".into(),
+            readiness_reason: None,
+            source: "harness_config".into(),
+        };
+        request.effective_phase.active_mcp_tools.push(mcp_tool);
         let memory = MemorySpaceRuntimeSnapshot {
             package: "@zack/state".into(),
             package_version: "0.1.0".into(),
@@ -2659,7 +2865,7 @@ mod tests {
 
         let required_cases = [
             (
-                action_alias("action_4", "external_mcp_tool", "incident-data/search"),
+                action_alias("action_4", "external_mcp_tool", "mcp:incident-data/search"),
                 "arguments",
             ),
             (
@@ -2697,6 +2903,18 @@ mod tests {
                 );
             }
         }
+        let mcp_schema = action_parameters_schema(
+            &action_alias("action_4", "external_mcp_tool", "mcp:incident-data/search"),
+            &request,
+        );
+        assert_eq!(
+            mcp_schema["properties"]["arguments"]["properties"]["query"]["type"],
+            json!("string")
+        );
+        assert_eq!(
+            mcp_schema["properties"]["arguments"]["required"],
+            json!(["query"])
+        );
 
         let memory_write_schema = action_parameters_schema(
             &action_alias("action_7", "memory_write", "@zack/state/conversation_state"),
@@ -2736,6 +2954,74 @@ mod tests {
         assert_eq!(
             append_only_memory_write_schema["properties"]["operation"]["enum"],
             json!(["create"])
+        );
+    }
+
+    #[test]
+    fn external_mcp_provider_schema_strips_unsupported_composition_without_changing_runtime_schema()
+    {
+        let mut request = model_request();
+        let canonical_schema = json!({
+            "$defs": {
+                "Query": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string" }
+                    },
+                    "required": ["query"]
+                }
+            },
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "query": {
+                    "anyOf": [
+                        { "type": "string" },
+                        { "type": "number" }
+                    ]
+                },
+                "options": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" }
+                }
+            },
+            "required": ["query"]
+        });
+        request.effective_phase.active_mcp_tools.push(
+            crate::harness_runtime::McpImportRuntimeSnapshot {
+                server_id: "incident-data".into(),
+                tool_name: "search".into(),
+                identity: "mcp:incident-data/search".into(),
+                description: "Search incidents over MCP.".into(),
+                input_schema: canonical_schema.clone(),
+                transport: "http".into(),
+                scopes: vec!["global".into()],
+                endpoint: Some("https://mcp.example.com/mcp".into()),
+                state: "available".into(),
+                readiness_reason: None,
+                source: "harness_config".into(),
+            },
+        );
+
+        let schema = action_parameters_schema(
+            &action_alias("action_4", "external_mcp_tool", "mcp:incident-data/search"),
+            &request,
+        );
+
+        let provider_arguments = &schema["properties"]["arguments"];
+        assert!(provider_arguments.get("$defs").is_none());
+        assert!(
+            provider_arguments["properties"]["query"]
+                .get("anyOf")
+                .is_none()
+        );
+        assert_eq!(
+            provider_arguments["properties"]["options"]["additionalProperties"],
+            json!(true)
+        );
+        assert_eq!(
+            request.effective_phase.active_mcp_tools[0].input_schema,
+            canonical_schema
         );
     }
 
@@ -3657,12 +3943,16 @@ mod tests {
                 action_kind: "memory_read".into(),
                 identity: "@zack/memory/notes".into(),
                 provider_shape: Some("key_record".into()),
+                mcp_server: None,
+                mcp_tool: None,
             },
             ActionAlias {
                 alias: "memory_read_notes_semantic_note_abcd1234".into(),
                 action_kind: "memory_read".into(),
                 identity: "@zack/memory/notes".into(),
                 provider_shape: Some("semantic".into()),
+                mcp_server: None,
+                mcp_tool: None,
             },
         ];
 
@@ -3965,6 +4255,11 @@ mod tests {
                 "memory_write",
                 "@zack/memory/notes",
             ),
+            action_alias(
+                "mcp_tool_lookup_ref_schema_abcd1234",
+                "external_mcp_tool",
+                "mcp:search/lookup",
+            ),
         ];
         request
             .effective_phase
@@ -3993,6 +4288,42 @@ mod tests {
                 description: "Write notes.".into(),
                 source: "agent_binding".into(),
             });
+        request
+            .effective_phase
+            .capability_catalog
+            .push(CapabilityDescriptor {
+                action_kind: "external_mcp_tool".into(),
+                identity: "mcp:search/lookup".into(),
+                description: "Lookup over imported MCP.".into(),
+                source: "harness_config".into(),
+            });
+        request.effective_phase.active_mcp_tools.push(
+            crate::harness_runtime::McpImportRuntimeSnapshot {
+                server_id: "search".into(),
+                tool_name: "lookup".into(),
+                identity: "mcp:search/lookup".into(),
+                description: "Lookup over imported MCP.".into(),
+                input_schema: json!({
+                    "$ref": "#/$defs/LookupArgs",
+                    "$defs": {
+                        "LookupArgs": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "query": { "type": "string" }
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                }),
+                transport: "http".into(),
+                scopes: vec!["global".into()],
+                endpoint: Some("https://mcp.example.com/mcp".into()),
+                state: "available".into(),
+                readiness_reason: None,
+                source: "harness_config".into(),
+            },
+        );
         let mut empty_context = context_knowledge_snapshot("@zack/empty-context");
         empty_context.documents.clear();
         request.effective_phase.active_knowledge.push(empty_context);
@@ -4038,6 +4369,11 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.contains("Memory write `@zack/memory/notes`"))
         );
+        assert!(snapshot.diagnostics.iter().any(|diagnostic| {
+            diagnostic.contains("MCP Tool `mcp:search/lookup`")
+                && diagnostic.contains("open object")
+                && diagnostic.contains("canonical MCP schema")
+        }));
     }
 
     #[test]
@@ -4946,6 +5282,8 @@ for line in sys.stdin:
                     action_kind: capability.action_kind.clone(),
                     identity: capability.identity.clone(),
                     provider_shape: None,
+                    mcp_server: None,
+                    mcp_tool: None,
                 }],
                 completion: CompletionContract {
                     phase_id: "review".into(),
@@ -4971,6 +5309,7 @@ for line in sys.stdin:
                 authored_profile_candidates: Vec::new(),
                 active_profiles: Vec::new(),
                 active_tools: Vec::new(),
+                active_mcp_tools: Vec::new(),
                 active_skills: Vec::new(),
                 active_knowledge: Vec::new(),
                 active_memory: Vec::new(),
@@ -5029,11 +5368,23 @@ for line in sys.stdin:
     }
 
     fn action_alias(alias: &str, action_kind: &str, identity: &str) -> ActionAlias {
+        let (mcp_server, mcp_tool) = if action_kind == "external_mcp_tool" {
+            identity
+                .strip_prefix("mcp:")
+                .unwrap_or(identity)
+                .split_once('/')
+                .map(|(server, tool)| (Some(server.to_string()), Some(tool.to_string())))
+                .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
         ActionAlias {
             alias: alias.into(),
             action_kind: action_kind.into(),
             identity: identity.into(),
             provider_shape: None,
+            mcp_server,
+            mcp_tool,
         }
     }
 
@@ -5048,6 +5399,8 @@ for line in sys.stdin:
             action_kind: action_kind.into(),
             identity: identity.into(),
             provider_shape: Some(provider_shape.into()),
+            mcp_server: None,
+            mcp_tool: None,
         }
     }
 

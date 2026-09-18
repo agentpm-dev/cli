@@ -1894,8 +1894,8 @@ impl HarnessEngine {
                 self.active_run_mut(session)?
                     .usage
                     .accepted_semantic_actions += 1;
-                let action = if let SemanticAction::AgentPmTool { tool, arguments } =
-                    &proposal.action
+                let action = if let Some((tool, arguments)) =
+                    tool_call_hook_target(&proposal.action)
                 {
                     let before_tool_call_hook = HarnessHookId::BeforeToolCall;
                     let before_tool_call_binding_count =
@@ -2023,12 +2023,9 @@ impl HarnessEngine {
                                 );
                             }
                             if before_tool_call_enabled {
-                                let argument_keys_after = match &patched {
-                                    SemanticAction::AgentPmTool { arguments, .. } => {
-                                        argument_keys(arguments)
-                                    }
-                                    _ => Vec::new(),
-                                };
+                                let argument_keys_after = tool_call_hook_target(&patched)
+                                    .map(|(_, arguments)| argument_keys(arguments))
+                                    .unwrap_or_default();
                                 self.emit_nonfatal_hook_failures(
                                     session,
                                     &run_id,
@@ -3185,6 +3182,14 @@ impl HarnessEngine {
                 },
             )?;
         }
+    }
+}
+
+fn tool_call_hook_target(action: &SemanticAction) -> Option<(String, &Value)> {
+    match action {
+        SemanticAction::AgentPmTool { tool, arguments } => Some((tool.clone(), arguments)),
+        SemanticAction::ExternalMcpTool { arguments, .. } => Some((action.identity(), arguments)),
+        _ => None,
     }
 }
 

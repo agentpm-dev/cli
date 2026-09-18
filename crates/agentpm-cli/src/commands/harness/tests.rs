@@ -929,6 +929,52 @@ fn human_preflight_reports_mcp_export_surfaces() {
 }
 
 #[test]
+fn human_preflight_reports_mcp_imports_without_secret_values() {
+    let root = temp_dir("human-preflight-mcp-imports");
+    let mut plan = minimal_plan(&root);
+    plan.report.mcp_imports = crate::harness_plan::PreflightMcpImports {
+        enabled: true,
+        servers: vec![
+            crate::harness_plan::PreflightMcpImportServer {
+                id: "company-search".into(),
+                transport: "http".into(),
+                scope: "global".into(),
+                tools: Some(vec!["search".into()]),
+                env: vec!["COMPANY_MCP_AUTHORIZATION".into()],
+                headers: vec!["Authorization".into(), "X-Workspace".into()],
+                startup_timeout_ms: None,
+                request_timeout_ms: None,
+                restart: None,
+            },
+            crate::harness_plan::PreflightMcpImportServer {
+                id: "local-mcp".into(),
+                transport: "stdio".into(),
+                scope: "phases:research".into(),
+                tools: None,
+                env: vec!["LOCAL_MCP_TOKEN".into()],
+                headers: Vec::new(),
+                startup_timeout_ms: Some(15_000),
+                request_timeout_ms: Some(120_000),
+                restart: Some(crate::harness_config::HarnessRestartPolicy::default()),
+            },
+        ],
+    };
+
+    let lines = mcp_import_preflight_lines(&plan);
+
+    assert_eq!(
+        lines,
+        vec![
+            "- servers: 2",
+            "  - `company-search`: transport: http, scope: global, tools: search, env: COMPANY_MCP_AUTHORIZATION, headers: Authorization, X-Workspace",
+            "  - `local-mcp`: transport: stdio, scope: phases:research, tools: all advertised, env: LOCAL_MCP_TOKEN, request_timeout_ms: 120000, startup_timeout_ms: 15000, restart: max_attempts=1, backoff_ms=250",
+        ]
+    );
+    assert!(!lines.join("\n").contains("Bearer"));
+    assert!(!lines.join("\n").contains("secret"));
+}
+
+#[test]
 fn default_surface_is_tui_with_explicit_headless_and_machine_modes() {
     let default_args = HarnessArgs {
         agent: None,
@@ -3426,6 +3472,7 @@ fn minimal_run_report(run_id: &str) -> RunReport {
         action_summaries: Vec::new(),
         tool_summaries: Vec::new(),
         mcp_summaries: Vec::new(),
+        mcp_imports: Vec::new(),
         knowledge_summaries: Vec::new(),
         memory_summaries: Vec::new(),
         memory_write_review_summaries: Vec::new(),
@@ -3490,6 +3537,10 @@ fn minimal_plan(root: &Path) -> ResolvedHarnessPlan {
                 host: "127.0.0.1".into(),
                 restart: crate::harness_config::HarnessRestartPolicy::default(),
                 surfaces: Vec::new(),
+            },
+            mcp_imports: crate::harness_plan::PreflightMcpImports {
+                enabled: false,
+                servers: Vec::new(),
             },
         },
     }
@@ -4088,6 +4139,7 @@ fn empty_model_request(selection: ModelProviderSelection) -> ModelRequest {
             authored_profile_candidates: Vec::new(),
             active_profiles: Vec::new(),
             active_tools: Vec::new(),
+            active_mcp_tools: Vec::new(),
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory: Vec::new(),

@@ -1,6 +1,6 @@
 use crate::harness_config::{
-    HarnessConfigOverrides, HarnessImplementation, HarnessMcpExports, HarnessMcpImport,
-    HarnessMcpScope, ResolvedHarnessConfig, load_harness_config_with_overrides,
+    HarnessConfigOverrides, HarnessImplementation, HarnessMcpExports, HarnessMcpHeaderValue,
+    HarnessMcpImport, HarnessMcpScope, ResolvedHarnessConfig, load_harness_config_with_overrides,
 };
 use crate::manifest::{
     AgentBindingScope, AgentBindings, AgentManifest, KnowledgeManifest, MemoryManifest,
@@ -65,6 +65,7 @@ pub struct PreflightReport {
     pub status: PreflightStatus,
     pub diagnostics: Vec<PreflightDiagnostic>,
     pub mcp_exports: PreflightMcpExports,
+    pub mcp_imports: PreflightMcpImports,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +80,25 @@ pub struct PreflightMcpExports {
 pub struct PreflightMcpExportSurface {
     pub id: String,
     pub tools: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreflightMcpImports {
+    pub enabled: bool,
+    pub servers: Vec<PreflightMcpImportServer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreflightMcpImportServer {
+    pub id: String,
+    pub transport: String,
+    pub scope: String,
+    pub tools: Option<Vec<String>>,
+    pub env: Vec<String>,
+    pub headers: Vec<String>,
+    pub startup_timeout_ms: Option<u64>,
+    pub request_timeout_ms: Option<u64>,
+    pub restart: Option<crate::harness_config::HarnessRestartPolicy>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,6 +208,7 @@ struct PlanParts {
     profiles: BTreeMap<String, ProfileSnapshot>,
     capabilities: Vec<StaticCapabilityCandidate>,
     mcp_exports: PreflightMcpExports,
+    mcp_imports: PreflightMcpImports,
     diagnostics: Vec<PreflightDiagnostic>,
 }
 
@@ -226,6 +247,7 @@ pub fn resolve_harness_plan(
 
     let Some(lock) = read_required_lock(&lock_path, &mut diagnostics)? else {
         let mcp_exports = preflight_mcp_exports(&config.config.mcp.exports, None);
+        let mcp_imports = preflight_mcp_imports(&config.config.mcp.imports);
         return Ok(build_plan(PlanParts {
             workspace_root,
             lock_path,
@@ -239,12 +261,14 @@ pub fn resolve_harness_plan(
             profiles,
             capabilities,
             mcp_exports,
+            mcp_imports,
             diagnostics,
         }));
     };
 
     let Some(lock_v2) = lock_v2(lock, &mut diagnostics) else {
         let mcp_exports = preflight_mcp_exports(&config.config.mcp.exports, None);
+        let mcp_imports = preflight_mcp_imports(&config.config.mcp.imports);
         return Ok(build_plan(PlanParts {
             workspace_root,
             lock_path,
@@ -258,6 +282,7 @@ pub fn resolve_harness_plan(
             profiles,
             capabilities,
             mcp_exports,
+            mcp_imports,
             diagnostics,
         }));
     };
@@ -301,6 +326,7 @@ pub fn resolve_harness_plan(
     }
 
     let mcp_exports = preflight_mcp_exports(&config.config.mcp.exports, selected_manifest.as_ref());
+    let mcp_imports = preflight_mcp_imports(&config.config.mcp.imports);
     Ok(build_plan(PlanParts {
         workspace_root,
         lock_path,
@@ -314,6 +340,7 @@ pub fn resolve_harness_plan(
         profiles,
         capabilities,
         mcp_exports,
+        mcp_imports,
         diagnostics,
     }))
 }
@@ -335,6 +362,7 @@ fn build_plan(parts: PlanParts) -> ResolvedHarnessPlan {
         status: preflight_status(&parts.diagnostics),
         diagnostics: parts.diagnostics,
         mcp_exports: parts.mcp_exports,
+        mcp_imports: parts.mcp_imports,
     };
     ResolvedHarnessPlan {
         workspace_root: parts.workspace_root,
@@ -375,6 +403,60 @@ fn preflight_mcp_exports(
         host: config.host.clone(),
         restart: config.restart.clone(),
         surfaces,
+    }
+}
+
+fn preflight_mcp_imports(imports: &HashMap<String, HarnessMcpImport>) -> PreflightMcpImports {
+    let mut servers = imports
+        .iter()
+        .map(|(id, import)| match import {
+            HarnessMcpImport::Stdio {
+                env,
+                scope,
+                tools,
+                startup_timeout_ms,
+                request_timeout_ms,
+                restart,
+                ..
+            } => PreflightMcpImportServer {
+                id: id.clone(),
+                transport: "stdio".into(),
+                scope: mcp_scope_label(scope),
+                tools: tools.clone(),
+                env: env.clone(),
+                headers: Vec::new(),
+                startup_timeout_ms: Some(*startup_timeout_ms),
+                request_timeout_ms: Some(*request_timeout_ms),
+                restart: Some(restart.clone()),
+            },
+            HarnessMcpImport::Http {
+                headers,
+                scope,
+                tools,
+                ..
+            } => PreflightMcpImportServer {
+                id: id.clone(),
+                transport: "http".into(),
+                scope: mcp_scope_label(scope),
+                tools: tools.clone(),
+                env: headers
+                    .values()
+                    .filter_map(|value| match value {
+                        HarnessMcpHeaderValue::Env { env } => Some(env.clone()),
+                        HarnessMcpHeaderValue::Value { .. } => None,
+                    })
+                    .collect(),
+                headers: headers.keys().cloned().collect(),
+                startup_timeout_ms: None,
+                request_timeout_ms: None,
+                restart: None,
+            },
+        })
+        .collect::<Vec<_>>();
+    servers.sort_by(|a, b| a.id.cmp(&b.id));
+    PreflightMcpImports {
+        enabled: !servers.is_empty(),
+        servers,
     }
 }
 

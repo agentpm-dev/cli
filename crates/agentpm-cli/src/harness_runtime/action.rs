@@ -179,7 +179,7 @@ impl SemanticAction {
     pub fn identity(&self) -> String {
         match self {
             Self::AgentPmTool { tool, .. } => tool.clone(),
-            Self::ExternalMcpTool { server, tool, .. } => format!("{server}/{tool}"),
+            Self::ExternalMcpTool { server, tool, .. } => format!("mcp:{server}/{tool}"),
             Self::SkillResourceRead { skill, resource } => format!("{skill}/{resource}"),
             Self::KnowledgeRequest { package, .. } => package.clone(),
             Self::MemoryRead { package, space, .. } | Self::MemoryWrite { package, space, .. } => {

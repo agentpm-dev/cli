@@ -1037,6 +1037,7 @@ fn persistence_review_effective_phase(effective_phase: &EffectivePhase) -> Effec
     review_phase.tools_allowed = Some(false);
     review_phase.knowledge_allowed = Some(false);
     review_phase.active_tools.clear();
+    review_phase.active_mcp_tools.clear();
     review_phase.active_skills.clear();
     review_phase.active_knowledge.clear();
     review_phase.capability_catalog = effective_phase

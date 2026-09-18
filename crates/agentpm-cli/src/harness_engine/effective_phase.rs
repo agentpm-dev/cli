@@ -1,5 +1,5 @@
 use super::*;
-use crate::harness_runtime::MemoryOperationRuntimeSnapshot;
+use crate::harness_runtime::{McpImportRuntimeSnapshot, MemoryOperationRuntimeSnapshot};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EffectivePhase {
@@ -11,6 +11,7 @@ pub struct EffectivePhase {
     pub authored_profile_candidates: Vec<String>,
     pub active_profiles: Vec<ActiveProfile>,
     pub active_tools: Vec<ToolRuntimeSnapshot>,
+    pub active_mcp_tools: Vec<McpImportRuntimeSnapshot>,
     pub active_skills: Vec<SkillRuntimeSnapshot>,
     pub active_knowledge: Vec<KnowledgeRuntimeSnapshot>,
     pub active_memory: Vec<MemorySpaceRuntimeSnapshot>,
@@ -29,6 +30,7 @@ pub(super) fn runtime_capability_descriptors(
     memory_write_allowed: Option<bool>,
     suppressed_capabilities: &mut Vec<SuppressedCapability>,
     active_tools: &mut Vec<ToolRuntimeSnapshot>,
+    active_mcp_tools: &mut Vec<McpImportRuntimeSnapshot>,
     active_skills: &mut Vec<SkillRuntimeSnapshot>,
     active_knowledge: &mut Vec<KnowledgeRuntimeSnapshot>,
     active_memory: &mut Vec<MemorySpaceRuntimeSnapshot>,
@@ -36,6 +38,7 @@ pub(super) fn runtime_capability_descriptors(
 ) -> Vec<CapabilityDescriptor> {
     let mut descriptors = Vec::new();
     let mut seen_tools = BTreeSet::new();
+    let mut seen_mcp_tools = BTreeSet::new();
     let mut seen_skills = BTreeSet::new();
     let mut seen_knowledge = BTreeSet::new();
     let mut seen_memory_read = BTreeSet::new();
@@ -86,6 +89,51 @@ pub(super) fn runtime_capability_descriptors(
                     action_kind: "agentpm_tool".into(),
                     identity: tool.name.clone(),
                     description: tool.description.clone(),
+                    source: candidate.source.clone(),
+                });
+            }
+            "mcp_import_tool" => {
+                if !seen_mcp_tools.insert(candidate.identity.clone()) {
+                    continue;
+                }
+                if tools_allowed == Some(false) {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "external_mcp_tool".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: "Loop access.tools=false for this phase".into(),
+                    });
+                    continue;
+                }
+                let Some(tool) = runtime
+                    .mcp_imports
+                    .iter()
+                    .find(|tool| tool.identity == candidate.identity)
+                else {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "external_mcp_tool".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: "resolved MCP Tool metadata unavailable".into(),
+                    });
+                    continue;
+                };
+                if !is_available_candidate(candidate) || tool.state != "available" {
+                    suppressed_capabilities.push(SuppressedCapability {
+                        kind: "external_mcp_tool".into(),
+                        identity: candidate.identity.clone(),
+                        source: candidate.source.clone(),
+                        reason: tool.readiness_reason.clone().unwrap_or_else(|| {
+                            format!("MCP Tool readiness state is {}", tool.state)
+                        }),
+                    });
+                    continue;
+                }
+                active_mcp_tools.push(tool.clone());
+                descriptors.push(CapabilityDescriptor {
+                    action_kind: "external_mcp_tool".into(),
+                    identity: tool.identity.clone(),
+                    description: imported_mcp_descriptor_description(tool),
                     source: candidate.source.clone(),
                 });
             }
@@ -397,6 +445,13 @@ pub(super) fn knowledge_descriptor_description(knowledge: &KnowledgeRuntimeSnaps
     }
 }
 
+fn imported_mcp_descriptor_description(tool: &McpImportRuntimeSnapshot) -> String {
+    format!(
+        "{} Imported MCP Tool `{}` from server `{}` over {} transport.",
+        tool.description, tool.tool_name, tool.server_id, tool.transport
+    )
+}
+
 pub(super) fn memory_read_descriptor_description(memory: &MemorySpaceRuntimeSnapshot) -> String {
     let record_types = memory
         .record_types
@@ -662,6 +717,7 @@ impl EffectivePhase {
             }
         }
         let mut active_tools = Vec::new();
+        let mut active_mcp_tools = Vec::new();
         let mut active_skills = Vec::new();
         let mut active_knowledge = Vec::new();
         let mut active_memory = Vec::new();
@@ -680,6 +736,7 @@ impl EffectivePhase {
                 .and_then(|memory| memory.write),
             &mut suppressed_capabilities,
             &mut active_tools,
+            &mut active_mcp_tools,
             &mut active_skills,
             &mut active_knowledge,
             &mut active_memory,
@@ -698,6 +755,7 @@ impl EffectivePhase {
             authored_profile_candidates,
             active_profiles,
             active_tools,
+            active_mcp_tools,
             active_skills,
             active_knowledge,
             active_memory,
@@ -729,5 +787,88 @@ impl ActiveProfile {
             version: snapshot.version.clone(),
             profile: snapshot.profile.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness_runtime::RuntimeCapabilitySnapshot;
+    use crate::manifest::{LoopPhase, LoopPhaseAccess};
+    use serde_json::json;
+
+    #[test]
+    fn imported_mcp_tools_enter_only_matching_tool_allowed_phases() {
+        let mut runtime = RuntimeSnapshot::empty("session".into());
+        runtime.mcp_imports.push(McpImportRuntimeSnapshot {
+            server_id: "search".into(),
+            tool_name: "lookup".into(),
+            identity: "mcp:search/lookup".into(),
+            description: "Lookup launch readiness.".into(),
+            input_schema: json!({ "type": "object" }),
+            transport: "stdio".into(),
+            scopes: vec!["phase:investigate".into()],
+            endpoint: None,
+            state: "available".into(),
+            readiness_reason: None,
+            source: "harness_config".into(),
+        });
+        runtime
+            .capability_candidates
+            .push(RuntimeCapabilitySnapshot {
+                kind: "mcp_import_tool".into(),
+                identity: "mcp:search/lookup".into(),
+                scope: "phase:investigate".into(),
+                source: "harness_config".into(),
+                state: "available".into(),
+            });
+
+        let active = EffectivePhase::from_phase(
+            &LoopPhase {
+                id: "investigate".into(),
+                objective: "Investigate.".into(),
+                access: None,
+                outcomes: Vec::new(),
+            },
+            &runtime,
+        );
+        assert!(runtime.tools.is_empty());
+        assert!(active.active_tools.is_empty());
+        assert_eq!(active.active_mcp_tools.len(), 1);
+        assert!(active.capability_catalog.iter().any(|descriptor| {
+            descriptor.action_kind == "external_mcp_tool"
+                && descriptor.identity == "mcp:search/lookup"
+        }));
+
+        let inactive = EffectivePhase::from_phase(
+            &LoopPhase {
+                id: "summarize".into(),
+                objective: "Summarize.".into(),
+                access: None,
+                outcomes: Vec::new(),
+            },
+            &runtime,
+        );
+        assert!(inactive.active_mcp_tools.is_empty());
+
+        let disabled = EffectivePhase::from_phase(
+            &LoopPhase {
+                id: "investigate".into(),
+                objective: "Investigate.".into(),
+                access: Some(LoopPhaseAccess {
+                    tools: Some(false),
+                    knowledge: None,
+                    memory: None,
+                }),
+                outcomes: Vec::new(),
+            },
+            &runtime,
+        );
+        assert!(disabled.active_mcp_tools.is_empty());
+        assert!(disabled.suppressed_capabilities.iter().any(|suppressed| {
+            suppressed.kind == "external_mcp_tool"
+                && suppressed.identity == "mcp:search/lookup"
+                && suppressed.reason.contains("access.tools=false")
+        }));
     }
 }

@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::harness_runtime::McpExportRuntimeSnapshot;
+use crate::harness_runtime::{McpExportRuntimeSnapshot, McpImportRuntimeSnapshot};
 #[test]
 fn executes_multi_phase_loop_and_accumulates_session_usage() {
     let (result, session, model) = run_engine(
@@ -53,7 +53,7 @@ fn supports_cycles_and_phase_reentry() {
 }
 
 #[test]
-fn run_report_includes_mcp_export_runtime_summaries() {
+fn run_report_includes_mcp_runtime_summaries_and_import_details() {
     let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
     let mut runtime = RuntimeSnapshot::empty("session-test".into());
     runtime.mcp_exports.push(McpExportRuntimeSnapshot {
@@ -63,6 +63,19 @@ fn run_report_includes_mcp_export_runtime_summaries() {
         endpoint: "http://127.0.0.1:18181/mcp".into(),
         tools: vec!["@zack/search".into(), "@zack/fetch".into()],
         state: "ready".into(),
+    });
+    runtime.mcp_imports.push(McpImportRuntimeSnapshot {
+        server_id: "company-search".into(),
+        tool_name: "lookup".into(),
+        identity: "mcp:company-search/lookup".into(),
+        description: "Lookup launch readiness.".into(),
+        input_schema: json!({ "type": "object" }),
+        transport: "http".into(),
+        scopes: vec!["phase:execute".into()],
+        endpoint: Some("https://mcp.example.com/mcp".into()),
+        state: "available".into(),
+        readiness_reason: None,
+        source: "harness_config".into(),
     });
     let mut session = HarnessSession::with_runtime_snapshot(runtime);
     let mut model = ScriptedModelRuntime::new(vec![
@@ -87,12 +100,31 @@ fn run_report_includes_mcp_export_runtime_summaries() {
 
     assert_eq!(
         result.report.mcp_summaries,
-        vec![OperationReportSummary {
-            operation_kind: "mcp_export".into(),
-            identity: "public-tools".into(),
-            status: "ready".into(),
-            count: 2,
-        }]
+        vec![
+            OperationReportSummary {
+                operation_kind: "mcp_export".into(),
+                identity: "public-tools".into(),
+                status: "ready".into(),
+                count: 2,
+            },
+            OperationReportSummary {
+                operation_kind: "mcp_import".into(),
+                identity: "mcp:company-search/lookup".into(),
+                status: "available".into(),
+                count: 1,
+            }
+        ]
+    );
+    assert_eq!(result.report.mcp_imports.len(), 1);
+    assert_eq!(result.report.mcp_imports[0].server_id, "company-search");
+    assert_eq!(result.report.mcp_imports[0].tool_name, "lookup");
+    assert_eq!(
+        result.report.mcp_imports[0].scopes,
+        vec!["phase:execute".to_string()]
+    );
+    assert_eq!(
+        result.report.mcp_imports[0].endpoint.as_deref(),
+        Some("https://mcp.example.com/mcp")
     );
     assert!(result.report.action_summaries.iter().all(|action| {
         action.action_kind != "mcp_export"
@@ -1470,6 +1502,71 @@ fn tool_retry_counts_additional_attempts_after_initial_failure() {
     assert_eq!(dispatcher.dispatched.len(), 2);
     let next_prompt = model.requests[1].prompt.render_text();
     assert!(next_prompt.contains("ActionResult [agentpm_tool @zack/search]"));
+    assert!(next_prompt.contains(SUCCESSFUL_ACTION_RESULT_CONTROL));
+}
+
+#[test]
+fn imported_mcp_tool_retry_and_phase_local_result_use_shared_tool_pipeline() {
+    let mut loop_manifest = base_loop();
+    loop_manifest.r#loop.error_policy = Some(LoopErrorPolicy {
+        tool_failure: Some(LoopToolFailurePolicy {
+            action: LoopToolFailureAction::Retry,
+            max_retries: Some(2),
+            on_exhausted: Some(LoopToolFailureExhaustedAction::FailPhase),
+        }),
+        phase_failure: None,
+    });
+    let mut engine = HarnessEngine::new(loop_manifest, HarnessEngineOptions::new(limits()));
+    let runtime = runtime_with_imported_mcp_tool("search", "lookup", "global");
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let mut model = ScriptedModelRuntime::new(vec![
+        external_mcp_tool_turn("search", "lookup", json!({ "query": "launch" })),
+        completion("a", "execute"),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    dispatcher.push_result(
+        "mcp:search/lookup",
+        ActionDispatchResult::failure("temporary"),
+    );
+    dispatcher.push_result(
+        "mcp:search/lookup",
+        ActionDispatchResult::success(json!({"results": ["cached hit"]})),
+    );
+    let mut approvals = ScriptedApprovalController::default();
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(result.report.retry_count, 1);
+    assert_eq!(result.report.usage.tool_retries, 1);
+    assert_eq!(dispatcher.dispatched.len(), 2);
+    assert!(dispatcher.dispatched.iter().all(|action| {
+        matches!(
+            action,
+            SemanticAction::ExternalMcpTool {
+                server,
+                tool,
+                arguments
+            } if server == "search"
+                && tool == "lookup"
+                && arguments == &json!({ "query": "launch" })
+        )
+    }));
+    let next_prompt = model.requests[1].prompt.render_text();
+    assert!(next_prompt.contains("ActionResult [external_mcp_tool mcp:search/lookup]"));
+    assert!(next_prompt.contains("\"cached hit\""));
     assert!(next_prompt.contains(SUCCESSFUL_ACTION_RESULT_CONTROL));
 }
 

@@ -42,7 +42,7 @@ pub(super) fn memory_summaries_for_actions(
 pub(super) fn mcp_export_summaries_for_runtime(
     runtime: &RuntimeSnapshot,
 ) -> Vec<OperationReportSummary> {
-    runtime
+    let mut summaries = runtime
         .mcp_exports
         .iter()
         .map(|surface| OperationReportSummary {
@@ -51,6 +51,40 @@ pub(super) fn mcp_export_summaries_for_runtime(
             status: surface.state.clone(),
             count: surface.tools.len().try_into().unwrap_or(0),
         })
+        .collect::<Vec<_>>();
+    summaries.extend(
+        runtime
+            .mcp_imports
+            .iter()
+            .map(|tool| OperationReportSummary {
+                operation_kind: "mcp_import".into(),
+                identity: tool.identity.clone(),
+                status: tool.state.clone(),
+                count: u64::from(tool.state == "available"),
+            }),
+    );
+    summaries
+}
+
+pub(super) fn mcp_import_details_for_runtime(
+    runtime: &RuntimeSnapshot,
+) -> Vec<crate::harness_observability::McpImportReportSummary> {
+    runtime
+        .mcp_imports
+        .iter()
+        .map(
+            |tool| crate::harness_observability::McpImportReportSummary {
+                server_id: tool.server_id.clone(),
+                tool_name: tool.tool_name.clone(),
+                identity: tool.identity.clone(),
+                transport: tool.transport.clone(),
+                scopes: tool.scopes.clone(),
+                endpoint: tool.endpoint.clone(),
+                state: tool.state.clone(),
+                readiness_reason: tool.readiness_reason.clone(),
+                source: tool.source.clone(),
+            },
+        )
         .collect()
 }
 

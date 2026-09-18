@@ -16,11 +16,11 @@ use crate::harness_runtime::knowledge::{
     EmbeddingProvider, KnowledgeRuntimeFailure, ServiceRuntime,
 };
 use crate::harness_runtime::model::{
-    KnowledgeEmbeddingSnapshot, MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
-    MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelProviderSelection,
-    ModelRequestTurn, ModelRuntimeFailure, ModelTurn, RuntimeCapabilitySnapshot,
-    SUCCESSFUL_ACTION_RESULT_CONTROL, ScriptedModelRuntime, SkillResourceSnapshot,
-    SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    KnowledgeEmbeddingSnapshot, McpImportRuntimeSnapshot, MemoryOperationRefRuntimeSnapshot,
+    MemoryOperationRuntimeSnapshot, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
+    ModelProviderSelection, ModelRequestTurn, ModelRuntimeFailure, ModelTurn,
+    RuntimeCapabilitySnapshot, SUCCESSFUL_ACTION_RESULT_CONTROL, ScriptedModelRuntime,
+    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::harness_runtime::service::HostServiceInvoker;
 use crate::manifest::{
@@ -616,6 +616,45 @@ fn runtime_with_m14c_memory(
     runtime
 }
 
+fn runtime_with_imported_mcp_tool(
+    server_id: &str,
+    tool_name: &str,
+    scope: &str,
+) -> RuntimeSnapshot {
+    let mut runtime = RuntimeSnapshot::empty("session-test".into());
+    let identity = format!("mcp:{server_id}/{tool_name}");
+    runtime.mcp_imports.push(McpImportRuntimeSnapshot {
+        server_id: server_id.into(),
+        tool_name: tool_name.into(),
+        identity: identity.clone(),
+        description: "Imported MCP test tool.".into(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "query": { "type": "string" }
+            },
+            "required": ["query"]
+        }),
+        transport: "stdio".into(),
+        scopes: vec![scope.into()],
+        endpoint: None,
+        state: "available".into(),
+        readiness_reason: None,
+        source: "harness_config".into(),
+    });
+    runtime
+        .capability_candidates
+        .push(RuntimeCapabilitySnapshot {
+            kind: "mcp_import_tool".into(),
+            identity,
+            scope: scope.into(),
+            source: "harness_config".into(),
+            state: "available".into(),
+        });
+    runtime
+}
+
 fn session_with_tool_and_skill() -> HarnessSession {
     HarnessSession::with_runtime_snapshot(runtime_with_tool_and_skill())
 }
@@ -642,6 +681,23 @@ fn tool_turn_with_arguments(tool: &str, arguments: Value) -> ModelTurn {
         actions: vec![SemanticActionProposal::new(
             "tool",
             SemanticAction::AgentPmTool {
+                tool: tool.into(),
+                arguments,
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: None,
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
+fn external_mcp_tool_turn(server: &str, tool: &str, arguments: Value) -> ModelTurn {
+    ModelTurn {
+        assistant_content: None,
+        actions: vec![SemanticActionProposal::new(
+            "mcp-tool",
+            SemanticAction::ExternalMcpTool {
+                server: server.into(),
                 tool: tool.into(),
                 arguments,
             },

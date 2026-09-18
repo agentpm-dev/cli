@@ -277,6 +277,7 @@ impl HarnessEngine {
                 .cloned()
                 .collect(),
             mcp_summaries: mcp_export_summaries_for_runtime(&session.runtime_snapshot),
+            mcp_imports: mcp_import_details_for_runtime(&session.runtime_snapshot),
             knowledge_summaries: operation_summaries_for_action_kind(
                 &run.action_summaries,
                 "knowledge_request",

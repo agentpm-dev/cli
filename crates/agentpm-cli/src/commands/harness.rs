@@ -9,13 +9,14 @@ use crate::harness_runtime::{
     CompositeKnowledgeRuntime, ConfiguredApprovalController, ConfiguredHookRuntime,
     ConsumerContextSnapshot, CustomKnowledgeRuntime, CustomMemoryRuntime, HookRuntime,
     HostServiceInvoker, KnowledgeEmbeddingSnapshot, KnowledgeRuntime, KnowledgeRuntimeSnapshot,
-    LocalKnowledgeRuntime, McpExportRuntimeSnapshot, MemoryOperationRefRuntimeSnapshot,
-    MemoryOperationRuntimeSnapshot, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
-    ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
-    ModelRuntimeFailure, ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot,
-    ProcessModelRuntime, RoutingEmbeddingProvider, RuntimeCapabilitySnapshot, RuntimeSnapshot,
-    ServiceEmbeddingProvider, ServiceLifecycleEmitter, ServiceLifecycleEvents,
-    ServiceReadinessSnapshot, SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
+    LocalKnowledgeRuntime, McpExportRuntimeSnapshot, McpImportRuntimeActivation,
+    McpImportRuntimeSnapshot, MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
+    MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelCapabilityAdvertisement,
+    ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure,
+    ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProcessModelRuntime,
+    RoutingEmbeddingProvider, RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceEmbeddingProvider,
+    ServiceLifecycleEmitter, ServiceLifecycleEvents, ServiceReadinessSnapshot,
+    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot,
 };
 use crate::manifest::{
     AgentManifest, AgentMemoryBinding, MemoryManifest, MemoryOperation, MemoryOperationRef,
@@ -522,6 +523,67 @@ fn refresh_mcp_exports_for_session_without_restart(
     Ok(())
 }
 
+fn activate_mcp_import_runtime_for_plan(plan: &ResolvedHarnessPlan) -> McpImportRuntimeActivation {
+    crate::harness_runtime::ConfiguredMcpImportRuntime::start(
+        &plan.workspace_root,
+        &plan.config.config.mcp.imports,
+    )
+}
+
+fn apply_mcp_import_activation_to_runtime(
+    runtime: &mut RuntimeSnapshot,
+    activation: &McpImportRuntimeActivation,
+) {
+    runtime
+        .mcp_imports
+        .extend(activation.snapshots.iter().cloned());
+    runtime
+        .capability_candidates
+        .extend(activation.capability_candidates.iter().cloned());
+}
+
+fn emit_mcp_import_activation_events(
+    session: &mut HarnessSession,
+    snapshots: &[McpImportRuntimeSnapshot],
+) -> Result<()> {
+    for snapshot in snapshots {
+        let event_type = if snapshot.state == "available" {
+            crate::harness_observability::HarnessEventType::McpImportConnected
+        } else {
+            crate::harness_observability::HarnessEventType::McpImportFailed
+        };
+        let mut fields = BTreeMap::from([
+            ("server".into(), json!(snapshot.server_id)),
+            ("transport".into(), json!(snapshot.transport)),
+            ("state".into(), json!(snapshot.state)),
+            ("scopes".into(), json!(snapshot.scopes)),
+        ]);
+        if let Some(endpoint) = &snapshot.endpoint {
+            fields.insert("endpoint".into(), json!(endpoint));
+        }
+        if !snapshot.tool_name.is_empty() {
+            fields.insert("tool".into(), json!(snapshot.tool_name));
+            fields.insert("identity".into(), json!(snapshot.identity));
+        }
+        if let Some(reason) = &snapshot.readiness_reason {
+            fields.insert("reason".into(), json!(reason));
+        }
+        session.emitter.emit(
+            event_type,
+            crate::harness_observability::HarnessEventPayload::Lifecycle {
+                message: if snapshot.state == "available" {
+                    "MCP import Tool is ready.".into()
+                } else {
+                    "MCP import is unavailable.".into()
+                },
+                fields,
+            },
+            Default::default(),
+        )?;
+    }
+    Ok(())
+}
+
 fn merge_mcp_report_summaries(
     report_summaries: &mut Vec<crate::harness_observability::OperationReportSummary>,
     managed_summaries: Vec<crate::harness_observability::OperationReportSummary>,
@@ -593,6 +655,31 @@ impl McpExportActivity {
                 }
             })
             .collect()
+    }
+}
+
+struct McpImportActionDispatcher<'a> {
+    delegate: &'a mut dyn ActionDispatcher,
+    mcp_imports: Arc<Mutex<crate::harness_runtime::ConfiguredMcpImportRuntime>>,
+}
+
+impl ActionDispatcher for McpImportActionDispatcher<'_> {
+    fn dispatch(
+        &mut self,
+        action: &crate::harness_runtime::SemanticAction,
+    ) -> crate::harness_runtime::ActionDispatchResult {
+        match action {
+            crate::harness_runtime::SemanticAction::ExternalMcpTool {
+                server,
+                tool,
+                arguments,
+            } => self
+                .mcp_imports
+                .lock()
+                .expect("MCP import runtime poisoned")
+                .call_tool(server, tool, arguments),
+            _ => self.delegate.dispatch(action),
+        }
     }
 }
 
@@ -1095,7 +1182,11 @@ fn execute_machine_run(
         Some(&service_events),
     );
     apply_custom_memory_activation_to_runtime(&mut runtime, &custom_memory);
+    let mcp_import_activation = activate_mcp_import_runtime_for_plan(plan);
+    apply_mcp_import_activation_to_runtime(&mut runtime, &mcp_import_activation);
+    let mcp_import_runtime = Arc::new(Mutex::new(mcp_import_activation.runtime));
     let mut dispatcher = AgentPmActionDispatcher::from_runtime(&runtime)?
+        .with_mcp_import_runtime(Arc::clone(&mcp_import_runtime))
         .with_cancellation_token(bridge.cancellation_token());
     let mut knowledge = knowledge_runtime_for_machine_plan(
         plan,
@@ -1125,6 +1216,8 @@ fn execute_machine_run(
             plan.config.config.trace.clone(),
         )?));
     }
+    let mcp_import_snapshots = session.runtime_snapshot.mcp_imports.clone();
+    emit_mcp_import_activation_events(&mut session, &mcp_import_snapshots)?;
     session.runtime_snapshot.mcp_exports = mcp_exports.snapshots();
     let mut approvals = if bridge.has_sdk_approval_controller() {
         Box::new(SdkHostApprovalController {
@@ -2388,6 +2481,9 @@ fn execute_headless_plan_with_hooks(
         activate_custom_memory_runtime_for_plan(plan, &runtime, None, service_events_ref)
     };
     apply_custom_memory_activation_to_runtime(&mut runtime, &custom_memory);
+    let mcp_import_activation = activate_mcp_import_runtime_for_plan(plan);
+    apply_mcp_import_activation_to_runtime(&mut runtime, &mcp_import_activation);
+    let mcp_import_runtime = Arc::new(Mutex::new(mcp_import_activation.runtime));
     let mut knowledge = {
         let service_events_ref = service_events.as_deref();
         knowledge_runtime_for_headless_plan(
@@ -2401,9 +2497,13 @@ fn execute_headless_plan_with_hooks(
         let service_events_ref = service_events.as_deref();
         embedding_provider_for_plan(plan, None, service_events_ref)
     };
+    let mut mcp_dispatcher = McpImportActionDispatcher {
+        delegate: dispatcher,
+        mcp_imports: Arc::clone(&mcp_import_runtime),
+    };
     let mut services = HarnessRuntimeServices {
         model,
-        dispatcher,
+        dispatcher: &mut mcp_dispatcher,
         knowledge: knowledge.as_mut(),
         memory: custom_memory.runtime,
         embedding_provider: memory_embedding_provider,
@@ -2435,6 +2535,8 @@ fn execute_headless_plan_with_services(
             plan.config.config.trace.clone(),
         )?));
     }
+    let mcp_import_snapshots = session.runtime_snapshot.mcp_imports.clone();
+    emit_mcp_import_activation_events(&mut session, &mcp_import_snapshots)?;
     let mut mcp_exports = ManagedMcpExports::start(plan, &mut session)?;
     refresh_mcp_exports_for_session(plan, &mut session, &mut mcp_exports, None)?;
     let engine_options = harness_engine_options_from_plan(plan);
@@ -2920,6 +3022,15 @@ fn print_harness_preflight(
         }
     }
 
+    let mcp_import_lines = mcp_import_preflight_lines(plan);
+    if !mcp_import_lines.is_empty() {
+        stream.line("")?;
+        stream.line("MCP imports:")?;
+        for line in mcp_import_lines {
+            stream.line(line)?;
+        }
+    }
+
     if !plan.report.diagnostics.is_empty() {
         stream.line("")?;
         stream.line("Diagnostics:")?;
@@ -2980,6 +3091,51 @@ fn mcp_export_preflight_lines(plan: &ResolvedHarnessPlan) -> Vec<String> {
             };
             lines.push(format!("  - `{}`: tools: {}", surface.id, tools));
         }
+    }
+    lines
+}
+
+fn mcp_import_preflight_lines(plan: &ResolvedHarnessPlan) -> Vec<String> {
+    let imports = &plan.report.mcp_imports;
+    if !imports.enabled {
+        return Vec::new();
+    }
+    let mut lines = vec![format!("- servers: {}", imports.servers.len())];
+    for server in &imports.servers {
+        let tools = server
+            .tools
+            .as_ref()
+            .map(|tools| {
+                if tools.is_empty() {
+                    "none".to_string()
+                } else {
+                    tools.join(", ")
+                }
+            })
+            .unwrap_or_else(|| "all advertised".into());
+        let mut detail = format!(
+            "  - `{}`: transport: {}, scope: {}, tools: {}",
+            server.id, server.transport, server.scope, tools
+        );
+        if !server.env.is_empty() {
+            detail.push_str(&format!(", env: {}", server.env.join(", ")));
+        }
+        if !server.headers.is_empty() {
+            detail.push_str(&format!(", headers: {}", server.headers.join(", ")));
+        }
+        if let Some(timeout) = server.request_timeout_ms {
+            detail.push_str(&format!(", request_timeout_ms: {timeout}"));
+        }
+        if let Some(timeout) = server.startup_timeout_ms {
+            detail.push_str(&format!(", startup_timeout_ms: {timeout}"));
+        }
+        if let Some(restart) = &server.restart {
+            detail.push_str(&format!(
+                ", restart: max_attempts={}, backoff_ms={}",
+                restart.max_attempts, restart.backoff_ms
+            ));
+        }
+        lines.push(detail);
     }
     lines
 }

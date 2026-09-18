@@ -4,6 +4,7 @@ pub(crate) mod action;
 pub(crate) mod approval;
 pub(crate) mod hook;
 pub(crate) mod knowledge;
+pub(crate) mod mcp;
 pub(crate) mod memory;
 pub(crate) mod model;
 pub(crate) mod provider;
@@ -21,16 +22,18 @@ pub use knowledge::{
     KnowledgeRuntime, LocalKnowledgeRuntime, NoopKnowledgeRuntime, RoutingEmbeddingProvider,
     ServiceEmbeddingProvider,
 };
+pub use mcp::{ConfiguredMcpImportRuntime, McpImportRuntimeActivation};
 pub use memory::CustomMemoryRuntime;
 pub use model::{
     CapabilityDescriptor, ConsumerContextSnapshot, KnowledgeEmbeddingSnapshot,
-    KnowledgeRuntimeSnapshot, McpExportRuntimeSnapshot, MemoryOperationRefRuntimeSnapshot,
-    MemoryOperationRuntimeSnapshot, MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot,
-    ModelCapabilityAdvertisement, ModelProviderSelection, ModelRequest, ModelRuntime,
-    ModelRuntimeFailure, ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProfileSnapshot,
-    PromptAssemblyInput, RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot,
-    SkillResourceSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry,
-    TranscriptEntryKind, assemble_logical_prompt, model_request_turns,
+    KnowledgeRuntimeSnapshot, McpExportRuntimeSnapshot, McpImportRuntimeSnapshot,
+    MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
+    MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelCapabilityAdvertisement,
+    ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure,
+    ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProfileSnapshot, PromptAssemblyInput,
+    RuntimeCapabilitySnapshot, RuntimeSnapshot, ServiceReadinessSnapshot, SkillResourceSnapshot,
+    SkillRuntimeSnapshot, ToolRuntimeSnapshot, TranscriptEntry, TranscriptEntryKind,
+    assemble_logical_prompt, model_request_turns,
 };
 pub use provider::{BuiltInModelRuntime, ProcessModelRuntime};
 pub use service::{HostServiceInvoker, ServiceLifecycleEmitter, ServiceLifecycleEvents};

@@ -31,6 +31,26 @@ pub(super) fn validate_semantic_action(
             validate_json_schema_value(&tool_snapshot.input_schema, arguments)
                 .map_err(|err| format!("Tool `{tool}` arguments are invalid: {err}"))
         }
+        SemanticAction::ExternalMcpTool {
+            server,
+            tool,
+            arguments,
+        } => {
+            let Some(tool_snapshot) = phase
+                .active_mcp_tools
+                .iter()
+                .find(|candidate| candidate.server_id == *server && candidate.tool_name == *tool)
+            else {
+                return Err(format!(
+                    "MCP Tool `{server}/{tool}` is not available in the current EffectivePhase."
+                ));
+            };
+            validate_json_schema_value(&tool_snapshot.input_schema, arguments).map_err(|err| {
+                format!(
+                    "MCP Tool `{server}/{tool}` arguments are invalid against the canonical MCP input schema: {err}. Provider-facing schemas may be reduced for model compatibility; retry with arguments that satisfy the MCP Tool's declared schema."
+                )
+            })
+        }
         SemanticAction::SkillResourceRead { skill, resource } => {
             let Some(skill_snapshot) = phase
                 .active_skills
@@ -651,6 +671,7 @@ pub(super) fn schema_for_standalone_compile(schema: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness_runtime::McpImportRuntimeSnapshot;
     use crate::harness_runtime::MemoryRecordTypeRuntimeSnapshot;
     use serde_json::json;
 
@@ -692,6 +713,7 @@ mod tests {
             authored_profile_candidates: Vec::new(),
             active_profiles: Vec::new(),
             active_tools: Vec::new(),
+            active_mcp_tools: Vec::new(),
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory: vec![memory],
@@ -701,6 +723,54 @@ mod tests {
                 identity: "@zack/memory/notes".into(),
                 description: "Read notes.".into(),
                 source: "agent_binding".into(),
+            }],
+            suppressed_capabilities: Vec::new(),
+        }
+    }
+
+    fn mcp_phase() -> EffectivePhase {
+        mcp_phase_with_schema(json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "query": { "type": "string", "minLength": 1 }
+            },
+            "required": ["query"]
+        }))
+    }
+
+    fn mcp_phase_with_schema(input_schema: Value) -> EffectivePhase {
+        EffectivePhase {
+            phase_id: "remember".into(),
+            tools_allowed: None,
+            knowledge_allowed: None,
+            memory_read_allowed: None,
+            memory_write_allowed: None,
+            authored_profile_candidates: Vec::new(),
+            active_profiles: Vec::new(),
+            active_tools: Vec::new(),
+            active_mcp_tools: vec![McpImportRuntimeSnapshot {
+                server_id: "search".into(),
+                tool_name: "lookup".into(),
+                identity: "mcp:search/lookup".into(),
+                description: "Lookup launch readiness.".into(),
+                input_schema,
+                transport: "http".into(),
+                scopes: vec!["global".into()],
+                endpoint: Some("https://mcp.example.com/mcp".into()),
+                state: "available".into(),
+                readiness_reason: None,
+                source: "harness_config".into(),
+            }],
+            active_skills: Vec::new(),
+            active_knowledge: Vec::new(),
+            active_memory: Vec::new(),
+            active_memory_operations: Vec::new(),
+            capability_catalog: vec![CapabilityDescriptor {
+                action_kind: "external_mcp_tool".into(),
+                identity: "mcp:search/lookup".into(),
+                description: "Lookup launch readiness.".into(),
+                source: "harness_config".into(),
             }],
             suppressed_capabilities: Vec::new(),
         }
@@ -722,6 +792,66 @@ mod tests {
             query: query.map(str::to_string),
             limit: None,
         }
+    }
+
+    #[test]
+    fn external_mcp_tool_arguments_validate_against_discovered_schema() {
+        let phase = mcp_phase();
+        validate_semantic_action(
+            &SemanticAction::ExternalMcpTool {
+                server: "search".into(),
+                tool: "lookup".into(),
+                arguments: json!({ "query": "launch readiness" }),
+            },
+            &phase,
+        )
+        .unwrap();
+
+        let err = validate_semantic_action(
+            &SemanticAction::ExternalMcpTool {
+                server: "search".into(),
+                tool: "lookup".into(),
+                arguments: json!({}),
+            },
+            &phase,
+        )
+        .unwrap_err();
+        assert!(err.contains("arguments are invalid"), "{err}");
+        assert!(err.contains("query"), "{err}");
+    }
+
+    #[test]
+    fn external_mcp_tool_rejection_names_canonical_schema_after_provider_schema_reduction() {
+        let phase = mcp_phase_with_schema(json!({
+            "$ref": "#/$defs/LookupArgs",
+            "$defs": {
+                "LookupArgs": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "query": { "type": "string", "minLength": 1 }
+                    },
+                    "required": ["query"]
+                }
+            }
+        }));
+
+        let err = validate_semantic_action(
+            &SemanticAction::ExternalMcpTool {
+                server: "search".into(),
+                tool: "lookup".into(),
+                arguments: json!({ "unused": true }),
+            },
+            &phase,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("canonical MCP input schema"), "{err}");
+        assert!(
+            err.contains("Provider-facing schemas may be reduced"),
+            "{err}"
+        );
+        assert!(err.contains("query"), "{err}");
     }
 
     #[test]
