@@ -20,6 +20,7 @@ use crate::semver::types::PackageKind;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 #[test]
 fn parse_scope_requires_key_value_pair() {
@@ -30,6 +31,654 @@ fn parse_scope_requires_key_value_pair() {
     assert!(parse_scope("user").is_err());
     assert!(parse_scope("=user-1").is_err());
     assert!(parse_scope("user=").is_err());
+}
+
+#[test]
+fn mcp_export_bindings_load_authored_agent_surfaces() {
+    let root = temp_dir("mcp-export-bindings");
+    let plan = minimal_plan(&root);
+    write_json(
+        &root.join("agent.json"),
+        json!({
+            "kind": "agent",
+            "name": "@zack/test-agent",
+            "version": "0.1.0",
+            "tools": ["@zack/search@0.1.0", "@zack/summarize@0.1.0"],
+            "bindings": {
+                "mcp": [
+                    {
+                        "id": "research",
+                        "tools": ["@zack/search", "@zack/summarize"]
+                    }
+                ]
+            }
+        }),
+    );
+
+    let bindings = mcp_export_bindings(&plan).unwrap();
+
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].id, "research");
+    assert_eq!(
+        bindings[0].tools,
+        vec!["@zack/search".to_string(), "@zack/summarize".to_string()]
+    );
+}
+
+#[test]
+fn mcp_export_bindings_preserve_multiple_authored_surfaces() {
+    let root = temp_dir("mcp-export-multiple-bindings");
+    let plan = minimal_plan(&root);
+    write_json(
+        &root.join("agent.json"),
+        json!({
+            "kind": "agent",
+            "name": "@zack/test-agent",
+            "version": "0.1.0",
+            "tools": ["@zack/search@0.1.0", "@zack/summarize@0.1.0"],
+            "bindings": {
+                "mcp": [
+                    { "id": "research", "tools": ["@zack/search"] },
+                    { "id": "summary", "tools": ["@zack/summarize"] }
+                ]
+            }
+        }),
+    );
+
+    let bindings = mcp_export_bindings(&plan).unwrap();
+
+    assert_eq!(bindings.len(), 2);
+    assert_eq!(bindings[0].id, "research");
+    assert_eq!(bindings[0].tools, vec!["@zack/search".to_string()]);
+    assert_eq!(bindings[1].id, "summary");
+    assert_eq!(bindings[1].tools, vec!["@zack/summarize".to_string()]);
+}
+
+#[test]
+fn mcp_export_start_is_noop_when_exports_disabled() {
+    let root = temp_dir("mcp-export-disabled");
+    let mut plan = minimal_plan(&root);
+    plan.config.config.mcp.exports.enabled = false;
+    write_json(
+        &root.join("agent.json"),
+        json!({
+            "kind": "agent",
+            "name": "@zack/test-agent",
+            "version": "0.1.0",
+            "tools": ["@zack/search@0.1.0"],
+            "bindings": {
+                "mcp": [
+                    { "id": "research", "tools": ["@zack/search"] }
+                ]
+            }
+        }),
+    );
+    let mut session = HarnessSession::new();
+
+    let exports = ManagedMcpExports::start(&plan, &mut session).unwrap();
+
+    assert!(exports.snapshots().is_empty());
+    assert!(exports.report_summaries().is_empty());
+}
+
+#[test]
+fn mcp_export_surface_selection_suppresses_non_ready_tools() {
+    let root = temp_dir("mcp-export-ready-subset");
+    let mut plan = minimal_plan(&root);
+    plan.selected_agent.as_mut().unwrap().tools = vec![
+        "tool:@zack/search@0.1.0".into(),
+        "tool:@zack/node-only@0.1.0".into(),
+        "tool:@zack/missing@0.1.0".into(),
+    ];
+    let search_root = root
+        .join(".agentpm")
+        .join("tools")
+        .join("zack")
+        .join("search")
+        .join("0.1.0");
+    plan.package_graph.insert(
+        "tool:@zack/search@0.1.0".into(),
+        ResolvedPackageInfo {
+            key: "tool:@zack/search@0.1.0".into(),
+            kind: PackageKind::Tool,
+            name: "@zack/search".into(),
+            version: "0.1.0".into(),
+            root: search_root.clone(),
+        },
+    );
+    let node_only_root = root
+        .join(".agentpm")
+        .join("tools")
+        .join("zack")
+        .join("node-only")
+        .join("0.1.0");
+    plan.package_graph.insert(
+        "tool:@zack/node-only@0.1.0".into(),
+        ResolvedPackageInfo {
+            key: "tool:@zack/node-only@0.1.0".into(),
+            kind: PackageKind::Tool,
+            name: "@zack/node-only".into(),
+            version: "0.1.0".into(),
+            root: node_only_root.clone(),
+        },
+    );
+    write_json(
+        &root.join("agent.lock"),
+        json!({
+            "lockfile_version": 2,
+            "generated": chrono::Utc::now(),
+            "packages": {
+                "tool:@zack/search@0.1.0": {
+                    "kind": "tool",
+                    "name": "@zack/search",
+                    "version": "0.1.0",
+                    "integrity": "sha256-test"
+                },
+                "tool:@zack/node-only@0.1.0": {
+                    "kind": "tool",
+                    "name": "@zack/node-only",
+                    "version": "0.1.0",
+                    "integrity": "sha256-test"
+                }
+            },
+            "roots": {}
+        }),
+    );
+    write_json(
+        &search_root.join("agent.json"),
+        json!({
+            "kind": "tool",
+            "name": "@zack/search",
+            "version": "0.1.0",
+            "description": "Search tool.",
+            "entrypoint": {
+                "command": "python3",
+                "args": ["tool.py"],
+                "cwd": ".",
+                "timeout_ms": 1000,
+                "env": {}
+            },
+            "inputs": { "type": "object" },
+            "outputs": { "type": "object" }
+        }),
+    );
+    write_json(
+        &node_only_root.join("agent.json"),
+        json!({
+            "kind": "tool",
+            "name": "@zack/node-only",
+            "version": "0.1.0",
+            "description": "Runtime mismatch tool.",
+            "entrypoint": {
+                "command": "python3",
+                "args": ["tool.py"],
+                "cwd": ".",
+                "timeout_ms": 1000,
+                "env": {}
+            },
+            "runtime": { "type": "node" },
+            "inputs": { "type": "object" },
+            "outputs": { "type": "object" }
+        }),
+    );
+    let binding = crate::manifest::AgentMcpBinding {
+        id: "research".into(),
+        tools: vec![
+            "@zack/search".into(),
+            "@zack/node-only".into(),
+            "@zack/missing".into(),
+            "@zack/skill-only".into(),
+        ],
+    };
+
+    let selection = mcp_export_surface_selection(&plan, &binding).unwrap();
+
+    assert_eq!(selection.binding.tools, vec!["@zack/search".to_string()]);
+    assert_eq!(
+        selection.suppressed_tools,
+        vec![
+            McpExportSuppressedTool {
+                tool: "@zack/node-only".into(),
+                reason: "tool_runtime_mismatch".into(),
+            },
+            McpExportSuppressedTool {
+                tool: "@zack/missing".into(),
+                reason: "not_ready_in_agent_lock".into(),
+            },
+            McpExportSuppressedTool {
+                tool: "@zack/skill-only".into(),
+                reason: "not_top_level_agent_tool".into(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn mcp_export_start_marks_empty_ready_surface_unavailable() {
+    let root = temp_dir("mcp-export-empty-ready-subset");
+    let mut plan = minimal_plan(&root);
+    plan.selected_agent.as_mut().unwrap().tools = vec!["tool:@zack/node-only@0.1.0".into()];
+    let node_only_root = root
+        .join(".agentpm")
+        .join("tools")
+        .join("zack")
+        .join("node-only")
+        .join("0.1.0");
+    plan.package_graph.insert(
+        "tool:@zack/node-only@0.1.0".into(),
+        ResolvedPackageInfo {
+            key: "tool:@zack/node-only@0.1.0".into(),
+            kind: PackageKind::Tool,
+            name: "@zack/node-only".into(),
+            version: "0.1.0".into(),
+            root: node_only_root.clone(),
+        },
+    );
+    write_json(
+        &root.join("agent.json"),
+        json!({
+            "kind": "agent",
+            "name": "@zack/test-agent",
+            "version": "0.1.0",
+            "tools": ["@zack/node-only@0.1.0"],
+            "bindings": {
+                "mcp": [
+                    { "id": "research", "tools": ["@zack/node-only"] }
+                ]
+            }
+        }),
+    );
+    write_json(
+        &root.join("agent.lock"),
+        json!({
+            "lockfile_version": 2,
+            "generated": chrono::Utc::now(),
+            "packages": {
+                "tool:@zack/node-only@0.1.0": {
+                    "kind": "tool",
+                    "name": "@zack/node-only",
+                    "version": "0.1.0",
+                    "integrity": "sha256-test"
+                }
+            },
+            "roots": {}
+        }),
+    );
+    write_json(
+        &node_only_root.join("agent.json"),
+        json!({
+            "kind": "tool",
+            "name": "@zack/node-only",
+            "version": "0.1.0",
+            "description": "Runtime mismatch tool.",
+            "entrypoint": {
+                "command": "python3",
+                "args": ["tool.py"],
+                "cwd": ".",
+                "timeout_ms": 1000,
+                "env": {}
+            },
+            "runtime": { "type": "node" },
+            "inputs": { "type": "object" },
+            "outputs": { "type": "object" }
+        }),
+    );
+    let mut session = HarnessSession::new();
+
+    let exports = ManagedMcpExports::start(&plan, &mut session).unwrap();
+
+    assert!(exports.snapshots().is_empty());
+    assert!(session.runtime_snapshot.mcp_exports.is_empty());
+}
+
+#[test]
+fn mcp_export_surface_start_rejects_empty_tool_list() {
+    let root = temp_dir("mcp-export-empty-binding-start");
+    let plan = minimal_plan(&root);
+    let binding = crate::manifest::AgentMcpBinding {
+        id: "research".into(),
+        tools: Vec::new(),
+    };
+
+    let err =
+        start_mcp_export_surface(&plan, &binding, None, McpExportActivity::default()).unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("has no selected Tools"),
+        "{err:#}"
+    );
+}
+
+#[test]
+fn mcp_export_activity_summaries_count_external_calls_without_run_actions() {
+    let activity = McpExportActivity::default();
+    activity.record_child_event(
+        "research",
+        &json!({
+            "event": "tool_call_started",
+            "fields": {
+                "identity": "@zack/search",
+                "mcp_name": "zack__search"
+            }
+        }),
+    );
+    activity.record_child_event(
+        "research",
+        &json!({
+            "event": "tool_call_completed",
+            "fields": {
+                "identity": "@zack/search",
+                "mcp_name": "zack__search"
+            }
+        }),
+    );
+    activity.record_child_event(
+        "research",
+        &json!({
+            "event": "tool_call_failed",
+            "fields": {
+                "identity": "@zack/fetch",
+                "mcp_name": "zack__fetch"
+            }
+        }),
+    );
+
+    let summaries = activity.report_summaries();
+
+    assert_eq!(
+        summaries,
+        vec![
+            crate::harness_observability::OperationReportSummary {
+                operation_kind: "mcp_tool_call".into(),
+                identity: "@zack/fetch".into(),
+                status: "failed".into(),
+                count: 1,
+            },
+            crate::harness_observability::OperationReportSummary {
+                operation_kind: "mcp_tool_call".into(),
+                identity: "@zack/search".into(),
+                status: "completed".into(),
+                count: 1,
+            },
+            crate::harness_observability::OperationReportSummary {
+                operation_kind: "mcp_tool_call".into(),
+                identity: "@zack/search".into(),
+                status: "started".into(),
+                count: 1,
+            },
+        ]
+    );
+}
+
+#[test]
+fn mcp_report_summary_merge_replaces_surface_state_and_appends_call_activity() {
+    let mut summaries = vec![crate::harness_observability::OperationReportSummary {
+        operation_kind: "mcp_export".into(),
+        identity: "research".into(),
+        status: "ready".into(),
+        count: 1,
+    }];
+
+    merge_mcp_report_summaries(
+        &mut summaries,
+        vec![
+            crate::harness_observability::OperationReportSummary {
+                operation_kind: "mcp_export".into(),
+                identity: "research".into(),
+                status: "failed".into(),
+                count: 1,
+            },
+            crate::harness_observability::OperationReportSummary {
+                operation_kind: "mcp_tool_call".into(),
+                identity: "@zack/search".into(),
+                status: "completed".into(),
+                count: 2,
+            },
+            crate::harness_observability::OperationReportSummary {
+                operation_kind: "mcp_tool_call".into(),
+                identity: "@zack/search".into(),
+                status: "started".into(),
+                count: 3,
+            },
+        ],
+    );
+
+    assert_eq!(
+        summaries,
+        vec![
+            crate::harness_observability::OperationReportSummary {
+                operation_kind: "mcp_export".into(),
+                identity: "research".into(),
+                status: "failed".into(),
+                count: 1,
+            },
+            crate::harness_observability::OperationReportSummary {
+                operation_kind: "mcp_tool_call".into(),
+                identity: "@zack/search".into(),
+                status: "completed".into(),
+                count: 2,
+            },
+            crate::harness_observability::OperationReportSummary {
+                operation_kind: "mcp_tool_call".into(),
+                identity: "@zack/search".into(),
+                status: "started".into(),
+                count: 3,
+            },
+        ]
+    );
+}
+
+#[test]
+fn mcp_export_ready_reader_forwards_child_call_events() {
+    let (writer, output) = MachineProtocolWriter::buffer(HarnessTraceContent::Full);
+    let activity = McpExportActivity::default();
+    let stream = std::io::Cursor::new(
+        [
+            r#"{"event":"ready","fields":{"host":"127.0.0.1","port":18080,"endpoint":"http://127.0.0.1:18080/mcp"}}"#,
+            r#"{"event":"tool_call_started","fields":{"identity":"@zack/search","mcp_name":"zack__search"}}"#,
+            r#"{"event":"tool_call_completed","fields":{"identity":"@zack/search","mcp_name":"zack__search"}}"#,
+        ]
+        .join("\n")
+        .into_bytes(),
+    );
+
+    let ready = wait_for_mcp_ready_frame(
+        "research".into(),
+        std::io::BufReader::new(stream),
+        Some(writer),
+        activity.clone(),
+    )
+    .unwrap();
+
+    assert_eq!(ready["endpoint"], "http://127.0.0.1:18080/mcp");
+    wait_for_machine_frame(&output, |frame| {
+        frame["method"] == "mcp_export_event"
+            && frame["payload"]["surface"] == "research"
+            && frame["payload"]["event"]["event"] == "tool_call_completed"
+    });
+    let summaries = activity.report_summaries();
+    assert!(summaries.iter().any(|summary| {
+        summary.operation_kind == "mcp_tool_call"
+            && summary.identity == "@zack/search"
+            && summary.status == "started"
+            && summary.count == 1
+    }));
+    assert!(summaries.iter().any(|summary| {
+        summary.operation_kind == "mcp_tool_call"
+            && summary.identity == "@zack/search"
+            && summary.status == "completed"
+            && summary.count == 1
+    }));
+}
+
+#[test]
+fn mcp_export_refresh_marks_surface_failed_after_restart_exhaustion() {
+    let root = temp_dir("mcp-export-restart-exhausted");
+    let plan = minimal_plan(&root);
+    let mut child = Command::new("true").spawn().unwrap();
+    let _ = child.wait();
+    let mut exports = ManagedMcpExports {
+        surfaces: vec![ManagedMcpExportSurface {
+            snapshot: McpExportRuntimeSnapshot {
+                id: "research".into(),
+                host: "127.0.0.1".into(),
+                port: 18080,
+                endpoint: "http://127.0.0.1:18080/mcp".into(),
+                tools: vec!["@zack/search".into()],
+                state: "ready".into(),
+            },
+            child,
+            binding: crate::manifest::AgentMcpBinding {
+                id: "research".into(),
+                tools: vec!["@zack/search".into()],
+            },
+            restart_attempts: plan.config.config.mcp.exports.restart.max_attempts,
+        }],
+        activity: McpExportActivity::default(),
+    };
+    let mut session = HarnessSession::new();
+
+    exports.refresh(&plan, &mut session, None).unwrap();
+
+    assert_eq!(exports.snapshots()[0].state, "failed");
+    assert_eq!(
+        exports.report_summaries()[0],
+        crate::harness_observability::OperationReportSummary {
+            operation_kind: "mcp_export".into(),
+            identity: "research".into(),
+            status: "failed".into(),
+            count: 1,
+        }
+    );
+}
+
+#[test]
+fn mcp_export_restart_policy_can_disable_restart_attempts() {
+    let root = temp_dir("mcp-export-restart-disabled");
+    let mut plan = minimal_plan(&root);
+    plan.config.config.mcp.exports.restart.max_attempts = 0;
+    let mut child = Command::new("true").spawn().unwrap();
+    let _ = child.wait();
+    let mut exports = ManagedMcpExports {
+        surfaces: vec![ManagedMcpExportSurface {
+            snapshot: McpExportRuntimeSnapshot {
+                id: "research".into(),
+                host: "127.0.0.1".into(),
+                port: 18080,
+                endpoint: "http://127.0.0.1:18080/mcp".into(),
+                tools: vec!["@zack/search".into()],
+                state: "ready".into(),
+            },
+            child,
+            binding: crate::manifest::AgentMcpBinding {
+                id: "research".into(),
+                tools: vec!["@zack/search".into()],
+            },
+            restart_attempts: 0,
+        }],
+        activity: McpExportActivity::default(),
+    };
+    let mut session = HarnessSession::new();
+
+    exports.refresh(&plan, &mut session, None).unwrap();
+
+    assert_eq!(exports.snapshots()[0].state, "failed");
+    assert_eq!(exports.surfaces[0].restart_attempts, 0);
+}
+
+#[test]
+fn mcp_export_refresh_helper_updates_session_snapshot_after_child_exit() {
+    let root = temp_dir("mcp-export-refresh-session-snapshot");
+    let plan = minimal_plan(&root);
+    let mut child = Command::new("true").spawn().unwrap();
+    let _ = child.wait();
+    let mut exports = ManagedMcpExports {
+        surfaces: vec![ManagedMcpExportSurface {
+            snapshot: McpExportRuntimeSnapshot {
+                id: "research".into(),
+                host: "127.0.0.1".into(),
+                port: 18080,
+                endpoint: "http://127.0.0.1:18080/mcp".into(),
+                tools: vec!["@zack/search".into()],
+                state: "ready".into(),
+            },
+            child,
+            binding: crate::manifest::AgentMcpBinding {
+                id: "research".into(),
+                tools: vec!["@zack/search".into()],
+            },
+            restart_attempts: plan.config.config.mcp.exports.restart.max_attempts,
+        }],
+        activity: McpExportActivity::default(),
+    };
+    let mut session = HarnessSession::new();
+    session.runtime_snapshot.mcp_exports = exports.snapshots();
+
+    refresh_mcp_exports_for_session(&plan, &mut session, &mut exports, None).unwrap();
+
+    assert_eq!(session.runtime_snapshot.mcp_exports[0].state, "failed");
+}
+
+#[test]
+fn mcp_export_report_refresh_marks_failed_without_restart_attempt() {
+    let root = temp_dir("mcp-export-refresh-without-restart");
+    let plan = minimal_plan(&root);
+    let mut child = Command::new("true").spawn().unwrap();
+    let _ = child.wait();
+    let mut exports = ManagedMcpExports {
+        surfaces: vec![ManagedMcpExportSurface {
+            snapshot: McpExportRuntimeSnapshot {
+                id: "research".into(),
+                host: "127.0.0.1".into(),
+                port: 18080,
+                endpoint: "http://127.0.0.1:18080/mcp".into(),
+                tools: vec!["@zack/search".into()],
+                state: "ready".into(),
+            },
+            child,
+            binding: crate::manifest::AgentMcpBinding {
+                id: "research".into(),
+                tools: vec!["@zack/search".into()],
+            },
+            restart_attempts: 0,
+        }],
+        activity: McpExportActivity::default(),
+    };
+    let mut session = HarnessSession::new();
+
+    refresh_mcp_exports_for_session_without_restart(&plan, &mut session, &mut exports, None)
+        .unwrap();
+
+    assert_eq!(session.runtime_snapshot.mcp_exports[0].state, "failed");
+    assert_eq!(exports.surfaces[0].restart_attempts, 0);
+}
+
+#[test]
+fn mcp_export_stop_terminates_children_and_clears_surfaces() {
+    let mut exports = ManagedMcpExports {
+        surfaces: vec![ManagedMcpExportSurface {
+            snapshot: McpExportRuntimeSnapshot {
+                id: "research".into(),
+                host: "127.0.0.1".into(),
+                port: 18080,
+                endpoint: "http://127.0.0.1:18080/mcp".into(),
+                tools: vec!["@zack/search".into()],
+                state: "ready".into(),
+            },
+            child: Command::new("sleep").arg("30").spawn().unwrap(),
+            binding: crate::manifest::AgentMcpBinding {
+                id: "research".into(),
+                tools: vec!["@zack/search".into()],
+            },
+            restart_attempts: 0,
+        }],
+        activity: McpExportActivity::default(),
+    };
+    let mut session = HarnessSession::new();
+
+    exports.stop(&mut session).unwrap();
+
+    assert!(exports.snapshots().is_empty());
 }
 
 #[test]
@@ -256,6 +905,73 @@ fn trace_verbose_enables_human_preflight_verbose_details() {
 
     plan.config.config.trace.level = HarnessTraceLevel::Verbose;
     assert!(human_preflight_verbose_enabled(false, &plan));
+}
+
+#[test]
+fn human_preflight_reports_mcp_export_surfaces() {
+    let root = temp_dir("human-preflight-mcp-exports");
+    let mut plan = minimal_plan(&root);
+    plan.report.mcp_exports.surfaces = vec![crate::harness_plan::PreflightMcpExportSurface {
+        id: "public-tools".into(),
+        tools: vec!["@zack/search".into(), "@zack/summarize".into()],
+    }];
+
+    assert_eq!(
+        mcp_export_preflight_lines(&plan),
+        vec![
+            "- enabled: true",
+            "- host: 127.0.0.1",
+            "- restart: max_attempts=1, backoff_ms=250",
+            "- surfaces: 1",
+            "  - `public-tools`: tools: @zack/search, @zack/summarize",
+        ]
+    );
+}
+
+#[test]
+fn human_preflight_reports_mcp_imports_without_secret_values() {
+    let root = temp_dir("human-preflight-mcp-imports");
+    let mut plan = minimal_plan(&root);
+    plan.report.mcp_imports = crate::harness_plan::PreflightMcpImports {
+        enabled: true,
+        servers: vec![
+            crate::harness_plan::PreflightMcpImportServer {
+                id: "company-search".into(),
+                transport: "http".into(),
+                scope: "global".into(),
+                tools: Some(vec!["search".into()]),
+                env: vec!["COMPANY_MCP_AUTHORIZATION".into()],
+                headers: vec!["Authorization".into(), "X-Workspace".into()],
+                startup_timeout_ms: None,
+                request_timeout_ms: None,
+                restart: None,
+            },
+            crate::harness_plan::PreflightMcpImportServer {
+                id: "local-mcp".into(),
+                transport: "stdio".into(),
+                scope: "phases:research".into(),
+                tools: None,
+                env: vec!["LOCAL_MCP_TOKEN".into()],
+                headers: Vec::new(),
+                startup_timeout_ms: Some(15_000),
+                request_timeout_ms: Some(120_000),
+                restart: Some(crate::harness_config::HarnessRestartPolicy::default()),
+            },
+        ],
+    };
+
+    let lines = mcp_import_preflight_lines(&plan);
+
+    assert_eq!(
+        lines,
+        vec![
+            "- servers: 2",
+            "  - `company-search`: transport: http, scope: global, tools: search, env: COMPANY_MCP_AUTHORIZATION, headers: Authorization, X-Workspace",
+            "  - `local-mcp`: transport: stdio, scope: phases:research, tools: all advertised, env: LOCAL_MCP_TOKEN, request_timeout_ms: 120000, startup_timeout_ms: 15000, restart: max_attempts=1, backoff_ms=250",
+        ]
+    );
+    assert!(!lines.join("\n").contains("Bearer"));
+    assert!(!lines.join("\n").contains("secret"));
 }
 
 #[test]
@@ -1953,7 +2669,8 @@ fn machine_memory_operation_control_runs_through_engine_yield_point() {
     bridge.set_active_run(true);
     let run_bridge = bridge.clone();
     let run = std::thread::spawn(move || {
-        let result = execute_machine_run(&plan, "run input".into(), &run_bridge);
+        let mcp_exports = ManagedMcpExports::default();
+        let result = execute_machine_run(&plan, "run input".into(), &run_bridge, &mcp_exports);
         run_bridge.set_active_run(false);
         result
     });
@@ -2029,6 +2746,89 @@ fn machine_memory_operation_control_runs_through_engine_yield_point() {
 }
 
 #[test]
+fn machine_run_report_preserves_mcp_export_surface_and_activity_summaries() {
+    let root = temp_dir("machine-run-mcp-report-summaries");
+    let mut plan = minimal_plan(&root);
+    write_single_phase_loop_fixture(&root, &mut plan);
+    plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+        provider: "host-model".into(),
+        model: "model-1".into(),
+        options: json!({}),
+    });
+    plan.config.config.providers.models.insert(
+        "host-model".into(),
+        HarnessImplementationEntry {
+            implementation: HarnessImplementation::Host {
+                request_timeout_ms: 1_000,
+            },
+        },
+    );
+    let activity = McpExportActivity::default();
+    activity.record_child_event(
+        "research",
+        &json!({
+            "event": "tool_call_completed",
+            "fields": {
+                "identity": "@zack/search",
+                "mcp_name": "zack__search"
+            }
+        }),
+    );
+    let mcp_exports = ManagedMcpExports {
+        surfaces: vec![ManagedMcpExportSurface {
+            snapshot: McpExportRuntimeSnapshot {
+                id: "research".into(),
+                host: "127.0.0.1".into(),
+                port: 18080,
+                endpoint: "http://127.0.0.1:18080/mcp".into(),
+                tools: vec!["@zack/search".into()],
+                state: "ready".into(),
+            },
+            child: Command::new("true").spawn().unwrap(),
+            binding: crate::manifest::AgentMcpBinding {
+                id: "research".into(),
+                tools: vec!["@zack/search".into()],
+            },
+            restart_attempts: 0,
+        }],
+        activity,
+    };
+    let (bridge, sender, _output) = buffered_machine_bridge();
+    bridge.register_host_service(
+        &host_service("model", "host-model"),
+        host_model_capabilities(),
+    );
+
+    let terminal = std::thread::spawn(move || {
+        execute_machine_run(&plan, "run input".into(), &bridge, &mcp_exports)
+    });
+    sender
+        .send(Ok(machine_response(
+            "host-model-host-model-1",
+            serde_json::to_value(phase_completion_turn(
+                Some("complete"),
+                Some(json!({ "summary": "done" })),
+            ))
+            .unwrap(),
+        )))
+        .unwrap();
+
+    let terminal = terminal.join().unwrap().unwrap();
+    assert!(terminal.report.mcp_summaries.iter().any(|summary| {
+        summary.operation_kind == "mcp_export"
+            && summary.identity == "research"
+            && summary.status == "ready"
+            && summary.count == 1
+    }));
+    assert!(terminal.report.mcp_summaries.iter().any(|summary| {
+        summary.operation_kind == "mcp_tool_call"
+            && summary.identity == "@zack/search"
+            && summary.status == "completed"
+            && summary.count == 1
+    }));
+}
+
+#[test]
 fn machine_memory_operation_control_returns_engine_scope_mismatch_error() {
     let root = temp_dir("machine-memory-operation-scope-error");
     let mut plan = minimal_plan(&root);
@@ -2057,7 +2857,8 @@ fn machine_memory_operation_control_returns_engine_scope_mismatch_error() {
     bridge.set_active_run(true);
     let run_bridge = bridge.clone();
     let run = std::thread::spawn(move || {
-        let result = execute_machine_run(&plan, "run input".into(), &run_bridge);
+        let mcp_exports = ManagedMcpExports::default();
+        let result = execute_machine_run(&plan, "run input".into(), &run_bridge, &mcp_exports);
         run_bridge.set_active_run(false);
         result
     });
@@ -2671,6 +3472,7 @@ fn minimal_run_report(run_id: &str) -> RunReport {
         action_summaries: Vec::new(),
         tool_summaries: Vec::new(),
         mcp_summaries: Vec::new(),
+        mcp_imports: Vec::new(),
         knowledge_summaries: Vec::new(),
         memory_summaries: Vec::new(),
         memory_write_review_summaries: Vec::new(),
@@ -2730,6 +3532,16 @@ fn minimal_plan(root: &Path) -> ResolvedHarnessPlan {
         report: crate::harness_plan::PreflightReport {
             status: PreflightStatus::Ready,
             diagnostics: Vec::new(),
+            mcp_exports: crate::harness_plan::PreflightMcpExports {
+                enabled: true,
+                host: "127.0.0.1".into(),
+                restart: crate::harness_config::HarnessRestartPolicy::default(),
+                surfaces: Vec::new(),
+            },
+            mcp_imports: crate::harness_plan::PreflightMcpImports {
+                enabled: false,
+                servers: Vec::new(),
+            },
         },
     }
 }
@@ -3327,6 +4139,7 @@ fn empty_model_request(selection: ModelProviderSelection) -> ModelRequest {
             authored_profile_candidates: Vec::new(),
             active_profiles: Vec::new(),
             active_tools: Vec::new(),
+            active_mcp_tools: Vec::new(),
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory: Vec::new(),

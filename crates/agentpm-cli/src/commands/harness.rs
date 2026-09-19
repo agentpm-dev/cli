@@ -1,13 +1,16 @@
+use crate::adapter::list_locked_tool_descriptors;
 use crate::harness_plan::{
     CapabilityState, HarnessBootstrapOptions, HarnessExecutionSurface, PreflightDiagnosticSeverity,
     PreflightStatus, ResolvedHarnessPlan, ResolvedPackageInfo, resolve_harness_plan,
+    tool_readiness_state,
 };
 use crate::harness_runtime::{
     ActionDispatcher, AgentPmActionDispatcher, ApprovalController, BuiltInModelRuntime,
     CompositeKnowledgeRuntime, ConfiguredApprovalController, ConfiguredHookRuntime,
     ConsumerContextSnapshot, CustomKnowledgeRuntime, CustomMemoryRuntime, HookRuntime,
     HostServiceInvoker, KnowledgeEmbeddingSnapshot, KnowledgeRuntime, KnowledgeRuntimeSnapshot,
-    LocalKnowledgeRuntime, MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
+    LocalKnowledgeRuntime, McpExportRuntimeSnapshot, McpImportRuntimeActivation,
+    McpImportRuntimeSnapshot, MemoryOperationRefRuntimeSnapshot, MemoryOperationRuntimeSnapshot,
     MemoryRecordTypeRuntimeSnapshot, MemorySpaceRuntimeSnapshot, ModelCapabilityAdvertisement,
     ModelProviderSelection, ModelRequest, ModelRuntime, ModelRuntimeFailure,
     ModelRuntimeRequestSnapshot, ModelTurn, PackageSnapshot, ProcessModelRuntime,
@@ -42,6 +45,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -207,6 +211,747 @@ fn run_headless_worker(run: impl FnOnce() -> Result<()> + Send + 'static) -> Res
         .map_err(|_| anyhow!("Harness headless worker panicked"))?
 }
 
+#[derive(Debug)]
+struct ManagedMcpExportSurface {
+    snapshot: McpExportRuntimeSnapshot,
+    child: Child,
+    binding: crate::manifest::AgentMcpBinding,
+    restart_attempts: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct McpExportSuppressedTool {
+    tool: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone)]
+struct McpExportSurfaceSelection {
+    binding: crate::manifest::AgentMcpBinding,
+    suppressed_tools: Vec<McpExportSuppressedTool>,
+}
+
+#[derive(Debug, Default)]
+struct ManagedMcpExports {
+    surfaces: Vec<ManagedMcpExportSurface>,
+    activity: McpExportActivity,
+}
+
+#[derive(Debug, Clone, Default)]
+struct McpExportActivity {
+    counts: Arc<Mutex<McpExportActivityCounts>>,
+}
+
+type McpExportActivityKey = (String, String, String);
+type McpExportActivityCounts = BTreeMap<McpExportActivityKey, u64>;
+
+impl ManagedMcpExports {
+    fn start(plan: &ResolvedHarnessPlan, session: &mut HarnessSession) -> Result<Self> {
+        Self::start_with_machine_writer(plan, session, None)
+    }
+
+    fn start_with_machine_writer(
+        plan: &ResolvedHarnessPlan,
+        session: &mut HarnessSession,
+        machine_writer: Option<MachineProtocolWriter>,
+    ) -> Result<Self> {
+        if !plan.config.config.mcp.exports.enabled {
+            return Ok(Self::default());
+        }
+        let bindings = mcp_export_bindings(plan)?;
+        if bindings.is_empty() {
+            return Ok(Self::default());
+        }
+        let mut exports = Self::default();
+        for binding in bindings {
+            let selection = mcp_export_surface_selection(plan, &binding)?;
+            if selection.binding.tools.is_empty() {
+                session.emitter.emit(
+                    crate::harness_observability::HarnessEventType::McpSurfaceFailed,
+                    crate::harness_observability::HarnessEventPayload::Lifecycle {
+                        message: "MCP export surface has no ready Tools.".into(),
+                        fields: BTreeMap::from([
+                            ("surface".into(), json!(binding.id)),
+                            ("requested_tools".into(), json!(binding.tools)),
+                            ("suppressed_tools".into(), json!(selection.suppressed_tools)),
+                            ("reason".into(), json!("empty_ready_tool_subset")),
+                        ]),
+                    },
+                    Default::default(),
+                )?;
+                continue;
+            }
+            session.emitter.emit(
+                crate::harness_observability::HarnessEventType::McpSurfaceStarting,
+                crate::harness_observability::HarnessEventPayload::Lifecycle {
+                    message: "MCP export surface starting.".into(),
+                    fields: BTreeMap::from([
+                        ("surface".into(), json!(selection.binding.id)),
+                        ("tools".into(), json!(selection.binding.tools)),
+                        ("suppressed_tools".into(), json!(selection.suppressed_tools)),
+                    ]),
+                },
+                Default::default(),
+            )?;
+            match start_mcp_export_surface(
+                plan,
+                &selection.binding,
+                machine_writer.clone(),
+                exports.activity.clone(),
+            ) {
+                Ok(surface) => {
+                    session.emitter.emit(
+                        crate::harness_observability::HarnessEventType::McpSurfaceReady,
+                        crate::harness_observability::HarnessEventPayload::Lifecycle {
+                            message: "MCP export surface is ready.".into(),
+                            fields: BTreeMap::from([
+                                ("surface".into(), json!(surface.snapshot.id)),
+                                ("host".into(), json!(surface.snapshot.host)),
+                                ("port".into(), json!(surface.snapshot.port)),
+                                ("endpoint".into(), json!(surface.snapshot.endpoint)),
+                                ("tools".into(), json!(surface.snapshot.tools)),
+                            ]),
+                        },
+                        Default::default(),
+                    )?;
+                    exports.surfaces.push(surface);
+                }
+                Err(err) => {
+                    session.emitter.emit(
+                        crate::harness_observability::HarnessEventType::McpSurfaceFailed,
+                        crate::harness_observability::HarnessEventPayload::Lifecycle {
+                            message: "MCP export surface failed to start.".into(),
+                            fields: BTreeMap::from([
+                                ("surface".into(), json!(selection.binding.id)),
+                                ("error".into(), json!(err.to_string())),
+                            ]),
+                        },
+                        Default::default(),
+                    )?;
+                }
+            }
+        }
+        Ok(exports)
+    }
+
+    fn snapshots(&self) -> Vec<McpExportRuntimeSnapshot> {
+        self.surfaces
+            .iter()
+            .map(|surface| surface.snapshot.clone())
+            .collect()
+    }
+
+    fn refresh(
+        &mut self,
+        plan: &ResolvedHarnessPlan,
+        session: &mut HarnessSession,
+        machine_writer: Option<MachineProtocolWriter>,
+    ) -> Result<()> {
+        self.refresh_with_restart(plan, session, machine_writer, true)
+    }
+
+    fn refresh_without_restart(
+        &mut self,
+        plan: &ResolvedHarnessPlan,
+        session: &mut HarnessSession,
+        machine_writer: Option<MachineProtocolWriter>,
+    ) -> Result<()> {
+        self.refresh_with_restart(plan, session, machine_writer, false)
+    }
+
+    fn refresh_with_restart(
+        &mut self,
+        plan: &ResolvedHarnessPlan,
+        session: &mut HarnessSession,
+        machine_writer: Option<MachineProtocolWriter>,
+        allow_restart: bool,
+    ) -> Result<()> {
+        for surface in &mut self.surfaces {
+            if surface.child.try_wait()?.is_none() {
+                continue;
+            }
+            let _ = surface.child.wait();
+            session.emitter.emit(
+                crate::harness_observability::HarnessEventType::McpSurfaceFailed,
+                crate::harness_observability::HarnessEventPayload::Lifecycle {
+                    message: "MCP export surface process exited.".into(),
+                    fields: BTreeMap::from([
+                        ("surface".into(), json!(surface.snapshot.id)),
+                        ("endpoint".into(), json!(surface.snapshot.endpoint)),
+                        ("reason".into(), json!("process_exited")),
+                    ]),
+                },
+                Default::default(),
+            )?;
+            if !allow_restart {
+                surface.snapshot.state = "failed".into();
+                continue;
+            }
+            let restart_policy = &plan.config.config.mcp.exports.restart;
+            if surface.restart_attempts >= restart_policy.max_attempts {
+                surface.snapshot.state = "failed".into();
+                session.emitter.emit(
+                    crate::harness_observability::HarnessEventType::McpSurfaceFailed,
+                    crate::harness_observability::HarnessEventPayload::Lifecycle {
+                        message: "MCP export surface restart attempts exhausted.".into(),
+                        fields: BTreeMap::from([
+                            ("surface".into(), json!(surface.snapshot.id)),
+                            ("endpoint".into(), json!(surface.snapshot.endpoint)),
+                            ("reason".into(), json!("restart_exhausted")),
+                        ]),
+                    },
+                    Default::default(),
+                )?;
+                continue;
+            }
+
+            surface.restart_attempts += 1;
+            surface.snapshot.state = "restarting".into();
+            session.emitter.emit(
+                crate::harness_observability::HarnessEventType::McpSurfaceStarting,
+                crate::harness_observability::HarnessEventPayload::Lifecycle {
+                    message: "MCP export surface restarting.".into(),
+                    fields: BTreeMap::from([
+                        ("surface".into(), json!(surface.snapshot.id)),
+                        ("restart_attempt".into(), json!(surface.restart_attempts)),
+                    ]),
+                },
+                Default::default(),
+            )?;
+            std::thread::sleep(Duration::from_millis(restart_policy.backoff_ms));
+            match start_mcp_export_surface(
+                plan,
+                &surface.binding,
+                machine_writer.clone(),
+                self.activity.clone(),
+            ) {
+                Ok(restarted) => {
+                    surface.snapshot = restarted.snapshot;
+                    surface.child = restarted.child;
+                    session.emitter.emit(
+                        crate::harness_observability::HarnessEventType::McpSurfaceReady,
+                        crate::harness_observability::HarnessEventPayload::Lifecycle {
+                            message: "MCP export surface restarted.".into(),
+                            fields: BTreeMap::from([
+                                ("surface".into(), json!(surface.snapshot.id)),
+                                ("host".into(), json!(surface.snapshot.host)),
+                                ("port".into(), json!(surface.snapshot.port)),
+                                ("endpoint".into(), json!(surface.snapshot.endpoint)),
+                                ("tools".into(), json!(surface.snapshot.tools)),
+                                ("restart_attempt".into(), json!(surface.restart_attempts)),
+                            ]),
+                        },
+                        Default::default(),
+                    )?;
+                }
+                Err(err) => {
+                    surface.snapshot.state = "failed".into();
+                    session.emitter.emit(
+                        crate::harness_observability::HarnessEventType::McpSurfaceFailed,
+                        crate::harness_observability::HarnessEventPayload::Lifecycle {
+                            message: "MCP export surface restart failed.".into(),
+                            fields: BTreeMap::from([
+                                ("surface".into(), json!(surface.snapshot.id)),
+                                ("error".into(), json!(err.to_string())),
+                                ("restart_attempt".into(), json!(surface.restart_attempts)),
+                            ]),
+                        },
+                        Default::default(),
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn report_summaries(&self) -> Vec<crate::harness_observability::OperationReportSummary> {
+        let mut summaries = self
+            .snapshots()
+            .into_iter()
+            .map(
+                |surface| crate::harness_observability::OperationReportSummary {
+                    operation_kind: "mcp_export".into(),
+                    identity: surface.id,
+                    status: surface.state,
+                    count: surface.tools.len().try_into().unwrap_or(0),
+                },
+            )
+            .collect::<Vec<_>>();
+        summaries.extend(self.activity.report_summaries());
+        summaries
+    }
+
+    fn stop(&mut self, session: &mut HarnessSession) -> Result<()> {
+        for surface in &mut self.surfaces {
+            stop_mcp_export_child(&mut surface.child);
+            session.emitter.emit(
+                crate::harness_observability::HarnessEventType::McpSurfaceStopped,
+                crate::harness_observability::HarnessEventPayload::Lifecycle {
+                    message: "MCP export surface stopped.".into(),
+                    fields: BTreeMap::from([
+                        ("surface".into(), json!(surface.snapshot.id)),
+                        ("endpoint".into(), json!(surface.snapshot.endpoint)),
+                    ]),
+                },
+                Default::default(),
+            )?;
+        }
+        self.surfaces.clear();
+        Ok(())
+    }
+}
+
+fn refresh_mcp_exports_for_session(
+    plan: &ResolvedHarnessPlan,
+    session: &mut HarnessSession,
+    mcp_exports: &mut ManagedMcpExports,
+    machine_writer: Option<MachineProtocolWriter>,
+) -> Result<()> {
+    mcp_exports.refresh(plan, session, machine_writer)?;
+    session.runtime_snapshot.mcp_exports = mcp_exports.snapshots();
+    Ok(())
+}
+
+fn refresh_mcp_exports_for_session_without_restart(
+    plan: &ResolvedHarnessPlan,
+    session: &mut HarnessSession,
+    mcp_exports: &mut ManagedMcpExports,
+    machine_writer: Option<MachineProtocolWriter>,
+) -> Result<()> {
+    mcp_exports.refresh_without_restart(plan, session, machine_writer)?;
+    session.runtime_snapshot.mcp_exports = mcp_exports.snapshots();
+    Ok(())
+}
+
+fn activate_mcp_import_runtime_for_plan(plan: &ResolvedHarnessPlan) -> McpImportRuntimeActivation {
+    crate::harness_runtime::ConfiguredMcpImportRuntime::start(
+        &plan.workspace_root,
+        &plan.config.config.mcp.imports,
+    )
+}
+
+fn apply_mcp_import_activation_to_runtime(
+    runtime: &mut RuntimeSnapshot,
+    activation: &McpImportRuntimeActivation,
+) {
+    runtime
+        .mcp_imports
+        .extend(activation.snapshots.iter().cloned());
+    runtime
+        .capability_candidates
+        .extend(activation.capability_candidates.iter().cloned());
+}
+
+fn emit_mcp_import_activation_events(
+    session: &mut HarnessSession,
+    snapshots: &[McpImportRuntimeSnapshot],
+) -> Result<()> {
+    for snapshot in snapshots {
+        let event_type = if snapshot.state == "available" {
+            crate::harness_observability::HarnessEventType::McpImportConnected
+        } else {
+            crate::harness_observability::HarnessEventType::McpImportFailed
+        };
+        let mut fields = BTreeMap::from([
+            ("server".into(), json!(snapshot.server_id)),
+            ("transport".into(), json!(snapshot.transport)),
+            ("state".into(), json!(snapshot.state)),
+            ("scopes".into(), json!(snapshot.scopes)),
+        ]);
+        if let Some(endpoint) = &snapshot.endpoint {
+            fields.insert("endpoint".into(), json!(endpoint));
+        }
+        if !snapshot.tool_name.is_empty() {
+            fields.insert("tool".into(), json!(snapshot.tool_name));
+            fields.insert("identity".into(), json!(snapshot.identity));
+        }
+        if let Some(reason) = &snapshot.readiness_reason {
+            fields.insert("reason".into(), json!(reason));
+        }
+        session.emitter.emit(
+            event_type,
+            crate::harness_observability::HarnessEventPayload::Lifecycle {
+                message: if snapshot.state == "available" {
+                    "MCP import Tool is ready.".into()
+                } else {
+                    "MCP import is unavailable.".into()
+                },
+                fields,
+            },
+            Default::default(),
+        )?;
+    }
+    Ok(())
+}
+
+fn merge_mcp_report_summaries(
+    report_summaries: &mut Vec<crate::harness_observability::OperationReportSummary>,
+    managed_summaries: Vec<crate::harness_observability::OperationReportSummary>,
+) {
+    for managed in managed_summaries {
+        let managed_key = mcp_report_summary_merge_key(&managed);
+        if let Some(existing) = report_summaries
+            .iter_mut()
+            .find(|summary| mcp_report_summary_merge_key(summary) == managed_key)
+        {
+            *existing = managed;
+        } else {
+            report_summaries.push(managed);
+        }
+    }
+}
+
+fn mcp_report_summary_merge_key(
+    summary: &crate::harness_observability::OperationReportSummary,
+) -> (&str, &str, Option<&str>) {
+    let status_key = match summary.operation_kind.as_str() {
+        "mcp_export" => None,
+        "mcp_tool_call" => Some(summary.status.as_str()),
+        _ => Some(summary.status.as_str()),
+    };
+    (
+        summary.operation_kind.as_str(),
+        summary.identity.as_str(),
+        status_key,
+    )
+}
+
+impl McpExportActivity {
+    fn record_child_event(&self, surface: &str, event: &Value) {
+        let Some(event_type) = event.get("event").and_then(Value::as_str) else {
+            return;
+        };
+        let status = match event_type {
+            "tool_call_started" => "started",
+            "tool_call_completed" => "completed",
+            "tool_call_failed" => "failed",
+            _ => return,
+        };
+        let identity = event
+            .get("fields")
+            .and_then(|fields| fields.get("identity"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| surface.to_string());
+        *self
+            .counts
+            .lock()
+            .expect("MCP export activity poisoned")
+            .entry(("mcp_tool_call".into(), identity, status.into()))
+            .or_insert(0) += 1;
+    }
+
+    fn report_summaries(&self) -> Vec<crate::harness_observability::OperationReportSummary> {
+        self.counts
+            .lock()
+            .expect("MCP export activity poisoned")
+            .iter()
+            .map(|((operation_kind, identity, status), count)| {
+                crate::harness_observability::OperationReportSummary {
+                    operation_kind: operation_kind.clone(),
+                    identity: identity.clone(),
+                    status: status.clone(),
+                    count: *count,
+                }
+            })
+            .collect()
+    }
+}
+
+struct McpImportActionDispatcher<'a> {
+    delegate: &'a mut dyn ActionDispatcher,
+    mcp_imports: Arc<Mutex<crate::harness_runtime::ConfiguredMcpImportRuntime>>,
+}
+
+impl ActionDispatcher for McpImportActionDispatcher<'_> {
+    fn dispatch(
+        &mut self,
+        action: &crate::harness_runtime::SemanticAction,
+    ) -> crate::harness_runtime::ActionDispatchResult {
+        match action {
+            crate::harness_runtime::SemanticAction::ExternalMcpTool {
+                server,
+                tool,
+                arguments,
+            } => self
+                .mcp_imports
+                .lock()
+                .expect("MCP import runtime poisoned")
+                .call_tool(server, tool, arguments),
+            _ => self.delegate.dispatch(action),
+        }
+    }
+}
+
+impl Drop for ManagedMcpExports {
+    fn drop(&mut self) {
+        for surface in &mut self.surfaces {
+            stop_mcp_export_child(&mut surface.child);
+        }
+    }
+}
+
+fn mcp_export_bindings(
+    plan: &ResolvedHarnessPlan,
+) -> Result<Vec<crate::manifest::AgentMcpBinding>> {
+    let Some(agent) = &plan.selected_agent else {
+        return Ok(Vec::new());
+    };
+    if !agent.manifest_path.exists() {
+        return Ok(Vec::new());
+    }
+    let (value, _) = load_manifest_value(&agent.manifest_path)
+        .with_context(|| format!("loading selected Agent {}", agent.manifest_path.display()))?;
+    let manifest: AgentManifest =
+        serde_json::from_value(value).context("parsing selected Agent manifest")?;
+    Ok(manifest
+        .bindings
+        .map(|bindings| bindings.mcp)
+        .unwrap_or_default())
+}
+
+fn mcp_export_surface_selection(
+    plan: &ResolvedHarnessPlan,
+    binding: &crate::manifest::AgentMcpBinding,
+) -> Result<McpExportSurfaceSelection> {
+    let descriptors = list_locked_tool_descriptors(&plan.workspace_root)?;
+    let available_tools = descriptors
+        .into_iter()
+        .map(|descriptor| descriptor.package_ref)
+        .collect::<BTreeSet<_>>();
+    let top_level_tools = plan
+        .selected_agent
+        .as_ref()
+        .map(|agent| {
+            agent
+                .tools
+                .iter()
+                .map(|tool| package_identity_for_mcp_export(tool))
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut ready_tools = Vec::new();
+    let mut suppressed_tools = Vec::new();
+    for tool in &binding.tools {
+        let identity = package_identity_for_mcp_export(tool);
+        if !top_level_tools.contains(&identity) {
+            suppressed_tools.push(McpExportSuppressedTool {
+                tool: tool.clone(),
+                reason: "not_top_level_agent_tool".into(),
+            });
+            continue;
+        }
+        if !available_tools.contains(tool) {
+            suppressed_tools.push(McpExportSuppressedTool {
+                tool: tool.clone(),
+                reason: "not_ready_in_agent_lock".into(),
+            });
+            continue;
+        }
+        let mut diagnostics = Vec::new();
+        if tool_readiness_state(
+            &plan.workspace_root,
+            &plan.package_graph,
+            &identity,
+            &mut diagnostics,
+        ) != CapabilityState::Available
+        {
+            let reason = diagnostics
+                .first()
+                .map(|diagnostic| diagnostic.code.clone())
+                .unwrap_or_else(|| "tool_unavailable".into());
+            suppressed_tools.push(McpExportSuppressedTool {
+                tool: tool.clone(),
+                reason,
+            });
+            continue;
+        }
+        ready_tools.push(tool.clone());
+    }
+
+    Ok(McpExportSurfaceSelection {
+        binding: crate::manifest::AgentMcpBinding {
+            id: binding.id.clone(),
+            tools: ready_tools,
+        },
+        suppressed_tools,
+    })
+}
+
+fn package_identity_for_mcp_export(reference: &str) -> String {
+    let without_kind = reference
+        .split_once(':')
+        .map_or(reference, |(_, value)| value);
+    if let Some(stripped) = without_kind.strip_prefix('@') {
+        let mut parts = stripped.split('@');
+        let scope_and_name = parts.next().unwrap_or_default();
+        if let Some((scope, name)) = scope_and_name.split_once('/') {
+            return format!("@{scope}/{name}");
+        }
+        return format!("@{scope_and_name}");
+    }
+    without_kind
+        .split_once('@')
+        .map_or(without_kind, |(name, _)| name)
+        .to_string()
+}
+
+fn start_mcp_export_surface(
+    plan: &ResolvedHarnessPlan,
+    binding: &crate::manifest::AgentMcpBinding,
+    machine_writer: Option<MachineProtocolWriter>,
+    activity: McpExportActivity,
+) -> Result<ManagedMcpExportSurface> {
+    if binding.tools.is_empty() {
+        bail!(
+            "MCP export surface `{}` has no selected Tools and will not be started",
+            binding.id
+        );
+    }
+    let executable = std::env::current_exe().context("locating current agentpm executable")?;
+    let mut command = Command::new(executable);
+    command
+        .arg("serve")
+        .arg("--mcp")
+        .arg("--machine")
+        .arg("--host")
+        .arg(&plan.config.config.mcp.exports.host)
+        .arg("--port")
+        .arg("0")
+        .current_dir(&plan.workspace_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for tool in &binding.tools {
+        command.arg("--tool").arg(tool);
+    }
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("starting MCP export surface `{}`", binding.id))?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("capturing MCP export machine stdout")?;
+    let reader = std::io::BufReader::new(stdout);
+    let ready = wait_for_mcp_ready_frame(binding.id.clone(), reader, machine_writer, activity)
+        .with_context(|| format!("waiting for MCP export surface `{}` readiness", binding.id));
+    let ready = match ready {
+        Ok(ready) => ready,
+        Err(err) => {
+            stop_mcp_export_child(&mut child);
+            let mut stderr = String::new();
+            if let Some(mut child_stderr) = child.stderr.take() {
+                let _ = child_stderr.read_to_string(&mut stderr);
+            }
+            let stderr = stderr.trim();
+            if stderr.is_empty() {
+                return Err(err);
+            }
+            return Err(err).with_context(|| {
+                format!(
+                    "MCP export surface `{}` stderr: {}",
+                    binding.id,
+                    stderr.lines().next().unwrap_or(stderr)
+                )
+            });
+        }
+    };
+    let endpoint = ready
+        .get("endpoint")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let host = ready
+        .get("host")
+        .and_then(Value::as_str)
+        .unwrap_or(plan.config.config.mcp.exports.host.as_str())
+        .to_string();
+    let port = ready
+        .get("port")
+        .and_then(Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .unwrap_or(0);
+    Ok(ManagedMcpExportSurface {
+        snapshot: McpExportRuntimeSnapshot {
+            id: binding.id.clone(),
+            host,
+            port,
+            endpoint,
+            tools: binding.tools.clone(),
+            state: "ready".into(),
+        },
+        child,
+        binding: binding.clone(),
+        restart_attempts: 0,
+    })
+}
+
+fn wait_for_mcp_ready_frame<R>(
+    surface_id: String,
+    reader: std::io::BufReader<R>,
+    machine_writer: Option<MachineProtocolWriter>,
+    activity: McpExportActivity,
+) -> Result<Value>
+where
+    R: Read + Send + 'static,
+{
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut ready_sent = false;
+        for line in reader.lines() {
+            let Ok(line) = line else {
+                break;
+            };
+            let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if !ready_sent && value.get("event").and_then(Value::as_str) == Some("ready") {
+                let _ = sender.send(value.get("fields").cloned().unwrap_or_else(|| json!({})));
+                ready_sent = true;
+            } else if ready_sent {
+                activity.record_child_event(&surface_id, &value);
+                if let Some(writer) = &machine_writer {
+                    let _ = writer.write_event_payload(
+                        None,
+                        "mcp_export_event",
+                        json!({
+                            "surface": surface_id,
+                            "event": value,
+                        }),
+                    );
+                }
+            }
+        }
+    });
+    receiver
+        .recv_timeout(Duration::from_secs(5))
+        .context("timed out waiting for MCP machine ready event")
+}
+
+fn stop_mcp_export_child(child: &mut Child) {
+    if child.try_wait().ok().flatten().is_none() {
+        terminate_mcp_export_child(child);
+    }
+    let _ = child.wait();
+}
+
+#[cfg(unix)]
+fn terminate_mcp_export_child(child: &mut Child) {
+    let _ = unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+    for _ in 0..20 {
+        if child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let _ = child.kill();
+}
+
+#[cfg(not(unix))]
+fn terminate_mcp_export_child(child: &mut Child) {
+    let _ = child.kill();
+}
+
 fn run_tui_surface(_plan: &ResolvedHarnessPlan) -> Result<()> {
     Ok(())
 }
@@ -230,6 +975,29 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
             "report": plan.report,
         }),
     )?;
+    let mut mcp_export_session =
+        HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(plan));
+    mcp_export_session
+        .emitter
+        .add_sink(Box::new(MachineEventSink::new(writer.clone())));
+    let mut mcp_exports = if matches!(
+        plan.report.status,
+        PreflightStatus::Ready | PreflightStatus::ReadyWithWarnings
+    ) {
+        ManagedMcpExports::start_with_machine_writer(
+            plan,
+            &mut mcp_export_session,
+            Some(writer.clone()),
+        )?
+    } else {
+        ManagedMcpExports::default()
+    };
+    refresh_mcp_exports_for_session(
+        plan,
+        &mut mcp_export_session,
+        &mut mcp_exports,
+        Some(writer.clone()),
+    )?;
     let mut initialized = false;
     while let Some(request) = bridge.recv_control_request()? {
         let id = request.id.clone();
@@ -240,6 +1008,12 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
         let method = request.method.as_deref().unwrap_or_default();
         match method {
             "initialize" => {
+                refresh_mcp_exports_for_session(
+                    plan,
+                    &mut mcp_export_session,
+                    &mut mcp_exports,
+                    Some(writer.clone()),
+                )?;
                 initialized = true;
                 bridge.write_response(
                     id.as_deref(),
@@ -249,6 +1023,7 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
                             "version": AGENTPM_HARNESS_MACHINE_VERSION,
                         },
                         "preflight": plan.report,
+                        "mcp_exports": mcp_exports.snapshots(),
                         "required_host_services": required_host_services(plan),
                     }),
                 )?;
@@ -265,9 +1040,27 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
                 }
             }
             "preflight" => {
-                bridge.write_response(id.as_deref(), json!(plan.report))?;
+                refresh_mcp_exports_for_session(
+                    plan,
+                    &mut mcp_export_session,
+                    &mut mcp_exports,
+                    Some(writer.clone()),
+                )?;
+                bridge.write_response(
+                    id.as_deref(),
+                    json!({
+                        "report": plan.report,
+                        "mcp_exports": mcp_exports.snapshots(),
+                    }),
+                )?;
             }
             "start_run" => {
+                refresh_mcp_exports_for_session(
+                    plan,
+                    &mut mcp_export_session,
+                    &mut mcp_exports,
+                    Some(writer.clone()),
+                )?;
                 if !initialized {
                     bridge.write_error(
                         id.as_deref(),
@@ -304,7 +1097,7 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
                     .or_else(|| args.input.clone())
                     .ok_or_else(|| anyhow!("machine start_run requires payload.input"))?;
                 bridge.set_active_run(true);
-                let terminal = match execute_machine_run(plan, input, &bridge) {
+                let terminal = match execute_machine_run(plan, input, &bridge, &mcp_exports) {
                     Ok(terminal) => terminal,
                     Err(err) => {
                         bridge.set_active_run(false);
@@ -341,6 +1134,8 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
                 )?;
             }
             "shutdown" => {
+                mcp_exports.stop(&mut mcp_export_session)?;
+                mcp_export_session.emitter.flush()?;
                 bridge.write_response(id.as_deref(), json!({ "shutdown": true }))?;
                 break;
             }
@@ -351,6 +1146,8 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
             )?,
         }
     }
+    mcp_exports.stop(&mut mcp_export_session)?;
+    mcp_export_session.emitter.flush()?;
     Ok(())
 }
 
@@ -358,6 +1155,7 @@ fn execute_machine_run(
     plan: &ResolvedHarnessPlan,
     input: String,
     bridge: &MachineHostBridgeHandle,
+    mcp_exports: &ManagedMcpExports,
 ) -> Result<RuntimeTerminalResult> {
     let selection = model_selection(plan)?;
     let mut service_events = ServiceLifecycleEvents::new();
@@ -384,7 +1182,11 @@ fn execute_machine_run(
         Some(&service_events),
     );
     apply_custom_memory_activation_to_runtime(&mut runtime, &custom_memory);
+    let mcp_import_activation = activate_mcp_import_runtime_for_plan(plan);
+    apply_mcp_import_activation_to_runtime(&mut runtime, &mcp_import_activation);
+    let mcp_import_runtime = Arc::new(Mutex::new(mcp_import_activation.runtime));
     let mut dispatcher = AgentPmActionDispatcher::from_runtime(&runtime)?
+        .with_mcp_import_runtime(Arc::clone(&mcp_import_runtime))
         .with_cancellation_token(bridge.cancellation_token());
     let mut knowledge = knowledge_runtime_for_machine_plan(
         plan,
@@ -414,6 +1216,9 @@ fn execute_machine_run(
             plan.config.config.trace.clone(),
         )?));
     }
+    let mcp_import_snapshots = session.runtime_snapshot.mcp_imports.clone();
+    emit_mcp_import_activation_events(&mut session, &mcp_import_snapshots)?;
+    session.runtime_snapshot.mcp_exports = mcp_exports.snapshots();
     let mut approvals = if bridge.has_sdk_approval_controller() {
         Box::new(SdkHostApprovalController {
             invoker: Box::new(bridge.clone()),
@@ -449,6 +1254,10 @@ fn execute_machine_run(
         );
     };
     let mut terminal = *result;
+    merge_mcp_report_summaries(
+        &mut terminal.report.mcp_summaries,
+        mcp_exports.report_summaries(),
+    );
     if plan.config.config.trace.enabled {
         terminal.report.trace_path = Some(output_paths.events_path.display().to_string());
     }
@@ -1672,6 +2481,9 @@ fn execute_headless_plan_with_hooks(
         activate_custom_memory_runtime_for_plan(plan, &runtime, None, service_events_ref)
     };
     apply_custom_memory_activation_to_runtime(&mut runtime, &custom_memory);
+    let mcp_import_activation = activate_mcp_import_runtime_for_plan(plan);
+    apply_mcp_import_activation_to_runtime(&mut runtime, &mcp_import_activation);
+    let mcp_import_runtime = Arc::new(Mutex::new(mcp_import_activation.runtime));
     let mut knowledge = {
         let service_events_ref = service_events.as_deref();
         knowledge_runtime_for_headless_plan(
@@ -1685,9 +2497,13 @@ fn execute_headless_plan_with_hooks(
         let service_events_ref = service_events.as_deref();
         embedding_provider_for_plan(plan, None, service_events_ref)
     };
+    let mut mcp_dispatcher = McpImportActionDispatcher {
+        delegate: dispatcher,
+        mcp_imports: Arc::clone(&mcp_import_runtime),
+    };
     let mut services = HarnessRuntimeServices {
         model,
-        dispatcher,
+        dispatcher: &mut mcp_dispatcher,
         knowledge: knowledge.as_mut(),
         memory: custom_memory.runtime,
         embedding_provider: memory_embedding_provider,
@@ -1719,6 +2535,10 @@ fn execute_headless_plan_with_services(
             plan.config.config.trace.clone(),
         )?));
     }
+    let mcp_import_snapshots = session.runtime_snapshot.mcp_imports.clone();
+    emit_mcp_import_activation_events(&mut session, &mcp_import_snapshots)?;
+    let mut mcp_exports = ManagedMcpExports::start(plan, &mut session)?;
+    refresh_mcp_exports_for_session(plan, &mut session, &mut mcp_exports, None)?;
     let engine_options = harness_engine_options_from_plan(plan);
     let mut engine = HarnessEngine::new(loop_manifest, engine_options);
     let result = engine.execute_run_with_id(&mut session, run_id, input, services)?;
@@ -1726,6 +2546,12 @@ fn execute_headless_plan_with_services(
         bail!("Harness --headless cannot wait for interactive approval");
     };
     let mut terminal = *result;
+    refresh_mcp_exports_for_session_without_restart(plan, &mut session, &mut mcp_exports, None)?;
+    merge_mcp_report_summaries(
+        &mut terminal.report.mcp_summaries,
+        mcp_exports.report_summaries(),
+    );
+    mcp_exports.stop(&mut session)?;
     if plan.config.config.trace.enabled {
         terminal.report.trace_path = Some(output_paths.events_path.display().to_string());
     }
@@ -2187,6 +3013,24 @@ fn print_harness_preflight(
         }
     }
 
+    let mcp_export_lines = mcp_export_preflight_lines(plan);
+    if !mcp_export_lines.is_empty() {
+        stream.line("")?;
+        stream.line("MCP exports:")?;
+        for line in mcp_export_lines {
+            stream.line(line)?;
+        }
+    }
+
+    let mcp_import_lines = mcp_import_preflight_lines(plan);
+    if !mcp_import_lines.is_empty() {
+        stream.line("")?;
+        stream.line("MCP imports:")?;
+        for line in mcp_import_lines {
+            stream.line(line)?;
+        }
+    }
+
     if !plan.report.diagnostics.is_empty() {
         stream.line("")?;
         stream.line("Diagnostics:")?;
@@ -2223,6 +3067,77 @@ fn print_harness_preflight(
         }
     }
     Ok(())
+}
+
+fn mcp_export_preflight_lines(plan: &ResolvedHarnessPlan) -> Vec<String> {
+    let exports = &plan.report.mcp_exports;
+    let mut lines = vec![
+        format!("- enabled: {}", exports.enabled),
+        format!("- host: {}", exports.host),
+        format!(
+            "- restart: max_attempts={}, backoff_ms={}",
+            exports.restart.max_attempts, exports.restart.backoff_ms
+        ),
+    ];
+    if exports.surfaces.is_empty() {
+        lines.push("- surfaces: none".into());
+    } else {
+        lines.push(format!("- surfaces: {}", exports.surfaces.len()));
+        for surface in &exports.surfaces {
+            let tools = if surface.tools.is_empty() {
+                "none".to_string()
+            } else {
+                surface.tools.join(", ")
+            };
+            lines.push(format!("  - `{}`: tools: {}", surface.id, tools));
+        }
+    }
+    lines
+}
+
+fn mcp_import_preflight_lines(plan: &ResolvedHarnessPlan) -> Vec<String> {
+    let imports = &plan.report.mcp_imports;
+    if !imports.enabled {
+        return Vec::new();
+    }
+    let mut lines = vec![format!("- servers: {}", imports.servers.len())];
+    for server in &imports.servers {
+        let tools = server
+            .tools
+            .as_ref()
+            .map(|tools| {
+                if tools.is_empty() {
+                    "none".to_string()
+                } else {
+                    tools.join(", ")
+                }
+            })
+            .unwrap_or_else(|| "all advertised".into());
+        let mut detail = format!(
+            "  - `{}`: transport: {}, scope: {}, tools: {}",
+            server.id, server.transport, server.scope, tools
+        );
+        if !server.env.is_empty() {
+            detail.push_str(&format!(", env: {}", server.env.join(", ")));
+        }
+        if !server.headers.is_empty() {
+            detail.push_str(&format!(", headers: {}", server.headers.join(", ")));
+        }
+        if let Some(timeout) = server.request_timeout_ms {
+            detail.push_str(&format!(", request_timeout_ms: {timeout}"));
+        }
+        if let Some(timeout) = server.startup_timeout_ms {
+            detail.push_str(&format!(", startup_timeout_ms: {timeout}"));
+        }
+        if let Some(restart) = &server.restart {
+            detail.push_str(&format!(
+                ", restart: max_attempts={}, backoff_ms={}",
+                restart.max_attempts, restart.backoff_ms
+            ));
+        }
+        lines.push(detail);
+    }
+    lines
 }
 
 fn capability_counts(plan: &ResolvedHarnessPlan) -> BTreeMap<&'static str, usize> {

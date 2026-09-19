@@ -966,7 +966,7 @@ pub fn apply_before_tool_selection_decision(
     let original_tools = phase
         .capability_catalog
         .iter()
-        .filter(|descriptor| descriptor.action_kind == "agentpm_tool")
+        .filter(|descriptor| is_tool_descriptor_kind(&descriptor.action_kind))
         .cloned()
         .map(|descriptor| (descriptor.identity.clone(), descriptor))
         .collect::<std::collections::BTreeMap<_, _>>();
@@ -987,7 +987,7 @@ pub fn apply_before_tool_selection_decision(
     let mut catalog = phase
         .capability_catalog
         .iter()
-        .filter(|descriptor| descriptor.action_kind != "agentpm_tool")
+        .filter(|descriptor| !is_tool_descriptor_kind(&descriptor.action_kind))
         .cloned()
         .collect::<Vec<_>>();
     catalog.extend(reordered_tools.clone());
@@ -1003,7 +1003,22 @@ pub fn apply_before_tool_selection_decision(
             .position(|descriptor| descriptor.identity == tool.name)
             .unwrap_or(usize::MAX)
     });
+    phase.active_mcp_tools.retain(|tool| {
+        reordered_tools
+            .iter()
+            .any(|descriptor| descriptor.identity == tool.identity)
+    });
+    phase.active_mcp_tools.sort_by_key(|tool| {
+        reordered_tools
+            .iter()
+            .position(|descriptor| descriptor.identity == tool.identity)
+            .unwrap_or(usize::MAX)
+    });
     Ok(())
+}
+
+fn is_tool_descriptor_kind(action_kind: &str) -> bool {
+    matches!(action_kind, "agentpm_tool" | "external_mcp_tool")
 }
 
 pub fn before_tool_selection_hook_from_phase(
@@ -1021,7 +1036,7 @@ pub fn before_tool_selection_hook_from_phase(
         candidates: effective_phase
             .capability_catalog
             .iter()
-            .filter(|descriptor| descriptor.action_kind == "agentpm_tool")
+            .filter(|descriptor| is_tool_descriptor_kind(&descriptor.action_kind))
             .map(|descriptor| BeforeToolSelectionCandidate {
                 canonical_id: descriptor.identity.clone(),
                 description: descriptor.description.clone(),
@@ -1373,8 +1388,12 @@ pub fn apply_before_tool_call_decision(
             tool: tool.clone(),
             arguments,
         }),
-        SemanticAction::ExternalMcpTool { .. } => {
-            Err("before_tool_call cannot patch external MCP Tool arguments yet".into())
+        SemanticAction::ExternalMcpTool { server, tool, .. } => {
+            Ok(SemanticAction::ExternalMcpTool {
+                server: server.clone(),
+                tool: tool.clone(),
+                arguments,
+            })
         }
         _ => Ok(action.clone()),
     }
@@ -1898,6 +1917,7 @@ for line in sys.stdin:
             authored_profile_candidates: Vec::new(),
             active_profiles: Vec::new(),
             active_tools: vec![tool("@zack/a")],
+            active_mcp_tools: Vec::new(),
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory: Vec::new(),
@@ -1941,6 +1961,30 @@ for line in sys.stdin:
         }))
         .unwrap_err();
         assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn before_tool_call_can_patch_external_mcp_tool_arguments() {
+        let action = SemanticAction::ExternalMcpTool {
+            server: "search".into(),
+            tool: "lookup".into(),
+            arguments: json!({ "query": "old" }),
+        };
+        let patched = apply_before_tool_call_decision(
+            &action,
+            BeforeToolCallDecision {
+                arguments: Some(json!({ "query": "new" })),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            patched,
+            SemanticAction::ExternalMcpTool {
+                server: "search".into(),
+                tool: "lookup".into(),
+                arguments: json!({ "query": "new" }),
+            }
+        );
     }
 
     #[test]
@@ -2122,6 +2166,7 @@ for line in sys.stdin:
             authored_profile_candidates: Vec::new(),
             active_profiles: Vec::new(),
             active_tools: vec![tool("@zack/a"), tool("@zack/b")],
+            active_mcp_tools: Vec::new(),
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory: Vec::new(),
@@ -2155,6 +2200,7 @@ for line in sys.stdin:
             authored_profile_candidates: Vec::new(),
             active_profiles: Vec::new(),
             active_tools: vec![tool("@zack/a")],
+            active_mcp_tools: Vec::new(),
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory: Vec::new(),
@@ -2282,6 +2328,8 @@ for line in sys.stdin:
                 knowledge: Vec::new(),
                 memory: Vec::new(),
                 memory_operations: Vec::new(),
+                mcp_exports: Vec::new(),
+                mcp_imports: Vec::new(),
                 capability_candidates: Vec::new(),
                 model: Some(selection.clone()),
             },
@@ -2324,6 +2372,7 @@ for line in sys.stdin:
                 authored_profile_candidates: Vec::new(),
                 active_profiles: Vec::new(),
                 active_tools: Vec::new(),
+                active_mcp_tools: Vec::new(),
                 active_skills: Vec::new(),
                 active_knowledge: Vec::new(),
                 active_memory: Vec::new(),

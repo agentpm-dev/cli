@@ -3,6 +3,7 @@
 use super::action::{
     ActionDispatchResult, ActionDispatcher, ActionFailureCategory, SemanticAction,
 };
+use super::mcp::ConfiguredMcpImportRuntime;
 use super::model::{RuntimeSnapshot, SkillRuntimeSnapshot, ToolRuntimeSnapshot};
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
@@ -26,6 +27,7 @@ pub struct AgentPmActionDispatcher {
     agentpm_binary: PathBuf,
     tools: BTreeMap<String, ToolRuntimeSnapshot>,
     skills: BTreeMap<String, SkillRuntimeSnapshot>,
+    mcp_imports: Option<Arc<std::sync::Mutex<ConfiguredMcpImportRuntime>>>,
     cancellation_requested: Option<Arc<AtomicBool>>,
 }
 
@@ -53,12 +55,21 @@ impl AgentPmActionDispatcher {
                 .cloned()
                 .map(|skill| (skill.name.clone(), skill))
                 .collect(),
+            mcp_imports: None,
             cancellation_requested: None,
         })
     }
 
     pub fn with_cancellation_token(mut self, cancellation_requested: Arc<AtomicBool>) -> Self {
         self.cancellation_requested = Some(cancellation_requested);
+        self
+    }
+
+    pub fn with_mcp_import_runtime(
+        mut self,
+        mcp_imports: Arc<std::sync::Mutex<ConfiguredMcpImportRuntime>>,
+    ) -> Self {
+        self.mcp_imports = Some(mcp_imports);
         self
     }
 
@@ -238,8 +249,21 @@ impl ActionDispatcher for AgentPmActionDispatcher {
             SemanticAction::SkillResourceRead { skill, resource } => {
                 self.dispatch_skill_resource(skill, resource)
             }
-            SemanticAction::ExternalMcpTool { .. } => {
-                ActionDispatchResult::failure("External MCP Tool runtime is not available yet")
+            SemanticAction::ExternalMcpTool {
+                server,
+                tool,
+                arguments,
+            } => {
+                let Some(runtime) = &self.mcp_imports else {
+                    return ActionDispatchResult::failure_with_category(
+                        ActionFailureCategory::Runtime,
+                        "External MCP Tool runtime is not available",
+                    );
+                };
+                runtime
+                    .lock()
+                    .expect("MCP import runtime poisoned")
+                    .call_tool(server, tool, arguments)
             }
             SemanticAction::KnowledgeRequest { .. } => ActionDispatchResult::failure(
                 "Knowledge actions are handled by the Harness KnowledgeRuntime",

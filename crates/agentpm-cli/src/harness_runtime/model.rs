@@ -389,6 +389,34 @@ pub struct RuntimeCapabilitySnapshot {
     pub state: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpExportRuntimeSnapshot {
+    pub id: String,
+    pub host: String,
+    pub port: u16,
+    pub endpoint: String,
+    pub tools: Vec<String>,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpImportRuntimeSnapshot {
+    pub server_id: String,
+    pub tool_name: String,
+    pub identity: String,
+    pub description: String,
+    pub input_schema: Value,
+    pub transport: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness_reason: Option<String>,
+    pub source: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileSnapshot {
     pub name: String,
@@ -427,6 +455,10 @@ pub struct RuntimeSnapshot {
     pub memory: Vec<MemorySpaceRuntimeSnapshot>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory_operations: Vec<MemoryOperationRuntimeSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_exports: Vec<McpExportRuntimeSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_imports: Vec<McpImportRuntimeSnapshot>,
     pub capability_candidates: Vec<RuntimeCapabilitySnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelProviderSelection>,
@@ -453,6 +485,8 @@ impl RuntimeSnapshot {
             knowledge: Vec::new(),
             memory: Vec::new(),
             memory_operations: Vec::new(),
+            mcp_exports: Vec::new(),
+            mcp_imports: Vec::new(),
             capability_candidates: Vec::new(),
             model: None,
         }
@@ -474,6 +508,10 @@ pub struct ActionAlias {
     pub identity: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_shape: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_server: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_tool: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -948,12 +986,19 @@ pub(crate) fn provider_action_aliases(effective_phase: &EffectivePhase) -> Vec<A
                 memory_read_provider_action_aliases(descriptor, effective_phase)
             } else if descriptor.action_kind == "memory_write" {
                 memory_write_provider_action_aliases(descriptor, effective_phase)
+            } else if descriptor.action_kind == "external_mcp_tool" {
+                vec![external_mcp_provider_action_alias(
+                    descriptor,
+                    effective_phase,
+                )]
             } else {
                 vec![ActionAlias {
                     alias: provider_action_alias(descriptor, effective_phase, None),
                     action_kind: descriptor.action_kind.clone(),
                     identity: descriptor.identity.clone(),
                     provider_shape: None,
+                    mcp_server: None,
+                    mcp_tool: None,
                 }]
             }
         })
@@ -970,6 +1015,26 @@ fn single_provider_action_alias(
         action_kind: descriptor.action_kind.clone(),
         identity: descriptor.identity.clone(),
         provider_shape: provider_shape.map(str::to_string),
+        mcp_server: None,
+        mcp_tool: None,
+    }
+}
+
+fn external_mcp_provider_action_alias(
+    descriptor: &CapabilityDescriptor,
+    effective_phase: &EffectivePhase,
+) -> ActionAlias {
+    let tool = effective_phase
+        .active_mcp_tools
+        .iter()
+        .find(|tool| tool.identity == descriptor.identity);
+    ActionAlias {
+        alias: provider_action_alias(descriptor, effective_phase, None),
+        action_kind: descriptor.action_kind.clone(),
+        identity: descriptor.identity.clone(),
+        provider_shape: None,
+        mcp_server: tool.map(|tool| tool.server_id.clone()),
+        mcp_tool: tool.map(|tool| tool.tool_name.clone()),
     }
 }
 
@@ -1027,6 +1092,8 @@ fn memory_read_provider_action_aliases(
             action_kind: descriptor.action_kind.clone(),
             identity: descriptor.identity.clone(),
             provider_shape: Some(provider_shape.into()),
+            mcp_server: None,
+            mcp_tool: None,
         })
         .collect()
 }
@@ -1757,12 +1824,29 @@ mod tests {
             authored_profile_candidates: Vec::new(),
             active_profiles: Vec::new(),
             active_tools: Vec::new(),
+            active_mcp_tools: Vec::new(),
             active_skills: Vec::new(),
             active_knowledge: Vec::new(),
             active_memory,
             active_memory_operations: Vec::new(),
             capability_catalog,
             suppressed_capabilities: Vec::new(),
+        }
+    }
+
+    fn mcp_tool(server_id: &str, tool_name: &str) -> McpImportRuntimeSnapshot {
+        McpImportRuntimeSnapshot {
+            server_id: server_id.into(),
+            tool_name: tool_name.into(),
+            identity: format!("mcp:{server_id}/{tool_name}"),
+            description: format!("{server_id} {tool_name} tool"),
+            input_schema: json!({ "type": "object" }),
+            transport: "stdio".into(),
+            scopes: vec!["global".into()],
+            endpoint: None,
+            state: "available".into(),
+            readiness_reason: None,
+            source: "harness_config".into(),
         }
     }
 
@@ -1993,6 +2077,37 @@ mod tests {
             })
             .expect("reordered notes write alias");
         assert_eq!(reordered_alias.alias, notes_write.alias);
+    }
+
+    #[test]
+    fn external_mcp_aliases_keep_duplicate_tool_names_distinct_by_server_metadata() {
+        let mut phase = phase_with(
+            vec![
+                descriptor("external_mcp_tool", "mcp:github/search"),
+                descriptor("external_mcp_tool", "mcp:linear/search"),
+            ],
+            Vec::new(),
+        );
+        phase.active_mcp_tools = vec![mcp_tool("github", "search"), mcp_tool("linear", "search")];
+
+        let aliases = provider_action_aliases(&phase);
+
+        assert_eq!(aliases.len(), 2);
+        assert_ne!(aliases[0].alias, aliases[1].alias);
+        let github = aliases
+            .iter()
+            .find(|alias| alias.identity == "mcp:github/search")
+            .expect("github alias");
+        let linear = aliases
+            .iter()
+            .find(|alias| alias.identity == "mcp:linear/search")
+            .expect("linear alias");
+        assert!(github.alias.starts_with("mcp_tool_search_"));
+        assert!(linear.alias.starts_with("mcp_tool_search_"));
+        assert_eq!(github.mcp_server.as_deref(), Some("github"));
+        assert_eq!(github.mcp_tool.as_deref(), Some("search"));
+        assert_eq!(linear.mcp_server.as_deref(), Some("linear"));
+        assert_eq!(linear.mcp_tool.as_deref(), Some("search"));
     }
 
     #[test]

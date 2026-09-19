@@ -729,6 +729,8 @@ pub struct RunReport {
     pub action_summaries: Vec<ActionReportSummary>,
     pub tool_summaries: Vec<OperationReportSummary>,
     pub mcp_summaries: Vec<OperationReportSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_imports: Vec<McpImportReportSummary>,
     pub knowledge_summaries: Vec<OperationReportSummary>,
     pub memory_summaries: Vec<OperationReportSummary>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -741,6 +743,21 @@ pub struct RunReport {
     pub cancellation_summary: BTreeMap<String, u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpImportReportSummary {
+    pub server_id: String,
+    pub tool_name: String,
+    pub identity: String,
+    pub transport: String,
+    pub scopes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness_reason: Option<String>,
+    pub source: String,
 }
 
 impl RunReport {
@@ -928,6 +945,7 @@ impl SyntheticHarnessRun {
             action_summaries: self.action_summaries,
             tool_summaries: Vec::new(),
             mcp_summaries: Vec::new(),
+            mcp_imports: Vec::new(),
             knowledge_summaries: Vec::new(),
             memory_summaries: Vec::new(),
             memory_write_review_summaries: Vec::new(),
@@ -1633,6 +1651,7 @@ mod tests {
             action_summaries: Vec::new(),
             tool_summaries: Vec::new(),
             mcp_summaries: Vec::new(),
+            mcp_imports: Vec::new(),
             knowledge_summaries: Vec::new(),
             memory_summaries: Vec::new(),
             memory_write_review_summaries: Vec::new(),

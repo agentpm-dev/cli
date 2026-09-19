@@ -197,7 +197,7 @@ impl HarnessEngine {
             },
             HarnessEventBuilder::default(),
         )?;
-        let report = self.report_for_run(&session.session_id, &run, status, output.clone());
+        let report = self.report_for_run(session, &run, status, output.clone());
         Ok(HarnessRunResult::Terminal(Box::new(
             RuntimeTerminalResult {
                 status,
@@ -209,7 +209,7 @@ impl HarnessEngine {
 
     pub(super) fn report_for_run(
         &self,
-        session_id: &str,
+        session: &HarnessSession,
         run: &RunState,
         status: HarnessTerminalStatus,
         output: Option<Value>,
@@ -226,7 +226,7 @@ impl HarnessEngine {
         };
         RunReport {
             report_version: HARNESS_REPORT_SCHEMA_VERSION,
-            session_id: session_id.to_string(),
+            session_id: session.session_id.clone(),
             run_id: run.run_id().to_string(),
             agent: ReportPackageIdentity {
                 name: "synthetic-agent".into(),
@@ -276,7 +276,8 @@ impl HarnessEngine {
                 .filter(|summary| summary.operation_kind != "memory_operation")
                 .cloned()
                 .collect(),
-            mcp_summaries: Vec::new(),
+            mcp_summaries: mcp_export_summaries_for_runtime(&session.runtime_snapshot),
+            mcp_imports: mcp_import_details_for_runtime(&session.runtime_snapshot),
             knowledge_summaries: operation_summaries_for_action_kind(
                 &run.action_summaries,
                 "knowledge_request",

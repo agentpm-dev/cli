@@ -235,6 +235,73 @@ fn before_tool_call_hook_patches_arguments_and_revalidates() {
 }
 
 #[test]
+fn before_tool_call_hook_patches_imported_mcp_tool_arguments() {
+    let runtime = runtime_with_imported_mcp_tool("search", "lookup", "global");
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new([
+        external_mcp_tool_turn("search", "lookup", json!({ "query": "old" })),
+        completion("done", "handoff"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+    let mut hooks = TestHookRuntime {
+        tool_call: Some(BeforeToolCallDecision {
+            arguments: Some(json!({ "query": "patched" })),
+        }),
+        active_hooks: vec![HarnessHookId::BeforeToolCall],
+        ..TestHookRuntime::default()
+    };
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let result = {
+        let mut knowledge = NoopKnowledgeRuntime;
+        let mut services = HarnessRuntimeServices {
+            model: &mut model,
+            dispatcher: &mut dispatcher,
+            knowledge: &mut knowledge,
+            memory: None,
+            embedding_provider: None,
+            approvals: &mut approvals,
+            hooks: &mut hooks,
+            service_events: None,
+        };
+        engine
+            .execute_run_with_id(
+                &mut session,
+                "run-hooks-imported-mcp-tool-call".into(),
+                "input",
+                &mut services,
+            )
+            .unwrap()
+    };
+
+    assert!(matches!(result, HarnessRunResult::Terminal(_)));
+    assert_eq!(
+        dispatcher.dispatched[0],
+        SemanticAction::ExternalMcpTool {
+            server: "search".into(),
+            tool: "lookup".into(),
+            arguments: json!({ "query": "patched" }),
+        }
+    );
+    let hook_input = hooks.tool_call_hooks.first().expect("hook input");
+    assert_eq!(hook_input.phase_id, "assess");
+    assert_eq!(hook_input.tool, "mcp:search/lookup");
+    assert_eq!(hook_input.arguments, json!({ "query": "old" }));
+    let fields = hook_event_fields_for(
+        &handle.events(),
+        HarnessEventType::HookCompleted,
+        "before_tool_call",
+    );
+    assert_eq!(fields["tool"], json!("mcp:search/lookup"));
+    assert_eq!(fields["argument_keys_before"], json!(["query"]));
+    assert_eq!(fields["argument_keys_after"], json!(["query"]));
+    assert_eq!(fields["arguments_patched"], json!(true));
+}
+
+#[test]
 fn before_tool_call_continue_failure_is_reported_before_completed() {
     let mut session = session_with_tool_and_skill();
     let memory = InMemoryEventSink::default();

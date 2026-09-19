@@ -39,6 +39,55 @@ pub(super) fn memory_summaries_for_actions(
     summaries
 }
 
+pub(super) fn mcp_export_summaries_for_runtime(
+    runtime: &RuntimeSnapshot,
+) -> Vec<OperationReportSummary> {
+    let mut summaries = runtime
+        .mcp_exports
+        .iter()
+        .map(|surface| OperationReportSummary {
+            operation_kind: "mcp_export".into(),
+            identity: surface.id.clone(),
+            status: surface.state.clone(),
+            count: surface.tools.len().try_into().unwrap_or(0),
+        })
+        .collect::<Vec<_>>();
+    summaries.extend(
+        runtime
+            .mcp_imports
+            .iter()
+            .map(|tool| OperationReportSummary {
+                operation_kind: "mcp_import".into(),
+                identity: tool.identity.clone(),
+                status: tool.state.clone(),
+                count: u64::from(tool.state == "available"),
+            }),
+    );
+    summaries
+}
+
+pub(super) fn mcp_import_details_for_runtime(
+    runtime: &RuntimeSnapshot,
+) -> Vec<crate::harness_observability::McpImportReportSummary> {
+    runtime
+        .mcp_imports
+        .iter()
+        .map(
+            |tool| crate::harness_observability::McpImportReportSummary {
+                server_id: tool.server_id.clone(),
+                tool_name: tool.tool_name.clone(),
+                identity: tool.identity.clone(),
+                transport: tool.transport.clone(),
+                scopes: tool.scopes.clone(),
+                endpoint: tool.endpoint.clone(),
+                state: tool.state.clone(),
+                readiness_reason: tool.readiness_reason.clone(),
+                source: tool.source.clone(),
+            },
+        )
+        .collect()
+}
+
 pub(super) fn model_turn_trace_fields(turn: &ModelTurn) -> BTreeMap<String, Value> {
     let mut fields = BTreeMap::from([("semantic_actions".into(), json!(turn.actions.len()))]);
     if let Some(content) = &turn.assistant_content {

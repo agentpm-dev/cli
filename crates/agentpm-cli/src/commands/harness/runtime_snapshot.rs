@@ -52,6 +52,8 @@ pub(super) fn runtime_snapshot_from_plan(plan: &ResolvedHarnessPlan) -> RuntimeS
         knowledge: knowledge_snapshots_from_plan(plan),
         memory: memory_snapshots_from_plan(plan),
         memory_operations: memory_operation_snapshots_from_plan(plan),
+        mcp_exports: Vec::new(),
+        mcp_imports: Vec::new(),
         capability_candidates: plan
             .capabilities
             .iter()

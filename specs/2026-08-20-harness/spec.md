@@ -989,15 +989,23 @@ Agent `bindings.mcp` defines the logical exported surfaces. Runtime config only 
   "mcp": {
     "exports": {
       "enabled": true,
-      "host": "127.0.0.1"
+      "host": "127.0.0.1",
+      "restart": {
+        "max_attempts": 1,
+        "backoff_ms": 250
+      }
     }
   }
 }
 ```
 
-Defaults are `enabled: true` and `host: "127.0.0.1"`. Harness always requests ephemeral port `0` independently for each logical exported surface. Version 1 does not provide a static per-surface port map; users who require custom standalone MCP hosting can run `agentpm serve --mcp` directly. Configuring a non-loopback host is allowed only explicitly and must produce a prominent security warning.
+Defaults are `enabled: true`, `host: "127.0.0.1"`, `restart.max_attempts: 1`, and `restart.backoff_ms: 250`. `restart.max_attempts: 0` disables automatic managed-surface restart. Harness always requests ephemeral port `0` independently for each logical exported surface. Version 1 does not provide a static per-surface port map; users who require custom standalone MCP hosting can run `agentpm serve --mcp` directly. Configuring a non-loopback host is allowed only explicitly and must produce a prominent security warning.
 
 Exported MCP surfaces are Session-owned, not Run-owned. They may service external MCP calls while no Run is active and may also remain callable while the Session's single Harness Run is active. Such outward calls do not become part of that Run merely because their timing overlaps it: they do not mutate RunState, consume phase/Run action or Tool-call limits, participate in Loop access/checkpoints, or invoke phase-scoped Hooks. Their events/correlation carry Session/surface/call identity; `run_id` is absent unless a future explicit contract intentionally associates an outward call with a Run.
+
+Managed export restart follows the same no-replay rule as other managed services: a failed in-flight external MCP call fails visibly and is never retried automatically; a successful restart only restores availability for subsequent external calls. Because Harness-managed exports always bind with ephemeral port `0`, a restarted surface may return on a different endpoint. Harness updates the runtime snapshot/report with the new endpoint, but existing external MCP clients holding the old URL must rediscover the surface before making subsequent calls. Exhausting the configured attempts marks the surface unavailable/failed until the Session is restarted or configuration changes.
+
+Restart is evaluated at explicit Harness refresh/yield points, not by a background scheduler. Machine/TUI-style Session owners can refresh while the Session remains active and publish the new endpoint through lifecycle events and runtime snapshots. One-shot headless execution refreshes managed exports before Run execution and records final surface state for the report after the Run; it does not provide continuous in-run recovery or a live endpoint rediscovery channel. Long-lived external MCP hosting that requires continuous restart/rediscovery should use a machine-managed Harness Session or standalone `agentpm serve --mcp` hosting rather than relying on a single headless Run.
 
 ### Approval configuration
 

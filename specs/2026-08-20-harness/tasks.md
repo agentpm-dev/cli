@@ -1074,54 +1074,54 @@ This gives us the built-in SQLite MemoryRuntime, direct Memory read/write semant
 
 ## Milestone 17: MCP Export and `agentpm serve --mcp` Machine Lifecycle
 > Scope note: realize Agent-authored `bindings.mcp` as outward AgentPM MCP server surfaces. Preserve the existing shared-runner MCP implementation while adding a stable machine lifecycle/event contract and Session-owned Harness management. Outward MCP remains independent of active Run phase semantics.
-- [ ] Add `agentpm serve --mcp --machine` with a documented versioned machine envelope and structured startup/ready/shutdown/error/event messages; protocol stdout must not require Harness to parse human stderr/stdout text.
-- [ ] Support `--port 0` and report the actual bound host/port/endpoint in machine readiness.
-- [ ] Preserve existing human `serve --mcp` behavior outside machine mode.
-- [ ] Keep default managed host loopback and honor `mcp.exports.host`; use ephemeral ports per logical surface rather than static config mapping.
-- [ ] Keep existing `serve --mcp` Tool invocation through the shared internal Tool runner; do **not** spawn public `agentpm run` per MCP request.
-- [ ] Ensure Milestone 7 runner hardening (schema/runtime/env/timeout/cancellation semantics) is inherited by MCP calls through the shared runner.
-- [ ] Add `serve --mcp` lifecycle cleanup for concurrent shared-runner Tool invocations: SIGINT/SIGTERM or managed Session shutdown must terminate any nested child process groups started by in-flight Tool calls without installing a permanent process-global `_exit` handler that bypasses graceful MCP/Harness cleanup.
-- [ ] Emit machine Tool-call started/completed/failed events containing canonical AgentPM identity and external MCP-safe normalized name.
+- [x] Add `agentpm serve --mcp --machine` with a documented versioned machine envelope and structured startup/ready/shutdown/error/event messages; protocol stdout must not require Harness to parse human stderr/stdout text.
+- [x] Support `--port 0` and report the actual bound host/port/endpoint in machine readiness.
+- [x] Preserve existing human `serve --mcp` behavior outside machine mode.
+- [x] Keep default managed host loopback and honor `mcp.exports.host`; use ephemeral ports per logical surface rather than static config mapping.
+- [x] Keep existing `serve --mcp` Tool invocation through the shared internal Tool runner; do **not** spawn public `agentpm run` per MCP request.
+- [x] Ensure Milestone 7 runner hardening (schema/runtime/env/timeout/cancellation semantics) is inherited by MCP calls through the shared runner.
+- [x] Add `serve --mcp` lifecycle cleanup for concurrent shared-runner Tool invocations: SIGINT/SIGTERM or managed Session shutdown must terminate any nested child process groups started by in-flight Tool calls without installing a permanent process-global `_exit` handler that bypasses graceful MCP/Harness cleanup.
+- [x] Emit machine Tool-call started/completed/failed events containing canonical AgentPM identity and external MCP-safe normalized name.
 
-- [ ] Add Harness McpRuntime export lifecycle that honors `mcp.exports.enabled`; when enabled, start one managed `agentpm serve --mcp --machine` subprocess per authored Agent `bindings.mcp` surface.
-- [ ] Pass exactly the top-level Agent Tools explicitly listed by that logical MCP surface; do not export Skill-transitive Tools by accident.
-- [ ] Treat a Tool being both phase-bound and MCP-exported as valid/non-redundant, and allow MCP-only exported Tools without making them phase capabilities.
-- [ ] Keep surfaces Session-owned and externally callable even when no Harness Run is active.
-- [ ] Validate MCP-normalized name collisions and surface Tool readiness before/at startup.
-- [ ] Suppress known runtime-incompatible Tools from the managed surface; expose the ready subset with strong diagnostics when non-empty and mark an empty surface unavailable.
-- [ ] Keep missing Tool env semantics authoritative at actual shared-runner invocation rather than pretending successful readiness guarantees env presence forever.
-- [ ] Keep outward calls outside active Run Tool Hooks, Loop `access.tools`, checkpoints, Tool retry policy, and phase transcripts.
-- [ ] Feed surface lifecycle and external call activity back through Harness events/preflight/report/TUI models without treating those calls as Run actions.
-- [ ] Apply managed-process restart policy: failed in-flight call is never replayed; optional restart restores only subsequent calls; exhausted restart makes the surface unavailable.
-- [ ] Ensure Session shutdown/cancellation terminates all Harness-owned MCP export subprocesses cleanly.
+- [x] Add Harness McpRuntime export lifecycle that honors `mcp.exports.enabled`; when enabled, start one managed `agentpm serve --mcp --machine` subprocess per authored Agent `bindings.mcp` surface.
+- [x] Pass exactly the top-level Agent Tools explicitly listed by that logical MCP surface; do not export Skill-transitive Tools by accident.
+- [x] Treat a Tool being both phase-bound and MCP-exported as valid/non-redundant, and allow MCP-only exported Tools without making them phase capabilities.
+- [x] Keep surfaces Session-owned and externally callable even when no Harness Run is active.
+- [x] Validate MCP-normalized name collisions and surface Tool readiness before/at startup.
+- [x] Suppress known runtime-incompatible Tools from the managed surface; expose the ready subset with strong diagnostics when non-empty and mark an empty surface unavailable.
+- [x] Keep missing Tool env semantics authoritative at actual shared-runner invocation rather than pretending successful readiness guarantees env presence forever.
+- [x] Keep outward calls outside active Run Tool Hooks, Loop `access.tools`, checkpoints, Tool retry policy, and phase transcripts.
+- [x] Feed surface lifecycle and external call activity back through Harness events/preflight/report/TUI models without treating those calls as Run actions.
+- [x] Apply managed-process restart policy: failed in-flight call is never replayed; optional restart restores only subsequent calls; exhausted restart makes the surface unavailable.
+- [x] Ensure Session shutdown/cancellation terminates all Harness-owned MCP export subprocesses cleanly.
 
-- [ ] Add tests for exports disabled/enabled, multiple surfaces, ephemeral ports/host, Tool filtering, normalized-name collisions, ready subset/empty surface behavior, call events, shared-runner failures, concurrent in-flight Tool cleanup on MCP server termination, process restart-without-replay, calls with no active Run, and cleanup.
+- [x] Add tests for exports disabled/enabled, multiple surfaces, ephemeral ports/host, Tool filtering, normalized-name collisions, ready subset/empty surface behavior, call events, shared-runner failures, concurrent in-flight Tool cleanup on MCP server termination, process restart-without-replay, calls with no active Run, and cleanup.
 
 ## Milestone 18: External MCP Import and Runtime Tool Augmentation
 > Scope note: let workspace runtime configuration add environment-specific MCP functionality to an already-published Agent. Imported MCP Tools become normal phase Tool capabilities only in explicitly configured scope and run through the same Harness Tool selection/validation/Hook/retry/failure pipeline as AgentPM Tools, while retaining distinct McpRuntime transport.
-- [ ] Implement config-v1 `mcp.imports` exactly as defined in Milestone 1/spec: `transport: stdio | http`; stdio uses direct command/args/cwd/env/timeouts/restart, HTTP uses an absolute URL and `{value}|{env}` header references.
-- [ ] Resolve stdio env/header `{env}` references through the scoped secret/environment resolver and never emit resolved secrets in events, reports, or diagnostics.
-- [ ] Require every import to declare explicit `scope.mode: global | phases`; global forbids `phases`, while phase scope requires a non-empty unique list already validated against the selected Loop.
-- [ ] Support optional allowed Tool-name filter; omitted means all currently advertised Tools are eligible within the explicitly configured scope.
-- [ ] Start/connect imports at Session bootstrap, perform MCP initialization and `tools/list`, validate configured filters, and normalize discovered Tool name/description/input schema into runtime Tool descriptors.
-- [ ] Treat MCP import startup/connection/initialization/`tools/list`/filter validation as per-server/per-tool activation results that feed back into augmentation readiness before `EffectivePhase` construction; failed imports or filtered/missing Tools must be suppressed with reasons rather than exposed as model-selectable Tools that later fail resolution.
-- [ ] Replace the Milestone 5 placeholder provider-native `external_mcp_tool` action schema with each discovered MCP Tool's advertised input schema after `tools/list`, preserving the configured filter/scope.
-- [ ] Translate provider-facing imported-MCP Tool schemas to the schema subset accepted by the selected ModelRuntime/provider without changing the canonical MCP input schema used for Harness-side validation, Hook revalidation, dispatch, and bounded repair.
-- [ ] Replace any combined-string `server/tool` alias-decoding placeholder with structured external MCP Tool identity metadata before imported MCP Tool actions become live; server IDs and Tool names must not depend on `/` splitting such as `rsplit_once('/')`.
-- [ ] Apply managed-service lifecycle to owned stdio imports and appropriate connection/readiness failure handling to remote HTTP imports; never replay an in-flight Tool call automatically after reconnect/restart.
-- [ ] Assign stable canonical internal identities such as `mcp:<server-id>/<tool-name>` and keep provider-safe model aliases separate.
-- [ ] Add discovered imported Tools as runtime augmentation candidates only in configured global/phase scope; never mutate Agent manifest/bindings to represent them.
-- [ ] Reconcile imported-MCP scope encoding before `mcp_import` candidates become live in `EffectivePhase`: config currently labels phase scope as `phases:a,b`, while existing runtime candidate matching expects `global` or `phase:<id>`. Prefer typed scope metadata, or normalize to one string format, so phase-scoped imports are not silently dropped.
-- [ ] Populate `EffectivePhase` with ready/suppressed imported MCP Tool augmentation descriptors, preserving configured global/phase scope, discovered Tool identity, Loop `access.tools`, runtime readiness, and explicit suppression reasons.
+- [x] Implement config-v1 `mcp.imports` exactly as defined in Milestone 1/spec: `transport: stdio | http`; stdio uses direct command/args/cwd/env/timeouts/restart, HTTP uses an absolute URL and `{value}|{env}` header references.
+- [x] Resolve stdio env/header `{env}` references through the scoped secret/environment resolver and never emit resolved secrets in events, reports, or diagnostics.
+- [x] Require every import to declare explicit `scope.mode: global | phases`; global forbids `phases`, while phase scope requires a non-empty unique list already validated against the selected Loop.
+- [x] Support optional allowed Tool-name filter; omitted means all currently advertised Tools are eligible within the explicitly configured scope.
+- [x] Start/connect imports at Session bootstrap, perform MCP initialization and `tools/list`, validate configured filters, and normalize discovered Tool name/description/input schema into runtime Tool descriptors.
+- [x] Treat MCP import startup/connection/initialization/`tools/list`/filter validation as per-server/per-tool activation results that feed back into augmentation readiness before `EffectivePhase` construction; failed imports or filtered/missing Tools must be suppressed with reasons rather than exposed as model-selectable Tools that later fail resolution.
+- [x] Replace the Milestone 5 placeholder provider-native `external_mcp_tool` action schema with each discovered MCP Tool's advertised input schema after `tools/list`, preserving the configured filter/scope.
+- [x] Translate provider-facing imported-MCP Tool schemas to the schema subset accepted by the selected ModelRuntime/provider without changing the canonical MCP input schema used for Harness-side validation, Hook revalidation, dispatch, and bounded repair.
+- [x] Replace any combined-string `server/tool` alias-decoding placeholder with structured external MCP Tool identity metadata before imported MCP Tool actions become live; server IDs and Tool names must not depend on `/` splitting such as `rsplit_once('/')`.
+- [x] Apply managed-service lifecycle to owned stdio imports and appropriate connection/readiness failure handling to remote HTTP imports; never replay an in-flight Tool call automatically after reconnect/restart.
+- [x] Assign stable canonical internal identities such as `mcp:<server-id>/<tool-name>` and keep provider-safe model aliases separate.
+- [x] Add discovered imported Tools as runtime augmentation candidates only in configured global/phase scope; never mutate Agent manifest/bindings to represent them.
+- [x] Reconcile imported-MCP scope encoding before `mcp_import` candidates become live in `EffectivePhase`: config currently labels phase scope as `phases:a,b`, while existing runtime candidate matching expects `global` or `phase:<id>`. Prefer typed scope metadata, or normalize to one string format, so phase-scoped imports are not silently dropped.
+- [x] Populate `EffectivePhase` with ready/suppressed imported MCP Tool augmentation descriptors, preserving configured global/phase scope, discovered Tool identity, Loop `access.tools`, runtime readiness, and explicit suppression reasons.
 
-- [ ] Route imported MCP Tool actions through the same logical Tool pipeline as AgentPM Tools for EffectivePhase `access.tools`, candidate/selection Hooks, argument schema validation, `max_tool_calls_per_phase`, Loop retry/error policy, phase-local result handling, and Tool events.
-- [ ] Dispatch the actual call through McpRuntime rather than `agentpm run` and normalize MCP result/protocol failure into the common Tool action result/failure model.
-- [ ] Treat valid MCP invocation/transport/protocol failures as Loop Tool failures after the McpRuntime invocation boundary is crossed.
-- [ ] Revalidate arguments after Hook changes before `tools/call`.
-- [ ] Surface server/discovered/exposed/suppressed Tool readiness, configured phase scope, and endpoint/transport-safe metadata in preflight/report/TUI data.
-- [ ] Keep lifecycle Session-owned and distinguish Harness-owned stdio child termination from remote HTTP connection cleanup.
+- [x] Route imported MCP Tool actions through the same logical Tool pipeline as AgentPM Tools for EffectivePhase `access.tools`, candidate/selection Hooks, argument schema validation, `max_tool_calls_per_phase`, Loop retry/error policy, phase-local result handling, and Tool events.
+- [x] Dispatch the actual call through McpRuntime rather than `agentpm run` and normalize MCP result/protocol failure into the common Tool action result/failure model.
+- [x] Treat valid MCP invocation/transport/protocol failures as Loop Tool failures after the McpRuntime invocation boundary is crossed.
+- [x] Revalidate arguments after Hook changes before `tools/call`.
+- [x] Surface server/discovered/exposed/suppressed Tool readiness, configured phase scope, and endpoint/transport-safe metadata in preflight/report/TUI data.
+- [x] Keep lifecycle Session-owned and distinguish Harness-owned stdio child termination from remote HTTP connection cleanup.
 
-- [ ] Add tests for stdio + HTTP imports, secret-header/env handling, explicit scoping, Tool filters, duplicate Tool names across servers, canonical/provider alias mapping, Tool-disabled phases, Hook-modified arguments, logical Tool retry, server disconnect/restart-without-replay, phase-local results, Session cleanup, and no Agent-manifest mutation.
+- [x] Add tests for stdio + HTTP imports, secret-header/env handling, explicit scoping, Tool filters, duplicate Tool names across servers, canonical/provider alias mapping, Tool-disabled phases, Hook-modified arguments, logical Tool retry, server disconnect/restart-without-replay, phase-local results, Session cleanup, and no Agent-manifest mutation.
 
 ## Release Band 7: MCP Export and Import Runtime
 Covered milestones: 17-18.
