@@ -1,11 +1,9 @@
 use super::HarnessArgs;
 use crate::harness_config::{HarnessTraceContent, HarnessTraceLevel};
-use crate::harness_plan::{
-    CapabilityState, HarnessBootstrapOptions, HarnessExecutionSurface, PreflightDiagnosticSeverity,
-    PreflightStatus, ResolvedHarnessPlan, resolve_harness_plan,
-};
+use crate::harness_observability::{HarnessEventEnvelope, HarnessTerminalStatus};
+use crate::harness_plan::{CapabilityState, PreflightDiagnosticSeverity, PreflightStatus};
 use crate::prelude::*;
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, bail};
 use crossterm::{
     cursor::{Hide, Show},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -21,13 +19,11 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 use std::{
-    any::Any,
     io::{IsTerminal, Stdout, stdout},
-    panic::{self, AssertUnwindSafe, PanicHookInfo},
-    path::PathBuf,
+    panic::{self, PanicHookInfo},
     sync::{
         Arc, Mutex,
-        mpsc::{self, Receiver, TryRecvError},
+        mpsc::{Receiver, TryRecvError},
     },
     thread::{self, ThreadId},
     time::Duration,
@@ -47,10 +43,12 @@ const PRODUCT_TITLE: &str = "AgentPM Harness";
 const PREFLIGHT_LINE_WIDTH: usize = 34;
 const BAR_HORIZONTAL_PADDING: u16 = 1;
 
-type PanicHook = Box<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static>;
-type BootstrapResult = Result<ResolvedHarnessPlan>;
+mod state;
+use state::*;
 
-pub(super) fn run_tui_surface(args: HarnessArgs, workspace_root: PathBuf) -> Result<()> {
+type PanicHook = Box<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static>;
+
+pub(super) fn run_tui_surface(args: HarnessArgs, workspace_root: std::path::PathBuf) -> Result<()> {
     ensure_tui_terminal_available()?;
 
     let mut terminal = TuiTerminal::enter()?;
@@ -58,42 +56,6 @@ pub(super) fn run_tui_surface(args: HarnessArgs, workspace_root: PathBuf) -> Res
     let bootstrap = spawn_bootstrap_worker(args, workspace_root);
 
     run_shell_loop(&mut terminal, &mut app, bootstrap)
-}
-
-fn spawn_bootstrap_worker(args: HarnessArgs, workspace_root: PathBuf) -> Receiver<BootstrapResult> {
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            resolve_harness_plan(
-                &workspace_root,
-                &HarnessBootstrapOptions {
-                    agent_selector: args.agent.clone(),
-                    config_path: args.config.clone(),
-                    state_dir_override: args.state_dir.clone(),
-                    runtime_scopes: args.scopes.iter().cloned().collect(),
-                    surface: HarnessExecutionSurface::Tui,
-                },
-            )
-        }))
-        .unwrap_or_else(|payload| {
-            Err(anyhow!(
-                "bootstrap worker panicked: {}",
-                panic_payload_message(payload)
-            ))
-        });
-        let _ = sender.send(result);
-    });
-    receiver
-}
-
-fn panic_payload_message(payload: Box<dyn Any + Send>) -> String {
-    if let Some(message) = payload.downcast_ref::<&str>() {
-        (*message).into()
-    } else if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "unknown panic payload".into()
-    }
 }
 
 fn ensure_tui_terminal_available() -> Result<()> {
@@ -113,7 +75,7 @@ fn ensure_tui_terminal_available() -> Result<()> {
 fn run_shell_loop(
     terminal: &mut TuiTerminal,
     app: &mut TuiApp,
-    bootstrap: Receiver<BootstrapResult>,
+    bootstrap: Receiver<BootstrapMessage>,
 ) -> Result<()> {
     let mut bootstrap = Some(bootstrap);
     loop {
@@ -158,23 +120,44 @@ fn run_shell_loop(
     Ok(())
 }
 
-fn poll_bootstrap_result(app: &mut TuiApp, bootstrap: &mut Option<Receiver<BootstrapResult>>) {
+fn poll_bootstrap_result(app: &mut TuiApp, bootstrap: &mut Option<Receiver<BootstrapMessage>>) {
     let Some(receiver) = bootstrap else {
         return;
     };
-    match receiver.try_recv() {
-        Ok(Ok(plan)) => {
-            *app = TuiApp::ready(plan);
-            *bootstrap = None;
-        }
-        Ok(Err(err)) => {
-            *app = TuiApp::failed(format!("{err:#}"));
-            *bootstrap = None;
-        }
-        Err(TryRecvError::Empty) => {}
-        Err(TryRecvError::Disconnected) => {
-            *app = TuiApp::failed("bootstrap worker exited before reporting readiness".into());
-            *bootstrap = None;
+    loop {
+        match receiver.try_recv() {
+            Ok(BootstrapMessage::Progress(progress)) => app.push_bootstrap_progress(progress),
+            Ok(BootstrapMessage::Ready(result)) => match *result {
+                Ok(plan) => {
+                    app.push_bootstrap_progress(TuiBootstrapProgress::new(
+                        TuiBootstrapStage::Runtime,
+                        "Preparing TUI runtime controller.",
+                    ));
+                    match TuiSessionController::new(plan) {
+                        Ok(controller) => {
+                            *app = TuiApp::ready(controller);
+                            *bootstrap = None;
+                            return;
+                        }
+                        Err(err) => {
+                            *app = TuiApp::failed(format!("{err:#}"));
+                            *bootstrap = None;
+                            return;
+                        }
+                    }
+                }
+                Err(err) => {
+                    *app = TuiApp::failed(format!("{err:#}"));
+                    *bootstrap = None;
+                    return;
+                }
+            },
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                *app = TuiApp::failed("bootstrap worker exited before reporting readiness".into());
+                *bootstrap = None;
+                return;
+            }
         }
     }
 }
@@ -309,15 +292,25 @@ enum LayoutMode {
 }
 
 enum TuiState {
-    Loading { args: HarnessArgs },
-    Ready { plan: Box<ResolvedHarnessPlan> },
-    Failed { message: String },
+    Loading {
+        args: HarnessArgs,
+        progress: Vec<TuiBootstrapProgress>,
+    },
+    Ready {
+        controller: Box<TuiSessionController>,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 impl TuiApp {
     fn loading(args: HarnessArgs) -> Self {
         Self {
-            state: TuiState::Loading { args },
+            state: TuiState::Loading {
+                args,
+                progress: Vec::new(),
+            },
             panel: VisiblePanel::Run,
             accent: DEFAULT_ACCENT,
             warnings: Vec::new(),
@@ -325,17 +318,35 @@ impl TuiApp {
         }
     }
 
-    fn ready(plan: ResolvedHarnessPlan) -> Self {
-        let (accent, warning) = branding_accent(plan.config.config.ui.branding.accent.as_deref());
+    fn ready(controller: TuiSessionController) -> Self {
+        let (accent, warning) = branding_accent(
+            controller
+                .plan()
+                .config
+                .config
+                .ui
+                .branding
+                .accent
+                .as_deref(),
+        );
         let warnings = warning.into_iter().collect();
         Self {
             state: TuiState::Ready {
-                plan: Box::new(plan),
+                controller: Box::new(controller),
             },
             panel: VisiblePanel::Run,
             accent,
             warnings,
             layout_mode: LayoutMode::Single,
+        }
+    }
+
+    fn push_bootstrap_progress(&mut self, progress: TuiBootstrapProgress) {
+        if let TuiState::Loading {
+            progress: items, ..
+        } = &mut self.state
+        {
+            items.push(progress);
         }
     }
 
@@ -459,9 +470,55 @@ fn diagnostic_severity_label(severity: PreflightDiagnosticSeverity) -> &'static 
     }
 }
 
+fn bootstrap_stage_label(stage: TuiBootstrapStage) -> &'static str {
+    match stage {
+        TuiBootstrapStage::Bootstrap => "bootstrap",
+        TuiBootstrapStage::Preflight => "preflight",
+        TuiBootstrapStage::Runtime => "runtime",
+    }
+}
+
+fn tui_run_status_label(status: TuiRunStatus) -> &'static str {
+    match status {
+        TuiRunStatus::Idle => "ready",
+        TuiRunStatus::Active => "active",
+        TuiRunStatus::PendingApproval => "approval_required",
+        TuiRunStatus::Terminal => "terminal",
+    }
+}
+
+fn terminal_status_label(status: HarnessTerminalStatus) -> &'static str {
+    match status {
+        HarnessTerminalStatus::Ended => "ended",
+        HarnessTerminalStatus::HandedOff => "handed_off",
+        HarnessTerminalStatus::Aborted => "aborted",
+        HarnessTerminalStatus::Failed => "failed",
+        HarnessTerminalStatus::Cancelled => "cancelled",
+        HarnessTerminalStatus::LimitReached => "limit_reached",
+        HarnessTerminalStatus::ApprovalRequired => "approval_required",
+    }
+}
+
+fn event_trace_line(event: &HarnessEventEnvelope) -> String {
+    let event_type = serde_json::to_value(event.event_type)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown_event".into());
+    match &event.run_id {
+        Some(run_id) => format!(
+            "{}  {} · {}",
+            event.timestamp.format("%H:%M:%S"),
+            event_type,
+            run_id
+        ),
+        None => format!("{}  {}", event.timestamp.format("%H:%M:%S"), event_type),
+    }
+}
+
 fn render_top_bar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
     let (branding, trace_label) = match &app.state {
-        TuiState::Ready { plan } => {
+        TuiState::Ready { controller } => {
+            let plan = controller.plan();
             let branding = &plan.config.config.ui.branding;
             let mut parts = Vec::new();
             if branding.name != PRODUCT_TITLE {
@@ -808,23 +865,35 @@ fn key_span(label: &'static str, accent: Color) -> Span<'static> {
 
 fn workspace_lines(app: &TuiApp) -> Vec<Line<'_>> {
     match &app.state {
-        TuiState::Loading { args } => vec![
-            Line::from(styled("Loading Harness workspace...", app.accent)),
-            Line::from(""),
-            Line::from(format!(
-                "Agent selector: {}",
-                args.agent.as_deref().unwrap_or("auto")
-            )),
-            Line::from(format!(
-                "Config: {}",
-                args.config
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "agentpm.harness.json or defaults".into())
-            )),
-            Line::from(""),
-            Line::from("Preflight readiness will appear here."),
-        ],
+        TuiState::Loading { args, progress } => {
+            let mut lines = vec![
+                Line::from(styled("Loading Harness workspace...", app.accent)),
+                Line::from(""),
+                Line::from(format!(
+                    "Agent selector: {}",
+                    args.agent.as_deref().unwrap_or("auto")
+                )),
+                Line::from(format!(
+                    "Config: {}",
+                    args.config
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "agentpm.harness.json or defaults".into())
+                )),
+                Line::from(""),
+            ];
+            if progress.is_empty() {
+                lines.push(Line::from("Preflight readiness will appear here."));
+            } else {
+                for item in progress.iter().rev().take(5).rev() {
+                    lines.push(Line::from(vec![
+                        styled(bootstrap_stage_label(item.stage), app.accent),
+                        Span::raw(format!(" - {}", item.message)),
+                    ]));
+                }
+            }
+            lines
+        }
         TuiState::Failed { message } => vec![
             Line::from(styled("Preflight failed", Color::Red)),
             Line::from(""),
@@ -832,65 +901,25 @@ fn workspace_lines(app: &TuiApp) -> Vec<Line<'_>> {
             Line::from(""),
             Line::from("Press Q to exit."),
         ],
-        TuiState::Ready { plan } => {
-            let mut lines = vec![
-                readiness_line("Agent", plan.selected_agent.as_ref().is_some()),
-                info_line(
-                    "  ",
-                    plan.selected_agent
-                        .as_ref()
-                        .map(|agent| format!("{}@{}", agent.name, agent.version))
-                        .unwrap_or_else(|| "not selected".into()),
-                ),
-                Line::from(""),
-                readiness_line("Loop", plan.loop_package.as_ref().is_some()),
-                info_line(
-                    "  ",
-                    plan.loop_package
-                        .as_ref()
-                        .map(|package| format!("{}@{}", package.name, package.version))
-                        .unwrap_or_else(|| "not resolved".into()),
-                ),
-                Line::from(""),
-                state_line("Consumer Context", plan.consumer_context.state),
-                info_line("  ", consumer_context_file_summary(plan)),
-                if plan.consumer_context.approximate_tokens.is_some() {
-                    info_line("  ", consumer_context_token_summary(plan))
-                } else {
-                    Line::from("")
-                },
-                Line::from(""),
-                state_line("Model", model_state(plan)),
-                info_line("  ", model_summary(plan)),
-                Line::from(""),
-                state_line("Profiles", grouped_capability_state(plan, "profile")),
-                info_line("  ", capability_summary(plan, "profile", "profile")),
-                Line::from(""),
-                state_line("Tools", grouped_capability_state(plan, "tool")),
-                info_line("  ", capability_summary(plan, "tool", "tool")),
-                Line::from(""),
-                state_line("Knowledge", grouped_capability_state(plan, "knowledge")),
-                info_line("  ", capability_summary(plan, "knowledge", "source")),
-                Line::from(""),
-                state_line("Memory", grouped_capability_state(plan, "memory")),
-                info_line("  ", capability_summary(plan, "memory", "space")),
-                Line::from(""),
-                state_line("Hooks", grouped_capability_state(plan, "hook")),
-                info_line("  ", capability_summary(plan, "hook", "bound")),
-                Line::from(""),
-                readiness_line("MCP Exports", plan.report.mcp_exports.enabled),
-                info_line(
-                    "  ",
-                    format!("{} surfaces", plan.report.mcp_exports.surfaces.len()),
-                ),
-                Line::from(""),
-                readiness_line("MCP Imports", plan.report.mcp_imports.enabled),
-                info_line(
-                    "  ",
-                    format!("{} servers", plan.report.mcp_imports.servers.len()),
-                ),
-            ];
-            let warnings = warning_lines(app, plan);
+        TuiState::Ready { controller } => {
+            let mut lines = Vec::new();
+            for (index, category) in controller
+                .snapshot()
+                .workspace
+                .categories
+                .iter()
+                .enumerate()
+            {
+                if index > 0 {
+                    lines.push(Line::from(""));
+                }
+                lines.push(state_line(&category.label, category.state));
+                lines.push(info_line("  ", category.summary.clone()));
+                if let Some(source) = &category.source {
+                    lines.push(info_line("  ", format!("from {source}")));
+                }
+            }
+            let warnings = warning_lines(app, controller.snapshot());
             if !warnings.is_empty() {
                 lines.push(Line::from(""));
                 lines.extend(warnings);
@@ -918,7 +947,8 @@ fn run_lines(app: &TuiApp) -> Vec<Line<'_>> {
             Line::from(styled("Run unavailable", Color::Red)),
             Line::from("Fix preflight errors, then restart the Harness."),
         ],
-        TuiState::Ready { plan } => {
+        TuiState::Ready { controller } => {
+            let plan = controller.plan();
             let mut lines = vec![
                 center_header_line(app),
                 Line::from(""),
@@ -950,23 +980,33 @@ fn run_lines(app: &TuiApp) -> Vec<Line<'_>> {
 
 fn trace_lines(app: &TuiApp) -> Vec<Line<'_>> {
     match &app.state {
-        TuiState::Loading { .. } => vec![Line::from("bootstrap_started")],
-        TuiState::Failed { .. } => vec![Line::from("preflight_failed")],
-        TuiState::Ready { plan } => {
-            let mut lines = vec![
-                Line::from("bootstrap_started"),
-                Line::from("preflight_completed"),
-                Line::from(format!(
-                    "status: {}",
-                    preflight_status_label(plan.report.status)
-                )),
-            ];
-            for diagnostic in plan.report.diagnostics.iter().rev().take(8).rev() {
+        TuiState::Loading { progress, .. } => {
+            let mut lines = vec![Line::from("bootstrap_started")];
+            for item in progress.iter().rev().take(8).rev() {
                 lines.push(Line::from(format!(
                     "{}: {}",
-                    diagnostic_severity_label(diagnostic.severity),
-                    diagnostic.code
+                    bootstrap_stage_label(item.stage),
+                    item.message
                 )));
+            }
+            lines
+        }
+        TuiState::Failed { .. } => vec![Line::from("preflight_failed")],
+        TuiState::Ready { controller } => {
+            let mut lines = Vec::new();
+            for event in controller
+                .snapshot()
+                .trace
+                .events
+                .iter()
+                .rev()
+                .take(28)
+                .rev()
+            {
+                lines.push(Line::from(event_trace_line(event)));
+            }
+            if lines.is_empty() {
+                lines.push(Line::from("No session events yet."));
             }
             lines
         }
@@ -980,13 +1020,39 @@ fn center_trace_lines(app: &TuiApp) -> Vec<Line<'_>> {
         center_tabs_line(app),
         Line::from(""),
     ];
+    if let TuiState::Ready { controller } = &app.state
+        && controller
+            .snapshot()
+            .reports
+            .current_trace_path
+            .as_ref()
+            .is_some()
+    {
+        match read_tui_trace(&controller.snapshot().reports, 100) {
+            Ok(events) if !events.is_empty() => {
+                lines.extend(
+                    events
+                        .iter()
+                        .map(|event| Line::from(event_trace_line(event))),
+                );
+                return lines;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                lines.push(Line::from(styled("Trace unavailable", STATUS_WARNING)));
+                lines.push(Line::from(err.to_string()));
+                return lines;
+            }
+        }
+    }
     lines.extend(trace_lines(app));
     lines
 }
 
 fn memory_lines(app: &TuiApp) -> Vec<Line<'_>> {
     match &app.state {
-        TuiState::Ready { plan } => {
+        TuiState::Ready { controller } => {
+            let plan = controller.plan();
             let memory = grouped_capability_counts(plan, "memory");
             vec![
                 center_header_line(app),
@@ -1012,20 +1078,53 @@ fn memory_lines(app: &TuiApp) -> Vec<Line<'_>> {
 
 fn report_lines(app: &TuiApp) -> Vec<Line<'_>> {
     match &app.state {
-        TuiState::Ready { plan } => vec![
-            center_header_line(app),
-            Line::from(""),
-            center_tabs_line(app),
-            Line::from(""),
-            Line::from(styled("Preflight Report", app.accent)),
-            Line::from(format!(
-                "status: {}",
-                preflight_status_label(plan.report.status)
-            )),
-            Line::from(format!("diagnostics: {}", plan.report.diagnostics.len())),
-            Line::from(format!("workspace: {}", plan.workspace_root.display())),
-            Line::from(format!("state_dir: {}", plan.state_dir.display())),
-        ],
+        TuiState::Ready { controller } => {
+            let plan = controller.plan();
+            let mut lines = vec![
+                center_header_line(app),
+                Line::from(""),
+                center_tabs_line(app),
+                Line::from(""),
+            ];
+            match read_tui_report(&controller.snapshot().reports) {
+                Ok(Some(report)) => {
+                    lines.push(Line::from(styled("Run Report", app.accent)));
+                    lines.push(Line::from(format!("run_id: {}", report.run_id)));
+                    lines.push(Line::from(format!(
+                        "status: {}",
+                        terminal_status_label(report.terminal_status)
+                    )));
+                    lines.push(Line::from(format!(
+                        "trace: {}",
+                        report.trace_path.as_deref().unwrap_or("not recorded")
+                    )));
+                }
+                Ok(None) => {
+                    lines.push(Line::from(styled("Preflight Report", app.accent)));
+                    lines.push(Line::from(format!(
+                        "status: {}",
+                        preflight_status_label(plan.report.status)
+                    )));
+                    lines.push(Line::from(format!(
+                        "diagnostics: {}",
+                        plan.report.diagnostics.len()
+                    )));
+                    lines.push(Line::from(format!(
+                        "workspace: {}",
+                        plan.workspace_root.display()
+                    )));
+                    lines.push(Line::from(format!(
+                        "state_dir: {}",
+                        plan.state_dir.display()
+                    )));
+                }
+                Err(err) => {
+                    lines.push(Line::from(styled("Report unavailable", STATUS_WARNING)));
+                    lines.push(Line::from(err.to_string()));
+                }
+            }
+            lines
+        }
         TuiState::Failed { message } => vec![
             center_header_line(app),
             Line::from(""),
@@ -1050,7 +1149,15 @@ fn report_lines(app: &TuiApp) -> Vec<Line<'_>> {
 fn center_header_line(app: &TuiApp) -> Line<'static> {
     let (phase, status) = match &app.state {
         TuiState::Loading { .. } => ("bootstrap", "loading".to_string()),
-        TuiState::Ready { plan } => ("idle", preflight_status_label(plan.report.status).into()),
+        TuiState::Ready { controller } => (
+            controller
+                .snapshot()
+                .run
+                .phase_id
+                .as_deref()
+                .unwrap_or("idle"),
+            tui_run_status_label(controller.snapshot().run.status).into(),
+        ),
         TuiState::Failed { .. } => ("preflight", "failed".to_string()),
     };
     Line::from(vec![
@@ -1092,15 +1199,16 @@ fn center_tabs_line(app: &TuiApp) -> Line<'static> {
 }
 
 fn tab_span(label: &'static str, selected: bool, accent: Color) -> Span<'static> {
+    let text = format!(" {label} ");
     if selected {
         Span::styled(
-            format!(" {label} "),
+            text,
             Style::default()
                 .fg(accent)
                 .add_modifier(Modifier::BOLD | Modifier::REVERSED),
         )
     } else {
-        Span::styled(label, Style::default().fg(TEXT_MUTED))
+        Span::styled(text, Style::default().fg(TEXT_MUTED))
     }
 }
 
@@ -1108,7 +1216,7 @@ fn tab_sep() -> Span<'static> {
     Span::styled(" | ", Style::default().fg(TEXT_DIM))
 }
 
-fn warning_lines<'a>(app: &'a TuiApp, plan: &'a ResolvedHarnessPlan) -> Vec<Line<'a>> {
+fn warning_lines<'a>(app: &'a TuiApp, snapshot: &'a TuiSessionSnapshot) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
     for warning in &app.warnings {
         lines.push(Line::from(vec![
@@ -1116,7 +1224,7 @@ fn warning_lines<'a>(app: &'a TuiApp, plan: &'a ResolvedHarnessPlan) -> Vec<Line
             Span::raw(format!(" - {warning}")),
         ]));
     }
-    for diagnostic in &plan.report.diagnostics {
+    for diagnostic in &snapshot.workspace.diagnostics {
         if matches!(
             diagnostic.severity,
             PreflightDiagnosticSeverity::Warning
@@ -1133,158 +1241,6 @@ fn warning_lines<'a>(app: &'a TuiApp, plan: &'a ResolvedHarnessPlan) -> Vec<Line
         }
     }
     lines
-}
-
-#[derive(Default)]
-struct CapabilityCounts {
-    available: usize,
-    pending: usize,
-    suppressed: usize,
-    unavailable: usize,
-}
-
-impl CapabilityCounts {
-    fn total(&self) -> usize {
-        self.available + self.pending + self.suppressed + self.unavailable
-    }
-}
-
-fn grouped_capability_counts(plan: &ResolvedHarnessPlan, kind: &str) -> CapabilityCounts {
-    let mut counts = CapabilityCounts::default();
-    for capability in &plan.capabilities {
-        if !capability.kind.contains(kind) {
-            continue;
-        }
-        match capability.state {
-            CapabilityState::Available => counts.available += 1,
-            CapabilityState::Pending => counts.pending += 1,
-            CapabilityState::Suppressed => counts.suppressed += 1,
-            CapabilityState::Unavailable => counts.unavailable += 1,
-            CapabilityState::NotConfigured => {}
-        }
-    }
-    counts
-}
-
-fn grouped_capability_state(plan: &ResolvedHarnessPlan, kind: &str) -> CapabilityState {
-    let counts = grouped_capability_counts(plan, kind);
-    if counts.unavailable > 0 {
-        CapabilityState::Unavailable
-    } else if counts.suppressed > 0 {
-        CapabilityState::Suppressed
-    } else if counts.pending > 0 {
-        CapabilityState::Pending
-    } else if counts.available > 0 {
-        CapabilityState::Available
-    } else {
-        CapabilityState::NotConfigured
-    }
-}
-
-fn model_state(plan: &ResolvedHarnessPlan) -> CapabilityState {
-    if plan.config.config.model.is_some() {
-        CapabilityState::Available
-    } else {
-        CapabilityState::NotConfigured
-    }
-}
-
-fn model_summary(plan: &ResolvedHarnessPlan) -> String {
-    plan.config
-        .config
-        .model
-        .as_ref()
-        .map(|model| format!("{} / {}", model.provider, model.model))
-        .unwrap_or_else(|| "not configured".into())
-}
-
-fn consumer_context_file_summary(plan: &ResolvedHarnessPlan) -> String {
-    let file = plan
-        .consumer_context
-        .file
-        .clone()
-        .unwrap_or_else(|| "not configured".into());
-    match plan.consumer_context.byte_size {
-        Some(bytes) => format!("{file} · {}", format_byte_size(bytes)),
-        None => file,
-    }
-}
-
-fn consumer_context_token_summary(plan: &ResolvedHarnessPlan) -> String {
-    match plan.consumer_context.approximate_tokens {
-        Some(tokens) => format!("~{} tok", compact_count(tokens)),
-        None => "tokens unknown".into(),
-    }
-}
-
-fn capability_summary(plan: &ResolvedHarnessPlan, kind: &str, noun: &str) -> String {
-    let counts = grouped_capability_counts(plan, kind);
-    if counts.total() == 0 {
-        return "none configured".into();
-    }
-    let mut parts = Vec::new();
-    push_count_part(&mut parts, counts.available, "ready");
-    push_count_part(&mut parts, counts.pending, "pending");
-    push_count_part(&mut parts, counts.suppressed, "suppressed");
-    push_count_part(&mut parts, counts.unavailable, "unavailable");
-    if parts.is_empty() {
-        format!("0 {noun}s ready")
-    } else if parts.len() == 1 && counts.available > 0 && noun == "bound" {
-        format!("{} bound", counts.available)
-    } else if parts.len() == 1 && counts.available > 0 {
-        format!(
-            "{} {} ready",
-            counts.available,
-            pluralize(noun, counts.available)
-        )
-    } else {
-        parts.join(", ")
-    }
-}
-
-fn push_count_part(parts: &mut Vec<String>, count: usize, label: &str) {
-    if count > 0 {
-        parts.push(format!("{count} {label}"));
-    }
-}
-
-fn pluralize(noun: &str, count: usize) -> String {
-    if count == 1 {
-        noun.into()
-    } else if noun == "memory" {
-        "memory surfaces".into()
-    } else {
-        format!("{noun}s")
-    }
-}
-
-fn format_byte_size(bytes: u64) -> String {
-    if bytes >= 1024 * 1024 {
-        format!("~{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else if bytes >= 1024 {
-        format!("~{:.1} KB", bytes as f64 / 1024.0)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
-fn compact_count(value: u64) -> String {
-    if value >= 1000 {
-        format!("{:.1}k", value as f64 / 1000.0)
-    } else {
-        value.to_string()
-    }
-}
-
-fn readiness_line(label: &str, ready: bool) -> Line<'static> {
-    state_line(
-        label,
-        if ready {
-            CapabilityState::Available
-        } else {
-            CapabilityState::NotConfigured
-        },
-    )
 }
 
 fn state_line(label: &str, state: CapabilityState) -> Line<'static> {
@@ -1334,7 +1290,22 @@ fn terminal_supports_tui(
 
 #[cfg(test)]
 mod tests {
+    use super::super::{harness_engine_options_from_plan, runtime_snapshot_from_plan};
     use super::*;
+    use crate::harness_config::HarnessConfigSourceKind;
+    use crate::harness_engine::{
+        HarnessEngine, HarnessRuntimeServices, HarnessSession, RuntimeTerminalResult,
+    };
+    use crate::harness_observability::{
+        HarnessEventPayload, HarnessEventSink, HarnessEventType, RunOutputPaths, RunReport,
+        RunUsage,
+    };
+    use crate::harness_plan::{HarnessPlanProgress, HarnessPlanProgressStage, ResolvedHarnessPlan};
+    use crate::harness_runtime::action::ScriptedActionDispatcher;
+    use crate::harness_runtime::approval::ScriptedApprovalController;
+    use crate::harness_runtime::model::ScriptedModelRuntime;
+    use std::collections::BTreeMap;
+    use std::sync::{atomic::AtomicBool, mpsc};
 
     #[test]
     fn terminal_support_requires_interactive_streams_and_non_dumb_term() {
@@ -1454,6 +1425,225 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_progress_updates_loading_state() {
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(BootstrapMessage::Progress(TuiBootstrapProgress::new(
+                TuiBootstrapStage::Preflight,
+                "checking readiness",
+            )))
+            .unwrap();
+        let mut bootstrap = Some(receiver);
+        let mut app = TuiApp::loading(test_harness_args());
+
+        poll_bootstrap_result(&mut app, &mut bootstrap);
+
+        let TuiState::Loading { progress, .. } = &app.state else {
+            panic!("app should still be loading");
+        };
+        assert_eq!(progress.len(), 1);
+        assert_eq!(progress[0].stage, TuiBootstrapStage::Preflight);
+        assert!(bootstrap.is_some());
+    }
+
+    #[test]
+    fn resolver_progress_maps_to_tui_bootstrap_stages() {
+        let config = TuiBootstrapProgress::from_plan_progress(HarnessPlanProgress {
+            stage: HarnessPlanProgressStage::Config,
+            message: "loading config".into(),
+        });
+        assert_eq!(config.stage, TuiBootstrapStage::Bootstrap);
+        assert_eq!(config.message, "loading config");
+
+        let validation = TuiBootstrapProgress::from_plan_progress(HarnessPlanProgress {
+            stage: HarnessPlanProgressStage::Validation,
+            message: "validating agent".into(),
+        });
+        assert_eq!(validation.stage, TuiBootstrapStage::Preflight);
+        assert_eq!(validation.message, "validating agent");
+    }
+
+    #[test]
+    fn workspace_readiness_summary_uses_stable_categories_and_counts() {
+        let plan = test_plan();
+        let readiness = workspace_readiness_from_plan(&plan);
+
+        let profiles = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Profiles")
+            .expect("profiles category");
+        assert_eq!(profiles.summary, "1 profile ready");
+        let skills = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Skills")
+            .expect("skills category");
+        assert_eq!(skills.summary, "1 skill ready");
+        let tools = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Tools")
+            .expect("tools category");
+        assert_eq!(tools.summary, "1 ready, 1 suppressed");
+    }
+
+    #[test]
+    fn tui_event_buffer_applies_trace_content_policy() {
+        let buffer = TuiEventBuffer::new(HarnessTraceContent::None, 8);
+        let mut sink = buffer.sink();
+        sink.record(&HarnessEventEnvelope {
+            schema_version: 1,
+            event_id: "evt-test".into(),
+            session_id: "sess-test".into(),
+            run_id: None,
+            session_sequence: 1,
+            run_sequence: None,
+            timestamp: chrono::Utc::now(),
+            event_type: HarnessEventType::PromptPrepared,
+            phase_execution_id: None,
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Content {
+                label: "prompt".into(),
+                content: serde_json::json!({ "secret": "should-not-render" }),
+            },
+        })
+        .unwrap();
+
+        let events = buffer.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].payload, HarnessEventPayload::Empty);
+    }
+
+    #[test]
+    fn terminal_result_preserves_output_artifacts_and_usage_snapshot() {
+        let mut controller = test_controller();
+        let paths = RunOutputPaths::resolve(
+            &std::env::temp_dir().join("agentpm-tui-test-state"),
+            "run-test",
+            None,
+        )
+        .unwrap();
+        let mut report = test_run_report();
+        report.usage.model_calls = 2;
+        let terminal = RuntimeTerminalResult {
+            status: HarnessTerminalStatus::Ended,
+            output: Some(serde_json::json!({ "ok": true })),
+            report,
+        };
+
+        controller.apply_terminal_result(&terminal, &paths);
+
+        assert_eq!(controller.snapshot.run.status, TuiRunStatus::Terminal);
+        assert_eq!(
+            controller.snapshot.run.terminal_status,
+            Some(HarnessTerminalStatus::Ended)
+        );
+        assert_eq!(
+            controller.snapshot.run.latest_output,
+            Some(serde_json::json!({ "ok": true }))
+        );
+        assert_eq!(controller.snapshot.run.usage.model_calls, 2);
+        assert_eq!(
+            controller.snapshot.reports.current_report_path,
+            Some(paths.report_path)
+        );
+    }
+
+    #[test]
+    fn controller_controls_emit_or_reject_through_state_layer() {
+        let mut controller = test_controller();
+        let cancel = controller.request_cancel().unwrap();
+        assert!(cancel.accepted);
+        assert!(
+            controller
+                .snapshot
+                .trace
+                .events
+                .iter()
+                .any(|event| event.event_type == HarnessEventType::CancellationRequested)
+        );
+        assert!(
+            controller
+                .record_approval_decision(TuiApprovalDecision::Approve)
+                .is_err()
+        );
+        assert!(
+            controller
+                .record_approval_decision(TuiApprovalDecision::Deny)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn approval_control_does_not_fabricate_engine_approval_events() {
+        let mut controller = test_controller_with_checkpoint();
+        let mut model = ScriptedModelRuntime::new(Vec::new());
+        let mut dispatcher = ScriptedActionDispatcher::default();
+        let mut knowledge = crate::harness_runtime::NoopKnowledgeRuntime;
+        let mut approvals = ScriptedApprovalController::default();
+        approvals.push(
+            "approve-response",
+            crate::harness_runtime::ApprovalDecision::Pending,
+        );
+        let mut hooks = crate::harness_runtime::NoopHookRuntime;
+        let mut services = HarnessRuntimeServices {
+            model: &mut model,
+            dispatcher: &mut dispatcher,
+            knowledge: &mut knowledge,
+            memory: None,
+            embedding_provider: None,
+            approvals: &mut approvals,
+            hooks: &mut hooks,
+            service_events: None,
+        };
+        let paths = RunOutputPaths::resolve(
+            &std::env::temp_dir().join("agentpm-tui-approval-test-state"),
+            "run-approval",
+            None,
+        )
+        .unwrap();
+
+        controller
+            .start_run_with_services(
+                "run-approval".into(),
+                "requires approval",
+                &paths,
+                &mut services,
+            )
+            .unwrap();
+        assert_eq!(
+            controller.snapshot.run.status,
+            TuiRunStatus::PendingApproval
+        );
+
+        let err = controller
+            .record_approval_decision(TuiApprovalDecision::Approve)
+            .unwrap_err();
+        assert!(err.to_string().contains("ApprovalController"));
+        assert!(
+            controller
+                .snapshot
+                .trace
+                .events
+                .iter()
+                .any(|event| event.event_type == HarnessEventType::ApprovalRequested)
+        );
+        assert!(
+            !controller
+                .snapshot
+                .trace
+                .events
+                .iter()
+                .any(|event| matches!(
+                    event.event_type,
+                    HarnessEventType::ApprovalApproved | HarnessEventType::ApprovalDenied
+                ))
+        );
+    }
+
+    #[test]
     fn panic_payload_message_handles_common_payloads() {
         assert_eq!(panic_payload_message(Box::new("boom")), "boom");
         assert_eq!(
@@ -1464,6 +1654,209 @@ mod tests {
             panic_payload_message(Box::new(42_u8)),
             "unknown panic payload"
         );
+    }
+
+    fn test_controller() -> TuiSessionController {
+        test_controller_with_loop(test_loop_manifest())
+    }
+
+    fn test_controller_with_checkpoint() -> TuiSessionController {
+        let mut manifest = test_loop_manifest();
+        manifest.r#loop.checkpoints = vec![crate::manifest::LoopCheckpoint {
+            id: "approve-response".into(),
+            r#type: "approval".into(),
+            before_phase: "start".into(),
+            on_reject: "$abort".into(),
+        }];
+        test_controller_with_loop(manifest)
+    }
+
+    fn test_controller_with_loop(
+        loop_manifest: crate::manifest::LoopManifest,
+    ) -> TuiSessionController {
+        let plan = test_plan();
+        let runtime = runtime_snapshot_from_plan(&plan);
+        let mut session = HarnessSession::with_runtime_snapshot(runtime);
+        let events = TuiEventBuffer::new(HarnessTraceContent::Redacted, 32);
+        session.emitter.add_sink(Box::new(events.sink()));
+        let mut options = harness_engine_options_from_plan(&plan);
+        options.retain_active_on_approval_required = true;
+        let engine = HarnessEngine::new(loop_manifest, options);
+        let snapshot = build_session_snapshot(&plan, &session, &events, None, None);
+        TuiSessionController {
+            plan: Box::new(plan),
+            session,
+            engine,
+            events,
+            cancellation_requested: Arc::new(AtomicBool::new(false)),
+            snapshot,
+        }
+    }
+
+    fn test_plan() -> ResolvedHarnessPlan {
+        let root = std::env::temp_dir().join("agentpm-tui-plan");
+        ResolvedHarnessPlan {
+            workspace_root: root.clone(),
+            lock_path: root.join("agent.lock"),
+            state_dir: root.join(".agentpm-state"),
+            config: crate::harness_config::ResolvedHarnessConfig {
+                workspace_root: root.clone(),
+                config_path: None,
+                config: crate::harness_config::HarnessConfig::default(),
+                state_dir: root.join(".agentpm-state"),
+                state_dir_source: crate::harness_config::HarnessConfigSource {
+                    kind: HarnessConfigSourceKind::HarnessDefault,
+                    path: None,
+                },
+            },
+            selected_agent: Some(crate::harness_plan::ResolvedAgentRoot {
+                root_key: "agent:@zack/test@0.1.0".into(),
+                name: "@zack/test".into(),
+                version: "0.1.0".into(),
+                manifest_path: root.join("agent.json"),
+                package_key: Some("agent:@zack/test@0.1.0".into()),
+                tools: vec!["@zack/tool".into()],
+                skills: vec!["@zack/skill".into()],
+                knowledge: Vec::new(),
+                memory: Vec::new(),
+                profiles: vec!["@zack/profile".into()],
+                loop_key: "loop:@zack/loop@0.1.0".into(),
+            }),
+            loop_package: Some(crate::harness_plan::ResolvedPackageInfo {
+                key: "loop:@zack/loop@0.1.0".into(),
+                kind: crate::semver::types::PackageKind::Loop,
+                name: "@zack/loop".into(),
+                version: "0.1.0".into(),
+                root: root.join(".agentpm/packages/loops/zack/loop/0.1.0"),
+            }),
+            package_graph: BTreeMap::new(),
+            runtime_scopes: BTreeMap::new(),
+            consumer_context: crate::harness_plan::ConsumerContextReadiness {
+                state: CapabilityState::Available,
+                file: Some("context.md".into()),
+                path: Some(root.join("context.md")),
+                byte_size: Some(114),
+                approximate_tokens: Some(29),
+                sha256: None,
+            },
+            profile_bindings: Default::default(),
+            profiles: BTreeMap::new(),
+            capabilities: vec![
+                crate::harness_plan::StaticCapabilityCandidate {
+                    kind: "profile".into(),
+                    identity: "@zack/profile".into(),
+                    scope: "global".into(),
+                    source: "agent_binding".into(),
+                    state: CapabilityState::Available,
+                },
+                crate::harness_plan::StaticCapabilityCandidate {
+                    kind: "skill".into(),
+                    identity: "@zack/skill".into(),
+                    scope: "global".into(),
+                    source: "agent_binding".into(),
+                    state: CapabilityState::Available,
+                },
+                crate::harness_plan::StaticCapabilityCandidate {
+                    kind: "tool".into(),
+                    identity: "@zack/tool".into(),
+                    scope: "global".into(),
+                    source: "agent_binding".into(),
+                    state: CapabilityState::Available,
+                },
+                crate::harness_plan::StaticCapabilityCandidate {
+                    kind: "tool".into(),
+                    identity: "@zack/suppressed".into(),
+                    scope: "global".into(),
+                    source: "agent_binding".into(),
+                    state: CapabilityState::Suppressed,
+                },
+            ],
+            report: crate::harness_plan::PreflightReport {
+                status: PreflightStatus::Ready,
+                diagnostics: Vec::new(),
+                mcp_exports: crate::harness_plan::PreflightMcpExports {
+                    enabled: false,
+                    host: "127.0.0.1".into(),
+                    restart: crate::harness_config::HarnessRestartPolicy::default(),
+                    surfaces: Vec::new(),
+                },
+                mcp_imports: crate::harness_plan::PreflightMcpImports {
+                    enabled: false,
+                    servers: Vec::new(),
+                },
+            },
+        }
+    }
+
+    fn test_loop_manifest() -> crate::manifest::LoopManifest {
+        crate::manifest::LoopManifest {
+            kind: "loop".into(),
+            name: "@zack/loop".into(),
+            version: "0.1.0".into(),
+            description: None,
+            readme: None,
+            license: None,
+            r#loop: crate::manifest::LoopMetadata {
+                archetype: None,
+                entry_phase: "start".into(),
+                limits: None,
+                phases: vec![crate::manifest::LoopPhase {
+                    id: "start".into(),
+                    objective: "Start.".into(),
+                    access: None,
+                    outcomes: vec![crate::manifest::LoopOutcome {
+                        id: "done".into(),
+                        description: "Done.".into(),
+                    }],
+                }],
+                transitions: Vec::new(),
+                checkpoints: Vec::new(),
+                error_policy: None,
+            },
+        }
+    }
+
+    fn test_run_report() -> RunReport {
+        RunReport {
+            report_version: crate::harness_observability::HARNESS_REPORT_SCHEMA_VERSION,
+            session_id: "sess-test".into(),
+            run_id: "run-test".into(),
+            agent: crate::harness_observability::ReportPackageIdentity {
+                name: "@zack/test".into(),
+                version: "0.1.0".into(),
+            },
+            loop_package: crate::harness_observability::ReportPackageIdentity {
+                name: "@zack/loop".into(),
+                version: "0.1.0".into(),
+            },
+            started_at: chrono::Utc::now(),
+            ended_at: Some(chrono::Utc::now()),
+            duration_ms: Some(1),
+            terminal_status: HarnessTerminalStatus::Ended,
+            terminal_output: None,
+            preflight_status: PreflightStatus::Ready,
+            diagnostics: Vec::new(),
+            runtime: Default::default(),
+            runtime_sources: BTreeMap::new(),
+            consumer_context: None,
+            scope_summaries: Vec::new(),
+            phase_summaries: Vec::new(),
+            checkpoint_summaries: Vec::new(),
+            action_summaries: Vec::new(),
+            tool_summaries: Vec::new(),
+            mcp_summaries: Vec::new(),
+            mcp_imports: Vec::new(),
+            knowledge_summaries: Vec::new(),
+            memory_summaries: Vec::new(),
+            memory_write_review_summaries: Vec::new(),
+            usage: RunUsage::default(),
+            retry_count: 0,
+            repair_count: 0,
+            error_count: 0,
+            approval_summary: BTreeMap::new(),
+            cancellation_summary: BTreeMap::new(),
+            trace_path: None,
+        }
     }
 
     fn test_harness_args() -> HarnessArgs {

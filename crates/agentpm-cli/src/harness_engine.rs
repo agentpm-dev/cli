@@ -86,7 +86,7 @@ pub enum RuntimeTerminalStatus {
 }
 
 impl RuntimeTerminalStatus {
-    fn harness_status(&self) -> Option<HarnessTerminalStatus> {
+    pub fn harness_status(&self) -> Option<HarnessTerminalStatus> {
         match self {
             Self::Running | Self::PendingApproval => None,
             Self::Ended => Some(HarnessTerminalStatus::Ended),
@@ -170,6 +170,18 @@ impl RunState {
 
     pub fn pending_approval(&self) -> Option<&PendingApprovalState> {
         self.pending_approval.as_ref()
+    }
+
+    pub fn current_phase_id(&self) -> Option<&str> {
+        self.current_phase_id.as_deref()
+    }
+
+    pub fn usage(&self) -> &RunUsage {
+        &self.usage
+    }
+
+    pub fn terminal_output(&self) -> Option<&Value> {
+        self.terminal_output.as_ref()
     }
 }
 

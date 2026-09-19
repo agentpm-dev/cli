@@ -189,6 +189,33 @@ pub struct HarnessBootstrapOptions {
     pub surface: HarnessExecutionSurface,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HarnessPlanProgressStage {
+    Workspace,
+    Config,
+    Lockfile,
+    PackageGraph,
+    AgentSelection,
+    Validation,
+    RuntimeSummary,
+    Complete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarnessPlanProgress {
+    pub stage: HarnessPlanProgressStage,
+    pub message: String,
+}
+
+impl HarnessPlanProgress {
+    fn new(stage: HarnessPlanProgressStage, message: impl Into<String>) -> Self {
+        Self {
+            stage,
+            message: message.into(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct AgentCandidate {
     root: ResolvedAgentRoot,
@@ -216,9 +243,25 @@ pub fn resolve_harness_plan(
     workspace_root: &Path,
     options: &HarnessBootstrapOptions,
 ) -> Result<ResolvedHarnessPlan> {
+    resolve_harness_plan_with_progress(workspace_root, options, |_| {})
+}
+
+pub fn resolve_harness_plan_with_progress(
+    workspace_root: &Path,
+    options: &HarnessBootstrapOptions,
+    mut progress: impl FnMut(HarnessPlanProgress),
+) -> Result<ResolvedHarnessPlan> {
+    progress(HarnessPlanProgress::new(
+        HarnessPlanProgressStage::Workspace,
+        format!("Resolving workspace root {}.", workspace_root.display()),
+    ));
     let workspace_root = workspace_root
         .canonicalize()
         .with_context(|| format!("resolving workspace root {}", workspace_root.display()))?;
+    progress(HarnessPlanProgress::new(
+        HarnessPlanProgressStage::Config,
+        "Loading Harness configuration.",
+    ));
     let config = load_harness_config_with_overrides(
         &workspace_root,
         options.config_path.as_deref(),
@@ -245,9 +288,21 @@ pub fn resolve_harness_plan(
         sha256: None,
     };
 
+    progress(HarnessPlanProgress::new(
+        HarnessPlanProgressStage::Lockfile,
+        format!("Reading lockfile {}.", lock_path.display()),
+    ));
     let Some(lock) = read_required_lock(&lock_path, &mut diagnostics)? else {
+        progress(HarnessPlanProgress::new(
+            HarnessPlanProgressStage::RuntimeSummary,
+            "Summarizing configured runtime surfaces.",
+        ));
         let mcp_exports = preflight_mcp_exports(&config.config.mcp.exports, None);
         let mcp_imports = preflight_mcp_imports(&config.config.mcp.imports);
+        progress(HarnessPlanProgress::new(
+            HarnessPlanProgressStage::Complete,
+            "Preflight plan built with lockfile diagnostics.",
+        ));
         return Ok(build_plan(PlanParts {
             workspace_root,
             lock_path,
@@ -267,8 +322,16 @@ pub fn resolve_harness_plan(
     };
 
     let Some(lock_v2) = lock_v2(lock, &mut diagnostics) else {
+        progress(HarnessPlanProgress::new(
+            HarnessPlanProgressStage::RuntimeSummary,
+            "Summarizing configured runtime surfaces.",
+        ));
         let mcp_exports = preflight_mcp_exports(&config.config.mcp.exports, None);
         let mcp_imports = preflight_mcp_imports(&config.config.mcp.imports);
+        progress(HarnessPlanProgress::new(
+            HarnessPlanProgressStage::Complete,
+            "Preflight plan built with lockfile-version diagnostics.",
+        ));
         return Ok(build_plan(PlanParts {
             workspace_root,
             lock_path,
@@ -287,7 +350,15 @@ pub fn resolve_harness_plan(
         }));
     };
 
+    progress(HarnessPlanProgress::new(
+        HarnessPlanProgressStage::PackageGraph,
+        "Resolving locked package graph.",
+    ));
     package_graph = package_graph_from_lock(&workspace_root, &lock_v2.packages)?;
+    progress(HarnessPlanProgress::new(
+        HarnessPlanProgressStage::AgentSelection,
+        "Loading runnable Agent candidates.",
+    ));
     let mut candidates = load_agent_candidates(&workspace_root, &lock_v2, &mut diagnostics)?;
     let selected_agent = select_agent_candidate(
         &mut candidates,
@@ -308,6 +379,10 @@ pub fn resolve_harness_plan(
         selected_manifest.as_ref(),
         loop_package.as_ref(),
     ) {
+        progress(HarnessPlanProgress::new(
+            HarnessPlanProgressStage::Validation,
+            format!("Validating selected Agent `{}`.", agent.name),
+        ));
         validate_selected_agent(
             &workspace_root,
             agent,
@@ -325,8 +400,16 @@ pub fn resolve_harness_plan(
         )?;
     }
 
+    progress(HarnessPlanProgress::new(
+        HarnessPlanProgressStage::RuntimeSummary,
+        "Summarizing configured runtime surfaces.",
+    ));
     let mcp_exports = preflight_mcp_exports(&config.config.mcp.exports, selected_manifest.as_ref());
     let mcp_imports = preflight_mcp_imports(&config.config.mcp.imports);
+    progress(HarnessPlanProgress::new(
+        HarnessPlanProgressStage::Complete,
+        "Preflight plan built.",
+    ));
     Ok(build_plan(PlanParts {
         workspace_root,
         lock_path,
@@ -3158,6 +3241,58 @@ mod tests {
         let plan = resolve_harness_plan(&root, &options()).unwrap();
         assert_eq!(plan.report.status, PreflightStatus::Failed);
         assert!(codes(&plan).contains("missing_lock"));
+    }
+
+    #[test]
+    fn preflight_progress_reports_real_resolver_milestones() {
+        let root = temp_dir("preflight-progress");
+        write_base_workspace(&root);
+        lock_with_root(&root, base_root(), base_packages());
+        let mut progress = Vec::new();
+        let plan = resolve_harness_plan_with_progress(
+            &root,
+            &HarnessBootstrapOptions {
+                runtime_scopes: BTreeMap::from([("user".to_string(), "user-1".to_string())]),
+                ..options()
+            },
+            |item| progress.push(item.stage),
+        )
+        .unwrap();
+
+        assert_eq!(plan.report.status, PreflightStatus::Ready);
+        for stage in [
+            HarnessPlanProgressStage::Workspace,
+            HarnessPlanProgressStage::Config,
+            HarnessPlanProgressStage::Lockfile,
+            HarnessPlanProgressStage::PackageGraph,
+            HarnessPlanProgressStage::AgentSelection,
+            HarnessPlanProgressStage::Validation,
+            HarnessPlanProgressStage::RuntimeSummary,
+            HarnessPlanProgressStage::Complete,
+        ] {
+            assert!(
+                progress.contains(&stage),
+                "missing progress stage {stage:?} from {progress:?}"
+            );
+        }
+        let position = |stage| {
+            progress
+                .iter()
+                .position(|candidate| *candidate == stage)
+                .unwrap()
+        };
+        assert!(
+            position(HarnessPlanProgressStage::Workspace)
+                < position(HarnessPlanProgressStage::Config)
+        );
+        assert!(
+            position(HarnessPlanProgressStage::Lockfile)
+                < position(HarnessPlanProgressStage::PackageGraph)
+        );
+        assert!(
+            position(HarnessPlanProgressStage::Validation)
+                < position(HarnessPlanProgressStage::Complete)
+        );
     }
 
     #[test]
