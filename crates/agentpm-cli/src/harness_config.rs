@@ -16,6 +16,10 @@ const EMBEDDED_HARNESS_CONFIG_SCHEMA_JSON: &str =
 
 const BUILT_IN_MODEL_PROVIDER_IDS: &[&str] = &["openai", "anthropic", "ollama"];
 
+pub fn is_built_in_model_provider(provider_id: &str) -> bool {
+    BUILT_IN_MODEL_PROVIDER_IDS.contains(&provider_id)
+}
+
 fn default_startup_timeout_ms() -> u64 {
     15_000
 }
@@ -70,6 +74,7 @@ pub enum HarnessConfigSourceKind {
     ConfigFile,
     CliOverride,
     SdkOverride,
+    InteractiveOverride,
     Environment,
 }
 
@@ -100,6 +105,13 @@ impl HarnessConfigSource {
             path: None,
         }
     }
+
+    pub fn interactive_override() -> Self {
+        Self {
+            kind: HarnessConfigSourceKind::InteractiveOverride,
+            path: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -109,11 +121,14 @@ pub struct ResolvedHarnessConfig {
     pub config: HarnessConfig,
     pub state_dir: PathBuf,
     pub state_dir_source: HarnessConfigSource,
+    pub model_source: HarnessConfigSource,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct HarnessConfigOverrides {
     pub state_dir: Option<PathBuf>,
+    pub model: Option<HarnessModelConfig>,
+    pub model_source: Option<HarnessConfigSource>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -504,6 +519,7 @@ pub fn load_harness_config(
             config,
             state_dir,
             state_dir_source: HarnessConfigSource::defaulted(),
+            model_source: HarnessConfigSource::defaulted(),
         });
     }
 
@@ -522,7 +538,8 @@ pub fn load_harness_config(
         config_path: Some(config_path.clone()),
         config,
         state_dir,
-        state_dir_source: HarnessConfigSource::config_file(config_path),
+        state_dir_source: HarnessConfigSource::config_file(config_path.clone()),
+        model_source: HarnessConfigSource::config_file(config_path),
     })
 }
 
@@ -535,6 +552,13 @@ pub fn load_harness_config_with_overrides(
     if let Some(state_dir) = &overrides.state_dir {
         resolved.state_dir = resolve_state_dir(&resolved.workspace_root, state_dir)?;
         resolved.state_dir_source = HarnessConfigSource::cli_override();
+    }
+    if let Some(model) = &overrides.model {
+        resolved.config.model = Some(model.clone());
+        resolved.model_source = overrides
+            .model_source
+            .clone()
+            .unwrap_or_else(HarnessConfigSource::cli_override);
     }
     Ok(resolved)
 }

@@ -1,7 +1,9 @@
 use super::super::{
     HarnessArgs, harness_engine_options_from_plan, load_plan_loop, runtime_snapshot_from_plan,
 };
-use crate::harness_config::{HarnessConfigSourceKind, HarnessTraceContent};
+use crate::harness_config::{
+    HarnessConfigSource, HarnessConfigSourceKind, HarnessModelConfig, HarnessTraceContent,
+};
 use crate::harness_engine::{
     HarnessEngine, HarnessRunResult, HarnessRuntimeServices, HarnessSession,
     MemoryOperationInvocationResult, RuntimeTerminalResult, RuntimeTerminalStatus,
@@ -175,6 +177,7 @@ pub(super) struct TuiControlAck {
 pub(super) fn spawn_bootstrap_worker(
     args: HarnessArgs,
     workspace_root: PathBuf,
+    model_override: Option<HarnessModelConfig>,
 ) -> Receiver<BootstrapMessage> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
@@ -189,6 +192,10 @@ pub(super) fn spawn_bootstrap_worker(
                     agent_selector: args.agent.clone(),
                     config_path: args.config.clone(),
                     state_dir_override: args.state_dir.clone(),
+                    model_override: model_override.clone(),
+                    model_override_source: model_override
+                        .as_ref()
+                        .map(|_| HarnessConfigSource::interactive_override()),
                     runtime_scopes: args.scopes.iter().cloned().collect(),
                     surface: HarnessExecutionSurface::Tui,
                 },
@@ -224,7 +231,7 @@ pub(super) fn panic_payload_message(payload: Box<dyn Any + Send>) -> String {
 pub(super) struct TuiSessionController {
     pub(super) plan: Box<ResolvedHarnessPlan>,
     pub(super) session: HarnessSession,
-    pub(super) engine: HarnessEngine,
+    pub(super) engine: Option<HarnessEngine>,
     pub(super) events: TuiEventBuffer,
     pub(super) cancellation_requested: Arc<AtomicBool>,
     pub(super) snapshot: TuiSessionSnapshot,
@@ -237,8 +244,15 @@ impl TuiSessionController {
         let mut session = HarnessSession::with_runtime_snapshot(runtime);
         let events = TuiEventBuffer::new(plan.config.config.trace.content.clone(), 256);
         session.emitter.add_sink(Box::new(events.sink()));
-        let loop_manifest = load_plan_loop(&plan)?;
-        let engine = HarnessEngine::new(loop_manifest, harness_engine_options_from_plan(&plan));
+        let engine = if plan.loop_package.is_some() {
+            let loop_manifest = load_plan_loop(&plan)?;
+            Some(HarnessEngine::new(
+                loop_manifest,
+                harness_engine_options_from_plan(&plan),
+            ))
+        } else {
+            None
+        };
         session.emitter.emit(
             HarnessEventType::PreflightCompleted,
             HarnessEventPayload::Preflight {
@@ -325,6 +339,8 @@ impl TuiSessionController {
         self.cancellation_requested.store(false, Ordering::SeqCst);
         let result = self
             .engine
+            .as_mut()
+            .context("TUI Run control requires a resolved Loop package")?
             .execute_run_with_id(&mut self.session, run_id, input, services)?;
         self.apply_run_result(&result, output_paths);
         Ok(result)
@@ -372,14 +388,18 @@ impl TuiSessionController {
         model: &mut dyn ModelRuntime,
         hooks: &mut dyn HookRuntime,
     ) -> Result<MemoryOperationInvocationResult> {
-        let result = self.engine.invoke_memory_operation(
-            &mut self.session,
-            package,
-            operation,
-            current_resolved_scope,
-            model,
-            hooks,
-        )?;
+        let result = self
+            .engine
+            .as_mut()
+            .context("TUI Memory operation control requires a resolved Loop package")?
+            .invoke_memory_operation(
+                &mut self.session,
+                package,
+                operation,
+                current_resolved_scope,
+                model,
+                hooks,
+            )?;
         self.refresh_snapshot();
         Ok(result)
     }
@@ -631,14 +651,14 @@ pub(super) fn workspace_readiness_from_plan(plan: &ResolvedHarnessPlan) -> TuiWo
                 .config
                 .model
                 .as_ref()
-                .map(|_| config_source_label(plan.config.state_dir_source.kind).into()),
+                .map(|_| config_source_label(plan.config.model_source.kind).into()),
         },
     ];
     categories.extend([
         capability_readiness_category(plan, "Tools", "tool", "tool"),
         capability_readiness_category(plan, "Skills", "skill", "skill"),
         capability_readiness_category(plan, "Knowledge", "knowledge", "source"),
-        capability_readiness_category(plan, "Memory", "memory", "space"),
+        memory_readiness_category(plan),
         capability_readiness_category(plan, "Profiles", "profile", "profile"),
         capability_readiness_category(plan, "Hooks", "hook", "bound"),
         TuiReadinessCategory {
@@ -702,6 +722,41 @@ fn capability_source_summary(plan: &ResolvedHarnessPlan, kind: &str) -> Option<S
     }
 }
 
+fn memory_readiness_category(plan: &ResolvedHarnessPlan) -> TuiReadinessCategory {
+    let source = capability_source_summary(plan, "memory");
+    let counts = grouped_capability_counts(plan, "memory");
+    let pending_requires_attention = plan
+        .report
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == "unresolved_runtime_scope");
+    let state = if counts.unavailable > 0 {
+        CapabilityState::Unavailable
+    } else if counts.suppressed > 0 {
+        CapabilityState::Suppressed
+    } else if counts.pending > 0 && pending_requires_attention {
+        CapabilityState::Pending
+    } else if counts.available + counts.pending > 0 {
+        CapabilityState::Available
+    } else {
+        CapabilityState::NotConfigured
+    };
+    let summary = if counts.total() == 0 {
+        "none configured".into()
+    } else if state == CapabilityState::Available && counts.pending > 0 {
+        let ready = counts.available + counts.pending;
+        format!("{} {} ready", ready, pluralize("space", ready))
+    } else {
+        capability_summary(plan, "memory", "space")
+    };
+    TuiReadinessCategory {
+        label: "Memory".into(),
+        state,
+        summary,
+        source,
+    }
+}
+
 fn bool_readiness_state(ready: bool) -> CapabilityState {
     if ready {
         CapabilityState::Available
@@ -710,12 +765,13 @@ fn bool_readiness_state(ready: bool) -> CapabilityState {
     }
 }
 
-fn config_source_label(source: HarnessConfigSourceKind) -> &'static str {
+pub(super) fn config_source_label(source: HarnessConfigSourceKind) -> &'static str {
     match source {
         HarnessConfigSourceKind::HarnessDefault => "default",
         HarnessConfigSourceKind::ConfigFile => "config_file",
         HarnessConfigSourceKind::CliOverride => "cli_override",
         HarnessConfigSourceKind::SdkOverride => "sdk_override",
+        HarnessConfigSourceKind::InteractiveOverride => "interactive",
         HarnessConfigSourceKind::Environment => "environment",
     }
 }

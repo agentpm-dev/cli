@@ -3501,6 +3501,7 @@ fn minimal_plan(root: &Path) -> ResolvedHarnessPlan {
             config,
             state_dir: root.join(".agentpm-state"),
             state_dir_source: HarnessConfigSource::cli_override(),
+            model_source: HarnessConfigSource::cli_override(),
         },
         selected_agent: Some(crate::harness_plan::ResolvedAgentRoot {
             root_key: "local:agent:agent.json".into(),

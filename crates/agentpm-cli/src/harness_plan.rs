@@ -1,6 +1,7 @@
 use crate::harness_config::{
-    HarnessConfigOverrides, HarnessImplementation, HarnessMcpExports, HarnessMcpHeaderValue,
-    HarnessMcpImport, HarnessMcpScope, ResolvedHarnessConfig, load_harness_config_with_overrides,
+    HarnessConfigOverrides, HarnessConfigSource, HarnessImplementation, HarnessMcpExports,
+    HarnessMcpHeaderValue, HarnessMcpImport, HarnessMcpScope, HarnessModelConfig,
+    ResolvedHarnessConfig, load_harness_config_with_overrides,
 };
 use crate::manifest::{
     AgentBindingScope, AgentBindings, AgentManifest, KnowledgeManifest, MemoryManifest,
@@ -185,6 +186,8 @@ pub struct HarnessBootstrapOptions {
     pub agent_selector: Option<String>,
     pub config_path: Option<PathBuf>,
     pub state_dir_override: Option<PathBuf>,
+    pub model_override: Option<HarnessModelConfig>,
+    pub model_override_source: Option<HarnessConfigSource>,
     pub runtime_scopes: BTreeMap<String, String>,
     pub surface: HarnessExecutionSurface,
 }
@@ -267,6 +270,8 @@ pub fn resolve_harness_plan_with_progress(
         options.config_path.as_deref(),
         &HarnessConfigOverrides {
             state_dir: options.state_dir_override.clone(),
+            model: options.model_override.clone(),
+            model_source: options.model_override_source.clone(),
         },
     )?;
     let runtime_scopes = merged_runtime_scopes(&config.config.scopes, &options.runtime_scopes);
@@ -2310,7 +2315,7 @@ fn implementation_capability(
                     PreflightDiagnosticSeverity::Suppressed,
                     "host_implementation_unavailable",
                     format!(
-                        "Host implementation `{id}` requires a machine/SDK host and is unavailable for this execution surface."
+                        "Host implementation `{id}` requires a machine/SDK host and is unavailable for this execution surface. Configure a process implementation for standalone Harness surfaces, or launch Harness through a Node/Python SDK host."
                     ),
                     None::<String>,
                 );
@@ -3296,6 +3301,32 @@ mod tests {
     }
 
     #[test]
+    fn preflight_preserves_interactive_model_override_source() {
+        let root = temp_dir("interactive-model-source");
+        write_base_workspace(&root);
+        lock_with_root(&root, base_root(), base_packages());
+
+        let plan = resolve_harness_plan(
+            &root,
+            &HarnessBootstrapOptions {
+                model_override: Some(HarnessModelConfig {
+                    provider: "openai".into(),
+                    model: "gpt-4o-mini".into(),
+                    options: Value::Object(Default::default()),
+                }),
+                model_override_source: Some(HarnessConfigSource::interactive_override()),
+                ..options()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.config.model_source.kind,
+            crate::harness_config::HarnessConfigSourceKind::InteractiveOverride
+        );
+    }
+
+    #[test]
     fn preflight_selects_single_local_agent_and_applies_state_dir_override() {
         let root = temp_dir("single-agent");
         write_base_workspace(&root);
@@ -4223,6 +4254,14 @@ mod tests {
         let codes = codes(&plan);
         assert!(codes.contains("irrelevant_knowledge_runtime_mapping"));
         assert!(codes.contains("host_implementation_unavailable"));
+        let host_diag = plan
+            .report
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "host_implementation_unavailable")
+            .expect("host implementation diagnostic");
+        assert!(host_diag.message.contains("process implementation"));
+        assert!(host_diag.message.contains("Node/Python SDK host"));
         assert!(plan.capabilities.iter().any(|capability| {
             capability.kind == "knowledge_runtime"
                 && capability.identity == "remote-knowledge"

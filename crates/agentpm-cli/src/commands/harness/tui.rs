@@ -1,5 +1,7 @@
 use super::HarnessArgs;
-use crate::harness_config::{HarnessTraceContent, HarnessTraceLevel};
+use crate::harness_config::{
+    HarnessModelConfig, HarnessTraceContent, HarnessTraceLevel, is_built_in_model_provider,
+};
 use crate::harness_observability::{HarnessEventEnvelope, HarnessTerminalStatus};
 use crate::harness_plan::{CapabilityState, PreflightDiagnosticSeverity, PreflightStatus};
 use crate::prelude::*;
@@ -21,6 +23,7 @@ use ratatui::{
 use std::{
     io::{IsTerminal, Stdout, stdout},
     panic::{self, PanicHookInfo},
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         mpsc::{Receiver, TryRecvError},
@@ -48,14 +51,14 @@ use state::*;
 
 type PanicHook = Box<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static>;
 
-pub(super) fn run_tui_surface(args: HarnessArgs, workspace_root: std::path::PathBuf) -> Result<()> {
+pub(super) fn run_tui_surface(args: HarnessArgs, workspace_root: PathBuf) -> Result<()> {
     ensure_tui_terminal_available()?;
 
     let mut terminal = TuiTerminal::enter()?;
     let mut app = TuiApp::loading(args.clone());
-    let bootstrap = spawn_bootstrap_worker(args, workspace_root);
+    let bootstrap = spawn_bootstrap_worker(args, workspace_root.clone(), None);
 
-    run_shell_loop(&mut terminal, &mut app, bootstrap)
+    run_shell_loop(&mut terminal, &mut app, workspace_root, bootstrap)
 }
 
 fn ensure_tui_terminal_available() -> Result<()> {
@@ -75,6 +78,7 @@ fn ensure_tui_terminal_available() -> Result<()> {
 fn run_shell_loop(
     terminal: &mut TuiTerminal,
     app: &mut TuiApp,
+    workspace_root: PathBuf,
     bootstrap: Receiver<BootstrapMessage>,
 ) -> Result<()> {
     let mut bootstrap = Some(bootstrap);
@@ -88,9 +92,31 @@ fn run_shell_loop(
             if key.kind != KeyEventKind::Press {
                 continue;
             }
+            if handle_resolution_prompt_key(
+                app,
+                key.code,
+                key.modifiers,
+                &workspace_root,
+                &mut bootstrap,
+            )? {
+                continue;
+            }
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => break,
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                KeyCode::Char('!') => app.cycle_workspace_page(),
+                KeyCode::Char('d') | KeyCode::Char('D') if app.has_workspace_details() => {
+                    app.workspace_detail_expanded = !app.workspace_detail_expanded
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') if app.can_prompt_agent_selector() => {
+                    app.open_resolution_prompt(ResolutionPromptKind::AgentSelector)
+                }
+                KeyCode::Char('p') | KeyCode::Char('P') if app.can_prompt_model() => {
+                    app.open_resolution_prompt(ResolutionPromptKind::Model)
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') if app.can_prompt_scope() => {
+                    app.open_resolution_prompt(ResolutionPromptKind::Scope)
+                }
                 KeyCode::Char('1') | KeyCode::Char('w') | KeyCode::Char('W')
                     if app.layout_mode == LayoutMode::Single =>
                 {
@@ -106,12 +132,11 @@ fn run_shell_loop(
                     app.panel = VisiblePanel::Memory
                 }
                 KeyCode::Char('5') => app.panel = VisiblePanel::Reports,
+                KeyCode::Char('6') if app.layout_mode != LayoutMode::Wide => {
+                    app.panel = VisiblePanel::EventStream
+                }
                 KeyCode::Tab => {
-                    app.panel = if app.layout_mode == LayoutMode::Single {
-                        app.panel.next()
-                    } else {
-                        app.panel.next_center()
-                    }
+                    app.panel = app.panel.next_for_layout(app.layout_mode);
                 }
                 _ => {}
             }
@@ -135,7 +160,9 @@ fn poll_bootstrap_result(app: &mut TuiApp, bootstrap: &mut Option<Receiver<Boots
                     ));
                     match TuiSessionController::new(plan) {
                         Ok(controller) => {
-                            *app = TuiApp::ready(controller);
+                            let args = app.bootstrap_args.clone();
+                            let model = app.model_override.clone();
+                            *app = TuiApp::ready_with_runtime_inputs(controller, args, model);
                             *bootstrap = None;
                             return;
                         }
@@ -160,6 +187,43 @@ fn poll_bootstrap_result(app: &mut TuiApp, bootstrap: &mut Option<Receiver<Boots
             }
         }
     }
+}
+
+fn handle_resolution_prompt_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    workspace_root: &Path,
+    bootstrap: &mut Option<Receiver<BootstrapMessage>>,
+) -> Result<bool> {
+    if app.resolution_prompt.is_none() {
+        return Ok(false);
+    }
+    if matches!(code, KeyCode::Char('c')) && modifiers.contains(KeyModifiers::CONTROL) {
+        return Ok(false);
+    }
+    match code {
+        KeyCode::Esc => app.resolution_prompt = None,
+        KeyCode::Backspace => {
+            if let Some(prompt) = &mut app.resolution_prompt {
+                prompt.value.pop();
+                prompt.error = None;
+            }
+        }
+        KeyCode::Enter => {
+            if let Some(receiver) = app.submit_resolution_prompt(workspace_root)? {
+                *bootstrap = Some(receiver);
+            }
+        }
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(prompt) = &mut app.resolution_prompt {
+                prompt.value.push(ch);
+                prompt.error = None;
+            }
+        }
+        _ => {}
+    }
+    Ok(true)
 }
 
 struct TuiTerminal {
@@ -243,6 +307,7 @@ enum VisiblePanel {
     Trace,
     Memory,
     Reports,
+    EventStream,
 }
 
 impl VisiblePanel {
@@ -253,22 +318,42 @@ impl VisiblePanel {
             Self::Trace => "Trace",
             Self::Memory => "Memory",
             Self::Reports => "Reports",
+            Self::EventStream => "Event Stream",
         }
     }
 
-    fn next(self) -> Self {
+    fn next_for_layout(self, layout: LayoutMode) -> Self {
+        match layout {
+            LayoutMode::Wide => self.next_center(),
+            LayoutMode::Medium => self.next_medium(),
+            LayoutMode::Single => self.next_single(),
+        }
+    }
+
+    fn next_single(self) -> Self {
         match self {
             Self::Workspace => Self::Run,
             Self::Run => Self::Trace,
             Self::Trace => Self::Memory,
             Self::Memory => Self::Reports,
-            Self::Reports => Self::Workspace,
+            Self::Reports => Self::EventStream,
+            Self::EventStream => Self::Workspace,
+        }
+    }
+
+    fn next_medium(self) -> Self {
+        match self {
+            Self::Workspace | Self::Run => Self::Trace,
+            Self::Trace => Self::Memory,
+            Self::Memory => Self::Reports,
+            Self::Reports => Self::EventStream,
+            Self::EventStream => Self::Run,
         }
     }
 
     fn next_center(self) -> Self {
         match self {
-            Self::Workspace | Self::Run => Self::Trace,
+            Self::Workspace | Self::EventStream | Self::Run => Self::Trace,
             Self::Trace => Self::Memory,
             Self::Memory => Self::Reports,
             Self::Reports => Self::Run,
@@ -282,6 +367,26 @@ struct TuiApp {
     accent: Color,
     warnings: Vec<String>,
     layout_mode: LayoutMode,
+    workspace_page: usize,
+    workspace_detail_expanded: bool,
+    resolution_prompt: Option<ResolutionPrompt>,
+    bootstrap_args: HarnessArgs,
+    model_override: Option<HarnessModelConfig>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolutionPromptKind {
+    AgentSelector,
+    Model,
+    Scope,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolutionPrompt {
+    kind: ResolutionPromptKind,
+    label: String,
+    value: String,
+    error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,17 +413,26 @@ impl TuiApp {
     fn loading(args: HarnessArgs) -> Self {
         Self {
             state: TuiState::Loading {
-                args,
+                args: args.clone(),
                 progress: Vec::new(),
             },
             panel: VisiblePanel::Run,
             accent: DEFAULT_ACCENT,
             warnings: Vec::new(),
             layout_mode: LayoutMode::Single,
+            workspace_page: 0,
+            workspace_detail_expanded: false,
+            resolution_prompt: None,
+            bootstrap_args: args,
+            model_override: None,
         }
     }
 
-    fn ready(controller: TuiSessionController) -> Self {
+    fn ready_with_runtime_inputs(
+        controller: TuiSessionController,
+        bootstrap_args: HarnessArgs,
+        model_override: Option<HarnessModelConfig>,
+    ) -> Self {
         let (accent, warning) = branding_accent(
             controller
                 .plan()
@@ -338,6 +452,11 @@ impl TuiApp {
             accent,
             warnings,
             layout_mode: LayoutMode::Single,
+            workspace_page: 0,
+            workspace_detail_expanded: false,
+            resolution_prompt: None,
+            bootstrap_args,
+            model_override,
         }
     }
 
@@ -357,8 +476,193 @@ impl TuiApp {
             accent: DEFAULT_ACCENT,
             warnings: Vec::new(),
             layout_mode: LayoutMode::Single,
+            workspace_page: 0,
+            workspace_detail_expanded: false,
+            resolution_prompt: None,
+            bootstrap_args: HarnessArgs::default(),
+            model_override: None,
         }
     }
+
+    fn cycle_workspace_page(&mut self) {
+        self.workspace_page = self.workspace_page.saturating_add(1);
+    }
+
+    fn has_workspace_details(&self) -> bool {
+        let TuiState::Ready { controller } = &self.state else {
+            return false;
+        };
+        !self.warnings.is_empty()
+            || controller
+                .snapshot()
+                .workspace
+                .diagnostics
+                .iter()
+                .any(|diagnostic| {
+                    matches!(
+                        diagnostic.severity,
+                        PreflightDiagnosticSeverity::Fatal
+                            | PreflightDiagnosticSeverity::Warning
+                            | PreflightDiagnosticSeverity::Suppressed
+                            | PreflightDiagnosticSeverity::Pending
+                    )
+                })
+    }
+
+    fn has_resolution_actions(&self) -> bool {
+        self.can_prompt_agent_selector() || self.can_prompt_model() || self.can_prompt_scope()
+    }
+
+    fn can_prompt_agent_selector(&self) -> bool {
+        matches!(
+            &self.state,
+            TuiState::Ready { controller }
+                if controller
+                    .snapshot()
+                    .workspace
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| matches!(
+                        diagnostic.code.as_str(),
+                        "agent_selection_required" | "agent_not_found"
+                    ))
+        )
+    }
+
+    fn can_prompt_model(&self) -> bool {
+        matches!(
+            &self.state,
+            TuiState::Ready { controller } if controller.plan().config.config.model.is_none()
+        )
+    }
+
+    fn can_prompt_scope(&self) -> bool {
+        self.first_unresolved_scope_key().is_some()
+    }
+
+    fn first_unresolved_scope_key(&self) -> Option<String> {
+        let TuiState::Ready { controller } = &self.state else {
+            return None;
+        };
+        controller
+            .snapshot()
+            .workspace
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "unresolved_runtime_scope")
+            .and_then(|diagnostic| unresolved_scope_key_from_message(&diagnostic.message))
+    }
+
+    fn open_resolution_prompt(&mut self, kind: ResolutionPromptKind) {
+        let (label, value) = match kind {
+            ResolutionPromptKind::AgentSelector => ("Agent selector".into(), String::new()),
+            ResolutionPromptKind::Model => ("Model provider/model".into(), "openai/".into()),
+            ResolutionPromptKind::Scope => {
+                let key = self.first_unresolved_scope_key().unwrap_or_default();
+                ("Runtime scope KEY=VALUE".into(), format!("{key}="))
+            }
+        };
+        self.panel = VisiblePanel::Workspace;
+        self.resolution_prompt = Some(ResolutionPrompt {
+            kind,
+            label,
+            value,
+            error: None,
+        });
+    }
+
+    fn submit_resolution_prompt(
+        &mut self,
+        workspace_root: &Path,
+    ) -> Result<Option<Receiver<BootstrapMessage>>> {
+        let Some(prompt) = self.resolution_prompt.clone() else {
+            bail!("no TUI resolution prompt is active");
+        };
+        let value = prompt.value.trim();
+        if value.is_empty() {
+            self.set_resolution_prompt_error("Value is required.");
+            return Ok(None);
+        }
+        match prompt.kind {
+            ResolutionPromptKind::AgentSelector => self.bootstrap_args.agent = Some(value.into()),
+            ResolutionPromptKind::Model => {
+                let Some((provider, model)) = value.split_once('/') else {
+                    self.set_resolution_prompt_error("Use provider/model.");
+                    return Ok(None);
+                };
+                if provider.trim().is_empty() || model.trim().is_empty() {
+                    self.set_resolution_prompt_error("Use non-empty provider/model.");
+                    return Ok(None);
+                }
+                let provider = provider.trim();
+                if !self.model_provider_available(provider) {
+                    self.set_resolution_prompt_error(format!(
+                        "Unknown model provider `{provider}`."
+                    ));
+                    return Ok(None);
+                }
+                self.model_override = Some(HarnessModelConfig {
+                    provider: provider.into(),
+                    model: model.trim().into(),
+                    options: serde_json::Value::Object(Default::default()),
+                });
+            }
+            ResolutionPromptKind::Scope => {
+                let Some((key, scope_value)) = value.split_once('=') else {
+                    self.set_resolution_prompt_error("Use KEY=VALUE.");
+                    return Ok(None);
+                };
+                if key.trim().is_empty() || scope_value.trim().is_empty() {
+                    self.set_resolution_prompt_error("Use non-empty KEY=VALUE.");
+                    return Ok(None);
+                }
+                self.bootstrap_args
+                    .scopes
+                    .retain(|(existing, _)| existing != key.trim());
+                self.bootstrap_args
+                    .scopes
+                    .push((key.trim().into(), scope_value.trim().into()));
+            }
+        }
+        self.resolution_prompt = None;
+        let args = self.bootstrap_args.clone();
+        let model = self.model_override.clone();
+        *self = TuiApp::loading(args.clone());
+        self.model_override = model.clone();
+        Ok(Some(spawn_bootstrap_worker(
+            args,
+            workspace_root.to_path_buf(),
+            model,
+        )))
+    }
+
+    fn set_resolution_prompt_error(&mut self, message: impl Into<String>) {
+        if let Some(prompt) = &mut self.resolution_prompt {
+            prompt.error = Some(message.into());
+        }
+    }
+
+    fn model_provider_available(&self, provider: &str) -> bool {
+        if is_built_in_model_provider(provider) {
+            return true;
+        }
+        let TuiState::Ready { controller } = &self.state else {
+            return false;
+        };
+        controller
+            .plan()
+            .config
+            .config
+            .providers
+            .models
+            .contains_key(provider)
+    }
+}
+
+fn unresolved_scope_key_from_message(message: &str) -> Option<String> {
+    let rest = message.strip_prefix("Memory runtime scope `")?;
+    let (key, _) = rest.split_once('`')?;
+    Some(key.to_string())
 }
 
 fn branding_accent(configured: Option<&str>) -> (Color, Option<String>) {
@@ -407,6 +711,9 @@ fn render_app(frame: &mut Frame<'_>, app: &mut TuiApp) {
     });
     app.layout_mode = layout_mode_for_width(area.width);
     if app.layout_mode != LayoutMode::Single && app.panel == VisiblePanel::Workspace {
+        app.panel = VisiblePanel::Run;
+    }
+    if app.layout_mode == LayoutMode::Wide && app.panel == VisiblePanel::EventStream {
         app.panel = VisiblePanel::Run;
     }
 
@@ -619,6 +926,7 @@ fn render_body(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) -> Vec<Rect> {
         LayoutMode::Single => {
             match app.panel {
                 VisiblePanel::Workspace => render_workspace_panel(frame, content_area, app),
+                VisiblePanel::EventStream => render_trace_rail(frame, content_area, app),
                 _ => render_selected_center_panel(frame, content_area, app),
             }
             Vec::new()
@@ -740,6 +1048,7 @@ fn render_selected_center_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp)
         VisiblePanel::Trace => render_center_content(frame, area, center_trace_lines(app)),
         VisiblePanel::Memory => render_center_content(frame, area, memory_lines(app)),
         VisiblePanel::Reports => render_center_content(frame, area, report_lines(app)),
+        VisiblePanel::EventStream => render_trace_rail(frame, area, app),
     }
 }
 
@@ -749,14 +1058,36 @@ fn render_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
         .title_style(panel_title_style())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(PANEL_BORDER));
+    let block_inner = block.inner(area);
     let inner = panel_inner(&block, area);
-    let lines = workspace_lines(app);
+    let footer = Rect {
+        x: block_inner.x.saturating_add(1),
+        y: block_inner.y + block_inner.height.saturating_sub(1),
+        width: block_inner.width.saturating_sub(2),
+        height: if block_inner.height > 0 { 1 } else { 0 },
+    };
+    let body_height = if footer.height > 0 {
+        footer.y.saturating_sub(inner.y)
+    } else {
+        inner.height
+    };
+    let page = workspace_page(app, body_height as usize, inner.width as usize);
+    let body = Rect {
+        height: body_height,
+        ..inner
+    };
     frame.render_widget(block, area);
     frame.render_widget(
-        Paragraph::new(lines)
+        Paragraph::new(page.lines)
             .style(Style::default().fg(TEXT_PRIMARY))
             .wrap(Wrap { trim: false }),
-        inner,
+        body,
+    );
+    frame.render_widget(
+        Paragraph::new(page.footer)
+            .style(Style::default().fg(TEXT_MUTED))
+            .alignment(Alignment::Right),
+        footer,
     );
 }
 
@@ -836,6 +1167,18 @@ fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
     if app.layout_mode == LayoutMode::Single {
         spans.extend([key_span("1", app.accent), Span::raw(" Workspace  ")]);
     }
+    if app.has_workspace_details() {
+        spans.extend([key_span("D", app.accent), Span::raw(" Details  ")]);
+    }
+    if app.can_prompt_agent_selector() {
+        spans.extend([key_span("A", app.accent), Span::raw(" Agent  ")]);
+    }
+    if app.can_prompt_model() {
+        spans.extend([key_span("P", app.accent), Span::raw(" Model  ")]);
+    }
+    if app.can_prompt_scope() {
+        spans.extend([key_span("S", app.accent), Span::raw(" Scope  ")]);
+    }
     spans.extend([
         key_span("2", app.accent),
         Span::raw(" Run  "),
@@ -845,8 +1188,15 @@ fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
         Span::raw(" Memory  "),
         key_span("5", app.accent),
         Span::raw(" Reports"),
-        Span::raw(format!("    Panel: {}", app.panel.label())),
     ]);
+    if app.layout_mode != LayoutMode::Wide {
+        spans.extend([
+            Span::raw("  "),
+            key_span("6", app.accent),
+            Span::raw(" Events"),
+        ]);
+    }
+    spans.push(Span::raw(format!("    Panel: {}", app.panel.label())));
     let line = Line::from(spans);
     frame.render_widget(
         Paragraph::new(line)
@@ -863,7 +1213,12 @@ fn key_span(label: &'static str, accent: Color) -> Span<'static> {
     )
 }
 
-fn workspace_lines(app: &TuiApp) -> Vec<Line<'_>> {
+struct WorkspacePage {
+    lines: Vec<Line<'static>>,
+    footer: Line<'static>,
+}
+
+fn workspace_page(app: &TuiApp, max_lines: usize, line_width: usize) -> WorkspacePage {
     match &app.state {
         TuiState::Loading { args, progress } => {
             let mut lines = vec![
@@ -892,41 +1247,168 @@ fn workspace_lines(app: &TuiApp) -> Vec<Line<'_>> {
                     ]));
                 }
             }
-            lines
+            WorkspacePage {
+                lines,
+                footer: workspace_page_footer(0, 1),
+            }
         }
-        TuiState::Failed { message } => vec![
-            Line::from(styled("Preflight failed", Color::Red)),
-            Line::from(""),
-            Line::from(message.clone()),
-            Line::from(""),
-            Line::from("Press Q to exit."),
-        ],
+        TuiState::Failed { message } => WorkspacePage {
+            lines: vec![
+                Line::from(styled("Preflight failed", Color::Red)),
+                Line::from(""),
+                Line::from(message.clone()),
+                Line::from(""),
+                Line::from("Press Q to exit."),
+            ],
+            footer: workspace_page_footer(0, 1),
+        },
         TuiState::Ready { controller } => {
-            let mut lines = Vec::new();
-            for (index, category) in controller
-                .snapshot()
-                .workspace
-                .categories
-                .iter()
-                .enumerate()
-            {
-                if index > 0 {
-                    lines.push(Line::from(""));
-                }
-                lines.push(state_line(&category.label, category.state));
-                lines.push(info_line("  ", category.summary.clone()));
-                if let Some(source) = &category.source {
-                    lines.push(info_line("  ", format!("from {source}")));
-                }
-            }
-            let warnings = warning_lines(app, controller.snapshot());
-            if !warnings.is_empty() {
-                lines.push(Line::from(""));
-                lines.extend(warnings);
-            }
-            lines
+            workspace_ready_page(app, controller.snapshot(), max_lines, line_width)
         }
     }
+}
+
+fn workspace_ready_page(
+    app: &TuiApp,
+    snapshot: &TuiSessionSnapshot,
+    max_lines: usize,
+    line_width: usize,
+) -> WorkspacePage {
+    let mut groups = Vec::new();
+    groups.push(vec![state_line(
+        "Readiness",
+        readiness_state(app, snapshot),
+    )]);
+    for category in &snapshot.workspace.categories {
+        let mut group = vec![
+            state_line(&category.label, category.state),
+            info_line("  ", category.summary.clone()),
+        ];
+        if let Some(source) = &category.source {
+            group.push(info_line("  ", readiness_source_text(category, source)));
+        }
+        groups.push(group);
+    }
+    let warnings = warning_lines(app, snapshot);
+    if !warnings.is_empty() {
+        groups.push(vec![
+            preflight_divider_line(),
+            Line::from(""),
+            Line::from(styled(diagnostics_header(snapshot), STATUS_WARNING)),
+        ]);
+        for warning in warnings {
+            groups.push(vec![warning]);
+        }
+    }
+    if let Some(prompt) = &app.resolution_prompt {
+        let mut prompt_group = vec![
+            Line::from(styled("Resolve", app.accent)),
+            info_line("  ", prompt.label.clone()),
+            Line::from(vec![
+                Span::styled("> ", Style::default().fg(app.accent)),
+                Span::styled(prompt.value.clone(), Style::default().fg(TEXT_PRIMARY)),
+            ]),
+        ];
+        if let Some(error) = &prompt.error {
+            prompt_group.push(Line::from(vec![
+                styled("  error - ", Color::Red),
+                Span::styled(error.clone(), Style::default().fg(Color::Red)),
+            ]));
+        }
+        prompt_group.push(info_line("  ", "Enter applies · Esc cancels"));
+        groups.push(prompt_group);
+    } else {
+        let actions = workspace_resolution_actions(app);
+        if !actions.is_empty() {
+            let mut action_group = vec![Line::from(styled("Resolve", app.accent))];
+            action_group.extend(actions.into_iter().map(|action| info_line("  ", action)));
+            groups.push(action_group);
+        }
+    }
+    paginate_workspace_groups(groups, app.workspace_page, max_lines, line_width)
+}
+
+fn paginate_workspace_groups(
+    groups: Vec<Vec<Line<'static>>>,
+    requested_page: usize,
+    max_lines: usize,
+    line_width: usize,
+) -> WorkspacePage {
+    if groups.is_empty() {
+        return WorkspacePage {
+            lines: Vec::new(),
+            footer: workspace_page_footer(0, 1),
+        };
+    }
+    let max_body_lines = max_lines.max(1);
+    let line_width = line_width.max(1);
+    let mut pages: Vec<Vec<Line<'static>>> = Vec::new();
+    let mut current = Vec::new();
+    let mut current_height = 0;
+    for group in groups {
+        let separator = usize::from(!current.is_empty());
+        let group_height = visual_lines_height(&group, line_width);
+        let needed = separator + group_height;
+        if !current.is_empty() && current_height + needed > max_body_lines {
+            pages.push(current);
+            current = Vec::new();
+            current_height = 0;
+        }
+        if !current.is_empty() {
+            current.push(Line::from(""));
+            current_height += 1;
+        }
+        current_height += group_height;
+        current.extend(group);
+    }
+    if !current.is_empty() {
+        pages.push(current);
+    }
+    let page_count = pages.len().max(1);
+    let page_index = requested_page % page_count;
+    let lines = pages.into_iter().nth(page_index).unwrap_or_default();
+    WorkspacePage {
+        lines,
+        footer: workspace_page_footer(page_index, page_count),
+    }
+}
+
+fn workspace_page_footer(page_index: usize, page_count: usize) -> Line<'static> {
+    if page_count > 1 {
+        info_line(
+            "",
+            format!("Page {}/{} · Shift+1 next", page_index + 1, page_count),
+        )
+    } else {
+        info_line("", "Page 1/1")
+    }
+}
+
+fn visual_lines_height(lines: &[Line<'static>], width: usize) -> usize {
+    lines
+        .iter()
+        .map(|line| visual_line_height(&line.to_string(), width))
+        .sum()
+}
+
+fn visual_line_height(text: &str, width: usize) -> usize {
+    if text.is_empty() {
+        return 1;
+    }
+    text.lines()
+        .map(|line| {
+            let chars = line.chars().count().max(1);
+            chars.div_ceil(width)
+        })
+        .sum::<usize>()
+        .max(1)
+}
+
+fn preflight_divider_line() -> Line<'static> {
+    Line::from(Span::styled(
+        "─".repeat(PREFLIGHT_LINE_WIDTH),
+        Style::default().fg(PANEL_BORDER_SUBTLE),
+    ))
 }
 
 fn run_lines(app: &TuiApp) -> Vec<Line<'_>> {
@@ -1216,7 +1698,70 @@ fn tab_sep() -> Span<'static> {
     Span::styled(" | ", Style::default().fg(TEXT_DIM))
 }
 
-fn warning_lines<'a>(app: &'a TuiApp, snapshot: &'a TuiSessionSnapshot) -> Vec<Line<'a>> {
+fn readiness_state(app: &TuiApp, snapshot: &TuiSessionSnapshot) -> CapabilityState {
+    if snapshot
+        .workspace
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == PreflightDiagnosticSeverity::Fatal)
+    {
+        CapabilityState::Unavailable
+    } else if app.has_resolution_actions()
+        || snapshot
+            .workspace
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == PreflightDiagnosticSeverity::Pending)
+    {
+        CapabilityState::Pending
+    } else if snapshot.workspace.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic.severity,
+            PreflightDiagnosticSeverity::Warning | PreflightDiagnosticSeverity::Suppressed
+        )
+    }) {
+        CapabilityState::Suppressed
+    } else {
+        CapabilityState::Available
+    }
+}
+
+fn workspace_resolution_actions(app: &TuiApp) -> Vec<String> {
+    let mut actions = Vec::new();
+    if app.can_prompt_agent_selector() {
+        actions.push("A select Agent".into());
+    }
+    if app.can_prompt_model() {
+        actions.push("P set model provider/model".into());
+    }
+    if app.can_prompt_scope() {
+        actions.push("S set missing runtime scope".into());
+    }
+    actions
+}
+
+fn readiness_source_text(category: &TuiReadinessCategory, source: &str) -> String {
+    if category.label == "Agent" {
+        "selected from workspace".into()
+    } else {
+        format!("from {source}")
+    }
+}
+
+fn diagnostics_header(snapshot: &TuiSessionSnapshot) -> &'static str {
+    if snapshot
+        .workspace
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == PreflightDiagnosticSeverity::Fatal)
+    {
+        "Diagnostics"
+    } else {
+        "Warnings"
+    }
+}
+
+fn warning_lines(app: &TuiApp, snapshot: &TuiSessionSnapshot) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for warning in &app.warnings {
         lines.push(Line::from(vec![
@@ -1227,16 +1772,24 @@ fn warning_lines<'a>(app: &'a TuiApp, snapshot: &'a TuiSessionSnapshot) -> Vec<L
     for diagnostic in &snapshot.workspace.diagnostics {
         if matches!(
             diagnostic.severity,
-            PreflightDiagnosticSeverity::Warning
+            PreflightDiagnosticSeverity::Fatal
+                | PreflightDiagnosticSeverity::Warning
                 | PreflightDiagnosticSeverity::Suppressed
                 | PreflightDiagnosticSeverity::Pending
         ) {
+            let detail = if app.workspace_detail_expanded {
+                format!("{}: {}", diagnostic.code, diagnostic.message)
+            } else {
+                diagnostic.code.clone()
+            };
+            let color = if diagnostic.severity == PreflightDiagnosticSeverity::Fatal {
+                Color::Red
+            } else {
+                STATUS_WARNING
+            };
             lines.push(Line::from(vec![
-                styled(
-                    diagnostic_severity_label(diagnostic.severity),
-                    STATUS_WARNING,
-                ),
-                Span::raw(format!(" - {}", diagnostic.message)),
+                styled(diagnostic_severity_label(diagnostic.severity), color),
+                Span::raw(format!(" - {detail}")),
             ]));
         }
     }
@@ -1328,20 +1881,86 @@ mod tests {
 
     #[test]
     fn visible_panel_cycles_through_single_panel_tabs() {
-        assert_eq!(VisiblePanel::Workspace.next(), VisiblePanel::Run);
-        assert_eq!(VisiblePanel::Run.next(), VisiblePanel::Trace);
-        assert_eq!(VisiblePanel::Trace.next(), VisiblePanel::Memory);
-        assert_eq!(VisiblePanel::Memory.next(), VisiblePanel::Reports);
-        assert_eq!(VisiblePanel::Reports.next(), VisiblePanel::Workspace);
+        assert_eq!(
+            VisiblePanel::Workspace.next_for_layout(LayoutMode::Single),
+            VisiblePanel::Run
+        );
+        assert_eq!(
+            VisiblePanel::Run.next_for_layout(LayoutMode::Single),
+            VisiblePanel::Trace
+        );
+        assert_eq!(
+            VisiblePanel::Trace.next_for_layout(LayoutMode::Single),
+            VisiblePanel::Memory
+        );
+        assert_eq!(
+            VisiblePanel::Memory.next_for_layout(LayoutMode::Single),
+            VisiblePanel::Reports
+        );
+        assert_eq!(
+            VisiblePanel::Reports.next_for_layout(LayoutMode::Single),
+            VisiblePanel::EventStream
+        );
+        assert_eq!(
+            VisiblePanel::EventStream.next_for_layout(LayoutMode::Single),
+            VisiblePanel::Workspace
+        );
     }
 
     #[test]
-    fn visible_panel_cycles_center_tabs_without_workspace() {
-        assert_eq!(VisiblePanel::Workspace.next_center(), VisiblePanel::Trace);
-        assert_eq!(VisiblePanel::Run.next_center(), VisiblePanel::Trace);
-        assert_eq!(VisiblePanel::Trace.next_center(), VisiblePanel::Memory);
-        assert_eq!(VisiblePanel::Memory.next_center(), VisiblePanel::Reports);
-        assert_eq!(VisiblePanel::Reports.next_center(), VisiblePanel::Run);
+    fn visible_panel_cycles_medium_tabs_with_event_stream_without_workspace() {
+        assert_eq!(
+            VisiblePanel::Workspace.next_for_layout(LayoutMode::Medium),
+            VisiblePanel::Trace
+        );
+        assert_eq!(
+            VisiblePanel::Run.next_for_layout(LayoutMode::Medium),
+            VisiblePanel::Trace
+        );
+        assert_eq!(
+            VisiblePanel::Trace.next_for_layout(LayoutMode::Medium),
+            VisiblePanel::Memory
+        );
+        assert_eq!(
+            VisiblePanel::Memory.next_for_layout(LayoutMode::Medium),
+            VisiblePanel::Reports
+        );
+        assert_eq!(
+            VisiblePanel::Reports.next_for_layout(LayoutMode::Medium),
+            VisiblePanel::EventStream
+        );
+        assert_eq!(
+            VisiblePanel::EventStream.next_for_layout(LayoutMode::Medium),
+            VisiblePanel::Run
+        );
+    }
+
+    #[test]
+    fn visible_panel_cycles_wide_center_tabs_without_workspace_or_event_stream() {
+        assert_eq!(
+            VisiblePanel::Workspace.next_for_layout(LayoutMode::Wide),
+            VisiblePanel::Trace
+        );
+        assert_eq!(
+            VisiblePanel::EventStream.next_for_layout(LayoutMode::Wide),
+            VisiblePanel::Trace
+        );
+        assert_eq!(
+            VisiblePanel::Run.next_for_layout(LayoutMode::Wide),
+            VisiblePanel::Trace
+        );
+        assert_eq!(
+            VisiblePanel::Trace.next_for_layout(LayoutMode::Wide),
+            VisiblePanel::Memory
+        );
+        assert_eq!(
+            VisiblePanel::Memory.next_for_layout(LayoutMode::Wide),
+            VisiblePanel::Reports
+        );
+        assert_eq!(
+            VisiblePanel::Reports.next_for_layout(LayoutMode::Wide),
+            VisiblePanel::Run
+        );
     }
 
     #[test]
@@ -1396,6 +2015,34 @@ mod tests {
         assert_eq!(
             diagnostic_severity_label(PreflightDiagnosticSeverity::Info),
             "info"
+        );
+    }
+
+    #[test]
+    fn config_source_labels_are_stable_ui_copy() {
+        assert_eq!(
+            config_source_label(HarnessConfigSourceKind::HarnessDefault),
+            "default"
+        );
+        assert_eq!(
+            config_source_label(HarnessConfigSourceKind::ConfigFile),
+            "config_file"
+        );
+        assert_eq!(
+            config_source_label(HarnessConfigSourceKind::CliOverride),
+            "cli_override"
+        );
+        assert_eq!(
+            config_source_label(HarnessConfigSourceKind::SdkOverride),
+            "sdk_override"
+        );
+        assert_eq!(
+            config_source_label(HarnessConfigSourceKind::InteractiveOverride),
+            "interactive"
+        );
+        assert_eq!(
+            config_source_label(HarnessConfigSourceKind::Environment),
+            "environment"
         );
     }
 
@@ -1465,7 +2112,14 @@ mod tests {
 
     #[test]
     fn workspace_readiness_summary_uses_stable_categories_and_counts() {
-        let plan = test_plan();
+        let mut plan = test_plan();
+        plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+            provider: "openai".into(),
+            model: "gpt-4o-mini".into(),
+            options: serde_json::Value::Object(Default::default()),
+        });
+        plan.config.model_source =
+            crate::harness_config::HarnessConfigSource::interactive_override();
         let readiness = workspace_readiness_from_plan(&plan);
 
         let profiles = readiness
@@ -1486,6 +2140,353 @@ mod tests {
             .find(|category| category.label == "Tools")
             .expect("tools category");
         assert_eq!(tools.summary, "1 ready, 1 suppressed");
+        let memory = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Memory")
+            .expect("memory category");
+        assert_eq!(memory.state, CapabilityState::Available);
+        assert_eq!(memory.summary, "1 space ready");
+        let model = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Model")
+            .expect("model category");
+        assert_eq!(
+            readiness_source_text(model, model.source.as_deref().unwrap()),
+            "from interactive"
+        );
+
+        let agent = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Agent")
+            .expect("agent category");
+        assert_eq!(
+            readiness_source_text(agent, agent.source.as_deref().unwrap()),
+            "selected from workspace"
+        );
+    }
+
+    #[test]
+    fn workspace_readiness_paginates_without_splitting_groups() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+
+        let first_page = workspace_page(&app, 8, PREFLIGHT_LINE_WIDTH);
+        assert!(first_page.footer.to_string().contains("Page 1/"));
+        assert!(first_page.footer.to_string().contains("Shift+1 next"));
+        assert!(
+            first_page
+                .lines
+                .iter()
+                .any(|line| line.to_string().contains("Readiness"))
+        );
+
+        app.cycle_workspace_page();
+        let second_page = workspace_page(&app, 8, PREFLIGHT_LINE_WIDTH);
+        assert!(second_page.footer.to_string().contains("Page 2/"));
+        assert!(
+            !second_page
+                .lines
+                .iter()
+                .any(|line| line.to_string().contains("Readiness"))
+        );
+
+        let full_page = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH);
+        assert_eq!(full_page.footer.to_string(), "Page 1/1");
+        assert!(!full_page.footer.to_string().contains("Shift+1"));
+    }
+
+    #[test]
+    fn workspace_resolution_prompt_renders_model_override_input() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        assert!(app.can_prompt_model());
+
+        app.open_resolution_prompt(ResolutionPromptKind::Model);
+        let lines = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH).lines;
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Model provider/model"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Enter applies"))
+        );
+    }
+
+    #[test]
+    fn resolution_prompt_does_not_swallow_ctrl_c() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        app.open_resolution_prompt(ResolutionPromptKind::Model);
+        let mut bootstrap = None;
+
+        let handled = handle_resolution_prompt_key(
+            &mut app,
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+            &std::env::temp_dir(),
+            &mut bootstrap,
+        )
+        .expect("prompt key handling");
+
+        assert!(!handled);
+    }
+
+    #[test]
+    fn invalid_resolution_prompt_input_stays_inline() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+
+        app.open_resolution_prompt(ResolutionPromptKind::Scope);
+        let Some(prompt) = &mut app.resolution_prompt else {
+            panic!("resolution prompt expected");
+        };
+        prompt.value = "user".into();
+        let submitted = app
+            .submit_resolution_prompt(&std::env::temp_dir())
+            .expect("inline validation should not crash TUI");
+        assert!(submitted.is_none());
+        assert!(app.resolution_prompt.is_some());
+
+        let lines = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH).lines;
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Use KEY=VALUE."))
+        );
+    }
+
+    #[test]
+    fn invalid_model_provider_stays_inline() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+
+        app.open_resolution_prompt(ResolutionPromptKind::Model);
+        let Some(prompt) = &mut app.resolution_prompt else {
+            panic!("resolution prompt expected");
+        };
+        prompt.value = "not-a-provider/model".into();
+        let submitted = app
+            .submit_resolution_prompt(&std::env::temp_dir())
+            .expect("inline validation should not crash TUI");
+        assert!(submitted.is_none());
+        assert!(app.resolution_prompt.is_some());
+
+        let lines = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH).lines;
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Unknown model provider"))
+        );
+    }
+
+    #[test]
+    fn workspace_diagnostics_default_to_codes_and_expand_to_messages() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        assert!(!app.has_workspace_details());
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller
+            .snapshot
+            .workspace
+            .diagnostics
+            .push(TuiDiagnosticSummary {
+                severity: PreflightDiagnosticSeverity::Warning,
+                code: "example_warning".into(),
+                message: "expanded diagnostic detail".into(),
+            });
+        assert!(app.has_workspace_details());
+
+        let compact = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH).lines;
+        assert!(
+            compact
+                .iter()
+                .any(|line| line.to_string().contains("example_warning"))
+        );
+        assert!(
+            !compact
+                .iter()
+                .any(|line| line.to_string().contains("expanded diagnostic detail"))
+        );
+
+        app.workspace_detail_expanded = true;
+        let expanded = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH).lines;
+        assert!(
+            expanded
+                .iter()
+                .any(|line| line.to_string().contains("expanded diagnostic detail"))
+        );
+    }
+
+    #[test]
+    fn workspace_pagination_accounts_for_wrapped_expanded_diagnostics() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller
+            .snapshot
+            .workspace
+            .diagnostics
+            .push(TuiDiagnosticSummary {
+                severity: PreflightDiagnosticSeverity::Warning,
+                code: "first_warning".into(),
+                message: "This diagnostic has a long expanded message that wraps across several visual rows in the preflight rail.".into(),
+            });
+        controller
+            .snapshot
+            .workspace
+            .diagnostics
+            .push(TuiDiagnosticSummary {
+                severity: PreflightDiagnosticSeverity::Warning,
+                code: "second_warning".into(),
+                message: "A second diagnostic proves that warning entries can move onto the next page when details are expanded.".into(),
+            });
+        app.workspace_detail_expanded = true;
+
+        let mut first_warning_page = None;
+        let mut second_warning_page = None;
+        for page_index in 0..10 {
+            app.workspace_page = page_index;
+            let page = workspace_page(&app, 10, 24);
+            if page
+                .lines
+                .iter()
+                .any(|line| line.to_string().contains("first_warning"))
+            {
+                first_warning_page = Some(page_index);
+            }
+            if page
+                .lines
+                .iter()
+                .any(|line| line.to_string().contains("second_warning"))
+            {
+                second_warning_page = Some(page_index);
+            }
+        }
+        let first_warning_page = first_warning_page.expect("first warning page");
+        let second_warning_page = second_warning_page.expect("second warning page");
+        assert!(
+            second_warning_page > first_warning_page,
+            "expected second warning to paginate after first warning"
+        );
+    }
+
+    #[test]
+    fn workspace_readiness_is_pending_when_resolution_actions_remain() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        assert_eq!(
+            readiness_state(&app, ready_snapshot(&app)),
+            CapabilityState::Pending
+        );
+
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+            provider: "openai".into(),
+            model: "gpt-4o-mini".into(),
+            options: serde_json::Value::Object(Default::default()),
+        });
+        assert_eq!(
+            readiness_state(&app, ready_snapshot(&app)),
+            CapabilityState::Available
+        );
+
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller
+            .snapshot
+            .workspace
+            .diagnostics
+            .push(TuiDiagnosticSummary {
+                severity: PreflightDiagnosticSeverity::Warning,
+                code: "unresolved_runtime_scope".into(),
+                message: "Memory runtime scope `user` is required by active Memory bindings but has no configured value.".into(),
+            });
+        assert_eq!(
+            readiness_state(&app, ready_snapshot(&app)),
+            CapabilityState::Pending
+        );
+    }
+
+    #[test]
+    fn selection_required_plan_builds_preflight_only_controller() {
+        let mut plan = test_plan();
+        plan.selected_agent = None;
+        plan.loop_package = None;
+        plan.report.status = PreflightStatus::SelectionRequired;
+        plan.report
+            .diagnostics
+            .push(crate::harness_plan::PreflightDiagnostic {
+                severity: PreflightDiagnosticSeverity::Fatal,
+                code: "agent_selection_required".into(),
+                message: "multiple runnable Agents are available; pass `agentpm harness <agent>` to select one.".into(),
+                path: Some("agent.lock".into()),
+            });
+
+        let app = TuiApp::ready_with_runtime_inputs(
+            TuiSessionController::new(plan).expect("preflight-only controller"),
+            HarnessArgs::default(),
+            None,
+        );
+
+        assert!(app.can_prompt_agent_selector());
+        assert_eq!(
+            readiness_state(&app, ready_snapshot(&app)),
+            CapabilityState::Unavailable
+        );
+        let page = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH);
+        assert!(
+            page.lines
+                .iter()
+                .any(|line| line.to_string().contains("Diagnostics"))
+        );
+        assert!(
+            page.lines
+                .iter()
+                .any(|line| line.to_string().contains("agent_selection_required"))
+        );
+    }
+
+    #[test]
+    fn agent_not_found_keeps_agent_resolution_available() {
+        let mut controller = test_controller();
+        controller
+            .snapshot
+            .workspace
+            .diagnostics
+            .push(TuiDiagnosticSummary {
+                severity: PreflightDiagnosticSeverity::Fatal,
+                code: "agent_not_found".into(),
+                message: "no runnable Agent in agent.lock/install state matches `missing-agent`."
+                    .into(),
+            });
+        let app = TuiApp::ready_with_runtime_inputs(
+            controller,
+            HarnessArgs {
+                agent: Some("missing-agent".into()),
+                ..HarnessArgs::default()
+            },
+            None,
+        );
+
+        assert!(app.can_prompt_agent_selector());
+        assert!(
+            workspace_resolution_actions(&app)
+                .iter()
+                .any(|action| action.contains("select Agent"))
+        );
     }
 
     #[test]
@@ -1660,6 +2661,13 @@ mod tests {
         test_controller_with_loop(test_loop_manifest())
     }
 
+    fn ready_snapshot(app: &TuiApp) -> &TuiSessionSnapshot {
+        let TuiState::Ready { controller } = &app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot()
+    }
+
     fn test_controller_with_checkpoint() -> TuiSessionController {
         let mut manifest = test_loop_manifest();
         manifest.r#loop.checkpoints = vec![crate::manifest::LoopCheckpoint {
@@ -1686,7 +2694,7 @@ mod tests {
         TuiSessionController {
             plan: Box::new(plan),
             session,
-            engine,
+            engine: Some(engine),
             events,
             cancellation_requested: Arc::new(AtomicBool::new(false)),
             snapshot,
@@ -1705,6 +2713,10 @@ mod tests {
                 config: crate::harness_config::HarnessConfig::default(),
                 state_dir: root.join(".agentpm-state"),
                 state_dir_source: crate::harness_config::HarnessConfigSource {
+                    kind: HarnessConfigSourceKind::HarnessDefault,
+                    path: None,
+                },
+                model_source: crate::harness_config::HarnessConfigSource {
                     kind: HarnessConfigSourceKind::HarnessDefault,
                     path: None,
                 },
@@ -1769,6 +2781,13 @@ mod tests {
                     scope: "global".into(),
                     source: "agent_binding".into(),
                     state: CapabilityState::Suppressed,
+                },
+                crate::harness_plan::StaticCapabilityCandidate {
+                    kind: "memory".into(),
+                    identity: "@zack/memory".into(),
+                    scope: "global".into(),
+                    source: "agent_binding".into(),
+                    state: CapabilityState::Pending,
                 },
             ],
             report: crate::harness_plan::PreflightReport {

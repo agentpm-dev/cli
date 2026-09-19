@@ -72,7 +72,7 @@ use host_services::{
 use runtime_snapshot::knowledge_snapshots_from_plan;
 use runtime_snapshot::runtime_snapshot_from_plan;
 
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Default)]
 pub struct HarnessArgs {
     /// Agent package identity to run, for example @owner/name or @owner/name@version
     #[arg(value_name = "AGENT")]
@@ -133,6 +133,8 @@ impl HarnessArgs {
                 agent_selector: self.agent.clone(),
                 config_path: self.config.clone(),
                 state_dir_override: self.state_dir.clone(),
+                model_override: None,
+                model_override_source: None,
                 runtime_scopes: self.scopes.iter().cloned().collect(),
                 surface,
             },

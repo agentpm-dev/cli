@@ -1159,20 +1159,20 @@ This gives us Harness-managed outward MCP export and explicitly scoped external 
 
 ### Milestone 19C: Workspace Readiness Rail and Interactive Resolution
 > Scope note: own the left workspace/preflight rail and the interactive resolution flow needed before a Run can start. This chunk should not implement Run execution presentation beyond feeding resolved readiness state into the existing engine path.
-- [ ] Add the left workspace readiness rail showing selected Agent/Loop, provider/model + value source, Consumer Context, Profiles/Skills/Tools, Knowledge, Memory, Hooks, outward/inward MCP, warnings, pending live checks, and effective readiness.
-- [ ] Give Tools its own readiness row in the left rail (ready/suppressed counts with expandable reasons) alongside Knowledge/Memory/Hooks/MCP; the per-phase Effective Capabilities list inside the Run view is not a substitute for Agent-level Tool readiness.
-- [ ] Show a compact source tag (for example `config`, `cli`, `env`, `default`) next to the resolved Model/provider value per the Milestone 1/`spec.md` resolved-value source-metadata requirement; a bare model name with no source is insufficient.
-- [ ] Clearly show Consumer Context loaded/unavailable state with path/size/approximate token metadata.
-- [ ] Use the Milestone 19B readiness summary model for left-rail subtext instead of renderer-local approximations: stable wording such as `3 ready, 1 suppressed`, `3 spaces ready`, `2 bound`, source-aware model/provider metadata, and context size/token estimates.
-- [ ] Show capability suppression/unavailability/pending reasons with a concise default view plus expandable detail.
-- [ ] Add left-rail overflow behavior for smaller terminals using height-aware pagination rather than splitting readiness groups mid-row: compute how many full workspace-readiness groups fit in the rail, render only complete groups for the current page, show a compact `Page N/M` hint only when pagination is active, and bind `Shift+1` to cycle Preflight/workspace rail pages in both wide and single-panel layouts. Diagnostics/warnings and critical unavailable/suppressed state must remain reachable through this pagination.
-- [ ] Keep the left rail focused on workspace/preflight/readiness state. Do not include separate `Ready to Run` or `Run in progress` callouts there; those states are already visible in the center Run view.
-- [ ] Add interactive Agent selection when multiple runnable roots exist and no selector was supplied.
-- [ ] Add provider/model prompts when required values are unresolved.
-- [ ] Add trusted scope-value prompts for unresolved required Memory scope keys where interactive resolution is appropriate.
-- [ ] Treat interactive answers as trusted runtime overrides with source metadata for the current Session/Run; do not rewrite `agentpm.harness.json`, Agent artifacts, or portable manifests implicitly.
-- [ ] Re-run/recompute affected preflight/readiness after interactive Agent/model/provider/scope resolution before allowing the Run to start.
-- [ ] In standalone TUI execution, treat configured `type: host` providers/runtimes/hooks/controllers as unavailable and show an actionable preflight diagnostic directing the user to configure a `process` implementation or launch the Harness through a Node/Python SDK host. Built-in implementations remain available normally.
+- [x] Add the left workspace readiness rail showing selected Agent/Loop, provider/model + value source, Consumer Context, Profiles/Skills/Tools, Knowledge, Memory, Hooks, outward/inward MCP, warnings, pending live checks, and effective readiness.
+- [x] Give Tools its own readiness row in the left rail (ready/suppressed counts with expandable reasons) alongside Knowledge/Memory/Hooks/MCP; the per-phase Effective Capabilities list inside the Run view is not a substitute for Agent-level Tool readiness.
+- [x] Show a compact source tag (for example `config`, `cli`, `env`, `default`) next to the resolved Model/provider value per the Milestone 1/`spec.md` resolved-value source-metadata requirement; a bare model name with no source is insufficient.
+- [x] Clearly show Consumer Context loaded/unavailable state with path/size/approximate token metadata.
+- [x] Use the Milestone 19B readiness summary model for left-rail subtext instead of renderer-local approximations: stable wording such as `3 ready, 1 suppressed`, `3 spaces ready`, `2 bound`, source-aware model/provider metadata, and context size/token estimates.
+- [x] Show capability suppression/unavailability/pending reasons with a concise default view plus expandable detail.
+- [x] Add left-rail overflow behavior for smaller terminals using height-aware pagination rather than splitting readiness groups mid-row: compute how many full workspace-readiness groups fit in the rail, render only complete groups for the current page, show a compact `Page N/M` hint only when pagination is active, and bind `Shift+1` to cycle Preflight/workspace rail pages in both wide and single-panel layouts. Diagnostics/warnings and critical unavailable/suppressed state must remain reachable through this pagination.
+- [x] Keep the left rail focused on workspace/preflight/readiness state. Do not include separate `Ready to Run` or `Run in progress` callouts there; those states are already visible in the center Run view.
+- [x] Add interactive Agent selection when multiple runnable roots exist and no selector was supplied.
+- [x] Add provider/model prompts when required values are unresolved.
+- [x] Add trusted scope-value prompts for unresolved required Memory scope keys where interactive resolution is appropriate.
+- [x] Treat interactive answers as trusted runtime overrides with source metadata for the current Session/Run; do not rewrite `agentpm.harness.json`, Agent artifacts, or portable manifests implicitly.
+- [x] Re-run/recompute affected preflight/readiness after interactive Agent/model/provider/scope resolution before allowing the Run to start.
+- [x] In standalone TUI execution, treat configured `type: host` providers/runtimes/hooks/controllers as unavailable and show an actionable preflight diagnostic directing the user to configure a `process` implementation or launch the Harness through a Node/Python SDK host. Built-in implementations remain available normally.
 
 ### Milestone 19D: Center Run Surface, Composer, and Active-vs-Terminal Lifecycle
 > Scope note: build the center Run panel as the primary Agent interaction surface, including active Run presentation, terminal summary presentation, composer gating, and repeated Run handoff. This chunk owns the active-vs-terminal mockup fidelity.
