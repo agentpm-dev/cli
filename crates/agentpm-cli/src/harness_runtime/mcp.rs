@@ -8,10 +8,19 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Duration;
+
+const ERR_MCP_STDIO_RESPONSE_TIMED_OUT: &str = "MCP stdio response timed out";
+const ERR_MCP_STDIO_SERVER_CLOSED_STDOUT: &str = "MCP stdio server closed stdout";
+const ERR_MCP_STDIO_CLOSED_STDOUT_INITIALIZE: &str = "closed stdout during initialize";
+const ERR_MCP_STDIO_CLOSED_STDOUT_RESTART_INITIALIZE: &str =
+    "closed stdout during restart initialize";
+const ERR_MCP_STDIO_WRITE_REQUEST: &str = "writing MCP stdio JSON-RPC request";
+const ERR_MCP_STDIO_FLUSH_REQUEST: &str = "flushing MCP stdio request";
 
 #[derive(Debug)]
 pub struct McpImportRuntimeActivation {
@@ -145,10 +154,13 @@ impl ConfiguredMcpImportRuntime {
         };
         match client.call_tool(tool, arguments) {
             Ok(result) => ActionDispatchResult::success(result),
-            Err(err) => ActionDispatchResult::failure_with_category(
-                ActionFailureCategory::Runtime,
-                format!("MCP Tool `{server}/{tool}` failed: {err:#}"),
-            ),
+            Err(err) => {
+                let category = mcp_import_call_failure_category(&err);
+                ActionDispatchResult::failure_with_category(
+                    category,
+                    format!("MCP Tool `{server}/{tool}` failed: {err:#}"),
+                )
+            }
         }
     }
 
@@ -161,6 +173,53 @@ impl ConfiguredMcpImportRuntime {
         }
         self.clients.clear();
     }
+}
+
+fn mcp_import_call_failure_category(err: &anyhow::Error) -> ActionFailureCategory {
+    if let Some(classified) = err
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ClassifiedMcpImportError>())
+    {
+        return classified.kind;
+    }
+
+    let rendered = format!("{err:#}");
+    if rendered.contains(ERR_MCP_STDIO_RESPONSE_TIMED_OUT) {
+        return ActionFailureCategory::Timeout;
+    }
+    if rendered.contains(ERR_MCP_STDIO_SERVER_CLOSED_STDOUT)
+        || rendered.contains(ERR_MCP_STDIO_CLOSED_STDOUT_RESTART_INITIALIZE)
+        || rendered.contains(ERR_MCP_STDIO_CLOSED_STDOUT_INITIALIZE)
+        || rendered.contains(ERR_MCP_STDIO_WRITE_REQUEST)
+        || rendered.contains(ERR_MCP_STDIO_FLUSH_REQUEST)
+    {
+        return ActionFailureCategory::SubprocessFailure;
+    }
+    ActionFailureCategory::Runtime
+}
+
+#[derive(Debug)]
+struct ClassifiedMcpImportError {
+    kind: ActionFailureCategory,
+    message: String,
+}
+
+impl fmt::Display for ClassifiedMcpImportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ClassifiedMcpImportError {}
+
+fn classified_mcp_import_error(
+    kind: ActionFailureCategory,
+    message: impl Into<String>,
+) -> anyhow::Error {
+    anyhow!(ClassifiedMcpImportError {
+        kind,
+        message: message.into(),
+    })
 }
 
 impl Drop for ConfiguredMcpImportRuntime {
@@ -223,7 +282,12 @@ impl McpImportClient {
                     .read_line(&mut line)
                     .context("reading MCP stdio initialize response")?;
                 if line.trim().is_empty() {
-                    bail!("MCP import `{server_id}` closed stdout during initialize");
+                    return Err(classified_mcp_import_error(
+                        ActionFailureCategory::SubprocessFailure,
+                        format!(
+                            "MCP import `{server_id}` {ERR_MCP_STDIO_CLOSED_STDOUT_INITIALIZE}"
+                        ),
+                    ));
                 }
                 parse_json_rpc_response(
                     serde_json::from_str(&line).context("parsing MCP stdio initialize JSON")?,
@@ -308,7 +372,10 @@ impl McpImportClient {
                     .read_line(&mut line)
                     .context("reading MCP stdio JSON-RPC response")?;
                 if line.trim().is_empty() {
-                    bail!("MCP stdio server closed stdout");
+                    return Err(classified_mcp_import_error(
+                        ActionFailureCategory::SubprocessFailure,
+                        ERR_MCP_STDIO_SERVER_CLOSED_STDOUT,
+                    ));
                 }
                 parse_json_rpc_response(
                     serde_json::from_str(&line).context("parsing MCP stdio JSON")?,
@@ -355,7 +422,12 @@ impl McpImportClient {
             .read_line(&mut line)
             .context("reading restarted MCP stdio initialize response")?;
         if line.trim().is_empty() {
-            bail!("MCP import `{server_id}` closed stdout during restart initialize");
+            return Err(classified_mcp_import_error(
+                ActionFailureCategory::SubprocessFailure,
+                format!(
+                    "MCP import `{server_id}` {ERR_MCP_STDIO_CLOSED_STDOUT_RESTART_INITIALIZE}"
+                ),
+            ));
         }
         parse_json_rpc_response(
             serde_json::from_str(&line)
@@ -474,8 +546,18 @@ fn write_stdio_json_rpc(
             "params": params,
         })
     )
-    .context("writing MCP stdio JSON-RPC request")?;
-    stdin.flush().context("flushing MCP stdio request")
+    .map_err(|err| {
+        classified_mcp_import_error(
+            ActionFailureCategory::SubprocessFailure,
+            format!("{ERR_MCP_STDIO_WRITE_REQUEST}: {err}"),
+        )
+    })?;
+    stdin.flush().map_err(|err| {
+        classified_mcp_import_error(
+            ActionFailureCategory::SubprocessFailure,
+            format!("{ERR_MCP_STDIO_FLUSH_REQUEST}: {err}"),
+        )
+    })
 }
 
 fn stop_stdio_child(child: &mut Child) {
@@ -499,7 +581,10 @@ fn wait_for_stdio_readable(stdout: &ChildStdout, timeout_ms: u64) -> Result<()> 
         return Err(std::io::Error::last_os_error()).context("polling MCP stdio stdout");
     }
     if result == 0 {
-        bail!("MCP stdio response timed out after {timeout_ms}ms");
+        return Err(classified_mcp_import_error(
+            ActionFailureCategory::Timeout,
+            format!("{ERR_MCP_STDIO_RESPONSE_TIMED_OUT} after {timeout_ms}ms"),
+        ));
     }
     Ok(())
 }
@@ -646,6 +731,7 @@ fn safe_http_endpoint(url: &str) -> String {
 }
 
 fn sanitized_http_mcp_error(context: &str, url: &str, err: reqwest::Error) -> anyhow::Error {
+    let category = http_mcp_failure_category(&err);
     let mut details = Vec::new();
     if let Some(status) = err.status() {
         details.push(format!("status {status}"));
@@ -670,10 +756,23 @@ fn sanitized_http_mcp_error(context: &str, url: &str, err: reqwest::Error) -> an
     } else {
         details.join(", ")
     };
-    anyhow!(
-        "{context} for MCP endpoint `{}` failed: {detail}",
-        safe_http_endpoint(url)
+    classified_mcp_import_error(
+        category,
+        format!(
+            "{context} for MCP endpoint `{}` failed: {detail}",
+            safe_http_endpoint(url)
+        ),
     )
+}
+
+fn http_mcp_failure_category(err: &reqwest::Error) -> ActionFailureCategory {
+    if err.is_timeout() {
+        ActionFailureCategory::Timeout
+    } else if err.is_decode() || err.is_body() {
+        ActionFailureCategory::MalformedOutput
+    } else {
+        ActionFailureCategory::Runtime
+    }
 }
 
 fn failed_import_snapshot(
@@ -861,6 +960,46 @@ mod tests {
         );
         assert_eq!(activation.capability_candidates.len(), 1);
 
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn stdio_import_call_timeout_reports_timeout_category() {
+        let temp = std::env::temp_dir().join(format!(
+            "agentpm-mcp-import-timeout-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&temp).unwrap();
+        let script = temp.join("mcp_timeout_fixture.py");
+        fs::write(&script, MCP_TIMEOUT_FIXTURE).unwrap();
+        let mut imports = HashMap::new();
+        imports.insert(
+            "search".into(),
+            HarnessMcpImport::Stdio {
+                command: std::env::var("AGENTPM_TEST_PYTHON").unwrap_or_else(|_| "python3".into()),
+                args: vec![script.display().to_string()],
+                cwd: None,
+                env: Vec::new(),
+                scope: HarnessMcpScope::Global,
+                tools: Some(vec!["lookup".into()]),
+                startup_timeout_ms: 5_000,
+                request_timeout_ms: 25,
+                restart: HarnessRestartPolicy {
+                    max_attempts: 1,
+                    backoff_ms: 0,
+                },
+            },
+        );
+
+        let activation = ConfiguredMcpImportRuntime::start(Path::new("."), &imports);
+        let mut runtime = activation.runtime;
+        let result = runtime.call_tool("search", "lookup", &json!({ "query": "launch" }));
+
+        assert!(!result.ok, "{result:?}");
+        assert_eq!(
+            result.failure_category,
+            Some(ActionFailureCategory::Timeout)
+        );
         fs::remove_dir_all(temp).unwrap();
     }
 
@@ -1077,6 +1216,108 @@ mod tests {
     }
 
     #[test]
+    fn http_import_call_decode_failure_reports_malformed_output_category() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let (_headers, body) = read_http_request(&mut stream);
+                let request: Value = serde_json::from_str(&body).unwrap();
+                let method = request["method"].as_str().unwrap_or_default();
+                match method {
+                    "initialize" => write_http_json(
+                        &mut stream,
+                        &json!({
+                            "jsonrpc": "2.0",
+                            "id": request["id"].clone(),
+                            "result": { "protocolVersion": "2025-06-18" }
+                        }),
+                    ),
+                    "tools/list" => write_http_json(
+                        &mut stream,
+                        &json!({
+                            "jsonrpc": "2.0",
+                            "id": request["id"].clone(),
+                            "result": {
+                                "tools": [
+                                    {
+                                        "name": "lookup",
+                                        "description": "Lookup launch readiness.",
+                                        "inputSchema": {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "properties": { "query": { "type": "string" } },
+                                            "required": ["query"]
+                                        }
+                                    }
+                                ]
+                            }
+                        }),
+                    ),
+                    "tools/call" => {
+                        let payload = b"{not-json";
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                            payload.len()
+                        )
+                        .unwrap();
+                        stream.write_all(payload).unwrap();
+                    }
+                    _ => unreachable!("unexpected method {method}"),
+                }
+            }
+        });
+
+        let mut imports = HashMap::new();
+        imports.insert(
+            "search".into(),
+            HarnessMcpImport::Http {
+                url: url.clone(),
+                headers: HashMap::new(),
+                scope: HarnessMcpScope::Global,
+                tools: Some(vec!["lookup".into()]),
+            },
+        );
+
+        let activation =
+            ConfiguredMcpImportRuntime::start_with_env(Path::new("."), &imports, &HashMap::new());
+        let mut runtime = activation.runtime;
+        let result = runtime.call_tool("search", "lookup", &json!({ "query": "launch" }));
+
+        assert!(!result.ok, "{result:?}");
+        assert_eq!(
+            result.failure_category,
+            Some(ActionFailureCategory::MalformedOutput)
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn http_import_timeout_error_reports_timeout_category() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_millis(150));
+        });
+        let client = Client::builder()
+            .timeout(Duration::from_millis(20))
+            .build()
+            .unwrap();
+        let err = client.post(&url).json(&json!({})).send().unwrap_err();
+
+        let sanitized = sanitized_http_mcp_error("sending MCP HTTP JSON-RPC request", &url, err);
+
+        assert_eq!(
+            mcp_import_call_failure_category(&sanitized),
+            ActionFailureCategory::Timeout
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
     fn stdio_import_restart_does_not_replay_failed_in_flight_tool_call() {
         let temp = std::env::temp_dir().join(format!(
             "agentpm-mcp-import-restart-test-{}",
@@ -1110,6 +1351,10 @@ mod tests {
 
         let failed = runtime.call_tool("search", "lookup", &json!({ "query": "first" }));
         assert!(!failed.ok, "{failed:?}");
+        assert_eq!(
+            failed.failure_category,
+            Some(ActionFailureCategory::SubprocessFailure)
+        );
         assert!(
             failed
                 .error
@@ -1245,6 +1490,37 @@ for line in sys.stdin:
             },
             "isError": False,
         }
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": request.get("id"), "result": result}), flush=True)
+"#;
+
+    const MCP_TIMEOUT_FIXTURE: &str = r#"
+import json
+import sys
+import time
+
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request.get("method")
+    if method == "initialize":
+        result = {"protocolVersion": "2025-06-18"}
+    elif method == "tools/list":
+        result = {"tools": [
+            {
+                "name": "lookup",
+                "description": "Lookup launch readiness.",
+                "inputSchema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            }
+        ]}
+    elif method == "tools/call":
+        time.sleep(0.2)
+        result = {"content": [], "isError": False}
     else:
         result = {}
     print(json.dumps({"jsonrpc": "2.0", "id": request.get("id"), "result": result}), flush=True)
