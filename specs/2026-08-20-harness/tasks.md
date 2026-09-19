@@ -1129,43 +1129,67 @@ This gives us Harness-managed outward MCP export and explicitly scoped external 
 
 ## Milestone 19: Ratatui Harness TUI, Interactive Resolution, Approvals, and Branding
 > Scope note: build a focused Ratatui client over the existing bootstrap/engine/event/control interfaces. TUI code owns presentation and interactive resolution only; it must not duplicate Loop traversal, capability composition, runtime execution, Hook logic, or approval semantics already implemented below it.
+
+### Milestone 19A: Responsive TUI Shell, Branding, and Session Frame
 - [ ] Add Ratatui frontend as the default TTY mode for `agentpm harness` and start it early enough to render bootstrap/preflight/service progress rather than showing a blank terminal until readiness completes.
-- [ ] Add start/readiness screen showing selected Agent/Loop, provider/model + value source, Consumer Context, Profiles/Skills/Tools, Knowledge, Memory, Hooks, outward/inward MCP, warnings, pending live checks, and effective readiness.
-- [ ] Give Tools its own readiness row on the start screen (ready/suppressed counts with expandable reasons) alongside Knowledge/Memory/Hooks/MCP; the per-phase Effective Capabilities list inside the Run view is not a substitute for Agent-level Tool readiness.
-- [ ] Show a compact source tag (for example `config`, `cli`, `env`, `default`) next to the resolved Model/provider value on the start screen per the Milestone 1/`spec.md` resolved-value source-metadata requirement; a bare model name with no source is insufficient.
+- [ ] Build the TUI around the reviewed reference mockup as the visual target: a persistent top title/status bar, left workspace readiness rail, center Agent interaction surface, optional right session trace rail, and bottom contextual keybar.
+- [ ] Always show `AgentPM Harness` as the fixed product title in the top-left; render configured branding title/subtitle next to it where the mockup shows the workspace/customer label (for example `Acme Operations`).
+- [ ] Implement lightweight branding from config: visible title, optional subtitle, optional `#RRGGBB` accent with safe terminal fallback; branding never alters protocol/event/report/package identity.
+- [ ] Treat every light-blue/cyan accent in the mockup as controlled by the configured accent: selected tabs, active borders, hotkey glyphs, interactive links, highlighted package/tool names, and active labels. Default to the AgentPM logo purple-family accent when no accent is configured.
+- [ ] Keep the top bar session-level only: session active/inactive, trace level/content mode, and branding. Do not duplicate current Run status in the top bar; the center Run surface owns Run number, phase, terminal/active status, and elapsed time.
+- [ ] Implement responsive layout breakpoints: wide terminals show left rail + center + right rail; medium terminals may hide the right rail; small terminals show one primary panel at a time (`Workspace`, `Run`, `Trace`, `Memory`, or `Reports`) with hotkeys to switch visible panels.
+- [ ] Make the bottom keybar contextual to the current state and visible panel. It should advertise only actions that are currently available (for example Send only while the composer is visible, Cancel only while a Run is active).
+- [ ] Do not add arbitrary layout/theme/plugin scripting in Phase 7B; keep customization to title/subtitle/accent and responsive panel behavior.
+
+### Milestone 19B: Workspace Readiness Rail and Interactive Resolution
+- [ ] Add the left workspace readiness rail showing selected Agent/Loop, provider/model + value source, Consumer Context, Profiles/Skills/Tools, Knowledge, Memory, Hooks, outward/inward MCP, warnings, pending live checks, and effective readiness.
+- [ ] Give Tools its own readiness row in the left rail (ready/suppressed counts with expandable reasons) alongside Knowledge/Memory/Hooks/MCP; the per-phase Effective Capabilities list inside the Run view is not a substitute for Agent-level Tool readiness.
+- [ ] Show a compact source tag (for example `config`, `cli`, `env`, `default`) next to the resolved Model/provider value per the Milestone 1/`spec.md` resolved-value source-metadata requirement; a bare model name with no source is insufficient.
 - [ ] Clearly show Consumer Context loaded/unavailable state with path/size/approximate token metadata.
 - [ ] Show capability suppression/unavailability/pending reasons with a concise default view plus expandable detail.
-
+- [ ] Keep the left rail focused on workspace/preflight/readiness state. Do not include separate `Ready to Run` or `Run in progress` callouts there; those states are already visible in the center Run view.
 - [ ] Add interactive Agent selection when multiple runnable roots exist and no selector was supplied.
 - [ ] Add provider/model prompts when required values are unresolved.
 - [ ] Add trusted scope-value prompts for unresolved required Memory scope keys where interactive resolution is appropriate.
 - [ ] Treat interactive answers as trusted runtime overrides with source metadata for the current Session/Run; do not rewrite `agentpm.harness.json`, Agent artifacts, or portable manifests implicitly.
 - [ ] Re-run/recompute affected preflight/readiness after interactive Agent/model/provider/scope resolution before allowing the Run to start.
+- [ ] In standalone TUI execution, treat configured `type: host` providers/runtimes/hooks/controllers as unavailable and show an actionable preflight diagnostic directing the user to configure a `process` implementation or launch the Harness through a Node/Python SDK host. Built-in implementations remain available normally.
 
-- [ ] Add primary Run view centered on current phase/objective, concise assistant/model/action activity, selected outcome/transition, approval state, errors/limits, and terminal result.
-- [ ] Add a clearly visible message composer only while the Session has no active Run (idle/ready-for-next-Run); submitting the message creates the next Run through the canonical Engine path. Use inviting placeholder copy (for example "Type a message to start the next Run…") rather than pre-filled draft text with a live cursor, so an idle composer is never visually confusable with an in-progress one.
+### Milestone 19C: Center Run Surface, Composer, and Active-vs-Terminal Lifecycle
+- [ ] Make the center `Run` panel the primary Agent interaction surface. It must lead with a compact Run header at the very top — Run number, current phase, active/terminal status, and elapsed time where useful — with center tabs below it (`Run`, `Trace`, `Memory`, `Reports`). Do not include a center `Preflight` tab because workspace readiness belongs in the left rail.
+- [ ] Add primary Run view content centered on current phase/objective, concise assistant/model/action activity, selected outcome/transition, approval state, errors/limits, and terminal result.
+- [ ] In an active Run, show the current Phase Objective near the top of the Run panel, then effective capabilities for the phase, current-Run usage and cumulative Session usage where space permits, and latest/last-completed assistant or PhaseResult output prominently.
+- [ ] Display unavailable token/cost data as an explicit `unknown` label (for example `cost: unknown (provider does not report pricing)`) rather than omitting the field or estimating a value.
+- [ ] Show the latest user-facing assistant/PhaseResult output prominently so the TUI is an Agent interaction surface first with observability around it, not only a debugger.
+- [ ] Add a clearly visible message composer only while the Session has no active Run (idle/ready-for-next-Run); submitting the message creates the next Run through the canonical Engine path. Use inviting placeholder copy (for example `Type a message to start the next Run...`) rather than pre-filled draft text with a live cursor, so an idle composer is never visually confusable with an in-progress one.
 - [ ] While a Run is active — including while it is waiting on an approval checkpoint per the Milestone 4/9 single-active-Run invariant — replace the composer entirely with a non-editable working-status bar: a working/progress indicator naming the current phase plus a `[C] Cancel Run` control routed through canonical cancellation. Do not merely grey out or disable the composer in place; a dimmed text box still reads as an input field, which is the exact ambiguity this element exists to remove.
 - [ ] Bind `Enter` to Send only while the composer is shown (Session idle) and bind `C` to Cancel only while a Run is active; the footer keybind legend must reflect whichever state is current rather than always advertising both.
 - [ ] On a Run's transition from active to terminal, keep the most recently completed PhaseResult/assistant output visible without an intermediate blank state, and reveal the idle composer only once the Run has actually reached a terminal/runtime-terminal status.
 - [ ] Replace the Phase Objective block with a compact Run Summary once the Run is terminal — terminal status, duration, checkpoint outcomes, and the realized phase path (for example `assess -> execute -> respond -> $end`) — rather than leaving a stale in-progress phase objective on screen after the Run has ended.
-- [ ] Build the active-vs-terminal composer/working-bar/Run-Summary behavior above against the reviewed TUI reference mockup (provided at implementation time) demonstrating one Run shown at both points in its lifecycle; treat visual/interaction fidelity to that reference as part of this milestone's acceptance, not only the underlying state routing.
-- [ ] Show the latest user-facing assistant/PhaseResult output prominently so the TUI is an Agent interaction surface first with observability around it, not only a debugger.
-- [ ] Show current-Run usage and cumulative Session usage where space permits; display unavailable token/cost data as an explicit "unknown" label (for example "cost: unknown (provider does not report pricing)") rather than omitting the field or estimating a value.
+- [ ] Build the active-vs-terminal composer/working-bar/Run-Summary behavior above against the reviewed TUI reference mockup demonstrating one Run shown both while active and after terminal completion; treat visual/interaction fidelity to that reference as part of this milestone's acceptance, not only the underlying state routing.
+- [ ] Support repeated Runs in one Session; Consumer Context reloads at each Run start and Session usage accumulates.
+
+### Milestone 19D: Approvals, Cancellation, and External Controls
 - [ ] Add interactive checkpoint approval/deny controls routed through the existing ApprovalRuntime/Engine request path.
+- [ ] Ensure approval decision events (`approval_requested`/`approval_approved`/`approval_denied`) are visible in the trace/detail view whenever an approval outcome is also shown in the Run view, so the panels can never disagree about whether or when an approval occurred.
 - [ ] Add cancellation/quit through canonical cancellation and wait for graceful trace/report/service cleanup when possible.
 - [ ] Add TUI controls for eligible external Memory operations exposed by the current Run/phase, routed through the canonical Engine control ingress from Milestone 15; preserve the single-active-Run invariant, use trusted resolved scope only, render typed success/error outcomes, and do not present these controls as model semantic actions.
-- [ ] Add expandable/toggleable views for canonical prompt sections, Tool args/results, Skill resources, Knowledge results/citations, Memory reads/writes/lifecycle, Hook decisions, MCP activity, and raw events according to trace/content policy.
+
+### Milestone 19E: Trace, Detail, Memory, and Reports Panels
+- [ ] Implement the right rail as a session-level live trace tail for the entire TUI Session while the rail has been open. It should show recent canonical events across Runs and may let older events fall off rather than providing full scrollback.
+- [ ] Implement the center `Trace` tab as the run-specific trace view for the selected/current Run, corresponding to that Run's `events.jsonl` content. Unlike the right rail, this view can be scrollable/detail-oriented.
+- [ ] Render event/action labels in every trace/detail view using the exact canonical Milestone 3 event type names (for example `memory_write_completed`); do not introduce TUI-only event name variants.
+- [ ] Add expandable/toggleable detail views for canonical prompt sections, Tool args/results, Skill resources, Knowledge results/citations, Memory reads/writes/lifecycle, Hook decisions, MCP activity, and raw events according to trace/content policy.
 - [ ] Apply the Milestone 3 trace content policy and unconditional secret-redaction rules to every TUI event/detail/rendering path; expanded views may reveal more event categories, but must not bypass configured content exposure.
-- [ ] Render event/action labels in the trace/detail view using the exact canonical Milestone 3 event type names (for example `memory_write_completed`); do not introduce TUI-only event name variants.
-- [ ] Ensure approval decision events (`approval_requested`/`approval_approved`/`approval_denied`) are visible in the trace/detail view whenever an approval outcome is also shown in the Run view, so the two panels can never disagree about whether or when an approval occurred.
-- [ ] Support repeated Runs in one Session; Consumer Context reloads at each Run start and Session usage accumulates.
+- [ ] Define and implement the center `Memory` tab as a practical current-Run/Session memory activity view rather than a database browser: show Memory packages/spaces, ready/suppressed/unavailable state, space model, modes, record types, read/write/lifecycle/persistence-review activity, counts/record IDs where safe, and redaction-safe summaries only.
+- [ ] Define and implement the center `Reports` tab as a readable structured view of the current Run report: terminal status, phase summaries, usage, action summaries, Memory summaries, MCP summaries, diagnostics, report path, and trace path. A raw JSON view may be added as a toggle, but the default should be structured and readable.
 - [ ] Surface report/trace paths and terminal status after/between Runs.
 
-- [ ] In standalone TUI execution, treat configured `type: host` providers/runtimes/hooks/controllers as unavailable and show an actionable preflight diagnostic directing the user to configure a `process` implementation or launch the Harness through a Node/Python SDK host. Built-in implementations remain available normally.
-
-- [ ] Implement lightweight branding from config: visible name, optional subtitle, optional `#RRGGBB` accent with safe terminal fallback; branding never alters protocol/event/report/package identity.
-- [ ] Do not add arbitrary layout/theme/plugin scripting in Phase 7B.
-- [ ] Add TUI state/component tests where practical plus manual verification for small terminals/resizing, bootstrap loading/failure, interactive resolution, approval, cancellation, repeated Runs, trace-content modes, and branding.
+### Milestone 19F: Verification, Resize Behavior, and Reference Fidelity
+- [ ] Add TUI state/component tests where practical for layout state, active-vs-terminal composer behavior, Run summary replacement, panel switching, trace content policy, and branding/accent application.
+- [ ] Add manual verification for bootstrap loading/failure, workspace readiness, interactive resolution, approval, cancellation, repeated Runs, Memory controls, trace-content modes, report/trace paths, and branding.
+- [ ] Verify the TUI against the Milestone 19 reference mockup specifically for active-Run vs. terminal-Run distinction: no editable composer and visible Cancel control while active, composer restored with placeholder-only text once terminal, compact Run Summary replacing Phase Objective at terminal, latest output retained, and no intermediate blank/ambiguous state during the transition.
+- [ ] Verify responsive behavior at wide, medium, and small terminal sizes: wide shows left + center + right, medium gracefully hides or toggles the right rail, and small supports one-panel-at-a-time navigation without losing access to Workspace, Run, Trace, Memory, or Reports.
 
 ## Milestone 20: Templates, Examples, Documentation, End-to-End Hardening, and Release Verification
 > Scope note: close Phase 7B by proving the complete architecture through realistic workspaces and all three execution surfaces, documenting the public configuration/protocol/provider contracts, and running cross-repository regression/conformance suites. Do not introduce new runtime architecture here unless required to satisfy the existing spec.
