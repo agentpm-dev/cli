@@ -183,6 +183,10 @@ impl RunState {
     pub fn terminal_output(&self) -> Option<&Value> {
         self.terminal_output.as_ref()
     }
+
+    pub fn started_at(&self) -> DateTime<Utc> {
+        self.started_at
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -450,7 +454,7 @@ pub struct HarnessRuntimeServices<'a> {
     pub service_events: Option<&'a mut ServiceLifecycleEvents>,
 }
 
-pub trait EngineControlIngress {
+pub trait EngineControlIngress: Send {
     fn service_memory_operation_controls(
         &mut self,
         engine: &mut HarnessEngine,

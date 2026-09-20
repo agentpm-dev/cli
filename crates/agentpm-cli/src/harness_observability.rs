@@ -230,7 +230,7 @@ pub struct HarnessEventBuilder {
     pub parent_event_id: Option<String>,
 }
 
-pub trait HarnessEventSink {
+pub trait HarnessEventSink: Send {
     fn record(&mut self, event: &HarnessEventEnvelope) -> Result<()>;
     fn flush(&mut self) -> Result<()>;
 }

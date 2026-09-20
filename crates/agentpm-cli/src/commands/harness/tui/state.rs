@@ -1,5 +1,12 @@
 use super::super::{
-    HarnessArgs, harness_engine_options_from_plan, load_plan_loop, runtime_snapshot_from_plan,
+    HarnessArgs, activate_custom_knowledge_runtime_for_plan,
+    activate_custom_memory_runtime_for_plan, activate_mcp_import_runtime_for_plan,
+    apply_custom_knowledge_activation_to_runtime, apply_custom_memory_activation_to_runtime,
+    apply_mcp_import_activation_to_runtime, approval_controller_from_plan,
+    embedding_provider_for_plan, emit_mcp_import_activation_events,
+    harness_engine_options_from_plan, knowledge_runtime_for_headless_plan, load_plan_loop,
+    model_runtime_from_plan, model_selection, runtime_snapshot_from_plan,
+    validate_model_capabilities,
 };
 use crate::harness_config::{
     HarnessConfigSource, HarnessConfigSourceKind, HarnessModelConfig, HarnessTraceContent,
@@ -10,28 +17,31 @@ use crate::harness_engine::{
 };
 use crate::harness_observability::{
     HarnessEventBuilder, HarnessEventEnvelope, HarnessEventPayload, HarnessEventSink,
-    HarnessEventType, HarnessTerminalStatus, RunOutputPaths, RunReport, RunUsage, SessionUsage,
-    apply_content_policy,
+    HarnessEventType, HarnessTerminalStatus, JsonlTraceSink, RunOutputPaths, RunReport, RunUsage,
+    SessionUsage, apply_content_policy,
 };
 use crate::harness_plan::{
     CapabilityState, HarnessBootstrapOptions, HarnessExecutionSurface, HarnessPlanProgress,
     HarnessPlanProgressStage, PreflightDiagnosticSeverity, ResolvedHarnessPlan,
     resolve_harness_plan_with_progress,
 };
-use crate::harness_runtime::{HookRuntime, ModelRuntime};
+use crate::harness_runtime::{
+    AgentPmActionDispatcher, ConfiguredHookRuntime, HookRuntime, ModelRuntime,
+    ServiceLifecycleEvents,
+};
 use crate::prelude::*;
-use anyhow::{Context, anyhow, bail};
+use anyhow::{anyhow, bail};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{
     any::Any,
     collections::{BTreeMap, VecDeque},
-    fs,
     panic::{self, AssertUnwindSafe},
     path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver},
+        mpsc::{self, Receiver, Sender},
     },
     thread,
 };
@@ -41,6 +51,21 @@ type BootstrapResult = Result<ResolvedHarnessPlan>;
 pub(super) enum BootstrapMessage {
     Progress(TuiBootstrapProgress),
     Ready(Box<BootstrapResult>),
+}
+
+pub(super) enum TuiRunMessage {
+    Progress(TuiRunProgress),
+    Finished(Box<TuiRunWorkerResult>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TuiRunProgress {
+    pub(super) message: String,
+}
+
+pub(super) struct TuiRunWorkerResult {
+    pub(super) controller: TuiSessionController,
+    pub(super) error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,10 +141,33 @@ pub(super) struct TuiRunSnapshot {
     pub(super) status: TuiRunStatus,
     pub(super) run_id: Option<String>,
     pub(super) phase_id: Option<String>,
+    pub(super) started_at: Option<DateTime<Utc>>,
+    pub(super) phase_objective: Option<String>,
     pub(super) terminal_status: Option<HarnessTerminalStatus>,
     pub(super) latest_output: Option<Value>,
+    pub(super) transcript: Vec<TuiRunTranscriptItem>,
     pub(super) usage: RunUsage,
     pub(super) approval: Option<TuiApprovalSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct TuiRunTranscriptItem {
+    pub(super) phase_label: Option<String>,
+    pub(super) kind: TuiRunTranscriptKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum TuiRunTranscriptKind {
+    Assistant {
+        content: String,
+    },
+    Repair {
+        message: String,
+    },
+    PhaseResult {
+        outcome: Option<String>,
+        output: Option<Value>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,10 +189,14 @@ pub(super) struct TuiTraceSnapshot {
     pub(super) events: Vec<HarnessEventEnvelope>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct TuiReportSnapshot {
     pub(super) current_report_path: Option<PathBuf>,
     pub(super) current_trace_path: Option<PathBuf>,
+    pub(super) current_report: Option<RunReport>,
+    pub(super) current_trace_events: Vec<HarnessEventEnvelope>,
+    pub(super) current_report_error: Option<String>,
+    pub(super) current_trace_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,6 +267,136 @@ pub(super) fn spawn_bootstrap_worker(
         let _ = sender.send(BootstrapMessage::Ready(Box::new(result)));
     });
     receiver
+}
+
+pub(super) fn spawn_tui_run_worker(
+    controller: TuiSessionController,
+    run_id: String,
+    input: String,
+) -> Receiver<TuiRunMessage> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            execute_tui_run_worker(controller, run_id, input, &sender)
+        }))
+        .unwrap_or_else(|payload| TuiRunWorkerResult {
+            controller: TuiSessionController::failed_placeholder(format!(
+                "run worker panicked: {}",
+                panic_payload_message(payload)
+            )),
+            error: Some("run worker panicked before controller recovery was possible".into()),
+        });
+        let _ = sender.send(TuiRunMessage::Finished(Box::new(result)));
+    });
+    receiver
+}
+
+fn execute_tui_run_worker(
+    mut controller: TuiSessionController,
+    run_id: String,
+    input: String,
+    sender: &Sender<TuiRunMessage>,
+) -> TuiRunWorkerResult {
+    let error = match execute_tui_run_worker_inner(&mut controller, run_id, input, sender) {
+        Ok(()) => None,
+        Err(err) => {
+            controller.refresh_snapshot();
+            Some(format!("{err:#}"))
+        }
+    };
+    TuiRunWorkerResult { controller, error }
+}
+
+fn execute_tui_run_worker_inner(
+    controller: &mut TuiSessionController,
+    run_id: String,
+    input: String,
+    sender: &Sender<TuiRunMessage>,
+) -> Result<()> {
+    let plan = controller.plan().clone();
+    send_run_progress(sender, "Preparing model runtime.");
+    let selection = model_selection(&plan)?;
+    let mut service_events = ServiceLifecycleEvents::new();
+    let mut model = model_runtime_from_plan(&plan, selection, None, Some(&service_events))?;
+    validate_model_capabilities(model.as_ref())?;
+
+    send_run_progress(
+        sender,
+        "Activating Knowledge, Memory, and MCP import services.",
+    );
+    let mut runtime = runtime_snapshot_from_plan(&plan);
+    let custom_knowledge =
+        activate_custom_knowledge_runtime_for_plan(&plan, &runtime, None, Some(&service_events));
+    apply_custom_knowledge_activation_to_runtime(&mut runtime, &custom_knowledge);
+    let custom_memory =
+        activate_custom_memory_runtime_for_plan(&plan, &runtime, None, Some(&service_events));
+    apply_custom_memory_activation_to_runtime(&mut runtime, &custom_memory);
+    let mcp_import_activation = activate_mcp_import_runtime_for_plan(&plan);
+    apply_mcp_import_activation_to_runtime(&mut runtime, &mcp_import_activation);
+    let mcp_import_runtime = Arc::new(Mutex::new(mcp_import_activation.runtime));
+    let mut dispatcher = AgentPmActionDispatcher::from_runtime(&runtime)?
+        .with_mcp_import_runtime(Arc::clone(&mcp_import_runtime))
+        .with_cancellation_token(Arc::clone(&controller.cancellation_requested));
+    let mut knowledge = knowledge_runtime_for_headless_plan(
+        &plan,
+        &runtime,
+        custom_knowledge.runtime,
+        Some(&service_events),
+    );
+    let memory_embedding_provider = embedding_provider_for_plan(&plan, None, Some(&service_events));
+    let mut approvals = approval_controller_from_plan(&plan, None, Some(&service_events))?;
+    let mut hooks = ConfiguredHookRuntime::from_config(
+        &plan.workspace_root,
+        &plan.config.config.hooks.bindings,
+        &plan.config.config.hooks.implementations,
+        Some(service_events.emitter()),
+    )?;
+
+    let output_paths = RunOutputPaths::resolve(&plan.state_dir, &run_id, None)?;
+    if plan.config.config.trace.enabled {
+        controller
+            .session
+            .emitter
+            .add_sink(Box::new(JsonlTraceSink::create(
+                &output_paths.events_path,
+                plan.config.config.trace.clone(),
+            )?));
+    }
+    controller.session.runtime_snapshot = runtime;
+    let mcp_import_snapshots = controller.session.runtime_snapshot.mcp_imports.clone();
+    emit_mcp_import_activation_events(&mut controller.session, &mcp_import_snapshots)?;
+    controller.refresh_snapshot();
+
+    send_run_progress(sender, "Executing Run.");
+    let mut services = HarnessRuntimeServices {
+        model: model.as_mut(),
+        dispatcher: &mut dispatcher,
+        knowledge: knowledge.as_mut(),
+        memory: custom_memory.runtime,
+        embedding_provider: memory_embedding_provider,
+        approvals: approvals.as_mut(),
+        hooks: &mut hooks,
+        service_events: Some(&mut service_events),
+    };
+    let result = controller.start_run_with_services(run_id, input, &output_paths, &mut services)?;
+    if let HarnessRunResult::Terminal(terminal) = result {
+        let mut terminal = *terminal;
+        if plan.config.config.trace.enabled {
+            terminal.report.trace_path = Some(output_paths.events_path.display().to_string());
+        }
+        terminal
+            .report
+            .write_pretty(&output_paths.report_path, &plan.config.config.trace.content)?;
+        controller.apply_terminal_result(&terminal, &output_paths);
+        controller.session.emitter.flush()?;
+    }
+    Ok(())
+}
+
+fn send_run_progress(sender: &Sender<TuiRunMessage>, message: impl Into<String>) {
+    let _ = sender.send(TuiRunMessage::Progress(TuiRunProgress {
+        message: message.into(),
+    }));
 }
 
 pub(super) fn panic_payload_message(payload: Box<dyn Any + Send>) -> String {
@@ -303,6 +485,63 @@ impl TuiSessionController {
         })
     }
 
+    fn failed_placeholder(message: String) -> Self {
+        let plan = ResolvedHarnessPlan {
+            workspace_root: PathBuf::new(),
+            lock_path: PathBuf::new(),
+            state_dir: PathBuf::new(),
+            config: crate::harness_config::ResolvedHarnessConfig {
+                workspace_root: PathBuf::new(),
+                config_path: None,
+                config: crate::harness_config::HarnessConfig::default(),
+                state_dir: PathBuf::new(),
+                state_dir_source: HarnessConfigSource {
+                    kind: HarnessConfigSourceKind::HarnessDefault,
+                    path: None,
+                },
+                model_source: HarnessConfigSource {
+                    kind: HarnessConfigSourceKind::HarnessDefault,
+                    path: None,
+                },
+            },
+            selected_agent: None,
+            loop_package: None,
+            package_graph: BTreeMap::new(),
+            runtime_scopes: BTreeMap::new(),
+            consumer_context: crate::harness_plan::ConsumerContextReadiness {
+                state: CapabilityState::NotConfigured,
+                file: None,
+                path: None,
+                byte_size: None,
+                approximate_tokens: None,
+                sha256: None,
+            },
+            profile_bindings: Default::default(),
+            profiles: BTreeMap::new(),
+            capabilities: Vec::new(),
+            report: crate::harness_plan::PreflightReport {
+                status: crate::harness_plan::PreflightStatus::Failed,
+                diagnostics: vec![crate::harness_plan::PreflightDiagnostic {
+                    severity: PreflightDiagnosticSeverity::Fatal,
+                    code: "tui_run_worker_failed".into(),
+                    message,
+                    path: None,
+                }],
+                mcp_exports: crate::harness_plan::PreflightMcpExports {
+                    enabled: false,
+                    host: "127.0.0.1".into(),
+                    restart: crate::harness_config::HarnessRestartPolicy::default(),
+                    surfaces: Vec::new(),
+                },
+                mcp_imports: crate::harness_plan::PreflightMcpImports {
+                    enabled: false,
+                    servers: Vec::new(),
+                },
+            },
+        };
+        Self::new(plan).expect("placeholder TUI controller should build")
+    }
+
     pub(super) fn plan(&self) -> &ResolvedHarnessPlan {
         &self.plan
     }
@@ -312,15 +551,15 @@ impl TuiSessionController {
     }
 
     pub(super) fn refresh_snapshot(&mut self) {
-        let report_path = self.snapshot.reports.current_report_path.clone();
-        let trace_path = self.snapshot.reports.current_trace_path.clone();
+        let reports = self.snapshot.reports.clone();
         self.snapshot = build_session_snapshot(
             &self.plan,
             &self.session,
             &self.events,
-            report_path,
-            trace_path,
+            reports.current_report_path.clone(),
+            reports.current_trace_path.clone(),
         );
+        self.snapshot.reports = reports;
     }
 
     pub(super) fn start_run_with_services(
@@ -427,8 +666,21 @@ impl TuiSessionController {
         output_paths: &RunOutputPaths,
     ) {
         self.snapshot.run.status = TuiRunStatus::Terminal;
+        self.snapshot.run.run_id = Some(terminal.report.run_id.clone());
+        self.snapshot.run.started_at = Some(terminal.report.started_at);
+        self.snapshot.run.phase_id = terminal
+            .report
+            .phase_summaries
+            .last()
+            .map(|phase| phase.phase_id.clone());
+        self.snapshot.run.phase_objective =
+            run_phase_objective(&self.plan, self.snapshot.run.phase_id.as_deref());
         self.snapshot.run.terminal_status = Some(terminal.status);
-        self.snapshot.run.latest_output = terminal.output.clone();
+        self.snapshot.run.latest_output = terminal
+            .output
+            .clone()
+            .or_else(|| self.events.latest_phase_output());
+        self.snapshot.run.transcript = self.events.transcript();
         self.snapshot.run.usage = terminal.report.usage.clone();
         self.snapshot.reports.current_report_path = Some(output_paths.report_path.clone());
         self.snapshot.reports.current_trace_path = terminal
@@ -437,6 +689,10 @@ impl TuiSessionController {
             .as_ref()
             .map(PathBuf::from)
             .or_else(|| Some(output_paths.events_path.clone()));
+        self.snapshot.reports.current_report = Some(terminal.report.clone());
+        self.snapshot.reports.current_report_error = None;
+        self.snapshot.reports.current_trace_events = self.events.events();
+        self.snapshot.reports.current_trace_error = None;
         self.snapshot.usage = self.session.usage.clone();
         self.snapshot.trace.events = self.events.events();
     }
@@ -445,6 +701,11 @@ impl TuiSessionController {
 #[derive(Clone)]
 pub(super) struct TuiEventBuffer {
     pub(super) events: Arc<Mutex<VecDeque<HarnessEventEnvelope>>>,
+    latest_phase_output: Arc<Mutex<Option<Value>>>,
+    transcript: Arc<Mutex<VecDeque<TuiRunTranscriptItem>>>,
+    phase_labels: Arc<Mutex<BTreeMap<String, String>>>,
+    current_phase_id: Arc<Mutex<Option<String>>>,
+    live_run_usage: Arc<Mutex<RunUsage>>,
     pub(super) policy: HarnessTraceContent,
     pub(super) capacity: usize,
 }
@@ -453,6 +714,11 @@ impl TuiEventBuffer {
     pub(super) fn new(policy: HarnessTraceContent, capacity: usize) -> Self {
         Self {
             events: Arc::new(Mutex::new(VecDeque::new())),
+            latest_phase_output: Arc::new(Mutex::new(None)),
+            transcript: Arc::new(Mutex::new(VecDeque::new())),
+            phase_labels: Arc::new(Mutex::new(BTreeMap::new())),
+            current_phase_id: Arc::new(Mutex::new(None)),
+            live_run_usage: Arc::new(Mutex::new(RunUsage::default())),
             policy,
             capacity,
         }
@@ -461,6 +727,11 @@ impl TuiEventBuffer {
     pub(super) fn sink(&self) -> TuiEventSink {
         TuiEventSink {
             events: Arc::clone(&self.events),
+            latest_phase_output: Arc::clone(&self.latest_phase_output),
+            transcript: Arc::clone(&self.transcript),
+            phase_labels: Arc::clone(&self.phase_labels),
+            current_phase_id: Arc::clone(&self.current_phase_id),
+            live_run_usage: Arc::clone(&self.live_run_usage),
             policy: self.policy.clone(),
             capacity: self.capacity,
         }
@@ -474,16 +745,149 @@ impl TuiEventBuffer {
             .cloned()
             .collect()
     }
+
+    pub(super) fn latest_phase_output(&self) -> Option<Value> {
+        self.latest_phase_output
+            .lock()
+            .expect("TUI latest phase output poisoned")
+            .clone()
+    }
+
+    pub(super) fn transcript(&self) -> Vec<TuiRunTranscriptItem> {
+        self.transcript
+            .lock()
+            .expect("TUI run transcript poisoned")
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    pub(super) fn current_phase_id(&self) -> Option<String> {
+        self.current_phase_id
+            .lock()
+            .expect("TUI current phase id poisoned")
+            .clone()
+    }
+
+    pub(super) fn live_run_usage(&self) -> RunUsage {
+        self.live_run_usage
+            .lock()
+            .expect("TUI live run usage poisoned")
+            .clone()
+    }
+
+    pub(super) fn reset_run_output(&self) {
+        *self
+            .latest_phase_output
+            .lock()
+            .expect("TUI latest phase output poisoned") = None;
+        *self
+            .current_phase_id
+            .lock()
+            .expect("TUI current phase id poisoned") = None;
+        *self
+            .live_run_usage
+            .lock()
+            .expect("TUI live run usage poisoned") = RunUsage::default();
+        self.transcript
+            .lock()
+            .expect("TUI run transcript poisoned")
+            .clear();
+        self.phase_labels
+            .lock()
+            .expect("TUI phase labels poisoned")
+            .clear();
+    }
 }
 
 pub(super) struct TuiEventSink {
     events: Arc<Mutex<VecDeque<HarnessEventEnvelope>>>,
+    latest_phase_output: Arc<Mutex<Option<Value>>>,
+    transcript: Arc<Mutex<VecDeque<TuiRunTranscriptItem>>>,
+    phase_labels: Arc<Mutex<BTreeMap<String, String>>>,
+    current_phase_id: Arc<Mutex<Option<String>>>,
+    live_run_usage: Arc<Mutex<RunUsage>>,
     policy: HarnessTraceContent,
     capacity: usize,
 }
 
 impl HarnessEventSink for TuiEventSink {
     fn record(&mut self, event: &HarnessEventEnvelope) -> Result<()> {
+        if matches!(
+            event.event_type,
+            HarnessEventType::PhaseEnterRequested | HarnessEventType::PhaseStarted
+        ) && let Some(phase_id) = event_phase_id(event)
+        {
+            *self
+                .current_phase_id
+                .lock()
+                .expect("TUI current phase id poisoned") = Some(phase_id);
+        }
+        if let (Some(phase_execution_id), Some(phase_id)) =
+            (event.phase_execution_id.as_ref(), event_phase_id(event))
+        {
+            self.phase_labels
+                .lock()
+                .expect("TUI phase labels poisoned")
+                .insert(phase_execution_id.clone(), phase_id);
+        }
+        if event.event_type == HarnessEventType::PhaseResultReady
+            && let HarnessEventPayload::Phase {
+                outcome, output, ..
+            } = &event.payload
+        {
+            if let Some(output) = output {
+                *self
+                    .latest_phase_output
+                    .lock()
+                    .expect("TUI latest phase output poisoned") = Some(output.clone());
+            }
+            self.push_transcript(
+                event,
+                TuiRunTranscriptKind::PhaseResult {
+                    outcome: outcome.clone(),
+                    output: output.clone(),
+                },
+            );
+        }
+        if event.event_type == HarnessEventType::ModelRequestCompleted
+            && let HarnessEventPayload::Lifecycle { fields, .. } = &event.payload
+            && let Some(content) = fields
+                .get("assistant_content")
+                .and_then(serde_json::Value::as_str)
+            && !content.trim().is_empty()
+        {
+            self.push_transcript(
+                event,
+                TuiRunTranscriptKind::Assistant {
+                    content: content.to_string(),
+                },
+            );
+        }
+        if event.event_type == HarnessEventType::ModelRequestCompleted {
+            self.live_run_usage
+                .lock()
+                .expect("TUI live run usage poisoned")
+                .model_calls += 1;
+        }
+        if event.event_type == HarnessEventType::ModelRepairRequested
+            && let HarnessEventPayload::Lifecycle { message, .. } = &event.payload
+        {
+            self.push_transcript(
+                event,
+                TuiRunTranscriptKind::Repair {
+                    message: message.clone(),
+                },
+            );
+        }
+        if event.event_type == HarnessEventType::SessionUsageUpdated
+            && let HarnessEventPayload::Usage { run_usage, .. } = &event.payload
+        {
+            *self
+                .live_run_usage
+                .lock()
+                .expect("TUI live run usage poisoned") = (**run_usage).clone();
+        }
         let event = tui_safe_event_for_policy(event, &self.policy)?;
         let mut events = self.events.lock().expect("TUI event buffer poisoned");
         if events.len() == self.capacity {
@@ -495,6 +899,44 @@ impl HarnessEventSink for TuiEventSink {
 
     fn flush(&mut self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl TuiEventSink {
+    fn push_transcript(&mut self, event: &HarnessEventEnvelope, kind: TuiRunTranscriptKind) {
+        let phase_label = self.phase_label_for_event(event);
+        let mut transcript = self.transcript.lock().expect("TUI run transcript poisoned");
+        if transcript.len() == self.capacity {
+            transcript.pop_front();
+        }
+        transcript.push_back(TuiRunTranscriptItem { phase_label, kind });
+    }
+
+    fn phase_label_for_event(&self, event: &HarnessEventEnvelope) -> Option<String> {
+        event_phase_id(event).or_else(|| {
+            event
+                .phase_execution_id
+                .as_ref()
+                .and_then(|phase_execution_id| {
+                    self.phase_labels
+                        .lock()
+                        .expect("TUI phase labels poisoned")
+                        .get(phase_execution_id)
+                        .cloned()
+                        .or_else(|| Some(phase_execution_id.clone()))
+                })
+        })
+    }
+}
+
+fn event_phase_id(event: &HarnessEventEnvelope) -> Option<String> {
+    match &event.payload {
+        HarnessEventPayload::Phase { phase_id, .. } => Some(phase_id.clone()),
+        HarnessEventPayload::Lifecycle { fields, .. } => fields
+            .get("phase_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        _ => None,
     }
 }
 
@@ -520,7 +962,7 @@ pub(super) fn build_session_snapshot(
     report_path: Option<PathBuf>,
     trace_path: Option<PathBuf>,
 ) -> TuiSessionSnapshot {
-    TuiSessionSnapshot {
+    let mut snapshot = TuiSessionSnapshot {
         session_id: session.session_id.clone(),
         workspace: workspace_readiness_from_plan(plan),
         run: run_snapshot_from_session(session),
@@ -531,9 +973,19 @@ pub(super) fn build_session_snapshot(
         reports: TuiReportSnapshot {
             current_report_path: report_path,
             current_trace_path: trace_path,
+            current_report: None,
+            current_trace_events: Vec::new(),
+            current_report_error: None,
+            current_trace_error: None,
         },
         services: service_snapshot_from_session(session),
+    };
+    snapshot.run.phase_objective = run_phase_objective(plan, snapshot.run.phase_id.as_deref());
+    if snapshot.run.latest_output.is_none() {
+        snapshot.run.latest_output = events.latest_phase_output();
     }
+    snapshot.run.transcript = events.transcript();
+    snapshot
 }
 
 fn run_snapshot_from_session(session: &HarnessSession) -> TuiRunSnapshot {
@@ -542,8 +994,11 @@ fn run_snapshot_from_session(session: &HarnessSession) -> TuiRunSnapshot {
             status: TuiRunStatus::Idle,
             run_id: None,
             phase_id: None,
+            started_at: None,
+            phase_objective: run_phase_objective_for_idle(session),
             terminal_status: None,
             latest_output: None,
+            transcript: Vec::new(),
             usage: RunUsage::default(),
             approval: None,
         };
@@ -563,14 +1018,35 @@ fn run_snapshot_from_session(session: &HarnessSession) -> TuiRunSnapshot {
         status,
         run_id: Some(run.run_id().to_string()),
         phase_id: run.current_phase_id().map(str::to_string),
+        started_at: Some(run.started_at()),
+        phase_objective: None,
         terminal_status: run.status().harness_status(),
         latest_output: run.terminal_output().cloned(),
+        transcript: Vec::new(),
         usage: run.usage().clone(),
         approval: run.pending_approval().map(|approval| TuiApprovalSnapshot {
             checkpoint_id: approval.checkpoint_id.clone(),
             before_phase: approval.before_phase.clone(),
         }),
     }
+}
+
+fn run_phase_objective(
+    plan: &ResolvedHarnessPlan,
+    current_phase_id: Option<&str>,
+) -> Option<String> {
+    let loop_manifest = load_plan_loop(plan).ok()?;
+    let phase_id = current_phase_id.unwrap_or(&loop_manifest.r#loop.entry_phase);
+    loop_manifest
+        .r#loop
+        .phases
+        .iter()
+        .find(|phase| phase.id == phase_id)
+        .map(|phase| phase.objective.clone())
+}
+
+fn run_phase_objective_for_idle(_session: &HarnessSession) -> Option<String> {
+    None
 }
 
 fn service_snapshot_from_session(session: &HarnessSession) -> TuiServiceSnapshot {
@@ -776,41 +1252,6 @@ pub(super) fn config_source_label(source: HarnessConfigSourceKind) -> &'static s
     }
 }
 
-pub(super) fn read_tui_report(snapshot: &TuiReportSnapshot) -> Result<Option<RunReport>> {
-    let Some(path) = &snapshot.current_report_path else {
-        return Ok(None);
-    };
-    let bytes = fs::read(path).with_context(|| format!("reading TUI report {}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .with_context(|| format!("parsing TUI report {}", path.display()))
-        .map(Some)
-}
-
-pub(super) fn read_tui_trace(
-    snapshot: &TuiReportSnapshot,
-    limit: usize,
-) -> Result<Vec<HarnessEventEnvelope>> {
-    let Some(path) = &snapshot.current_trace_path else {
-        return Ok(Vec::new());
-    };
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("reading TUI trace {}", path.display()))?;
-    let mut events = Vec::new();
-    for line in content
-        .lines()
-        .rev()
-        .take(limit)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-    {
-        events.push(
-            serde_json::from_str(line)
-                .with_context(|| format!("parsing TUI trace event from {}", path.display()))?,
-        );
-    }
-    Ok(events)
-}
 #[derive(Default)]
 pub(super) struct CapabilityCounts {
     pub(super) available: usize,
