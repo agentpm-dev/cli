@@ -258,6 +258,16 @@ impl HarnessSession {
         }
     }
 
+    pub(crate) fn abandon_nonterminal_active_run_after_runtime_error(&mut self) {
+        if self
+            .active_run
+            .as_ref()
+            .is_some_and(|run| run.status.harness_status().is_none())
+        {
+            self.active_run = None;
+        }
+    }
+
     fn start_run(&mut self, input: String) -> Result<String> {
         self.start_run_with_id(allocate_harness_run_id(), input)
     }

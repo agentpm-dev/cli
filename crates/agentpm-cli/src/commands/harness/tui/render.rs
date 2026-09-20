@@ -475,6 +475,15 @@ fn render_no_run_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
 }
 
 fn render_active_run_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let working_height = working_section_height(app);
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(working_height),
+        ])
+        .split(area);
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -485,10 +494,8 @@ fn render_active_run_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
             Constraint::Length(5),
             Constraint::Length(1),
             Constraint::Min(6),
-            Constraint::Length(1),
-            Constraint::Length(5),
         ])
-        .split(area);
+        .split(outer[0]);
     render_run_section(
         frame,
         layout[0],
@@ -511,7 +518,34 @@ fn render_active_run_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
         PANEL_BORDER,
     );
     render_assistant_output_section(frame, layout[6], " ⊙ Assistant Output ", app);
-    render_working_section(frame, layout[8], app);
+    render_working_section(frame, outer[2], app);
+}
+
+fn working_section_height(app: &TuiApp) -> u16 {
+    let run = app.run_snapshot();
+    let mut content_lines = 2;
+    if run.and_then(|run| run.approval.as_ref()).is_some() {
+        if run.and_then(|run| run.approval_control.as_ref()).is_some() {
+            content_lines += 1;
+        }
+    } else {
+        if latest_run_progress(app).is_some() {
+            content_lines += 1;
+        }
+        if run.and_then(|run| run.approval_control.as_ref()).is_some() {
+            content_lines += 1;
+        }
+    }
+    if app.selected_memory_operation().is_some() {
+        content_lines += 1;
+    }
+    if run
+        .and_then(|run| run.memory_operation_control.as_ref())
+        .is_some()
+    {
+        content_lines += 1;
+    }
+    (content_lines + 2).clamp(5, 9)
 }
 
 fn render_terminal_run_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
@@ -628,7 +662,7 @@ fn render_message_section(frame: &mut Frame<'_>, area: Rect, app: &TuiApp, borde
         Span::styled(placeholder, Style::default().fg(TEXT_DIM))
     } else {
         Span::styled(
-            app.composer_input.clone(),
+            composer_visible_input(&app.composer_input, area.width.saturating_sub(4) as usize),
             Style::default().fg(TEXT_PRIMARY),
         )
     };
@@ -647,32 +681,167 @@ fn render_message_section(frame: &mut Frame<'_>, area: Rect, app: &TuiApp, borde
     render_run_section(frame, area, " Message ", lines, border);
 }
 
+fn composer_visible_input(input: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let char_count = input.chars().count();
+    if char_count <= width {
+        return input.to_string();
+    }
+    if width == 1 {
+        return input.chars().last().unwrap_or_default().to_string();
+    }
+    let tail = input
+        .chars()
+        .skip(char_count.saturating_sub(width - 1))
+        .collect::<String>();
+    format!("…{tail}")
+}
+
 fn render_working_section(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let run = app.run_snapshot();
+    if let Some(approval) = run.and_then(|run| run.approval.as_ref()) {
+        let mut lines = vec![Line::from(vec![
+            styled(
+                format!(
+                    "Checkpoint {} is waiting before phase {}",
+                    approval.checkpoint_id, approval.before_phase
+                ),
+                STATUS_WARNING,
+            ),
+            Span::raw("    "),
+            key_span("A", app.accent),
+            Span::raw(" Approve  "),
+            key_span("D", app.accent),
+            Span::raw(" Deny"),
+            memory_operation_inline_control(app),
+        ])];
+        if let Some(control) = run.and_then(|run| run.approval_control.as_ref()) {
+            lines.push(approval_control_line(control));
+        }
+        append_memory_operation_status_line(app, &mut lines);
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Run remains active until the approval decision is routed through the Engine.",
+                Style::default().fg(TEXT_MUTED),
+            ),
+            Span::raw("    "),
+            key_span("C", app.accent),
+            Span::raw(" Cancel Run"),
+        ]));
+        render_run_section(frame, area, " Approval Required ", lines, STATUS_WARNING);
+        return;
+    }
     let phase = app
         .run_snapshot()
         .and_then(|run| run.phase_id.as_deref())
         .unwrap_or("starting");
-    render_run_section(
-        frame,
-        area,
-        " Run In Progress ",
-        vec![
-            Line::from(vec![
-                styled(
-                    format!("Run is active - phase {phase} in progress"),
-                    STATUS_WARNING,
-                ),
-                Span::raw("    "),
-                key_span("C", app.accent),
-                Span::raw(" Cancel Run"),
-            ]),
-            Line::from(Span::styled(
-                "Composer reopens when this Run reaches a terminal state.",
-                Style::default().fg(TEXT_MUTED),
-            )),
-        ],
-        STATUS_WARNING,
-    );
+    let mut lines = vec![Line::from(vec![
+        styled(
+            format!("Run is active - phase {phase} in progress"),
+            STATUS_WARNING,
+        ),
+        Span::raw("    "),
+        key_span("C", app.accent),
+        Span::raw(" Cancel Run"),
+        memory_operation_inline_control(app),
+    ])];
+    append_memory_operation_status_line(app, &mut lines);
+    lines.push(Line::from(Span::styled(
+        "Composer reopens when this Run reaches a terminal state.",
+        Style::default().fg(TEXT_MUTED),
+    )));
+    if let Some(progress) = latest_run_progress(app) {
+        lines.push(Line::from(vec![
+            styled("status ", STATUS_WARNING),
+            Span::styled(progress.to_string(), Style::default().fg(TEXT_MUTED)),
+        ]));
+    }
+    if let Some(control) = run.and_then(|run| run.approval_control.as_ref()) {
+        lines.push(approval_control_line(control));
+    }
+    render_run_section(frame, area, " Run In Progress ", lines, STATUS_WARNING);
+}
+
+fn memory_operation_inline_control(app: &TuiApp) -> Span<'static> {
+    if app.selected_memory_operation().is_none() {
+        return Span::raw("");
+    }
+    Span::styled(
+        "    X Memory Op",
+        Style::default().fg(app.accent).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn append_memory_operation_status_line(app: &TuiApp, lines: &mut Vec<Line<'static>>) {
+    if let Some(operation) = app.selected_memory_operation() {
+        let count = app
+            .run_snapshot()
+            .map(|run| run.memory_operations.len())
+            .unwrap_or_default();
+        let mut operation_line = vec![
+            Span::styled("External Memory ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(
+                format!("{}/operations/{}", operation.package, operation.operation),
+                Style::default().fg(app.accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("    "),
+            key_span("X", app.accent),
+            Span::raw(" Invoke"),
+        ];
+        if count > 1 {
+            operation_line.extend([
+                Span::raw("  "),
+                key_span("]", app.accent),
+                Span::raw(" Next"),
+            ]);
+        }
+        lines.push(Line::from(operation_line));
+    }
+    if let Some(control) = app
+        .run_snapshot()
+        .and_then(|run| run.memory_operation_control.as_ref())
+    {
+        lines.push(memory_control_line(control));
+    }
+}
+
+fn latest_run_progress(app: &TuiApp) -> Option<&str> {
+    let TuiState::Running { progress, .. } = &app.state else {
+        return None;
+    };
+    progress.last().map(|item| item.message.as_str())
+}
+
+fn approval_control_line(control: &TuiApprovalControlSnapshot) -> Line<'static> {
+    let color = match control.status.as_str() {
+        TUI_APPROVAL_STATUS_APPROVED => STATUS_READY,
+        TUI_APPROVAL_STATUS_DENIED => STATUS_WARNING,
+        _ => TEXT_MUTED,
+    };
+    Line::from(vec![
+        styled(format!("approval {} ", control.status), color),
+        Span::styled(
+            format!("{} - {}", control.checkpoint_id, control.message),
+            Style::default().fg(TEXT_MUTED),
+        ),
+    ])
+}
+
+fn memory_control_line(control: &TuiMemoryOperationControlSnapshot) -> Line<'static> {
+    let color = match control.status.as_str() {
+        TUI_MEMORY_CONTROL_STATUS_COMPLETED => STATUS_READY,
+        TUI_MEMORY_CONTROL_STATUS_FAILED => Color::Red,
+        _ => STATUS_WARNING,
+    };
+    Line::from(vec![
+        styled(format!("memory {} ", control.status), color),
+        Span::styled(
+            format!("{} - {}", control.identity, control.message),
+            Style::default().fg(TEXT_MUTED),
+        ),
+    ])
 }
 
 fn render_center_content(frame: &mut Frame<'_>, area: Rect, lines: Vec<Line<'_>>) {
@@ -876,8 +1045,21 @@ fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
     if app.composer_available() {
         spans.extend([key_span("Enter", app.accent), Span::raw(" Compose  ")]);
     }
+    if app.can_decide_approval() {
+        spans.extend([key_span("A", app.accent), Span::raw(" Approve  ")]);
+        spans.extend([key_span("D", app.accent), Span::raw(" Deny  ")]);
+    }
     if app.can_cancel_run() {
         spans.extend([key_span("C", app.accent), Span::raw(" Cancel Run  ")]);
+    }
+    if app.can_invoke_memory_operation() {
+        spans.extend([key_span("X", app.accent), Span::raw(" Memory Op  ")]);
+        if app
+            .run_snapshot()
+            .is_some_and(|run| run.memory_operations.len() > 1)
+        {
+            spans.extend([key_span("]", app.accent), Span::raw(" Next Op  ")]);
+        }
     }
     if app.focus == TuiFocus::Panel(VisiblePanel::Workspace) {
         spans.extend([key_span("PgUp", app.accent), Span::raw(" Next Page  ")]);
@@ -969,7 +1151,7 @@ fn key_span(label: &'static str, accent: Color) -> Span<'static> {
 
 fn bottom_run_status_text(app: &TuiApp) -> Option<String> {
     let snapshot = app.snapshot()?;
-    let run_id = run_header_text(snapshot.run.run_id.as_deref());
+    let run_id = run_header_text(snapshot.run.run_number, snapshot.run.run_id.as_deref());
     match snapshot.run.status {
         TuiRunStatus::Active | TuiRunStatus::PendingApproval => {
             let phase = snapshot.run.phase_id.as_deref().unwrap_or("starting");
@@ -1531,7 +1713,7 @@ fn run_summary_content(app: &TuiApp) -> Vec<Line<'static>> {
     let Some(snapshot) = app.snapshot() else {
         return vec![Line::from("Run summary unavailable.")];
     };
-    match (
+    let mut lines = match (
         snapshot.reports.current_report.as_ref(),
         snapshot.reports.current_report_error.as_ref(),
     ) {
@@ -1568,7 +1750,20 @@ fn run_summary_content(app: &TuiApp) -> Vec<Line<'static>> {
             Line::from(styled("Report unavailable", STATUS_WARNING)),
             Line::from(err.clone()),
         ],
+    };
+    if let Some(control) = &snapshot.run.approval_control {
+        lines.push(label_value_line(
+            "Approval",
+            format!("{} - {}", control.status, control.message),
+        ));
     }
+    if let Some(control) = &snapshot.run.memory_operation_control {
+        lines.push(label_value_line(
+            "Memory control",
+            format!("{} - {}", control.status, control.message),
+        ));
+    }
+    lines
 }
 
 fn label_value_line(label: &'static str, value: String) -> Line<'static> {
@@ -1807,22 +2002,47 @@ fn trace_page(app: &TuiApp, max_lines: usize) -> TracePage {
 
 fn center_trace_event_lines(app: &TuiApp) -> Vec<Line<'static>> {
     if let Some(snapshot) = app.snapshot() {
-        if !snapshot.reports.current_trace_events.is_empty() {
-            return snapshot
-                .reports
-                .current_trace_events
-                .iter()
-                .map(|event| Line::from(event_trace_line(event)))
-                .collect();
-        }
         if let Some(err) = &snapshot.reports.current_trace_error {
             return vec![
                 Line::from(styled("Trace unavailable", STATUS_WARNING)),
                 Line::from(err.clone()),
             ];
         }
+        let events = if !snapshot.reports.current_trace_events.is_empty() {
+            &snapshot.reports.current_trace_events
+        } else {
+            &snapshot.trace.events
+        };
+        let lines = scoped_center_trace_events(snapshot, events)
+            .into_iter()
+            .map(|event| Line::from(event_trace_line(event)))
+            .collect::<Vec<_>>();
+        if !lines.is_empty() {
+            return lines;
+        }
+        return vec![Line::from(if snapshot.run.run_id.is_some() {
+            "No trace events recorded for this Run yet."
+        } else {
+            "preflight_completed has not been recorded yet."
+        })];
     }
     trace_lines(app)
+}
+
+fn scoped_center_trace_events<'a>(
+    snapshot: &TuiSessionSnapshot,
+    events: &'a [HarnessEventEnvelope],
+) -> Vec<&'a HarnessEventEnvelope> {
+    match snapshot.run.run_id.as_deref() {
+        Some(run_id) => events
+            .iter()
+            .filter(|event| event.run_id.as_deref() == Some(run_id))
+            .collect(),
+        None => events
+            .iter()
+            .filter(|event| event.event_type == HarnessEventType::PreflightCompleted)
+            .collect(),
+    }
 }
 
 fn paginate_trace_lines(
@@ -2006,14 +2226,14 @@ fn center_header_line(app: &TuiApp) -> Line<'static> {
         TuiState::Ready { controller } => {
             let snapshot = controller.snapshot();
             (
-                run_header_text(snapshot.run.run_id.as_deref()),
+                run_header_text(snapshot.run.run_number, snapshot.run.run_id.as_deref()),
                 snapshot.run.phase_id.as_deref().unwrap_or("idle"),
                 run_status_display_text(&snapshot.run),
                 run_status_display_color(&snapshot.run),
             )
         }
         TuiState::Running { snapshot, .. } => (
-            run_header_text(snapshot.run.run_id.as_deref()),
+            run_header_text(snapshot.run.run_number, snapshot.run.run_id.as_deref()),
             snapshot.run.phase_id.as_deref().unwrap_or("starting"),
             "In Progress".into(),
             STATUS_WARNING,
@@ -2077,7 +2297,7 @@ fn terminal_header_line(snapshot: &TuiSessionSnapshot, accent: Color) -> Line<'s
         .unwrap_or_else(|| status_text.clone());
     Line::from(vec![
         Span::styled(
-            run_header_text(snapshot.run.run_id.as_deref()),
+            run_header_text(snapshot.run.run_number, snapshot.run.run_id.as_deref()),
             Style::default()
                 .fg(TEXT_PRIMARY)
                 .add_modifier(Modifier::BOLD),
@@ -2159,9 +2379,12 @@ fn run_status_display_color(run: &TuiRunSnapshot) -> Color {
     }
 }
 
-fn run_header_text(run_id: Option<&str>) -> String {
-    run_id
-        .map(|run_id| format!("Run {}", run_id.rsplit('-').next().unwrap_or(run_id)))
+fn run_header_text(run_number: Option<u64>, run_id: Option<&str>) -> String {
+    run_number
+        .map(|number| format!("Run #{number}"))
+        .or_else(|| {
+            run_id.map(|run_id| format!("Run {}", run_id.rsplit('-').next().unwrap_or(run_id)))
+        })
         .unwrap_or_else(|| "Run --".into())
 }
 
@@ -2377,6 +2600,73 @@ mod tests {
     }
 
     #[test]
+    fn center_trace_before_first_run_only_shows_preflight_completed() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.trace.events = vec![
+            test_trace_event("evt-session", HarnessEventType::SessionStarted, None),
+            test_trace_event("evt-preflight", HarnessEventType::PreflightCompleted, None),
+            test_trace_event("evt-surface", HarnessEventType::McpSurfaceReady, None),
+        ];
+
+        let lines = center_trace_event_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("preflight_completed"));
+        assert!(!lines[0].contains("session_started"));
+        assert!(!lines[0].contains("mcp_surface_ready"));
+    }
+
+    #[test]
+    fn center_trace_filters_events_to_displayed_run() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let mut snapshot = ready_snapshot(&app).clone();
+        snapshot.run.status = TuiRunStatus::Active;
+        snapshot.run.run_id = Some("run-current".into());
+        snapshot.trace.events = vec![
+            test_trace_event(
+                "evt-old-model",
+                HarnessEventType::ModelRequestStarted,
+                Some("run-old"),
+            ),
+            test_trace_event(
+                "evt-current-phase",
+                HarnessEventType::PhaseStarted,
+                Some("run-current"),
+            ),
+            test_trace_event("evt-session", HarnessEventType::PreflightCompleted, None),
+        ];
+        let (_sender, receiver) = mpsc::channel();
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![],
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+
+        let lines = center_trace_event_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("phase_started"));
+        assert!(lines[0].contains("run-current"));
+        assert!(!lines[0].contains("run-old"));
+        assert!(!lines[0].contains("preflight_completed"));
+    }
+
+    #[test]
     fn assistant_output_pagination_accounts_for_wrapped_lines() {
         let lines = vec![Line::from("abcdefghijkl")];
 
@@ -2399,6 +2689,14 @@ mod tests {
             second.footer.to_string(),
             "Page 2/2 · PgUp next · PgDn prev · O full"
         );
+    }
+
+    #[test]
+    fn composer_visible_input_tracks_the_prompt_tail() {
+        assert_eq!(composer_visible_input("short", 10), "short");
+        assert_eq!(composer_visible_input("abcdefghij", 5), "…ghij");
+        assert_eq!(composer_visible_input("abcdefghij", 1), "j");
+        assert_eq!(composer_visible_input("abcdefghij", 0), "");
     }
 
     #[test]
@@ -2794,6 +3092,19 @@ mod tests {
     }
 
     #[test]
+    fn run_header_prefers_session_ordinal_over_backend_run_id_suffix() {
+        assert_eq!(
+            run_header_text(Some(1), Some("run-18d6e15e0bfc5af0-2")),
+            "Run #1"
+        );
+        assert_eq!(
+            run_header_text(Some(2), Some("run-18d6e15e0bfc5af0-3")),
+            "Run #2"
+        );
+        assert_eq!(run_header_text(None, None), "Run --");
+    }
+
+    #[test]
     fn composer_is_visible_only_for_idle_or_terminal_ready_run_panel() {
         let mut app =
             TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
@@ -2809,11 +3120,66 @@ mod tests {
             }],
             events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
             cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
         };
         app.focus = TuiFocus::Panel(VisiblePanel::Run);
         assert!(!app.can_send_message());
         assert!(app.can_cancel_run());
         assert_eq!(run_visual_state(&app), RunVisualState::Active);
+    }
+
+    #[test]
+    fn active_run_cancel_is_available_from_other_panels() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let snapshot = ready_snapshot(&app).clone();
+        let (_sender, receiver) = mpsc::channel();
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![TuiRunProgress {
+                message: "starting".into(),
+            }],
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+        app.panel = VisiblePanel::Trace;
+        app.focus = TuiFocus::Panel(VisiblePanel::Trace);
+
+        assert!(app.can_cancel_run());
+    }
+
+    #[test]
+    fn latest_run_progress_is_available_for_active_status_box() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let snapshot = ready_snapshot(&app).clone();
+        let (_sender, receiver) = mpsc::channel();
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![
+                TuiRunProgress {
+                    message: "Starting Run.".into(),
+                },
+                TuiRunProgress {
+                    message: "Cancellation requested; waiting for the active operation to stop."
+                        .into(),
+                },
+            ],
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+
+        assert_eq!(
+            latest_run_progress(&app),
+            Some("Cancellation requested; waiting for the active operation to stop.")
+        );
     }
 
     #[test]
@@ -2835,7 +3201,7 @@ mod tests {
         report.checkpoint_summaries = vec![crate::harness_observability::CheckpointReportSummary {
             checkpoint_id: "approve-response".into(),
             before_phase: "start".into(),
-            status: "approved".into(),
+            status: TUI_APPROVAL_STATUS_APPROVED.into(),
             on_reject: Some("$abort".into()),
         }];
         report
@@ -2881,6 +3247,108 @@ mod tests {
         assert!(output_text.contains("done output"));
         assert!(usage_text.contains("cost: unknown"));
         assert!(app.can_send_message());
+    }
+
+    #[test]
+    fn run_summary_content_shows_control_outcomes() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.approval_control = Some(TuiApprovalControlSnapshot {
+            checkpoint_id: "approve-response".into(),
+            status: TUI_APPROVAL_STATUS_APPROVED.into(),
+            message: "Approval approved for checkpoint `approve-response`.".into(),
+        });
+        controller.snapshot.run.memory_operation_control =
+            Some(TuiMemoryOperationControlSnapshot {
+                identity: "@zack/memory/operations/delete_user_memory".into(),
+                status: TUI_MEMORY_CONTROL_STATUS_COMPLETED.into(),
+                message: "Completed; affected 2 record(s).".into(),
+            });
+
+        let lines = run_summary_content(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(lines.iter().any(|line| line.contains("Approval")));
+        assert!(lines.iter().any(|line| line.contains("approved")));
+        assert!(lines.iter().any(|line| line.contains("Memory control")));
+        assert!(lines.iter().any(|line| line.contains("completed")));
+    }
+
+    #[test]
+    fn approval_view_can_show_external_memory_operation_control() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.status = TuiRunStatus::PendingApproval;
+        controller.snapshot.run.approval = Some(TuiApprovalSnapshot {
+            checkpoint_id: "approve-memory-control".into(),
+            before_phase: "respond".into(),
+        });
+        controller.snapshot.run.memory_operations = vec![TuiMemoryOperationSnapshot {
+            package: "@zack/m19-memory".into(),
+            operation: "external_delete_current_note".into(),
+            operation_type: "delete".into(),
+            description: "Delete current note.".into(),
+        }];
+        controller.snapshot.run.memory_operation_control =
+            Some(TuiMemoryOperationControlSnapshot {
+                identity: "@zack/m19-memory/operations/external_delete_current_note".into(),
+                status: TUI_MEMORY_CONTROL_STATUS_COMPLETED.into(),
+                message: "Completed; affected 0 record(s).".into(),
+            });
+
+        let mut lines = Vec::new();
+        append_memory_operation_status_line(&app, &mut lines);
+        let text = lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("External Memory"));
+        assert!(text.contains("@zack/m19-memory/operations/external_delete_current_note"));
+        assert!(text.contains("Invoke"));
+        assert!(text.contains("completed"));
+    }
+
+    #[test]
+    fn working_section_reserves_space_for_memory_operation_status() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.status = TuiRunStatus::PendingApproval;
+        controller.snapshot.run.approval = Some(TuiApprovalSnapshot {
+            checkpoint_id: "approve-memory-control".into(),
+            before_phase: "respond".into(),
+        });
+        controller.snapshot.run.approval_control = Some(TuiApprovalControlSnapshot {
+            checkpoint_id: "approve-memory-control".into(),
+            status: TUI_APPROVAL_STATUS_APPROVED.into(),
+            message: "Approval approved.".into(),
+        });
+        controller.snapshot.run.memory_operations = vec![TuiMemoryOperationSnapshot {
+            package: "@zack/m19-memory".into(),
+            operation: "external_delete_current_note".into(),
+            operation_type: "delete".into(),
+            description: "Delete current note.".into(),
+        }];
+        controller.snapshot.run.memory_operation_control =
+            Some(TuiMemoryOperationControlSnapshot {
+                identity: "@zack/m19-memory/operations/external_delete_current_note".into(),
+                status: TUI_MEMORY_CONTROL_STATUS_COMPLETED.into(),
+                message: "Completed; affected 0 record(s).".into(),
+            });
+
+        assert_eq!(working_section_height(&app), 7);
     }
 
     #[test]
@@ -2957,6 +3425,8 @@ mod tests {
             progress: vec![],
             events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
             cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
         };
 
         let output_text = assistant_output_page(&app, 5, 80)
@@ -3002,6 +3472,8 @@ mod tests {
             progress: vec![],
             events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
             cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
         };
 
         let output = assistant_output_text(&app).expect("assistant output should render");
@@ -3070,6 +3542,8 @@ mod tests {
             progress: vec![],
             events,
             cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
         };
 
         poll_run_result(&mut app);
@@ -3082,6 +3556,30 @@ mod tests {
         assert_eq!(snapshot.run.transcript.len(), 1);
         let output = assistant_output_text(&app).expect("assistant output should render");
         assert!(output.contains("live answer"));
+    }
+
+    fn test_trace_event(
+        event_id: &str,
+        event_type: HarnessEventType,
+        run_id: Option<&str>,
+    ) -> HarnessEventEnvelope {
+        HarnessEventEnvelope {
+            schema_version: 1,
+            event_id: event_id.into(),
+            session_id: "sess-test".into(),
+            run_id: run_id.map(str::to_string),
+            session_sequence: 1,
+            run_sequence: run_id.map(|_| 1),
+            timestamp: chrono::Utc::now(),
+            event_type,
+            phase_execution_id: None,
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Lifecycle {
+                message: "test event".into(),
+                fields: BTreeMap::new(),
+            },
+        }
     }
 
     #[test]
@@ -3131,6 +3629,8 @@ mod tests {
             progress: vec![],
             events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
             cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
         };
 
         assert!(assistant_output_text(&app).is_none());

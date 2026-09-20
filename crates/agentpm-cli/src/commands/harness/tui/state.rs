@@ -12,8 +12,9 @@ use crate::harness_config::{
     HarnessConfigSource, HarnessConfigSourceKind, HarnessModelConfig, HarnessTraceContent,
 };
 use crate::harness_engine::{
-    HarnessEngine, HarnessRunResult, HarnessRuntimeServices, HarnessSession,
-    MemoryOperationInvocationResult, RuntimeTerminalResult, RuntimeTerminalStatus,
+    EngineControlIngress, HarnessEngine, HarnessRunResult, HarnessRuntimeServices, HarnessSession,
+    MemoryOperationControlError, MemoryOperationInvocationResult, RuntimeTerminalResult,
+    RuntimeTerminalStatus,
 };
 use crate::harness_observability::{
     HarnessEventBuilder, HarnessEventEnvelope, HarnessEventPayload, HarnessEventSink,
@@ -26,9 +27,10 @@ use crate::harness_plan::{
     resolve_harness_plan_with_progress,
 };
 use crate::harness_runtime::{
-    AgentPmActionDispatcher, ConfiguredHookRuntime, HookRuntime, ModelRuntime,
-    ServiceLifecycleEvents,
+    AgentPmActionDispatcher, ApprovalController, ApprovalDecision as RuntimeApprovalDecision,
+    ConfiguredHookRuntime, HookRuntime, ModelRuntime, ServiceLifecycleEvents,
 };
+use crate::manifest::LoopCheckpoint;
 use crate::prelude::*;
 use anyhow::{anyhow, bail};
 use chrono::{DateTime, Utc};
@@ -44,9 +46,17 @@ use std::{
         mpsc::{self, Receiver, Sender},
     },
     thread,
+    time::Duration,
 };
 
 type BootstrapResult = Result<ResolvedHarnessPlan>;
+
+pub(super) const TUI_APPROVAL_STATUS_APPROVED: &str = "approved";
+pub(super) const TUI_APPROVAL_STATUS_DENIED: &str = "denied";
+pub(super) const TUI_MEMORY_CONTROL_STATUS_QUEUED: &str = "queued";
+pub(super) const TUI_MEMORY_CONTROL_STATUS_RUNNING: &str = "running";
+pub(super) const TUI_MEMORY_CONTROL_STATUS_COMPLETED: &str = "completed";
+pub(super) const TUI_MEMORY_CONTROL_STATUS_FAILED: &str = "failed";
 
 pub(super) enum BootstrapMessage {
     Progress(TuiBootstrapProgress),
@@ -140,6 +150,7 @@ pub(super) struct TuiDiagnosticSummary {
 pub(super) struct TuiRunSnapshot {
     pub(super) status: TuiRunStatus,
     pub(super) run_id: Option<String>,
+    pub(super) run_number: Option<u64>,
     pub(super) phase_id: Option<String>,
     pub(super) started_at: Option<DateTime<Utc>>,
     pub(super) phase_objective: Option<String>,
@@ -148,6 +159,9 @@ pub(super) struct TuiRunSnapshot {
     pub(super) transcript: Vec<TuiRunTranscriptItem>,
     pub(super) usage: RunUsage,
     pub(super) approval: Option<TuiApprovalSnapshot>,
+    pub(super) approval_control: Option<TuiApprovalControlSnapshot>,
+    pub(super) memory_operations: Vec<TuiMemoryOperationSnapshot>,
+    pub(super) memory_operation_control: Option<TuiMemoryOperationControlSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -182,6 +196,28 @@ pub(super) enum TuiRunStatus {
 pub(super) struct TuiApprovalSnapshot {
     pub(super) checkpoint_id: String,
     pub(super) before_phase: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TuiApprovalControlSnapshot {
+    pub(super) checkpoint_id: String,
+    pub(super) status: String,
+    pub(super) message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TuiMemoryOperationSnapshot {
+    pub(super) package: String,
+    pub(super) operation: String,
+    pub(super) operation_type: String,
+    pub(super) description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TuiMemoryOperationControlSnapshot {
+    pub(super) identity: String,
+    pub(super) status: String,
+    pub(super) message: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -224,6 +260,345 @@ pub(super) enum TuiApprovalDecision {
 pub(super) struct TuiControlAck {
     pub(super) accepted: bool,
     pub(super) message: String,
+}
+
+#[derive(Clone)]
+pub(super) struct TuiApprovalHandle {
+    inner: Arc<Mutex<TuiApprovalState>>,
+}
+
+#[derive(Default)]
+struct TuiApprovalState {
+    pending: Option<TuiApprovalSnapshot>,
+    decision: Option<TuiApprovalDecision>,
+    last: Option<TuiApprovalControlSnapshot>,
+}
+
+impl TuiApprovalHandle {
+    pub(super) fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(TuiApprovalState::default())),
+        }
+    }
+
+    pub(super) fn pending(&self) -> Option<TuiApprovalSnapshot> {
+        self.inner
+            .lock()
+            .expect("TUI approval handle poisoned")
+            .pending
+            .clone()
+    }
+
+    pub(super) fn snapshot(&self) -> Option<TuiApprovalControlSnapshot> {
+        self.inner
+            .lock()
+            .expect("TUI approval handle poisoned")
+            .last
+            .clone()
+    }
+
+    pub(super) fn decide(&self, decision: TuiApprovalDecision) -> Result<TuiControlAck> {
+        let mut state = self.inner.lock().expect("TUI approval handle poisoned");
+        let Some(checkpoint_id) = state
+            .pending
+            .as_ref()
+            .map(|pending| pending.checkpoint_id.clone())
+        else {
+            bail!("TUI approval control requires a pending approval");
+        };
+        if state.decision.is_some() {
+            bail!("TUI approval decision is already queued");
+        }
+        state.decision = Some(decision);
+        let status = match decision {
+            TuiApprovalDecision::Approve => TUI_APPROVAL_STATUS_APPROVED,
+            TuiApprovalDecision::Deny => TUI_APPROVAL_STATUS_DENIED,
+        };
+        let message = format!("Approval {status} for checkpoint `{checkpoint_id}`.");
+        state.last = Some(TuiApprovalControlSnapshot {
+            checkpoint_id: checkpoint_id.clone(),
+            status: status.into(),
+            message: message.clone(),
+        });
+        Ok(TuiControlAck {
+            accepted: true,
+            message,
+        })
+    }
+
+    pub(super) fn set_pending(&self, pending: TuiApprovalSnapshot) {
+        let mut state = self.inner.lock().expect("TUI approval handle poisoned");
+        state.pending = Some(pending);
+        state.decision = None;
+        state.last = None;
+    }
+
+    pub(super) fn take_decision(&self) -> Option<TuiApprovalDecision> {
+        self.inner
+            .lock()
+            .expect("TUI approval handle poisoned")
+            .decision
+            .take()
+    }
+
+    fn clear_pending(&self) {
+        let mut state = self.inner.lock().expect("TUI approval handle poisoned");
+        state.pending = None;
+        state.decision = None;
+    }
+}
+
+struct TuiInteractiveApprovalController {
+    handle: TuiApprovalHandle,
+    cancellation_requested: Arc<AtomicBool>,
+}
+
+impl TuiInteractiveApprovalController {
+    fn new(handle: TuiApprovalHandle, cancellation_requested: Arc<AtomicBool>) -> Self {
+        Self {
+            handle,
+            cancellation_requested,
+        }
+    }
+}
+
+impl ApprovalController for TuiInteractiveApprovalController {
+    fn request_approval(&mut self, checkpoint: &LoopCheckpoint) -> RuntimeApprovalDecision {
+        self.handle.set_pending(TuiApprovalSnapshot {
+            checkpoint_id: checkpoint.id.clone(),
+            before_phase: checkpoint.before_phase.clone(),
+        });
+        loop {
+            if self.cancellation_requested.load(Ordering::SeqCst) {
+                self.handle.clear_pending();
+                return RuntimeApprovalDecision::Failure(
+                    "Run cancelled while waiting for TUI approval".into(),
+                );
+            }
+            if let Some(decision) = self.handle.take_decision() {
+                self.handle.clear_pending();
+                return match decision {
+                    TuiApprovalDecision::Approve => RuntimeApprovalDecision::Approve,
+                    TuiApprovalDecision::Deny => RuntimeApprovalDecision::Deny,
+                };
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct TuiMemoryControlHandle {
+    inner: Arc<Mutex<TuiMemoryControlState>>,
+}
+
+#[derive(Default)]
+struct TuiMemoryControlState {
+    pending: Option<TuiMemoryControlRequest>,
+    in_flight: bool,
+    last: Option<TuiMemoryOperationControlSnapshot>,
+    operations: Vec<TuiMemoryOperationCandidate>,
+    trusted_scope: BTreeMap<String, String>,
+}
+
+#[derive(Clone)]
+pub(super) struct TuiMemoryControlRequest {
+    pub(super) package: String,
+    pub(super) operation: String,
+    pub(super) current_resolved_scope: BTreeMap<String, String>,
+}
+
+#[derive(Clone)]
+struct TuiMemoryOperationCandidate {
+    snapshot: TuiMemoryOperationSnapshot,
+    binding_scope: String,
+}
+
+impl TuiMemoryControlHandle {
+    pub(super) fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(TuiMemoryControlState::default())),
+        }
+    }
+
+    pub(super) fn snapshot(&self) -> Option<TuiMemoryOperationControlSnapshot> {
+        self.inner
+            .lock()
+            .expect("TUI memory control handle poisoned")
+            .last
+            .clone()
+    }
+
+    pub(super) fn set_operations_from_session(&self, session: &HarnessSession) {
+        let operations = session
+            .runtime_snapshot
+            .memory_operations
+            .iter()
+            .filter(|operation| operation.state == "available")
+            .filter(|operation| {
+                operation
+                    .trigger
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|trigger| trigger == "external")
+            })
+            .map(|operation| TuiMemoryOperationCandidate {
+                snapshot: TuiMemoryOperationSnapshot {
+                    package: operation.package.clone(),
+                    operation: operation.operation.clone(),
+                    operation_type: operation.operation_type.clone(),
+                    description: operation.description.clone(),
+                },
+                binding_scope: operation.binding_scope.clone(),
+            })
+            .collect();
+        let mut state = self
+            .inner
+            .lock()
+            .expect("TUI memory control handle poisoned");
+        state.operations = operations;
+        state.trusted_scope = session.runtime_snapshot.runtime_scopes.clone();
+    }
+
+    pub(super) fn operations_for_phase(
+        &self,
+        phase_id: Option<&str>,
+    ) -> Vec<TuiMemoryOperationSnapshot> {
+        let state = self
+            .inner
+            .lock()
+            .expect("TUI memory control handle poisoned");
+        state
+            .operations
+            .iter()
+            .filter(|operation| {
+                let Some(phase) = phase_id else {
+                    return false;
+                };
+                operation.binding_scope == "global"
+                    || operation.binding_scope == phase
+                    || operation.binding_scope == format!("phases:{phase}")
+            })
+            .map(|operation| operation.snapshot.clone())
+            .collect()
+    }
+
+    pub(super) fn request(&self, operation: &TuiMemoryOperationSnapshot) -> Result<TuiControlAck> {
+        let mut state = self
+            .inner
+            .lock()
+            .expect("TUI memory control handle poisoned");
+        if state.pending.is_some() || state.in_flight {
+            bail!("external Memory operation control is busy");
+        }
+        let identity = memory_operation_identity(&operation.package, &operation.operation);
+        state.last = Some(TuiMemoryOperationControlSnapshot {
+            identity: identity.clone(),
+            status: TUI_MEMORY_CONTROL_STATUS_QUEUED.into(),
+            message: "External Memory operation queued.".into(),
+        });
+        state.pending = Some(TuiMemoryControlRequest {
+            package: operation.package.clone(),
+            operation: operation.operation.clone(),
+            current_resolved_scope: state.trusted_scope.clone(),
+        });
+        Ok(TuiControlAck {
+            accepted: true,
+            message: format!("External Memory operation `{identity}` queued."),
+        })
+    }
+
+    pub(super) fn take(&self) -> Option<TuiMemoryControlRequest> {
+        let mut state = self
+            .inner
+            .lock()
+            .expect("TUI memory control handle poisoned");
+        if state.in_flight {
+            return None;
+        }
+        let request = state.pending.take()?;
+        state.in_flight = true;
+        state.last = Some(TuiMemoryOperationControlSnapshot {
+            identity: memory_operation_identity(&request.package, &request.operation),
+            status: TUI_MEMORY_CONTROL_STATUS_RUNNING.into(),
+            message: "External Memory operation running.".into(),
+        });
+        Some(request)
+    }
+
+    pub(super) fn complete(&self, result: Result<MemoryOperationInvocationResult>) -> Result<()> {
+        let mut state = self
+            .inner
+            .lock()
+            .expect("TUI memory control handle poisoned");
+        state.in_flight = false;
+        state.last = Some(match result {
+            Ok(result) => TuiMemoryOperationControlSnapshot {
+                identity: result.identity,
+                status: TUI_MEMORY_CONTROL_STATUS_COMPLETED.into(),
+                message: format!("Completed; affected {} record(s).", result.count),
+            },
+            Err(err) => {
+                if let Some(control_error) = err.downcast_ref::<MemoryOperationControlError>() {
+                    TuiMemoryOperationControlSnapshot {
+                        identity: "external_memory_operation".into(),
+                        status: TUI_MEMORY_CONTROL_STATUS_FAILED.into(),
+                        message: format!("{}: {}", control_error.code, control_error.message),
+                    }
+                } else {
+                    TuiMemoryOperationControlSnapshot {
+                        identity: "external_memory_operation".into(),
+                        status: TUI_MEMORY_CONTROL_STATUS_FAILED.into(),
+                        message: format!("{err:#}"),
+                    }
+                }
+            }
+        });
+        Ok(())
+    }
+
+    pub(super) fn flush(&self, code: &str, message: &str) {
+        let mut state = self
+            .inner
+            .lock()
+            .expect("TUI memory control handle poisoned");
+        if state.pending.take().is_some() || state.in_flight {
+            state.in_flight = false;
+            state.last = Some(TuiMemoryOperationControlSnapshot {
+                identity: "external_memory_operation".into(),
+                status: TUI_MEMORY_CONTROL_STATUS_FAILED.into(),
+                message: format!("{code}: {message}"),
+            });
+        }
+    }
+}
+
+impl EngineControlIngress for TuiMemoryControlHandle {
+    fn service_memory_operation_controls(
+        &mut self,
+        engine: &mut HarnessEngine,
+        session: &mut HarnessSession,
+        model: &mut dyn ModelRuntime,
+        hooks: &mut dyn HookRuntime,
+    ) -> Result<()> {
+        while let Some(request) = self.take() {
+            let result = engine.invoke_memory_operation(
+                session,
+                &request.package,
+                &request.operation,
+                request.current_resolved_scope,
+                model,
+                hooks,
+            );
+            self.complete(result)?;
+        }
+        Ok(())
+    }
+
+    fn flush_memory_operation_controls(&mut self, code: &str, message: &str) -> Result<()> {
+        self.flush(code, message);
+        Ok(())
+    }
 }
 
 pub(super) fn spawn_bootstrap_worker(
@@ -273,11 +648,20 @@ pub(super) fn spawn_tui_run_worker(
     controller: TuiSessionController,
     run_id: String,
     input: String,
+    approvals: TuiApprovalHandle,
+    memory_controls: TuiMemoryControlHandle,
 ) -> Receiver<TuiRunMessage> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            execute_tui_run_worker(controller, run_id, input, &sender)
+            execute_tui_run_worker(
+                controller,
+                run_id,
+                input,
+                approvals,
+                memory_controls,
+                &sender,
+            )
         }))
         .unwrap_or_else(|payload| TuiRunWorkerResult {
             controller: TuiSessionController::failed_placeholder(format!(
@@ -295,12 +679,25 @@ fn execute_tui_run_worker(
     mut controller: TuiSessionController,
     run_id: String,
     input: String,
+    approvals: TuiApprovalHandle,
+    memory_controls: TuiMemoryControlHandle,
     sender: &Sender<TuiRunMessage>,
 ) -> TuiRunWorkerResult {
-    let error = match execute_tui_run_worker_inner(&mut controller, run_id, input, sender) {
+    let error = match execute_tui_run_worker_inner(
+        &mut controller,
+        run_id,
+        input,
+        approvals,
+        memory_controls.clone(),
+        sender,
+    ) {
         Ok(()) => None,
         Err(err) => {
+            memory_controls.flush("memory_operation_run_failed", "Run failed before cleanup");
             controller.refresh_snapshot();
+            controller
+                .session
+                .abandon_nonterminal_active_run_after_runtime_error();
             Some(format!("{err:#}"))
         }
     };
@@ -311,6 +708,8 @@ fn execute_tui_run_worker_inner(
     controller: &mut TuiSessionController,
     run_id: String,
     input: String,
+    approval_handle: TuiApprovalHandle,
+    memory_controls: TuiMemoryControlHandle,
     sender: &Sender<TuiRunMessage>,
 ) -> Result<()> {
     let plan = controller.plan().clone();
@@ -344,7 +743,15 @@ fn execute_tui_run_worker_inner(
         Some(&service_events),
     );
     let memory_embedding_provider = embedding_provider_for_plan(&plan, None, Some(&service_events));
-    let mut approvals = approval_controller_from_plan(&plan, None, Some(&service_events))?;
+    let mut approvals: Box<dyn ApprovalController> =
+        if plan.config.config.approvals.controller.is_some() {
+            approval_controller_from_plan(&plan, None, Some(&service_events))?
+        } else {
+            Box::new(TuiInteractiveApprovalController::new(
+                approval_handle,
+                Arc::clone(&controller.cancellation_requested),
+            ))
+        };
     let mut hooks = ConfiguredHookRuntime::from_config(
         &plan.workspace_root,
         &plan.config.config.hooks.bindings,
@@ -363,6 +770,10 @@ fn execute_tui_run_worker_inner(
             )?));
     }
     controller.session.runtime_snapshot = runtime;
+    memory_controls.set_operations_from_session(&controller.session);
+    if let Some(engine) = controller.engine.as_mut() {
+        engine.set_control_ingress(Box::new(memory_controls.clone()));
+    }
     let mcp_import_snapshots = controller.session.runtime_snapshot.mcp_imports.clone();
     emit_mcp_import_activation_events(&mut controller.session, &mcp_import_snapshots)?;
     controller.refresh_snapshot();
@@ -602,23 +1013,6 @@ impl TuiSessionController {
         })
     }
 
-    pub(super) fn record_approval_decision(
-        &mut self,
-        decision: TuiApprovalDecision,
-    ) -> Result<TuiControlAck> {
-        let Some(run) = self.session.active_run() else {
-            bail!("TUI approval control requires an active Run");
-        };
-        let Some(approval) = run.pending_approval() else {
-            bail!("TUI approval control requires a pending approval");
-        };
-        bail!(
-            "TUI approval decision {:?} for checkpoint `{}` is not available until approval controls are routed through the Engine ApprovalController",
-            decision,
-            approval.checkpoint_id
-        )
-    }
-
     pub(super) fn invoke_memory_operation(
         &mut self,
         package: &str,
@@ -655,6 +1049,8 @@ impl TuiSessionController {
                     checkpoint_id: checkpoint.checkpoint_id.clone(),
                     before_phase: checkpoint.before_phase.clone(),
                 });
+                self.snapshot.run.approval_control = None;
+                self.snapshot.run.memory_operations = memory_operations_from_session(&self.session);
                 self.snapshot.trace.events = self.events.events();
             }
         }
@@ -667,6 +1063,8 @@ impl TuiSessionController {
     ) {
         self.snapshot.run.status = TuiRunStatus::Terminal;
         self.snapshot.run.run_id = Some(terminal.report.run_id.clone());
+        self.snapshot.run.run_number =
+            (self.session.usage.started_runs > 0).then_some(self.session.usage.started_runs);
         self.snapshot.run.started_at = Some(terminal.report.started_at);
         self.snapshot.run.phase_id = terminal
             .report
@@ -682,6 +1080,10 @@ impl TuiSessionController {
             .or_else(|| self.events.latest_phase_output());
         self.snapshot.run.transcript = self.events.transcript();
         self.snapshot.run.usage = terminal.report.usage.clone();
+        self.snapshot.run.approval = None;
+        self.snapshot.run.approval_control = None;
+        self.snapshot.run.memory_operations = Vec::new();
+        self.snapshot.run.memory_operation_control = None;
         self.snapshot.reports.current_report_path = Some(output_paths.report_path.clone());
         self.snapshot.reports.current_trace_path = terminal
             .report
@@ -993,6 +1395,7 @@ fn run_snapshot_from_session(session: &HarnessSession) -> TuiRunSnapshot {
         return TuiRunSnapshot {
             status: TuiRunStatus::Idle,
             run_id: None,
+            run_number: None,
             phase_id: None,
             started_at: None,
             phase_objective: run_phase_objective_for_idle(session),
@@ -1001,6 +1404,9 @@ fn run_snapshot_from_session(session: &HarnessSession) -> TuiRunSnapshot {
             transcript: Vec::new(),
             usage: RunUsage::default(),
             approval: None,
+            approval_control: None,
+            memory_operations: memory_operations_from_session(session),
+            memory_operation_control: None,
         };
     };
     let status = match run.status() {
@@ -1017,6 +1423,7 @@ fn run_snapshot_from_session(session: &HarnessSession) -> TuiRunSnapshot {
     TuiRunSnapshot {
         status,
         run_id: Some(run.run_id().to_string()),
+        run_number: (session.usage.started_runs > 0).then_some(session.usage.started_runs),
         phase_id: run.current_phase_id().map(str::to_string),
         started_at: Some(run.started_at()),
         phase_objective: None,
@@ -1028,7 +1435,76 @@ fn run_snapshot_from_session(session: &HarnessSession) -> TuiRunSnapshot {
             checkpoint_id: approval.checkpoint_id.clone(),
             before_phase: approval.before_phase.clone(),
         }),
+        approval_control: None,
+        memory_operations: memory_operations_from_session(session),
+        memory_operation_control: None,
     }
+}
+
+fn memory_operations_from_session(session: &HarnessSession) -> Vec<TuiMemoryOperationSnapshot> {
+    let active_phase = session
+        .active_run()
+        .and_then(|run| run.current_phase_id())
+        .map(str::to_string);
+    session
+        .runtime_snapshot
+        .memory_operations
+        .iter()
+        .filter(|operation| operation.state == "available")
+        .filter(|operation| {
+            operation
+                .trigger
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|trigger| trigger == "external")
+        })
+        .filter(|operation| {
+            let Some(phase) = active_phase.as_deref() else {
+                return false;
+            };
+            operation.binding_scope == "global"
+                || operation.binding_scope == phase
+                || operation.binding_scope == format!("phases:{phase}")
+        })
+        .map(|operation| TuiMemoryOperationSnapshot {
+            package: operation.package.clone(),
+            operation: operation.operation.clone(),
+            operation_type: operation.operation_type.clone(),
+            description: operation.description.clone(),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interactive_approval_returns_failure_when_cancelled() {
+        let handle = TuiApprovalHandle::new();
+        let cancellation_requested = Arc::new(AtomicBool::new(true));
+        let mut controller =
+            TuiInteractiveApprovalController::new(handle.clone(), cancellation_requested);
+        let decision = controller.request_approval(&LoopCheckpoint {
+            id: "approve-response".into(),
+            r#type: "approval".into(),
+            before_phase: "respond".into(),
+            on_reject: "$abort".into(),
+        });
+
+        match decision {
+            RuntimeApprovalDecision::Failure(message) => {
+                assert!(message.contains("cancelled"));
+            }
+            other => panic!("expected cancellation failure, got {other:?}"),
+        }
+        assert!(handle.pending().is_none());
+        assert!(handle.take_decision().is_none());
+    }
+}
+
+fn memory_operation_identity(package: &str, operation: &str) -> String {
+    format!("{package}/operations/{operation}")
 }
 
 fn run_phase_objective(

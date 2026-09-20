@@ -1193,10 +1193,10 @@ This gives us Harness-managed outward MCP export and explicitly scoped external 
 
 ### Milestone 19E: Approvals, Cancellation, and External Controls
 > Scope note: wire interactive controls into existing engine/control ingress points. TUI must present and route approvals, cancellation, and external Memory-operation controls without creating alternate approval, cancellation, or Memory lifecycle semantics.
-- [ ] Add interactive checkpoint approval/deny controls routed through the existing ApprovalRuntime/Engine request path.
-- [ ] Ensure approval decision events (`approval_requested`/`approval_approved`/`approval_denied`) are visible in the trace/detail view whenever an approval outcome is also shown in the Run view, so the panels can never disagree about whether or when an approval occurred.
-- [ ] Add cancellation/quit through canonical cancellation and wait for graceful trace/report/service cleanup when possible.
-- [ ] Add TUI controls for eligible external Memory operations exposed by the current Run/phase, routed through the canonical Engine control ingress from Milestone 15; preserve the single-active-Run invariant, use trusted resolved scope only, render typed success/error outcomes, and do not present these controls as model semantic actions.
+- [x] Add interactive checkpoint approval/deny controls routed through the existing ApprovalRuntime/Engine request path.
+- [x] Ensure approval decision events (`approval_requested`/`approval_approved`/`approval_denied`) are visible in the trace/detail view whenever an approval outcome is also shown in the Run view, so the panels can never disagree about whether or when an approval occurred.
+- [x] Add cancellation/quit through canonical cancellation and wait for graceful trace/report/service cleanup when possible.
+- [x] Add TUI controls for eligible external Memory operations exposed by the current Run/phase, routed through the canonical Engine control ingress from Milestone 15; preserve the single-active-Run invariant, use trusted resolved scope only, render typed success/error outcomes, and do not present these controls as model semantic actions.
 
 ### Milestone 19F: Trace, Detail, Memory, and Reports Panels
 > Scope note: add secondary observability and inspection panels around the primary Run surface. This chunk owns session trace tail, run-specific trace detail, Memory activity, Reports rendering, and strict trace-content-policy enforcement.

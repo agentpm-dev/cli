@@ -118,6 +118,9 @@ fn run_shell_loop(
                 KeyCode::Esc if app.focus == TuiFocus::Composer => {
                     app.focus = TuiFocus::Panel(VisiblePanel::Run)
                 }
+                _ if shell_quit_requested(app, key.code, key.modifiers) && app.is_run_active() => {
+                    app.request_run_cancel();
+                }
                 _ if shell_quit_requested(app, key.code, key.modifiers) => break,
                 KeyCode::Enter if app.can_send_message() => start_run_from_composer(app),
                 KeyCode::Enter if app.composer_available() => app.focus = TuiFocus::Composer,
@@ -135,8 +138,20 @@ fn run_shell_loop(
                 _ if app.focus == TuiFocus::Composer => {}
                 KeyCode::PageUp => app.page_focused_panel(PanelPageDirection::Next),
                 KeyCode::PageDown => app.page_focused_panel(PanelPageDirection::Previous),
+                KeyCode::Char('a') | KeyCode::Char('A') if app.can_decide_approval() => {
+                    app.record_approval_decision(TuiApprovalDecision::Approve);
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') if app.can_decide_approval() => {
+                    app.record_approval_decision(TuiApprovalDecision::Deny);
+                }
                 KeyCode::Char('c') | KeyCode::Char('C') if app.can_cancel_run() => {
                     app.request_run_cancel();
+                }
+                KeyCode::Char('x') | KeyCode::Char('X') if app.can_invoke_memory_operation() => {
+                    app.invoke_selected_memory_operation();
+                }
+                KeyCode::Char(']') if app.can_invoke_memory_operation() => {
+                    app.cycle_memory_operation();
                 }
                 KeyCode::Char('o') | KeyCode::Char('O') if app.has_latest_output() => {
                     app.open_output_viewer();
@@ -191,11 +206,15 @@ fn shell_quit_requested(app: &TuiApp, code: KeyCode, modifiers: KeyModifiers) ->
 
 fn poll_run_result(app: &mut TuiApp) {
     let mut finished = None;
+    let mut final_approval_control = None;
+    let mut final_memory_operation_control = None;
     if let TuiState::Running {
         snapshot,
         receiver,
         progress,
         events,
+        approvals,
+        memory_controls,
         ..
     } = &mut app.state
     {
@@ -203,16 +222,30 @@ fn poll_run_result(app: &mut TuiApp) {
         snapshot.run.transcript = events.transcript();
         snapshot.run.latest_output = events.latest_phase_output();
         snapshot.run.usage = events.live_run_usage();
+        snapshot.run.approval = approvals.pending();
+        snapshot.run.approval_control = approvals.snapshot();
+        snapshot.run.status = if snapshot.run.approval.is_some() {
+            TuiRunStatus::PendingApproval
+        } else {
+            TuiRunStatus::Active
+        };
+        snapshot.run.memory_operation_control = memory_controls.snapshot();
+        snapshot.run.memory_operations =
+            memory_controls.operations_for_phase(snapshot.run.phase_id.as_deref());
         if let Some(phase_id) = events.current_phase_id()
             && snapshot.run.phase_id.as_deref() != Some(phase_id.as_str())
         {
             snapshot.run.phase_id = Some(phase_id);
             snapshot.run.phase_objective = None;
+            snapshot.run.memory_operations =
+                memory_controls.operations_for_phase(snapshot.run.phase_id.as_deref());
         }
         loop {
             match receiver.try_recv() {
                 Ok(TuiRunMessage::Progress(item)) => progress.push(item),
                 Ok(TuiRunMessage::Finished(result)) => {
+                    final_approval_control = approvals.snapshot();
+                    final_memory_operation_control = memory_controls.snapshot();
                     finished = Some(*result);
                     break;
                 }
@@ -225,15 +258,28 @@ fn poll_run_result(app: &mut TuiApp) {
         }
     }
     if let Some(result) = finished {
-        app.run_error = result.error;
+        app.run_error = result.error.clone();
+        let mut controller = result.controller;
+        if result.error.is_some() && controller.snapshot.run.status != TuiRunStatus::Terminal {
+            terminalize_worker_error_snapshot(&mut controller.snapshot.run);
+        }
+        controller.snapshot.run.approval_control = final_approval_control;
+        controller.snapshot.run.memory_operation_control = final_memory_operation_control;
         app.state = TuiState::Ready {
-            controller: Box::new(result.controller),
+            controller: Box::new(controller),
         };
         app.panel = VisiblePanel::Run;
         app.focus = TuiFocus::Composer;
         app.composer_input.clear();
         app.reconcile_focus();
     }
+}
+
+fn terminalize_worker_error_snapshot(run: &mut TuiRunSnapshot) {
+    run.status = TuiRunStatus::Terminal;
+    run.terminal_status = Some(HarnessTerminalStatus::Failed);
+    run.approval = None;
+    run.memory_operations.clear();
 }
 
 fn start_run_from_composer(app: &mut TuiApp) {
@@ -250,12 +296,18 @@ fn start_run_from_composer(app: &mut TuiApp) {
         return;
     };
     let run_id = allocate_harness_run_id();
+    controller
+        .cancellation_requested
+        .store(false, Ordering::SeqCst);
     let cancel = Arc::clone(&controller.cancellation_requested);
     let events = controller.events.clone();
+    let approvals = TuiApprovalHandle::new();
+    let memory_controls = TuiMemoryControlHandle::new();
     events.reset_run_output();
     let mut snapshot = controller.snapshot().clone();
     snapshot.run.status = TuiRunStatus::Active;
     snapshot.run.run_id = Some(run_id.clone());
+    snapshot.run.run_number = Some(snapshot.usage.started_runs + 1);
     snapshot.run.phase_id = Some("starting".into());
     snapshot.run.started_at = Some(Utc::now());
     snapshot.run.phase_objective = Some("Preparing the Harness services for this Run.".into());
@@ -264,6 +316,8 @@ fn start_run_from_composer(app: &mut TuiApp) {
     snapshot.run.transcript.clear();
     snapshot.run.usage = Default::default();
     snapshot.run.approval = None;
+    snapshot.run.approval_control = None;
+    snapshot.run.memory_operation_control = None;
     snapshot.reports.current_report_path = None;
     snapshot.reports.current_trace_path = None;
     snapshot.reports.current_report = None;
@@ -271,7 +325,13 @@ fn start_run_from_composer(app: &mut TuiApp) {
     snapshot.reports.current_report_error = None;
     snapshot.reports.current_trace_error = None;
     app.assistant_output_page = 0;
-    let receiver = spawn_tui_run_worker(*controller, run_id, input.clone());
+    let receiver = spawn_tui_run_worker(
+        *controller,
+        run_id,
+        input.clone(),
+        approvals.clone(),
+        memory_controls.clone(),
+    );
     app.state = TuiState::Running {
         snapshot: Box::new(snapshot),
         receiver,
@@ -280,6 +340,8 @@ fn start_run_from_composer(app: &mut TuiApp) {
         }],
         events,
         cancel,
+        approvals,
+        memory_controls,
     };
     app.panel = VisiblePanel::Run;
     app.focus = TuiFocus::Panel(VisiblePanel::Run);
@@ -554,6 +616,7 @@ struct TuiApp {
     composer_input: String,
     run_error: Option<String>,
     output_viewer: Option<OutputViewerState>,
+    memory_operation_index: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -604,6 +667,8 @@ enum TuiState {
         progress: Vec<TuiRunProgress>,
         events: TuiEventBuffer,
         cancel: Arc<AtomicBool>,
+        approvals: TuiApprovalHandle,
+        memory_controls: TuiMemoryControlHandle,
     },
     Failed {
         message: String,
@@ -637,6 +702,7 @@ impl TuiApp {
             composer_input: String::new(),
             run_error: None,
             output_viewer: None,
+            memory_operation_index: 0,
         }
     }
 
@@ -675,6 +741,7 @@ impl TuiApp {
             composer_input: String::new(),
             run_error: None,
             output_viewer: None,
+            memory_operation_index: 0,
         }
     }
 
@@ -707,6 +774,7 @@ impl TuiApp {
             composer_input: String::new(),
             run_error: Some(message),
             output_viewer: None,
+            memory_operation_index: 0,
         }
     }
 
@@ -745,10 +813,44 @@ impl TuiApp {
     }
 
     fn can_cancel_run(&self) -> bool {
+        self.output_viewer.is_none() && self.resolution_prompt.is_none() && self.is_run_active()
+    }
+
+    fn can_decide_approval(&self) -> bool {
+        self.output_viewer.is_none()
+            && matches!(self.focus, TuiFocus::Panel(VisiblePanel::Run))
+            && self.panel == VisiblePanel::Run
+            && self
+                .run_snapshot()
+                .is_some_and(|run| run.approval.is_some())
+    }
+
+    fn selected_memory_operation(&self) -> Option<TuiMemoryOperationSnapshot> {
+        let operations = &self.run_snapshot()?.memory_operations;
+        if operations.is_empty() {
+            return None;
+        }
+        operations
+            .get(self.memory_operation_index % operations.len())
+            .cloned()
+    }
+
+    fn can_invoke_memory_operation(&self) -> bool {
         self.output_viewer.is_none()
             && matches!(self.focus, TuiFocus::Panel(VisiblePanel::Run))
             && self.panel == VisiblePanel::Run
             && self.is_run_active()
+            && self.selected_memory_operation().is_some()
+    }
+
+    fn cycle_memory_operation(&mut self) {
+        let count = self
+            .run_snapshot()
+            .map(|run| run.memory_operations.len())
+            .unwrap_or_default();
+        if count > 1 {
+            self.memory_operation_index = (self.memory_operation_index + 1) % count;
+        }
     }
 
     fn focus_panel(&mut self, panel: VisiblePanel) {
@@ -855,10 +957,48 @@ impl TuiApp {
             } => {
                 cancel.store(true, Ordering::SeqCst);
                 progress.push(TuiRunProgress {
-                    message: "Cancellation requested.".into(),
+                    message: "Cancellation requested; waiting for the active operation to stop."
+                        .into(),
                 });
             }
             TuiState::Loading { .. } | TuiState::Failed { .. } => {}
+        }
+    }
+
+    fn record_approval_decision(&mut self, decision: TuiApprovalDecision) {
+        let TuiState::Running {
+            approvals,
+            progress,
+            ..
+        } = &mut self.state
+        else {
+            return;
+        };
+        match approvals.decide(decision) {
+            Ok(ack) => progress.push(TuiRunProgress {
+                message: ack.message,
+            }),
+            Err(err) => self.run_error = Some(format!("{err:#}")),
+        }
+    }
+
+    fn invoke_selected_memory_operation(&mut self) {
+        let Some(operation) = self.selected_memory_operation() else {
+            return;
+        };
+        let TuiState::Running {
+            memory_controls,
+            progress,
+            ..
+        } = &mut self.state
+        else {
+            return;
+        };
+        match memory_controls.request(&operation) {
+            Ok(ack) => progress.push(TuiRunProgress {
+                message: ack.message,
+            }),
+            Err(err) => self.run_error = Some(format!("{err:#}")),
         }
     }
 
@@ -1157,17 +1297,6 @@ pub(super) mod test_support {
         controller.snapshot()
     }
 
-    pub(super) fn test_controller_with_checkpoint() -> TuiSessionController {
-        let mut manifest = test_loop_manifest();
-        manifest.r#loop.checkpoints = vec![crate::manifest::LoopCheckpoint {
-            id: "approve-response".into(),
-            r#type: "approval".into(),
-            before_phase: "start".into(),
-            on_reject: "$abort".into(),
-        }];
-        test_controller_with_loop(manifest)
-    }
-
     pub(super) fn test_controller_with_loop(
         loop_manifest: crate::manifest::LoopManifest,
     ) -> TuiSessionController {
@@ -1389,14 +1518,11 @@ mod tests {
     use super::test_support::*;
     use super::*;
     use crate::harness_config::HarnessConfigSourceKind;
-    use crate::harness_engine::{HarnessRuntimeServices, RuntimeTerminalResult};
+    use crate::harness_engine::{MemoryOperationInvocationResult, RuntimeTerminalResult};
     use crate::harness_observability::{
         HarnessEventPayload, HarnessEventSink, HarnessEventType, RunOutputPaths,
     };
     use crate::harness_plan::{HarnessPlanProgress, HarnessPlanProgressStage};
-    use crate::harness_runtime::action::ScriptedActionDispatcher;
-    use crate::harness_runtime::approval::ScriptedApprovalController;
-    use crate::harness_runtime::model::ScriptedModelRuntime;
     use std::collections::BTreeMap;
     use std::sync::mpsc;
 
@@ -1862,82 +1988,156 @@ mod tests {
                 .iter()
                 .any(|event| event.event_type == HarnessEventType::CancellationRequested)
         );
+    }
+
+    #[test]
+    fn tui_approval_handle_queues_one_engine_decision_without_events() {
+        let handle = TuiApprovalHandle::new();
         assert!(
-            controller
-                .record_approval_decision(TuiApprovalDecision::Approve)
-                .is_err()
+            handle
+                .decide(TuiApprovalDecision::Approve)
+                .unwrap_err()
+                .to_string()
+                .contains("pending approval")
         );
-        assert!(
-            controller
-                .record_approval_decision(TuiApprovalDecision::Deny)
-                .is_err()
+        handle.set_pending(TuiApprovalSnapshot {
+            checkpoint_id: "approve-response".into(),
+            before_phase: "respond".into(),
+        });
+
+        let ack = handle.decide(TuiApprovalDecision::Approve).unwrap();
+        assert!(ack.accepted);
+        assert!(ack.message.contains(TUI_APPROVAL_STATUS_APPROVED));
+        assert_eq!(
+            handle.snapshot().map(|snapshot| snapshot.status),
+            Some(TUI_APPROVAL_STATUS_APPROVED.into())
+        );
+        assert_eq!(handle.take_decision(), Some(TuiApprovalDecision::Approve));
+        assert!(handle.take_decision().is_none());
+    }
+
+    #[test]
+    fn running_app_routes_approval_decision_to_worker_handle() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let snapshot = ready_snapshot(&app).clone();
+        let (_sender, receiver) = mpsc::channel();
+        let approvals = TuiApprovalHandle::new();
+        approvals.set_pending(TuiApprovalSnapshot {
+            checkpoint_id: "approve-response".into(),
+            before_phase: "respond".into(),
+        });
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: Vec::new(),
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: approvals.clone(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+        app.focus = TuiFocus::Panel(VisiblePanel::Run);
+        poll_run_result(&mut app);
+        assert!(app.can_decide_approval());
+
+        app.record_approval_decision(TuiApprovalDecision::Deny);
+        assert_eq!(approvals.take_decision(), Some(TuiApprovalDecision::Deny));
+        poll_run_result(&mut app);
+        assert_eq!(
+            app.run_snapshot()
+                .and_then(|run| run.approval_control.as_ref())
+                .map(|control| control.status.as_str()),
+            Some(TUI_APPROVAL_STATUS_DENIED)
         );
     }
 
     #[test]
-    fn approval_control_does_not_fabricate_engine_approval_events() {
-        let mut controller = test_controller_with_checkpoint();
-        let mut model = ScriptedModelRuntime::new(Vec::new());
-        let mut dispatcher = ScriptedActionDispatcher::default();
-        let mut knowledge = crate::harness_runtime::NoopKnowledgeRuntime;
-        let mut approvals = ScriptedApprovalController::default();
-        approvals.push(
-            "approve-response",
-            crate::harness_runtime::ApprovalDecision::Pending,
-        );
-        let mut hooks = crate::harness_runtime::NoopHookRuntime;
-        let mut services = HarnessRuntimeServices {
-            model: &mut model,
-            dispatcher: &mut dispatcher,
-            knowledge: &mut knowledge,
-            memory: None,
-            embedding_provider: None,
-            approvals: &mut approvals,
-            hooks: &mut hooks,
-            service_events: None,
-        };
-        let paths = RunOutputPaths::resolve(
-            &std::env::temp_dir().join("agentpm-tui-approval-test-state"),
-            "run-approval",
-            None,
-        )
-        .unwrap();
+    fn worker_error_terminalizes_active_running_snapshot() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let mut running_snapshot = ready_snapshot(&app).clone();
+        running_snapshot.run.status = TuiRunStatus::Active;
+        running_snapshot.run.run_id = Some("run-error".into());
+        running_snapshot.run.phase_id = Some("respond".into());
 
-        controller
-            .start_run_with_services(
-                "run-approval".into(),
-                "requires approval",
-                &paths,
-                &mut services,
-            )
+        let mut finished_controller = test_controller();
+        finished_controller.snapshot.run = running_snapshot.run.clone();
+        finished_controller
+            .cancellation_requested
+            .store(true, Ordering::SeqCst);
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(TuiRunMessage::Finished(Box::new(TuiRunWorkerResult {
+                controller: finished_controller,
+                error: Some("approval `approve-response` failed: cancelled".into()),
+            })))
+            .unwrap();
+
+        app.state = TuiState::Running {
+            snapshot: Box::new(running_snapshot),
+            receiver,
+            progress: Vec::new(),
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(true)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+
+        poll_run_result(&mut app);
+
+        assert_eq!(
+            app.run_error.as_deref(),
+            Some("approval `approve-response` failed: cancelled")
+        );
+        let run = app.run_snapshot().expect("run snapshot");
+        assert_eq!(run.status, TuiRunStatus::Terminal);
+        assert_eq!(run.terminal_status, Some(HarnessTerminalStatus::Failed));
+        assert!(!app.can_cancel_run());
+
+        app.composer_input = "start another run".into();
+        start_run_from_composer(&mut app);
+        let TuiState::Running { cancel, .. } = &app.state else {
+            panic!("new run should enter running state");
+        };
+        assert!(
+            !cancel.load(Ordering::SeqCst),
+            "new runs must clear any previous cancellation request"
+        );
+    }
+
+    #[test]
+    fn memory_control_handle_queues_one_external_operation_at_a_time() {
+        let handle = TuiMemoryControlHandle::new();
+        let operation = TuiMemoryOperationSnapshot {
+            package: "@zack/memory".into(),
+            operation: "delete_user_memory".into(),
+            operation_type: "delete".into(),
+            description: "Delete user memory.".into(),
+        };
+        let first = handle.request(&operation).unwrap();
+        assert!(first.accepted);
+        assert!(
+            handle
+                .request(&operation)
+                .unwrap_err()
+                .to_string()
+                .contains("busy")
+        );
+        let queued = handle.take().expect("queued operation");
+        assert_eq!(queued.package, "@zack/memory");
+        assert_eq!(queued.operation, "delete_user_memory");
+        handle
+            .complete(Ok(MemoryOperationInvocationResult {
+                package: "@zack/memory".into(),
+                package_version: "0.1.0".into(),
+                operation: "delete_user_memory".into(),
+                identity: "@zack/memory/operations/delete_user_memory".into(),
+                count: 2,
+            }))
             .unwrap();
         assert_eq!(
-            controller.snapshot.run.status,
-            TuiRunStatus::PendingApproval
-        );
-
-        let err = controller
-            .record_approval_decision(TuiApprovalDecision::Approve)
-            .unwrap_err();
-        assert!(err.to_string().contains("ApprovalController"));
-        assert!(
-            controller
-                .snapshot
-                .trace
-                .events
-                .iter()
-                .any(|event| event.event_type == HarnessEventType::ApprovalRequested)
-        );
-        assert!(
-            !controller
-                .snapshot
-                .trace
-                .events
-                .iter()
-                .any(|event| matches!(
-                    event.event_type,
-                    HarnessEventType::ApprovalApproved | HarnessEventType::ApprovalDenied
-                ))
+            handle.snapshot().map(|snapshot| snapshot.status),
+            Some(TUI_MEMORY_CONTROL_STATUS_COMPLETED.into())
         );
     }
 

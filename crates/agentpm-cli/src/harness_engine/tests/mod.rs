@@ -95,6 +95,27 @@ fn limits() -> HarnessRuntimeLimits {
     }
 }
 
+#[test]
+fn abandon_nonterminal_active_run_after_runtime_error_allows_next_run() {
+    let mut session = HarnessSession::new();
+    session
+        .start_run_with_id("run-stale".into(), "first input".into())
+        .unwrap();
+    assert_eq!(
+        session.active_run().map(RunState::run_id),
+        Some("run-stale")
+    );
+
+    session.abandon_nonterminal_active_run_after_runtime_error();
+    assert!(session.active_run().is_none());
+
+    let next_run_id = session
+        .start_run_with_id("run-next".into(), "second input".into())
+        .unwrap();
+    assert_eq!(next_run_id, "run-next");
+    assert_eq!(session.active_run().map(RunState::run_id), Some("run-next"));
+}
+
 fn base_loop() -> LoopManifest {
     LoopManifest {
         kind: "loop".into(),
