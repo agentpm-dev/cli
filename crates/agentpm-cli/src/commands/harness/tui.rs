@@ -113,104 +113,113 @@ fn run_shell_loop(
             )? {
                 continue;
             }
-            app.reconcile_focus();
-            match key.code {
-                KeyCode::Esc if app.focus == TuiFocus::Composer => {
-                    app.focus = TuiFocus::Panel(VisiblePanel::Run)
-                }
-                _ if shell_quit_requested(app, key.code, key.modifiers) && app.is_run_active() => {
-                    app.request_run_cancel();
-                }
-                _ if shell_quit_requested(app, key.code, key.modifiers) => break,
-                KeyCode::Enter if app.can_send_message() => start_run_from_composer(app),
-                KeyCode::Enter if app.composer_available() => app.focus = TuiFocus::Composer,
-                KeyCode::Backspace if app.can_send_message() => {
-                    app.composer_input.pop();
-                }
-                KeyCode::Char(ch)
-                    if app.can_send_message() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
-                    app.composer_input.push(ch);
-                }
-                KeyCode::BackTab => app.focus_previous(),
-                KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => app.focus_previous(),
-                KeyCode::Tab => app.focus_next(),
-                _ if app.focus == TuiFocus::Composer => {}
-                KeyCode::Up if app.focus == TuiFocus::Panel(VisiblePanel::Trace) => {
-                    app.move_trace_selection(TraceSelectionDirection::Previous)
-                }
-                KeyCode::Down if app.focus == TuiFocus::Panel(VisiblePanel::Trace) => {
-                    app.move_trace_selection(TraceSelectionDirection::Next)
-                }
-                KeyCode::Enter if app.focus == TuiFocus::Panel(VisiblePanel::Trace) => {
-                    app.open_trace_viewer()
-                }
-                KeyCode::PageUp => app.page_focused_panel(PanelPageDirection::Next),
-                KeyCode::PageDown => app.page_focused_panel(PanelPageDirection::Previous),
-                KeyCode::Char('a') | KeyCode::Char('A') if app.can_decide_approval() => {
-                    app.record_approval_decision(TuiApprovalDecision::Approve);
-                }
-                KeyCode::Char('d') | KeyCode::Char('D') if app.can_decide_approval() => {
-                    app.record_approval_decision(TuiApprovalDecision::Deny);
-                }
-                KeyCode::Char('c') | KeyCode::Char('C') if app.can_cancel_run() => {
-                    app.request_run_cancel();
-                }
-                KeyCode::Char('x') | KeyCode::Char('X') if app.can_invoke_memory_operation() => {
-                    app.invoke_selected_memory_operation();
-                }
-                KeyCode::Char(']') if app.can_invoke_memory_operation() => {
-                    app.cycle_memory_operation();
-                }
-                KeyCode::Char('o') | KeyCode::Char('O') if app.can_open_output_viewer() => {
-                    app.open_output_viewer();
-                }
-                KeyCode::Char('d') | KeyCode::Char('D')
-                    if app.focus == TuiFocus::Panel(VisiblePanel::Workspace)
-                        && app.has_workspace_details() =>
-                {
-                    app.workspace_detail_expanded = !app.workspace_detail_expanded
-                }
-                KeyCode::Char('d') | KeyCode::Char('D')
-                    if app.focus == TuiFocus::Panel(VisiblePanel::Trace) =>
-                {
-                    app.open_trace_viewer()
-                }
-                KeyCode::Char('d') | KeyCode::Char('D') if app.has_secondary_details() => {
-                    app.detail_expanded = !app.detail_expanded
-                }
-                KeyCode::Char('a') | KeyCode::Char('A') if app.can_prompt_agent_selector() => {
-                    app.open_resolution_prompt(ResolutionPromptKind::AgentSelector)
-                }
-                KeyCode::Char('p') | KeyCode::Char('P') if app.can_prompt_model() => {
-                    app.open_resolution_prompt(ResolutionPromptKind::Model)
-                }
-                KeyCode::Char('s') | KeyCode::Char('S') if app.can_prompt_scope() => {
-                    app.open_resolution_prompt(ResolutionPromptKind::Scope)
-                }
-                KeyCode::Char('1') if app.layout_mode == LayoutMode::Single => {
-                    app.focus_panel(VisiblePanel::Workspace)
-                }
-                KeyCode::Char('2') => app.focus_panel(VisiblePanel::Run),
-                KeyCode::Char('3') => app.focus_panel(VisiblePanel::Trace),
-                KeyCode::Char('4') => app.focus_panel(VisiblePanel::Memory),
-                KeyCode::Char('5') => app.focus_panel(VisiblePanel::Reports),
-                KeyCode::Char('6') if app.layout_mode != LayoutMode::Wide => {
-                    app.focus_panel(VisiblePanel::EventStream)
-                }
-                KeyCode::Char('w') | KeyCode::Char('W')
-                    if app.layout_mode == LayoutMode::Single =>
-                {
-                    app.focus_panel(VisiblePanel::Workspace)
-                }
-                KeyCode::Char('r') | KeyCode::Char('R') => app.focus_panel(VisiblePanel::Run),
-                KeyCode::Char('t') | KeyCode::Char('T') => app.focus_panel(VisiblePanel::Trace),
-                KeyCode::Char('m') | KeyCode::Char('M') => app.focus_panel(VisiblePanel::Memory),
-                _ => {}
+            if handle_shell_key(app, key.code, key.modifiers) == ShellKeyOutcome::Quit {
+                break;
             }
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShellKeyOutcome {
+    Continue,
+    Quit,
+}
+
+fn handle_shell_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> ShellKeyOutcome {
+    app.reconcile_focus();
+    match code {
+        KeyCode::Esc if app.focus == TuiFocus::Composer => {
+            app.focus = TuiFocus::Panel(VisiblePanel::Run)
+        }
+        _ if shell_quit_requested(app, code, modifiers) && app.is_run_active() => {
+            app.request_run_cancel();
+        }
+        _ if shell_quit_requested(app, code, modifiers) => return ShellKeyOutcome::Quit,
+        KeyCode::Enter if app.can_send_message() => start_run_from_composer(app),
+        KeyCode::Enter if app.composer_available() => app.focus = TuiFocus::Composer,
+        KeyCode::Backspace if app.can_send_message() => {
+            app.composer_input.pop();
+        }
+        KeyCode::Char(ch)
+            if app.can_send_message() && !modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            app.composer_input.push(ch);
+        }
+        KeyCode::BackTab => app.focus_previous(),
+        KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => app.focus_previous(),
+        KeyCode::Tab => app.focus_next(),
+        _ if app.focus == TuiFocus::Composer => {}
+        KeyCode::Up if app.focus == TuiFocus::Panel(VisiblePanel::Trace) => {
+            app.move_trace_selection(TraceSelectionDirection::Previous)
+        }
+        KeyCode::Down if app.focus == TuiFocus::Panel(VisiblePanel::Trace) => {
+            app.move_trace_selection(TraceSelectionDirection::Next)
+        }
+        KeyCode::Enter if app.focus == TuiFocus::Panel(VisiblePanel::Trace) => {
+            app.open_trace_viewer()
+        }
+        KeyCode::PageUp => app.page_focused_panel(PanelPageDirection::Next),
+        KeyCode::PageDown => app.page_focused_panel(PanelPageDirection::Previous),
+        KeyCode::Char('a') | KeyCode::Char('A') if app.can_decide_approval() => {
+            app.record_approval_decision(TuiApprovalDecision::Approve);
+        }
+        KeyCode::Char('d') | KeyCode::Char('D') if app.can_decide_approval() => {
+            app.record_approval_decision(TuiApprovalDecision::Deny);
+        }
+        KeyCode::Char('c') | KeyCode::Char('C') if app.can_cancel_run() => {
+            app.request_run_cancel();
+        }
+        KeyCode::Char('x') | KeyCode::Char('X') if app.can_invoke_memory_operation() => {
+            app.invoke_selected_memory_operation();
+        }
+        KeyCode::Char(']') if app.can_invoke_memory_operation() => {
+            app.cycle_memory_operation();
+        }
+        KeyCode::Char('o') | KeyCode::Char('O') if app.can_open_output_viewer() => {
+            app.open_output_viewer();
+        }
+        KeyCode::Char('d') | KeyCode::Char('D')
+            if app.focus == TuiFocus::Panel(VisiblePanel::Workspace)
+                && app.has_workspace_details() =>
+        {
+            app.workspace_detail_expanded = !app.workspace_detail_expanded
+        }
+        KeyCode::Char('d') | KeyCode::Char('D')
+            if app.focus == TuiFocus::Panel(VisiblePanel::Trace) =>
+        {
+            app.open_trace_viewer()
+        }
+        KeyCode::Char('d') | KeyCode::Char('D') if app.has_secondary_details() => {
+            app.detail_expanded = !app.detail_expanded
+        }
+        KeyCode::Char('a') | KeyCode::Char('A') if app.can_prompt_agent_selector() => {
+            app.open_resolution_prompt(ResolutionPromptKind::AgentSelector)
+        }
+        KeyCode::Char('p') | KeyCode::Char('P') if app.can_prompt_model() => {
+            app.open_resolution_prompt(ResolutionPromptKind::Model)
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') if app.can_prompt_scope() => {
+            app.open_resolution_prompt(ResolutionPromptKind::Scope)
+        }
+        KeyCode::Char('1') => app.focus_panel(VisiblePanel::Workspace),
+        KeyCode::Char('2') => app.focus_panel(VisiblePanel::Run),
+        KeyCode::Char('3') => app.focus_panel(VisiblePanel::Trace),
+        KeyCode::Char('4') => app.focus_panel(VisiblePanel::Memory),
+        KeyCode::Char('5') => app.focus_panel(VisiblePanel::Reports),
+        KeyCode::Char('6') if app.layout_mode != LayoutMode::Wide => {
+            app.focus_panel(VisiblePanel::EventStream)
+        }
+        KeyCode::Char('w') | KeyCode::Char('W') if app.layout_mode == LayoutMode::Single => {
+            app.focus_panel(VisiblePanel::Workspace)
+        }
+        KeyCode::Char('r') | KeyCode::Char('R') => app.focus_panel(VisiblePanel::Run),
+        KeyCode::Char('t') | KeyCode::Char('T') => app.focus_panel(VisiblePanel::Trace),
+        KeyCode::Char('m') | KeyCode::Char('M') => app.focus_panel(VisiblePanel::Memory),
+        _ => {}
+    }
+    ShellKeyOutcome::Continue
 }
 
 fn shell_quit_requested(app: &TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
@@ -840,6 +849,10 @@ impl TuiApp {
         self.output_viewer.is_none()
             && self.resolution_prompt.is_none()
             && self.panel == VisiblePanel::Run
+            && matches!(
+                &self.state,
+                TuiState::Ready { controller } if controller.plan.loop_package.is_some()
+            )
             && matches!(
                 self.run_snapshot().map(|run| run.status),
                 Some(TuiRunStatus::Idle | TuiRunStatus::Terminal)
@@ -1804,6 +1817,23 @@ mod tests {
             KeyCode::Char('q'),
             KeyModifiers::empty()
         ));
+    }
+
+    #[test]
+    fn digit_key_focuses_workspace_in_wide_layout() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        app.layout_mode = LayoutMode::Wide;
+        app.focus = TuiFocus::Panel(VisiblePanel::Run);
+        app.panel = VisiblePanel::Run;
+
+        assert_eq!(
+            handle_shell_key(&mut app, KeyCode::Char('1'), KeyModifiers::empty()),
+            ShellKeyOutcome::Continue
+        );
+
+        assert_eq!(app.focus, TuiFocus::Panel(VisiblePanel::Workspace));
+        assert_eq!(app.panel, VisiblePanel::Run);
     }
 
     #[test]

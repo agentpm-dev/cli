@@ -16,12 +16,14 @@ pub(super) fn render_app(frame: &mut Frame<'_>, app: &mut TuiApp) {
     app.layout_mode = layout_mode_for_width(area.width);
     app.reconcile_focus();
 
+    let top_bar_height = top_bar_height(area.width, app);
+    let keybar_height = keybar_height(area.width, app);
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(top_bar_height),
             Constraint::Min(5),
-            Constraint::Length(4),
+            Constraint::Length(keybar_height),
         ])
         .split(area);
 
@@ -117,7 +119,43 @@ fn event_type_label(event_type: HarnessEventType) -> String {
         .unwrap_or_else(|| "unknown_event".into())
 }
 
-fn render_top_bar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+fn bar_content_width(width: u16) -> usize {
+    width
+        .saturating_sub(BAR_HORIZONTAL_PADDING.saturating_mul(2))
+        .max(1) as usize
+}
+
+fn line_width(line: &Line<'_>) -> usize {
+    span_width(&line.spans)
+}
+
+fn span_width(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(|span| span.content.chars().count()).sum()
+}
+
+fn wrapped_row_count(width: usize, content_width: usize) -> u16 {
+    let content_width = content_width.max(1);
+    width.div_ceil(content_width).max(1) as u16
+}
+
+fn top_bar_height(width: u16, app: &TuiApp) -> u16 {
+    if top_bar_content_wraps(width, app) {
+        4
+    } else {
+        3
+    }
+}
+
+fn top_bar_content_wraps(width: u16, app: &TuiApp) -> bool {
+    let (left_spans, right_line) = top_bar_content(app);
+    let content_width = bar_content_width(width);
+    span_width(&left_spans)
+        .saturating_add(line_width(&right_line))
+        .saturating_add(2)
+        > content_width
+}
+
+fn top_bar_content(app: &TuiApp) -> (Vec<Span<'static>>, Line<'static>) {
     let (branding, trace_label) = match &app.state {
         TuiState::Ready { controller } => {
             let plan = controller.plan();
@@ -142,33 +180,6 @@ fn render_top_bar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
         TuiState::Running { .. } => (String::new(), "[Trace: Normal]".into()),
         TuiState::Failed { .. } => (String::new(), "[Trace: Unavailable]".into()),
     };
-
-    let block = Block::default()
-        .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(PANEL_BORDER_SUBTLE));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    let content_area = if inner.height > 1 {
-        Rect {
-            y: inner.y + 1,
-            height: 1,
-            ..inner
-        }
-    } else {
-        inner
-    };
-
-    let content_area = content_area.inner(Margin {
-        horizontal: BAR_HORIZONTAL_PADDING,
-        vertical: 0,
-    });
-    let right_width = (trace_label.chars().count() + "● Session Active  ".len() + 2)
-        .min(content_area.width.saturating_sub(8) as usize) as u16;
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(12), Constraint::Length(right_width)])
-        .split(content_area);
-
     let mut left_spans = vec![Span::styled(
         PRODUCT_TITLE,
         Style::default()
@@ -182,7 +193,6 @@ fn render_top_bar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
             Style::default().fg(app.accent).add_modifier(Modifier::BOLD),
         ));
     }
-
     let right_line = Line::from(vec![
         Span::styled("●", Style::default().fg(STATUS_READY)),
         Span::styled(
@@ -194,6 +204,61 @@ fn render_top_bar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
         Span::raw("  "),
         Span::styled(trace_label, Style::default().fg(TEXT_MUTED)),
     ]);
+    (left_spans, right_line)
+}
+
+fn render_top_bar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let (left_spans, right_line) = top_bar_content(app);
+    let block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(PANEL_BORDER_SUBTLE));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let content_area = inner.inner(Margin {
+        horizontal: BAR_HORIZONTAL_PADDING,
+        vertical: 0,
+    });
+
+    if top_bar_content_wraps(area.width, app) {
+        let first_row = Rect {
+            height: 1,
+            ..content_area
+        };
+        let second_row = Rect {
+            y: content_area
+                .y
+                .saturating_add(content_area.height.saturating_sub(1)),
+            height: 1,
+            ..content_area
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(left_spans)).alignment(Alignment::Left),
+            first_row,
+        );
+        frame.render_widget(
+            Paragraph::new(right_line)
+                .alignment(Alignment::Left)
+                .style(Style::default().fg(TEXT_MUTED)),
+            second_row,
+        );
+        return;
+    }
+
+    let content_area = if content_area.height > 1 {
+        Rect {
+            y: content_area.y + content_area.height / 2,
+            height: 1,
+            ..content_area
+        }
+    } else {
+        content_area
+    };
+    let right_width =
+        (line_width(&right_line) + 2).min(content_area.width.saturating_sub(8) as usize) as u16;
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(12), Constraint::Length(right_width)])
+        .split(content_area);
 
     frame.render_widget(
         Paragraph::new(Line::from(left_spans)).alignment(Alignment::Left),
@@ -426,7 +491,7 @@ fn render_run_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
                 chunks[4],
                 " Run Unavailable ",
                 vec![Line::from(styled(
-                    "Fix preflight errors, then restart the Harness.",
+                    "Resolve preflight items before starting a Run.",
                     Color::Red,
                 ))],
                 Color::Red,
@@ -452,6 +517,7 @@ fn run_visual_state(app: &TuiApp) -> RunVisualState {
         TuiState::Ready { controller } => match controller.snapshot().run.status {
             TuiRunStatus::Active | TuiRunStatus::PendingApproval => RunVisualState::Active,
             TuiRunStatus::Terminal => RunVisualState::Terminal,
+            TuiRunStatus::Idle if controller.plan.loop_package.is_none() => RunVisualState::Failed,
             TuiRunStatus::Idle => RunVisualState::NoRun,
         },
     }
@@ -1032,26 +1098,7 @@ fn panel_title_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
-fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(PANEL_BORDER_SUBTLE));
-    let inner = block.inner(area);
-    let content_area = if inner.height > 1 {
-        Rect {
-            y: inner.y + inner.height / 2,
-            height: 1,
-            ..inner
-        }
-    } else {
-        inner
-    };
-    let content_area = content_area.inner(Margin {
-        horizontal: BAR_HORIZONTAL_PADDING,
-        vertical: 0,
-    });
-    frame.render_widget(block, area);
-
+fn keybar_spans(app: &TuiApp) -> Vec<Span<'static>> {
     let mut spans = if app.output_viewer.is_some() {
         vec![
             key_span("↑/↓", app.accent),
@@ -1071,32 +1118,17 @@ fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
             Span::raw(" Prev  "),
         ]
     };
-    if app.output_viewer.is_some() {
-        let line = Line::from(spans);
-        frame.render_widget(
-            Paragraph::new(line)
-                .alignment(Alignment::Left)
-                .style(Style::default().fg(TEXT_MUTED)),
-            content_area,
-        );
-        return;
-    }
     if app.focus == TuiFocus::Composer {
-        spans = vec![
+        return vec![
             key_span("Enter", app.accent),
             Span::raw(" Send  "),
             key_span("Esc", app.accent),
             Span::raw(" Navigation  "),
             Span::raw("Focus: Composer"),
         ];
-        let line = Line::from(spans);
-        frame.render_widget(
-            Paragraph::new(line)
-                .alignment(Alignment::Left)
-                .style(Style::default().fg(TEXT_MUTED)),
-            content_area,
-        );
-        return;
+    }
+    if app.output_viewer.is_some() {
+        return spans;
     }
     if app.composer_available() {
         spans.extend([key_span("Enter", app.accent), Span::raw(" Compose  ")]);
@@ -1128,9 +1160,6 @@ fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
     if app.can_open_output_viewer() {
         spans.extend([key_span("O", app.accent), Span::raw(" Output  ")]);
     }
-    if app.layout_mode == LayoutMode::Single {
-        spans.extend([key_span("1", app.accent), Span::raw(" Workspace  ")]);
-    }
     if app.focus == TuiFocus::Panel(VisiblePanel::Workspace) && app.has_workspace_details() {
         spans.extend([key_span("D", app.accent), Span::raw(" Details  ")]);
     }
@@ -1147,6 +1176,8 @@ fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
         spans.extend([key_span("S", app.accent), Span::raw(" Scope  ")]);
     }
     spans.extend([
+        key_span("1", app.accent),
+        Span::raw(" Workspace  "),
         key_span("2", app.accent),
         Span::raw(" Run  "),
         key_span("3", app.accent),
@@ -1164,44 +1195,150 @@ fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
         ]);
     }
     spans.push(Span::raw(format!("    Focus: {}", app.focus.label())));
-    let status_text = bottom_run_status_text(app);
+    spans
+}
+
+fn keybar_height(width: u16, app: &TuiApp) -> u16 {
+    let content_width = bar_content_width(width);
+    let spans = keybar_spans(app);
+    let spans_width = span_width(&spans);
+    let status_text = keybar_status_text(app);
+    let status_width = status_text.as_ref().map(|text| text.chars().count());
+    if status_width.is_some_and(|status_width| {
+        keybar_can_render_side_by_side(content_width, spans_width, status_width)
+    }) {
+        return 4;
+    }
+    let left_rows = wrapped_row_count(spans_width, content_width);
+    let status_rows = status_width
+        .map(|width| wrapped_row_count(width, content_width))
+        .unwrap_or(0);
+    left_rows
+        .saturating_add(status_rows)
+        .saturating_add(1)
+        .clamp(4, 8)
+}
+
+fn keybar_status_text(app: &TuiApp) -> Option<String> {
+    if app.output_viewer.is_some() || app.focus == TuiFocus::Composer {
+        None
+    } else {
+        bottom_run_status_text(app)
+    }
+}
+
+fn keybar_can_render_side_by_side(
+    content_width: usize,
+    spans_width: usize,
+    status_width: usize,
+) -> bool {
+    content_width > status_width.saturating_add(48)
+        && spans_width <= content_width.saturating_sub(status_width.saturating_add(2))
+}
+
+fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(PANEL_BORDER_SUBTLE));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let content_area = inner.inner(Margin {
+        horizontal: BAR_HORIZONTAL_PADDING,
+        vertical: 0,
+    });
+
+    let spans = keybar_spans(app);
+    let status_text = keybar_status_text(app);
     let status_width = status_text
         .as_ref()
-        .map(|text| text.chars().count() as u16)
+        .map(|text| text.chars().count())
         .unwrap_or(0);
-    let left_area = status_text
+    let spans_width = span_width(&spans);
+    let content_width = content_area.width.max(1) as usize;
+    let side_by_side = status_text
         .as_ref()
-        .filter(|_| content_area.width > status_width.saturating_add(48))
-        .map(|_| Rect {
+        .is_some_and(|_| keybar_can_render_side_by_side(content_width, spans_width, status_width));
+    if side_by_side {
+        let status_width = status_width as u16;
+        let line_area = if content_area.height > 1 {
+            Rect {
+                y: content_area.y + content_area.height / 2,
+                height: 1,
+                ..content_area
+            }
+        } else {
+            content_area
+        };
+        let left_area = Rect {
             width: content_area
                 .width
                 .saturating_sub(status_width.saturating_add(2)),
-            ..content_area
-        })
-        .unwrap_or(content_area);
-    let line = Line::from(spans);
-    frame.render_widget(
-        Paragraph::new(line)
-            .alignment(Alignment::Left)
-            .style(Style::default().fg(TEXT_MUTED)),
-        left_area,
-    );
-    if let Some(status_text) = status_text
-        && content_area.width > status_width.saturating_add(48)
-    {
-        let right_area = Rect {
-            x: content_area
-                .x
-                .saturating_add(content_area.width.saturating_sub(status_width)),
-            width: status_width,
-            ..content_area
+            ..line_area
         };
         frame.render_widget(
-            Paragraph::new(Line::from(status_text))
-                .alignment(Alignment::Right)
+            Paragraph::new(Line::from(spans))
+                .alignment(Alignment::Left)
                 .style(Style::default().fg(TEXT_MUTED)),
-            right_area,
+            left_area,
         );
+        if let Some(status_text) = status_text {
+            let right_area = Rect {
+                x: content_area
+                    .x
+                    .saturating_add(content_area.width.saturating_sub(status_width)),
+                width: status_width,
+                ..line_area
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(status_text))
+                    .alignment(Alignment::Right)
+                    .style(Style::default().fg(TEXT_MUTED)),
+                right_area,
+            );
+        }
+        return;
+    }
+
+    let left_rows = wrapped_row_count(spans_width, content_width)
+        .min(content_area.height)
+        .max(1);
+    let left_area = if status_text.is_none() && left_rows == 1 && content_area.height > 1 {
+        Rect {
+            y: content_area.y + content_area.height / 2,
+            height: 1,
+            ..content_area
+        }
+    } else {
+        Rect {
+            height: left_rows,
+            ..content_area
+        }
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(spans))
+            .alignment(Alignment::Left)
+            .style(Style::default().fg(TEXT_MUTED))
+            .wrap(Wrap { trim: false }),
+        left_area,
+    );
+    if let Some(status_text) = status_text {
+        let status_y = left_area.y.saturating_add(left_area.height);
+        if status_y < content_area.y.saturating_add(content_area.height) {
+            let status_area = Rect {
+                y: status_y,
+                height: content_area
+                    .height
+                    .saturating_sub(status_y.saturating_sub(content_area.y)),
+                ..content_area
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(status_text))
+                    .alignment(Alignment::Right)
+                    .style(Style::default().fg(TEXT_MUTED))
+                    .wrap(Wrap { trim: false }),
+                status_area,
+            );
+        }
     }
 }
 
@@ -2020,12 +2157,15 @@ fn trace_rail_lines(app: &TuiApp, max_lines: usize, max_width: usize) -> Vec<Lin
         TuiState::Failed { .. } => vec![Line::from("preflight_failed")],
         TuiState::Running { snapshot, .. } => {
             let run_ordinals = trace_rail_run_ordinals(&snapshot.trace.events);
-            let visible_events = trace_spaced_item_capacity(max_lines.saturating_sub(1), 1)
+            let visible_events = trace_spaced_item_capacity(max_lines.saturating_sub(2), 1)
                 .min(snapshot.trace.events.len());
             let mut lines = vec![info_line(
                 "",
                 trace_rail_header(visible_events, snapshot.trace.events.len()),
             )];
+            if visible_events > 0 {
+                lines.push(Line::from(""));
+            }
             let visible_events = snapshot
                 .trace
                 .events
@@ -2048,12 +2188,15 @@ fn trace_rail_lines(app: &TuiApp, max_lines: usize, max_width: usize) -> Vec<Lin
         TuiState::Ready { controller } => {
             let snapshot = controller.snapshot();
             let run_ordinals = trace_rail_run_ordinals(&snapshot.trace.events);
-            let visible_events = trace_spaced_item_capacity(max_lines.saturating_sub(1), 1)
+            let visible_events = trace_spaced_item_capacity(max_lines.saturating_sub(2), 1)
                 .min(snapshot.trace.events.len());
             let mut lines = vec![info_line(
                 "",
                 trace_rail_header(visible_events, snapshot.trace.events.len()),
             )];
+            if visible_events > 0 {
+                lines.push(Line::from(""));
+            }
             let visible_events = snapshot
                 .trace
                 .events
@@ -2250,7 +2393,12 @@ fn trace_list(app: &TuiApp, max_lines: usize, max_width: usize) -> TraceList {
             lines.push(Line::from(""));
         }
         let selected_event = index == selected;
-        lines.push(trace_event_header_line(event, selected_event, app.accent));
+        lines.push(trace_event_header_line(
+            event,
+            selected_event,
+            app.accent,
+            max_width,
+        ));
         lines.push(trace_event_json_line(event, selected_event, max_width));
     }
     TraceList {
@@ -2263,6 +2411,7 @@ fn trace_event_header_line(
     event: &HarnessEventEnvelope,
     selected: bool,
     accent: Color,
+    max_width: usize,
 ) -> Line<'static> {
     let prefix = if selected { "▶ " } else { "  " };
     let style = if selected {
@@ -2273,8 +2422,12 @@ fn trace_event_header_line(
     } else {
         Style::default().fg(TEXT_PRIMARY)
     };
+    let text_width = max_width.saturating_sub(prefix.chars().count()).max(1);
     Line::from(Span::styled(
-        format!("{prefix}{}", event_trace_line(event)),
+        format!(
+            "{prefix}{}",
+            truncate_right(&event_trace_line(event), text_width)
+        ),
         style,
     ))
 }
@@ -3424,8 +3577,26 @@ mod tests {
         HarnessEventEnvelope, HarnessEventPayload, HarnessEventSink, HarnessEventType,
         RunOutputPaths,
     };
+    use ratatui::{Terminal, backend::TestBackend};
     use std::collections::BTreeMap;
     use std::sync::{Arc, atomic::AtomicBool, mpsc};
+
+    fn render_app_text(app: &mut TuiApp, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render_app(frame, app))
+            .expect("test terminal should render");
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
 
     #[test]
     fn layout_mode_breakpoints_are_single_source_of_truth() {
@@ -3433,6 +3604,138 @@ mod tests {
         assert_eq!(layout_mode_for_width(119), LayoutMode::Medium);
         assert_eq!(layout_mode_for_width(88), LayoutMode::Medium);
         assert_eq!(layout_mode_for_width(87), LayoutMode::Single);
+    }
+
+    #[test]
+    fn rendered_layouts_preserve_panel_access_across_sizes() {
+        let mut wide =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let wide_text = render_app_text(&mut wide, 140, 40);
+        assert_eq!(wide.layout_mode, LayoutMode::Wide);
+        assert!(wide_text.contains("Preflight - Workspace Readiness"));
+        assert!(wide_text.contains("Run --"));
+        assert!(wide_text.contains("Trace - Event Stream"));
+
+        let mut medium =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let medium_text = render_app_text(&mut medium, 100, 40);
+        assert_eq!(medium.layout_mode, LayoutMode::Medium);
+        assert!(medium_text.contains("Preflight - Workspace Readiness"));
+        assert!(medium_text.contains("Run --"));
+        assert!(!medium_text.contains("Trace - Event Stream"));
+
+        let mut small_workspace =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        small_workspace.panel = VisiblePanel::Workspace;
+        let workspace_text = render_app_text(&mut small_workspace, 80, 32);
+        assert_eq!(small_workspace.layout_mode, LayoutMode::Single);
+        assert!(workspace_text.contains("Preflight - Workspace Readiness"));
+        assert!(!workspace_text.contains("Trace - Event Stream"));
+
+        let mut small_trace =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        small_trace.panel = VisiblePanel::EventStream;
+        let trace_text = render_app_text(&mut small_trace, 80, 32);
+        assert_eq!(small_trace.layout_mode, LayoutMode::Single);
+        assert!(trace_text.contains("Trace - Event Stream"));
+
+        let mut small_memory =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        small_memory.panel = VisiblePanel::Memory;
+        let memory_text = render_app_text(&mut small_memory, 80, 32);
+        assert!(memory_text.contains("Memory"));
+
+        let mut small_reports =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        small_reports.panel = VisiblePanel::Reports;
+        let reports_text = render_app_text(&mut small_reports, 80, 32);
+        assert!(reports_text.contains("Reports"));
+    }
+
+    #[test]
+    fn rendered_top_bar_applies_branding_and_trace_policy_labels() {
+        let mut controller = test_controller();
+        controller.plan.config.config.ui.branding.name = "Acme Operations".into();
+        controller.plan.config.config.ui.branding.subtitle = Some("M19 TUI fixture".into());
+        controller.plan.config.config.trace.level = HarnessTraceLevel::Verbose;
+        controller.plan.config.config.trace.content = HarnessTraceContent::Full;
+        let mut app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+
+        let text = render_app_text(&mut app, 140, 32);
+
+        assert!(text.contains("AgentPM Harness"));
+        assert!(text.contains("Acme Operations · M19 TUI fixture"));
+        assert!(text.contains("[Trace: verbose]"));
+        assert!(text.contains("[Content: full]"));
+    }
+
+    #[test]
+    fn failed_bootstrap_state_renders_all_primary_surfaces() {
+        let mut app = TuiApp::failed("reading agent.json: expected value".into());
+
+        let text = render_app_text(&mut app, 140, 32);
+
+        assert_eq!(app.layout_mode, LayoutMode::Wide);
+        assert!(text.contains("[Trace: Unavailable]"));
+        assert!(text.contains("Preflight failed"));
+        assert!(text.contains("reading agent.json: expected value"));
+        assert!(text.contains("Press Q to exit."));
+        assert!(text.contains("preflight_failed"));
+        assert!(text.contains("Run --"));
+        assert!(text.contains("Status: Failed"));
+    }
+
+    #[test]
+    fn keybar_always_shows_workspace_target_in_wide_layout() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        app.focus = TuiFocus::Panel(VisiblePanel::Run);
+
+        let text = render_app_text(&mut app, 140, 32);
+
+        assert_eq!(app.layout_mode, LayoutMode::Wide);
+        assert!(text.contains("1 Workspace"));
+        assert!(!text.contains("PgUp Next Page"));
+
+        app.focus = TuiFocus::Panel(VisiblePanel::Workspace);
+        let focused_text = render_app_text(&mut app, 140, 32);
+
+        assert!(focused_text.contains("1 Workspace"));
+        assert!(focused_text.contains("PgUp Next Page"));
+    }
+
+    #[test]
+    fn bars_expand_before_body_pagination_when_content_wraps() {
+        let mut controller = test_controller();
+        controller.plan.config.config.ui.branding.name = "Very Long Operations Brand Name".into();
+        controller.plan.config.config.ui.branding.subtitle =
+            Some("Long Environment Subtitle".into());
+        let state_dir = std::env::temp_dir().join("agentpm-tui-wrapped-bars-test");
+        let paths = RunOutputPaths::resolve(&state_dir, "run-wrapped-bars", None).unwrap();
+        let mut report = test_run_report();
+        report.run_id = "run-wrapped-bars".into();
+        report.duration_ms = Some(42_000);
+        report.terminal_output = Some(serde_json::json!("wrapped bars output"));
+        report
+            .write_pretty(&paths.report_path, &HarnessTraceContent::Redacted)
+            .unwrap();
+        let terminal = RuntimeTerminalResult {
+            status: HarnessTerminalStatus::Ended,
+            output: Some(serde_json::json!("wrapped bars output")),
+            report,
+        };
+        controller.apply_terminal_result(&terminal, &paths);
+        let mut app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+        app.focus = TuiFocus::Panel(VisiblePanel::Run);
+
+        assert_eq!(top_bar_height(140, &app), 3);
+        assert_eq!(top_bar_height(60, &app), 4);
+        assert!(keybar_height(60, &app) > 4);
+
+        let text = render_app_text(&mut app, 60, 30);
+        assert!(text.contains("1 Workspace"));
+        assert!(text.contains("wrapped bars output"));
+        assert!(bottom_run_status_text(&app).is_some());
     }
 
     #[test]
@@ -3513,19 +3816,20 @@ mod tests {
             ),
         ];
 
-        let lines = trace_rail_lines(&app, 4, 80)
+        let lines = trace_rail_lines(&app, 5, 80)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>();
 
-        assert_eq!(lines.len(), 4);
+        assert_eq!(lines.len(), 5);
         assert!(lines[0].contains("latest 2/3"));
+        assert!(lines[1].is_empty());
         assert!(!lines.iter().any(|line| line.contains("run_started")));
-        assert!(lines[1].contains("model_request_started"));
-        assert!(lines[2].is_empty());
-        assert!(lines[3].contains("run_completed"));
-        assert!(lines[3].contains("#1"));
-        assert!(!lines[3].contains("#3"));
+        assert!(lines[2].contains("model_request_started"));
+        assert!(lines[3].is_empty());
+        assert!(lines[4].contains("run_completed"));
+        assert!(lines[4].contains("#1"));
+        assert!(!lines[4].contains("#3"));
     }
 
     #[test]
@@ -3555,6 +3859,42 @@ mod tests {
         assert!(list.lines[0].to_string().contains("model_request_started"));
         assert!(list.lines[2].to_string().is_empty());
         assert!(list.lines[3].to_string().contains("run_completed"));
+    }
+
+    #[test]
+    fn center_trace_selection_stays_visible_with_short_wrapped_layout() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.status = TuiRunStatus::Terminal;
+        controller.snapshot.run.run_id = Some("run-current".into());
+        controller.snapshot.reports.current_trace_path = Some(PathBuf::from("events.jsonl"));
+        controller.snapshot.reports.current_trace_events = (0..8)
+            .map(|index| {
+                test_trace_event(
+                    &format!("evt-{index}"),
+                    HarnessEventType::ModelRuntimeRequestPrepared,
+                    Some("run-current-with-a-long-visible-label"),
+                )
+            })
+            .collect();
+        app.trace_selection = 4;
+
+        let list = trace_list(&app, 5, 32);
+        let rendered = list.lines.iter().map(Line::to_string).collect::<Vec<_>>();
+
+        assert!(rendered.iter().any(|line| line.starts_with("▶ ")));
+        assert_eq!(
+            rendered
+                .iter()
+                .filter(|line| line.starts_with("▶ "))
+                .count(),
+            1
+        );
+        assert!(rendered.iter().all(|line| line.chars().count() <= 32));
+        assert!(list.footer.to_string().contains("Event 5/8"));
     }
 
     #[test]
@@ -4245,6 +4585,8 @@ mod tests {
         );
 
         assert!(app.can_prompt_agent_selector());
+        assert!(!app.can_send_message());
+        assert_eq!(run_visual_state(&app), RunVisualState::Failed);
         assert_eq!(
             readiness_state(&app, ready_snapshot(&app)),
             CapabilityState::Unavailable
@@ -4334,6 +4676,38 @@ mod tests {
         app.focus = TuiFocus::Panel(VisiblePanel::Trace);
 
         assert!(app.can_cancel_run());
+    }
+
+    #[test]
+    fn rendered_output_viewer_shows_paths_and_modal_keybar() {
+        let mut controller = test_controller();
+        let state_dir = std::env::temp_dir().join("agentpm-tui-output-viewer-render-test");
+        let paths = RunOutputPaths::resolve(&state_dir, "run-output-viewer-render", None).unwrap();
+        let mut report = test_run_report();
+        report.run_id = "run-output-viewer-render".into();
+        report.terminal_output = Some(serde_json::json!("rendered modal output"));
+        report
+            .write_pretty(&paths.report_path, &HarnessTraceContent::Redacted)
+            .unwrap();
+        let terminal = RuntimeTerminalResult {
+            status: HarnessTerminalStatus::Ended,
+            output: Some(serde_json::json!("rendered modal output")),
+            report,
+        };
+        controller.apply_terminal_result(&terminal, &paths);
+        let mut app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+        app.focus = TuiFocus::Panel(VisiblePanel::Run);
+        app.open_output_viewer();
+
+        let text = render_app_text(&mut app, 90, 32);
+
+        assert!(text.contains("Assistant Output"));
+        assert!(text.contains("rendered modal output"));
+        assert!(text.contains("report: "));
+        assert!(text.contains("trace: "));
+        assert!(text.contains("Esc Close"));
+        assert!(!text.contains("Cancel Run"));
+        assert!(!text.contains("Enter Send"));
     }
 
     #[test]
