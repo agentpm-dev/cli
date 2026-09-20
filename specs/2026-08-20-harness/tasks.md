@@ -1283,6 +1283,10 @@ This gives us the Ratatui interactive UI, responsive layout, branding/accent sup
 - [ ] Count cross-phase repeats where the prior action's recorded status was `success` separately from repeats of previously failed actions. That first number is the repetition the ledger is actually trying to reduce; repeating a failed call is often correct behavior and should not be counted against the feature.
 - [ ] If the ledger shows no measurable effect, record that outcome rather than assuming it helped — and check Milestone 20A's Section 4 budget counters before concluding anything, because a ledger squeezed out of the prompt by a verbose output and a ledger the model simply ignored produce the same repeat count for entirely different reasons.
 
+## Release Band 9: Phase Output and Cross-Phase Context
+Covered milestones: 20A-20A.1.
+This gives us reliable canonical phase/final output for explicit-completion phases, a bounded cross-phase prompt section, and compact prior-action history for later phases before the final Template/documentation hardening band.
+
 ## Milestone 20B: Templates, Examples, Documentation, End-to-End Hardening, and Release Verification
 > Scope note: close Phase 7B by proving the complete architecture through realistic workspaces and all three execution surfaces, documenting the public configuration/protocol/provider contracts, and running cross-repository regression/conformance suites. Do not introduce new runtime architecture here unless required to satisfy the existing spec.
 - [ ] Create/update a **minimal Harness Template/workspace** that runs a published Agent with little/no runtime config and demonstrates the shortest credible `install -> agentpm harness -> message -> result` path.
@@ -1319,6 +1323,6 @@ This gives us the Ratatui interactive UI, responsive layout, branding/accent sup
 - [ ] Update version markers/release notes/docs according to repository conventions.
 - [ ] Record exact verification evidence required by `test-plan.md`, including skipped optional external-provider tests and environment blockers.
 
-## Release Band 9: Templates, Documentation, and Final Hardening
-Covered milestones: 20A-20B.
-This gives us reliable canonical phase/final output for explicit-completion phases, realistic Templates/examples, full documentation, and end-to-end release verification across headless, machine/SDK, and TUI surfaces after the Ratatui UI has already been proven in Release Band 8.
+## Release Band 10: Templates, Documentation, and Final Hardening
+Covered milestones: 20B.
+This gives us realistic Templates/examples, full documentation, and end-to-end release verification across headless, machine/SDK, and TUI surfaces after the Ratatui UI and phase-output/cross-phase context work have already been proven in earlier release bands.
