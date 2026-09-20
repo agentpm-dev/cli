@@ -136,6 +136,15 @@ fn run_shell_loop(
                 KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => app.focus_previous(),
                 KeyCode::Tab => app.focus_next(),
                 _ if app.focus == TuiFocus::Composer => {}
+                KeyCode::Up if app.focus == TuiFocus::Panel(VisiblePanel::Trace) => {
+                    app.move_trace_selection(TraceSelectionDirection::Previous)
+                }
+                KeyCode::Down if app.focus == TuiFocus::Panel(VisiblePanel::Trace) => {
+                    app.move_trace_selection(TraceSelectionDirection::Next)
+                }
+                KeyCode::Enter if app.focus == TuiFocus::Panel(VisiblePanel::Trace) => {
+                    app.open_trace_viewer()
+                }
                 KeyCode::PageUp => app.page_focused_panel(PanelPageDirection::Next),
                 KeyCode::PageDown => app.page_focused_panel(PanelPageDirection::Previous),
                 KeyCode::Char('a') | KeyCode::Char('A') if app.can_decide_approval() => {
@@ -153,11 +162,22 @@ fn run_shell_loop(
                 KeyCode::Char(']') if app.can_invoke_memory_operation() => {
                     app.cycle_memory_operation();
                 }
-                KeyCode::Char('o') | KeyCode::Char('O') if app.has_latest_output() => {
+                KeyCode::Char('o') | KeyCode::Char('O') if app.can_open_output_viewer() => {
                     app.open_output_viewer();
                 }
-                KeyCode::Char('d') | KeyCode::Char('D') if app.has_workspace_details() => {
+                KeyCode::Char('d') | KeyCode::Char('D')
+                    if app.focus == TuiFocus::Panel(VisiblePanel::Workspace)
+                        && app.has_workspace_details() =>
+                {
                     app.workspace_detail_expanded = !app.workspace_detail_expanded
+                }
+                KeyCode::Char('d') | KeyCode::Char('D')
+                    if app.focus == TuiFocus::Panel(VisiblePanel::Trace) =>
+                {
+                    app.open_trace_viewer()
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') if app.has_secondary_details() => {
+                    app.detail_expanded = !app.detail_expanded
                 }
                 KeyCode::Char('a') | KeyCode::Char('A') if app.can_prompt_agent_selector() => {
                     app.open_resolution_prompt(ResolutionPromptKind::AgentSelector)
@@ -322,6 +342,8 @@ fn start_run_from_composer(app: &mut TuiApp) {
     snapshot.reports.current_trace_path = None;
     snapshot.reports.current_report = None;
     snapshot.reports.current_trace_events.clear();
+    snapshot.reports.current_trace_values.clear();
+    snapshot.reports.current_trace_total_events = None;
     snapshot.reports.current_report_error = None;
     snapshot.reports.current_trace_error = None;
     app.assistant_output_page = 0;
@@ -607,9 +629,10 @@ struct TuiApp {
     warnings: Vec<String>,
     layout_mode: LayoutMode,
     workspace_page: PageCursor,
-    trace_page: PageCursor,
+    trace_selection: usize,
     assistant_output_page: PageCursor,
     workspace_detail_expanded: bool,
+    detail_expanded: bool,
     resolution_prompt: Option<ResolutionPrompt>,
     bootstrap_args: HarnessArgs,
     model_override: Option<HarnessModelConfig>,
@@ -678,6 +701,19 @@ enum TuiState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OutputViewerState {
     scroll: usize,
+    kind: OutputViewerKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OutputViewerKind {
+    AssistantOutput,
+    TraceEvent { event_id: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TraceSelectionDirection {
+    Next,
+    Previous,
 }
 
 impl TuiApp {
@@ -693,9 +729,10 @@ impl TuiApp {
             warnings: Vec::new(),
             layout_mode: LayoutMode::Single,
             workspace_page: 0,
-            trace_page: 0,
+            trace_selection: 0,
             assistant_output_page: 0,
             workspace_detail_expanded: false,
+            detail_expanded: false,
             resolution_prompt: None,
             bootstrap_args: args,
             model_override: None,
@@ -732,9 +769,10 @@ impl TuiApp {
             warnings,
             layout_mode: LayoutMode::Single,
             workspace_page: 0,
-            trace_page: 0,
+            trace_selection: 0,
             assistant_output_page: 0,
             workspace_detail_expanded: false,
+            detail_expanded: false,
             resolution_prompt: None,
             bootstrap_args,
             model_override,
@@ -765,9 +803,10 @@ impl TuiApp {
             warnings: Vec::new(),
             layout_mode: LayoutMode::Single,
             workspace_page: 0,
-            trace_page: 0,
+            trace_selection: 0,
             assistant_output_page: 0,
             workspace_detail_expanded: false,
+            detail_expanded: false,
             resolution_prompt: None,
             bootstrap_args: HarnessArgs::default(),
             model_override: None,
@@ -898,12 +937,6 @@ impl TuiApp {
             (TuiFocus::Panel(VisiblePanel::Workspace), PanelPageDirection::Previous) => {
                 self.workspace_page -= 1
             }
-            (TuiFocus::Panel(VisiblePanel::Trace), PanelPageDirection::Next) => {
-                self.trace_page += 1
-            }
-            (TuiFocus::Panel(VisiblePanel::Trace), PanelPageDirection::Previous) => {
-                self.trace_page -= 1
-            }
             (TuiFocus::Panel(VisiblePanel::Run), PanelPageDirection::Next) => {
                 self.assistant_output_page += 1
             }
@@ -939,9 +972,74 @@ impl TuiApp {
         assistant_output_text(self).is_some()
     }
 
+    fn can_open_output_viewer(&self) -> bool {
+        self.output_viewer.is_none()
+            && matches!(self.focus, TuiFocus::Panel(VisiblePanel::Run))
+            && self.panel == VisiblePanel::Run
+            && self.has_latest_output()
+    }
+
     fn open_output_viewer(&mut self) {
-        if self.has_latest_output() {
-            self.output_viewer = Some(OutputViewerState { scroll: 0 });
+        if self.can_open_output_viewer() {
+            self.output_viewer = Some(OutputViewerState {
+                scroll: 0,
+                kind: OutputViewerKind::AssistantOutput,
+            });
+        }
+    }
+
+    fn trace_events(&self) -> Vec<&HarnessEventEnvelope> {
+        let Some(snapshot) = self.snapshot() else {
+            return Vec::new();
+        };
+        let events = if snapshot.reports.current_trace_path.is_some() {
+            &snapshot.reports.current_trace_events
+        } else {
+            &snapshot.trace.events
+        };
+        if snapshot.reports.current_trace_path.is_some() {
+            return events.iter().collect();
+        }
+        match snapshot.run.run_id.as_deref() {
+            Some(run_id) => events
+                .iter()
+                .filter(|event| event.run_id.as_deref() == Some(run_id))
+                .collect(),
+            None => events
+                .iter()
+                .filter(|event| event.event_type == HarnessEventType::PreflightCompleted)
+                .collect(),
+        }
+    }
+
+    fn selected_trace_event(&self) -> Option<&HarnessEventEnvelope> {
+        let events = self.trace_events();
+        events
+            .get(self.trace_selection.min(events.len().saturating_sub(1)))
+            .copied()
+    }
+
+    fn move_trace_selection(&mut self, direction: TraceSelectionDirection) {
+        let count = self.trace_events().len();
+        if count == 0 {
+            self.trace_selection = 0;
+            return;
+        }
+        self.trace_selection = match direction {
+            TraceSelectionDirection::Next => (self.trace_selection + 1) % count,
+            TraceSelectionDirection::Previous => (self.trace_selection + count - 1) % count,
+        };
+    }
+
+    fn open_trace_viewer(&mut self) {
+        if let Some(event_id) = self
+            .selected_trace_event()
+            .map(|event| event.event_id.clone())
+        {
+            self.output_viewer = Some(OutputViewerState {
+                scroll: 0,
+                kind: OutputViewerKind::TraceEvent { event_id },
+            });
         }
     }
 
@@ -1021,6 +1119,30 @@ impl TuiApp {
                             | PreflightDiagnosticSeverity::Pending
                     )
                 })
+    }
+
+    fn has_secondary_details(&self) -> bool {
+        self.output_viewer.is_none()
+            && self.resolution_prompt.is_none()
+            && matches!(self.focus, TuiFocus::Panel(panel) if panel == self.panel)
+            && match self.panel {
+                VisiblePanel::Memory => self.snapshot().is_some(),
+                VisiblePanel::Reports => self.reports_have_hidden_details(),
+                _ => false,
+            }
+    }
+
+    fn reports_have_hidden_details(&self) -> bool {
+        let Some(snapshot) = self.snapshot() else {
+            return false;
+        };
+        snapshot
+            .reports
+            .current_report
+            .as_ref()
+            .is_some_and(|report| {
+                report.terminal_output.is_some() || !report.diagnostics.is_empty()
+            })
     }
 
     fn has_resolution_actions(&self) -> bool {
@@ -1691,40 +1813,60 @@ mod tests {
         app.layout_mode = LayoutMode::Wide;
         app.focus = TuiFocus::Panel(VisiblePanel::Workspace);
         app.workspace_page = 1;
-        app.trace_page = 2;
         app.assistant_output_page = 4;
 
         app.page_focused_panel(PanelPageDirection::Previous);
         assert_eq!(app.workspace_page, 0);
-        assert_eq!(app.trace_page, 2);
         assert_eq!(app.assistant_output_page, 4);
 
         app.page_focused_panel(PanelPageDirection::Previous);
         assert_eq!(app.workspace_page, -1);
-        assert_eq!(app.trace_page, 2);
         assert_eq!(app.assistant_output_page, 4);
 
         app.page_focused_panel(PanelPageDirection::Next);
         assert_eq!(app.workspace_page, 0);
-        assert_eq!(app.trace_page, 2);
         assert_eq!(app.assistant_output_page, 4);
 
         app.focus = TuiFocus::Panel(VisiblePanel::Trace);
         app.page_focused_panel(PanelPageDirection::Next);
         assert_eq!(app.workspace_page, 0);
-        assert_eq!(app.trace_page, 3);
         assert_eq!(app.assistant_output_page, 4);
 
         app.page_focused_panel(PanelPageDirection::Previous);
         assert_eq!(app.workspace_page, 0);
-        assert_eq!(app.trace_page, 2);
         assert_eq!(app.assistant_output_page, 4);
 
         app.focus = TuiFocus::Panel(VisiblePanel::Run);
         app.page_focused_panel(PanelPageDirection::Next);
         assert_eq!(app.workspace_page, 0);
-        assert_eq!(app.trace_page, 2);
         assert_eq!(app.assistant_output_page, 5);
+    }
+
+    #[test]
+    fn reports_details_are_available_only_when_report_has_hidden_content() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        app.focus_panel(VisiblePanel::Reports);
+
+        assert!(!app.has_secondary_details());
+
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.reports.current_report = Some(test_run_report());
+        assert!(!app.has_secondary_details());
+
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller
+            .snapshot
+            .reports
+            .current_report
+            .as_mut()
+            .expect("report")
+            .terminal_output = Some(serde_json::json!({"answer": "done"}));
+        assert!(app.has_secondary_details());
     }
 
     #[test]
@@ -1905,6 +2047,52 @@ mod tests {
     }
 
     #[test]
+    fn trace_selection_opens_selected_event_viewer() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.run_id = Some("run-current".into());
+        controller.snapshot.trace.events = vec![
+            test_tui_trace_event(
+                "evt-one",
+                HarnessEventType::PhaseStarted,
+                Some("run-current"),
+            ),
+            test_tui_trace_event(
+                "evt-two",
+                HarnessEventType::ModelRequestStarted,
+                Some("run-current"),
+            ),
+        ];
+        app.focus_panel(VisiblePanel::Trace);
+
+        assert_eq!(
+            app.selected_trace_event()
+                .map(|event| event.event_id.as_str()),
+            Some("evt-one")
+        );
+        app.move_trace_selection(TraceSelectionDirection::Next);
+        assert_eq!(
+            app.selected_trace_event()
+                .map(|event| event.event_id.as_str()),
+            Some("evt-two")
+        );
+
+        app.open_trace_viewer();
+        assert_eq!(
+            app.output_viewer,
+            Some(OutputViewerState {
+                scroll: 0,
+                kind: OutputViewerKind::TraceEvent {
+                    event_id: "evt-two".into()
+                }
+            })
+        );
+    }
+
+    #[test]
     fn terminal_result_preserves_output_artifacts_and_usage_snapshot() {
         let mut controller = test_controller();
         let paths = RunOutputPaths::resolve(
@@ -1915,6 +2103,32 @@ mod tests {
         .unwrap();
         let mut report = test_run_report();
         report.usage.model_calls = 2;
+        let trace_event = HarnessEventEnvelope {
+            schema_version: 1,
+            event_id: "evt-run-test".into(),
+            session_id: "sess-test".into(),
+            run_id: Some("run-test".into()),
+            session_sequence: 1,
+            run_sequence: Some(1),
+            timestamp: chrono::Utc::now(),
+            event_type: HarnessEventType::PhaseStarted,
+            phase_execution_id: Some("phase-exec-1".into()),
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Phase {
+                phase_id: "start".into(),
+                outcome: None,
+                transition_to: None,
+                output: None,
+            },
+        };
+        let mut trace_value = serde_json::to_value(&trace_event).unwrap();
+        trace_value["unknown_future_field"] = serde_json::json!("retained");
+        std::fs::write(
+            &paths.events_path,
+            format!("{}\n", serde_json::to_string(&trace_value).unwrap()),
+        )
+        .unwrap();
         let terminal = RuntimeTerminalResult {
             status: HarnessTerminalStatus::Ended,
             output: Some(serde_json::json!({ "ok": true })),
@@ -1946,6 +2160,16 @@ mod tests {
                 .map(|report| report.run_id.as_str()),
             Some("run-test")
         );
+        assert_eq!(controller.snapshot.reports.current_trace_events.len(), 1);
+        assert_eq!(
+            controller.snapshot.reports.current_trace_events[0].event_type,
+            HarnessEventType::PhaseStarted
+        );
+        assert_eq!(
+            controller.snapshot.reports.current_trace_values[0]["unknown_future_field"],
+            serde_json::json!("retained")
+        );
+        assert!(controller.snapshot.reports.current_trace_error.is_none());
     }
 
     #[test]
@@ -1965,7 +2189,9 @@ mod tests {
         controller.apply_terminal_result(&terminal, &paths);
         let mut app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
         assert!(app.can_send_message());
+        assert!(!app.can_open_output_viewer());
 
+        app.focus = TuiFocus::Panel(VisiblePanel::Run);
         app.open_output_viewer();
         assert!(app.output_viewer.is_some());
         assert!(!app.can_send_message());
@@ -1973,6 +2199,30 @@ mod tests {
         assert!(app.output_viewer.is_some());
         assert!(handle_output_viewer_key(&mut app, KeyCode::Esc));
         assert!(app.output_viewer.is_none());
+    }
+
+    fn test_tui_trace_event(
+        event_id: &str,
+        event_type: HarnessEventType,
+        run_id: Option<&str>,
+    ) -> HarnessEventEnvelope {
+        HarnessEventEnvelope {
+            schema_version: 1,
+            event_id: event_id.into(),
+            session_id: "sess-test".into(),
+            run_id: run_id.map(str::to_string),
+            session_sequence: 1,
+            run_sequence: run_id.map(|_| 1),
+            timestamp: chrono::Utc::now(),
+            event_type,
+            phase_execution_id: None,
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Lifecycle {
+                message: "test event".into(),
+                fields: BTreeMap::new(),
+            },
+        }
     }
 
     #[test]

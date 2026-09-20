@@ -1,4 +1,6 @@
 use super::*;
+use serde_json::Value;
+use std::collections::BTreeMap;
 
 pub(super) fn render_app(frame: &mut Frame<'_>, app: &mut TuiApp) {
     let area = frame.area();
@@ -96,10 +98,7 @@ fn terminal_status_label(status: HarnessTerminalStatus) -> &'static str {
 }
 
 fn event_trace_line(event: &HarnessEventEnvelope) -> String {
-    let event_type = serde_json::to_value(event.event_type)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_string))
-        .unwrap_or_else(|| "unknown_event".into());
+    let event_type = event_type_label(event.event_type);
     match &event.run_id {
         Some(run_id) => format!(
             "{}  {} · {}",
@@ -109,6 +108,13 @@ fn event_trace_line(event: &HarnessEventEnvelope) -> String {
         ),
         None => format!("{}  {}", event.timestamp.format("%H:%M:%S"), event_type),
     }
+}
+
+fn event_type_label(event_type: HarnessEventType) -> String {
+    serde_json::to_value(event_type)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown_event".into())
 }
 
 fn render_top_bar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
@@ -873,17 +879,17 @@ fn render_center_trace_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
             Constraint::Length(1),
         ])
         .split(inner);
-    let page = trace_page(app, chunks[4].height as usize);
     frame.render_widget(Paragraph::new(center_header_line(app)), chunks[0]);
     frame.render_widget(Paragraph::new(center_tabs_line(app)), chunks[2]);
+    let list = trace_list(app, chunks[4].height as usize, chunks[4].width as usize);
     frame.render_widget(
-        Paragraph::new(page.lines)
+        Paragraph::new(list.lines)
             .style(Style::default().fg(TEXT_PRIMARY))
             .wrap(Wrap { trim: false }),
         chunks[4],
     );
     frame.render_widget(
-        Paragraph::new(page.footer)
+        Paragraph::new(list.footer)
             .style(Style::default().fg(TEXT_MUTED))
             .alignment(Alignment::Right),
         chunks[5],
@@ -894,38 +900,84 @@ fn render_output_viewer(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
     let Some(viewer) = &app.output_viewer else {
         return;
     };
-    let Some(output) = assistant_output_text(app) else {
+    let Some(content) = output_viewer_content(app, viewer) else {
         return;
     };
     let overlay = centered_overlay(area, app.layout_mode);
     frame.render_widget(Clear, overlay);
     let block = Block::default()
-        .title(" Assistant Output ")
+        .title(content.title)
         .title_style(panel_title_style())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.accent));
     let inner = panel_inner(&block, overlay);
     frame.render_widget(block, overlay);
-    let mut lines = Vec::new();
-    if let Some(snapshot) = app.snapshot() {
-        if let Some(path) = &snapshot.reports.current_report_path {
-            lines.push(Line::from(format!("report: {}", path.display())));
-        }
-        if let Some(path) = &snapshot.reports.current_trace_path {
-            lines.push(Line::from(format!("trace: {}", path.display())));
-        }
-        if !lines.is_empty() {
-            lines.push(Line::from(""));
-        }
-    }
-    lines.extend(output.lines().map(|line| Line::from(line.to_string())));
     frame.render_widget(
-        Paragraph::new(lines)
+        Paragraph::new(content.lines)
             .style(Style::default().fg(TEXT_PRIMARY))
             .scroll((viewer.scroll as u16, 0))
             .wrap(Wrap { trim: false }),
         inner,
     );
+}
+
+struct OutputViewerContent {
+    title: &'static str,
+    lines: Vec<Line<'static>>,
+}
+
+fn output_viewer_content(app: &TuiApp, viewer: &OutputViewerState) -> Option<OutputViewerContent> {
+    match &viewer.kind {
+        OutputViewerKind::AssistantOutput => {
+            let output = assistant_output_text(app)?;
+            let mut lines = Vec::new();
+            if let Some(snapshot) = app.snapshot() {
+                if let Some(path) = &snapshot.reports.current_report_path {
+                    lines.push(Line::from(format!("report: {}", path.display())));
+                }
+                if let Some(path) = &snapshot.reports.current_trace_path {
+                    lines.push(Line::from(format!("trace: {}", path.display())));
+                }
+                if !lines.is_empty() {
+                    lines.push(Line::from(""));
+                }
+            }
+            lines.extend(output.lines().map(|line| Line::from(line.to_string())));
+            Some(OutputViewerContent {
+                title: " Assistant Output ",
+                lines,
+            })
+        }
+        OutputViewerKind::TraceEvent { event_id } => {
+            let value = trace_event_detail_value(app, event_id)?;
+            let pretty = serde_json::to_string_pretty(&value).ok()?;
+            Some(OutputViewerContent {
+                title: " Trace Event ",
+                lines: pretty
+                    .lines()
+                    .map(|line| Line::from(line.to_string()))
+                    .collect(),
+            })
+        }
+    }
+}
+
+fn trace_event_detail_value(app: &TuiApp, event_id: &str) -> Option<Value> {
+    let snapshot = app.snapshot()?;
+    if snapshot.reports.current_trace_path.is_some()
+        && let Some(index) = snapshot
+            .reports
+            .current_trace_events
+            .iter()
+            .position(|event| event.event_id == event_id)
+        && let Some(value) = snapshot.reports.current_trace_values.get(index)
+    {
+        return Some(value.clone());
+    }
+    app.trace_events()
+        .into_iter()
+        .find(|event| event.event_id == event_id)
+        .and_then(|event| serde_json::to_value(event).ok())
 }
 
 fn centered_overlay(area: Rect, layout: LayoutMode) -> Rect {
@@ -956,9 +1008,13 @@ fn render_trace_rail(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
     let inner = panel_inner(&block, area);
     frame.render_widget(block, area);
     frame.render_widget(
-        Paragraph::new(trace_lines(app))
-            .style(Style::default().fg(TEXT_PRIMARY))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(trace_rail_lines(
+            app,
+            inner.height as usize,
+            inner.width as usize,
+        ))
+        .style(Style::default().fg(TEXT_PRIMARY))
+        .wrap(Wrap { trim: false }),
         inner,
     );
 }
@@ -1065,13 +1121,20 @@ fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
         spans.extend([key_span("PgUp", app.accent), Span::raw(" Next Page  ")]);
         spans.extend([key_span("PgDn", app.accent), Span::raw(" Prev Page  ")]);
     }
-    if app.has_latest_output() {
+    if app.focus == TuiFocus::Panel(VisiblePanel::Trace) && app.selected_trace_event().is_some() {
+        spans.extend([key_span("↑/↓", app.accent), Span::raw(" Select  ")]);
+        spans.extend([key_span("Enter/D", app.accent), Span::raw(" Details  ")]);
+    }
+    if app.can_open_output_viewer() {
         spans.extend([key_span("O", app.accent), Span::raw(" Output  ")]);
     }
     if app.layout_mode == LayoutMode::Single {
         spans.extend([key_span("1", app.accent), Span::raw(" Workspace  ")]);
     }
-    if app.has_workspace_details() {
+    if app.focus == TuiFocus::Panel(VisiblePanel::Workspace) && app.has_workspace_details() {
+        spans.extend([key_span("D", app.accent), Span::raw(" Details  ")]);
+    }
+    if app.has_secondary_details() {
         spans.extend([key_span("D", app.accent), Span::raw(" Details  ")]);
     }
     if app.can_prompt_agent_selector() {
@@ -1936,53 +1999,76 @@ fn phase_path_text(report: &RunReport) -> String {
 }
 
 fn trace_lines(app: &TuiApp) -> Vec<Line<'static>> {
+    trace_rail_lines(app, usize::MAX, usize::MAX)
+}
+
+fn trace_rail_lines(app: &TuiApp, max_lines: usize, max_width: usize) -> Vec<Line<'static>> {
+    let max_lines = max_lines.max(1);
+    let max_width = max_width.max(1);
     match &app.state {
         TuiState::Loading { progress, .. } => {
             let mut lines = vec![Line::from("bootstrap_started")];
-            for item in progress.iter().rev().take(8).rev() {
-                lines.push(Line::from(format!(
-                    "{}: {}",
-                    bootstrap_stage_label(item.stage),
-                    item.message
+            let available = max_lines.saturating_sub(lines.len());
+            for item in progress.iter().rev().take(available).rev() {
+                lines.push(Line::from(truncate_right(
+                    &format!("{}: {}", bootstrap_stage_label(item.stage), item.message),
+                    max_width,
                 )));
             }
             lines
         }
         TuiState::Failed { .. } => vec![Line::from("preflight_failed")],
-        TuiState::Running {
-            snapshot, progress, ..
-        } => {
-            let mut lines = snapshot
+        TuiState::Running { snapshot, .. } => {
+            let run_ordinals = trace_rail_run_ordinals(&snapshot.trace.events);
+            let visible_events = trace_spaced_item_capacity(max_lines.saturating_sub(1), 1)
+                .min(snapshot.trace.events.len());
+            let mut lines = vec![info_line(
+                "",
+                trace_rail_header(visible_events, snapshot.trace.events.len()),
+            )];
+            let visible_events = snapshot
                 .trace
                 .events
                 .iter()
                 .rev()
-                .take(24)
+                .take(visible_events)
                 .rev()
-                .map(|event| Line::from(event_trace_line(event)))
                 .collect::<Vec<_>>();
-            for item in progress.iter().rev().take(4).rev() {
-                lines.push(Line::from(format!("run_starting  {}", item.message)));
+            for (index, event) in visible_events.iter().enumerate() {
+                if index > 0 {
+                    lines.push(Line::from(""));
+                }
+                lines.push(trace_rail_event_line(event, max_width, &run_ordinals));
             }
-            if lines.is_empty() {
+            if lines.len() == 1 {
                 lines.push(Line::from("Run starting."));
             }
             lines
         }
         TuiState::Ready { controller } => {
-            let mut lines = Vec::new();
-            for event in controller
-                .snapshot()
+            let snapshot = controller.snapshot();
+            let run_ordinals = trace_rail_run_ordinals(&snapshot.trace.events);
+            let visible_events = trace_spaced_item_capacity(max_lines.saturating_sub(1), 1)
+                .min(snapshot.trace.events.len());
+            let mut lines = vec![info_line(
+                "",
+                trace_rail_header(visible_events, snapshot.trace.events.len()),
+            )];
+            let visible_events = snapshot
                 .trace
                 .events
                 .iter()
                 .rev()
-                .take(28)
+                .take(visible_events)
                 .rev()
-            {
-                lines.push(Line::from(event_trace_line(event)));
+                .collect::<Vec<_>>();
+            for (index, event) in visible_events.iter().enumerate() {
+                if index > 0 {
+                    lines.push(Line::from(""));
+                }
+                lines.push(trace_rail_event_line(event, max_width, &run_ordinals));
             }
-            if lines.is_empty() {
+            if lines.len() == 1 {
                 lines.push(Line::from("No session events yet."));
             }
             lines
@@ -1990,16 +2076,101 @@ fn trace_lines(app: &TuiApp) -> Vec<Line<'static>> {
     }
 }
 
-struct TracePage {
+fn trace_rail_header(visible_events: usize, total_events: usize) -> String {
+    if total_events > visible_events {
+        format!("Session tail · latest {visible_events}/{total_events}")
+    } else {
+        format!("Session tail · latest {visible_events}")
+    }
+}
+
+fn trace_spaced_item_capacity(available_lines: usize, item_lines: usize) -> usize {
+    if available_lines == 0 {
+        0
+    } else {
+        (available_lines + 1) / (item_lines + 1)
+    }
+}
+
+fn trace_rail_run_ordinals(events: &[HarnessEventEnvelope]) -> BTreeMap<String, u64> {
+    let mut ordinals = BTreeMap::new();
+    let mut next = 1;
+    for event in events {
+        if event.event_type == HarnessEventType::RunStarted
+            && let Some(run_id) = &event.run_id
+            && !ordinals.contains_key(run_id)
+        {
+            ordinals.insert(run_id.clone(), next);
+            next += 1;
+        }
+    }
+    ordinals
+}
+
+fn trace_rail_event_line(
+    event: &HarnessEventEnvelope,
+    max_width: usize,
+    run_ordinals: &BTreeMap<String, u64>,
+) -> Line<'static> {
+    let event_type = event_type_label(event.event_type);
+    let (mark, mark_color) = trace_rail_event_mark(&event_type);
+    let run = event
+        .run_id
+        .as_deref()
+        .map(|run_id| trace_rail_run_label(run_id, run_ordinals))
+        .unwrap_or_default();
+    let time = event.timestamp.format("%H:%M:%S").to_string();
+    let text = truncate_right(&format!("{time} {mark} {event_type}{run}"), max_width);
+    let mut chars = text.chars();
+    let time_text = chars.by_ref().take(8).collect::<String>();
+    let rest = chars.collect::<String>();
+    Line::from(vec![
+        Span::styled(time_text, Style::default().fg(TEXT_MUTED)),
+        Span::styled(
+            rest.chars().take(3).collect::<String>(),
+            Style::default().fg(mark_color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            rest.chars().skip(3).collect::<String>(),
+            Style::default().fg(TEXT_PRIMARY),
+        ),
+    ])
+}
+
+fn trace_rail_run_label(run_id: &str, run_ordinals: &BTreeMap<String, u64>) -> String {
+    if let Some(run_number) = run_ordinals.get(run_id) {
+        return format!(" #{run_number}");
+    }
+    let suffix = run_id.rsplit('-').next().unwrap_or(run_id);
+    format!(" · run {suffix}")
+}
+
+fn trace_rail_event_mark(event_type: &str) -> (&'static str, Color) {
+    if event_type.contains("failed") || event_type.contains("rejected") {
+        ("×", Color::Red)
+    } else if event_type.contains("completed")
+        || event_type.contains("ready")
+        || event_type.contains("approved")
+        || event_type.contains("selected")
+        || event_type.contains("result")
+    {
+        ("✓", STATUS_READY)
+    } else if event_type.contains("started")
+        || event_type.contains("starting")
+        || event_type.contains("requested")
+    {
+        ("•", STATUS_WARNING)
+    } else {
+        ("·", TEXT_DIM)
+    }
+}
+
+struct TraceList {
     lines: Vec<Line<'static>>,
     footer: Line<'static>,
 }
 
-fn trace_page(app: &TuiApp, max_lines: usize) -> TracePage {
-    let lines = center_trace_event_lines(app);
-    paginate_trace_lines(lines, app.trace_page, max_lines)
-}
-
+#[cfg(test)]
 fn center_trace_event_lines(app: &TuiApp) -> Vec<Line<'static>> {
     if let Some(snapshot) = app.snapshot() {
         if let Some(err) = &snapshot.reports.current_trace_error {
@@ -2008,15 +2179,21 @@ fn center_trace_event_lines(app: &TuiApp) -> Vec<Line<'static>> {
                 Line::from(err.clone()),
             ];
         }
-        let events = if !snapshot.reports.current_trace_events.is_empty() {
+        let artifact_loaded = snapshot.reports.current_trace_path.is_some();
+        let events = if artifact_loaded {
             &snapshot.reports.current_trace_events
         } else {
             &snapshot.trace.events
         };
-        let lines = scoped_center_trace_events(snapshot, events)
-            .into_iter()
-            .map(|event| Line::from(event_trace_line(event)))
-            .collect::<Vec<_>>();
+        let scoped = scoped_center_trace_events(snapshot, events);
+        let lines = if app.detail_expanded {
+            detailed_trace_event_lines(scoped)
+        } else {
+            scoped
+                .into_iter()
+                .map(|event| Line::from(event_trace_line(event)))
+                .collect::<Vec<_>>()
+        };
         if !lines.is_empty() {
             return lines;
         }
@@ -2029,10 +2206,203 @@ fn center_trace_event_lines(app: &TuiApp) -> Vec<Line<'static>> {
     trace_lines(app)
 }
 
+fn trace_list(app: &TuiApp, max_lines: usize, max_width: usize) -> TraceList {
+    let Some(snapshot) = app.snapshot() else {
+        return TraceList {
+            lines: trace_lines(app),
+            footer: info_line("", "live session tail"),
+        };
+    };
+    if let Some(err) = &snapshot.reports.current_trace_error {
+        return TraceList {
+            lines: vec![
+                Line::from(styled("Trace unavailable", STATUS_WARNING)),
+                Line::from(err.clone()),
+            ],
+            footer: info_line("", center_trace_source_label(app)),
+        };
+    }
+
+    let events = app.trace_events();
+    if events.is_empty() {
+        let message = if snapshot.run.run_id.is_some() {
+            "No trace events recorded for this Run yet."
+        } else {
+            "preflight_completed has not been recorded yet."
+        };
+        return TraceList {
+            lines: vec![Line::from(message)],
+            footer: info_line("", center_trace_source_label(app)),
+        };
+    }
+
+    let selected = app.trace_selection.min(events.len().saturating_sub(1));
+    let rows_per_event = 2usize;
+    let visible_events = trace_spaced_item_capacity(max_lines.max(1), rows_per_event).max(1);
+    let mut start = selected.saturating_sub(visible_events.saturating_sub(1));
+    if start + visible_events > events.len() {
+        start = events.len().saturating_sub(visible_events);
+    }
+    let end = (start + visible_events).min(events.len());
+    let mut lines = Vec::new();
+    for (index, event) in events.iter().enumerate().take(end).skip(start) {
+        if index > start {
+            lines.push(Line::from(""));
+        }
+        let selected_event = index == selected;
+        lines.push(trace_event_header_line(event, selected_event, app.accent));
+        lines.push(trace_event_json_line(event, selected_event, max_width));
+    }
+    TraceList {
+        lines,
+        footer: trace_list_footer(selected, events.len(), center_trace_source_label(app)),
+    }
+}
+
+fn trace_event_header_line(
+    event: &HarnessEventEnvelope,
+    selected: bool,
+    accent: Color,
+) -> Line<'static> {
+    let prefix = if selected { "▶ " } else { "  " };
+    let style = if selected {
+        Style::default()
+            .fg(accent)
+            .add_modifier(Modifier::BOLD)
+            .bg(PANEL_BORDER_SUBTLE)
+    } else {
+        Style::default().fg(TEXT_PRIMARY)
+    };
+    Line::from(Span::styled(
+        format!("{prefix}{}", event_trace_line(event)),
+        style,
+    ))
+}
+
+fn trace_event_json_line(
+    event: &HarnessEventEnvelope,
+    selected: bool,
+    max_width: usize,
+) -> Line<'static> {
+    let json = serde_json::to_string(event).unwrap_or_else(|_| "{}".into());
+    let width = max_width.saturating_sub(4).max(1);
+    let text = format!("    {}", truncate_right(&json, width));
+    let style = if selected {
+        Style::default().fg(TEXT_MUTED).bg(PANEL_BORDER_SUBTLE)
+    } else {
+        Style::default().fg(TEXT_DIM)
+    };
+    Line::from(Span::styled(text, style))
+}
+
+fn truncate_right(value: &str, max_chars: usize) -> String {
+    let max_chars = max_chars.max(1);
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars == 1 {
+        return "…".into();
+    }
+    let keep = max_chars - 1;
+    format!("{}…", value.chars().take(keep).collect::<String>())
+}
+
+#[cfg(test)]
+fn detailed_trace_event_lines(events: Vec<&HarnessEventEnvelope>) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for event in events {
+        lines.push(Line::from(event_trace_line(event)));
+        if let Some(phase_execution_id) = &event.phase_execution_id {
+            lines.push(info_line(
+                "  phase_execution_id: ",
+                phase_execution_id.clone(),
+            ));
+        }
+        lines.push(info_line(
+            "  payload: ",
+            event_payload_detail(&event.payload),
+        ));
+        if let Ok(raw) = serde_json::to_string(event) {
+            lines.push(info_line("  raw: ", truncate_middle(&raw, 220)));
+        }
+        lines.push(Line::from(""));
+    }
+    lines
+}
+
+#[cfg(test)]
+fn event_payload_detail(payload: &HarnessEventPayload) -> String {
+    match payload {
+        HarnessEventPayload::Lifecycle { message, fields } => {
+            if fields.is_empty() {
+                message.clone()
+            } else {
+                format!("{message} · fields: {}", fields.len())
+            }
+        }
+        HarnessEventPayload::Action {
+            action_kind,
+            identity,
+            status,
+            ..
+        } => format!("{action_kind} {identity} · {status}"),
+        HarnessEventPayload::Phase {
+            phase_id,
+            outcome,
+            transition_to,
+            ..
+        } => format!(
+            "phase {phase_id} · outcome {} · transition {}",
+            outcome.as_deref().unwrap_or("pending"),
+            transition_to.as_deref().unwrap_or("pending")
+        ),
+        HarnessEventPayload::Preflight { status, .. } => {
+            format!("preflight {}", preflight_status_label(*status))
+        }
+        HarnessEventPayload::Usage { .. } => "usage update".into(),
+        HarnessEventPayload::Terminal { status, .. } => {
+            format!("terminal {}", terminal_status_label(*status))
+        }
+        HarnessEventPayload::Service {
+            service, status, ..
+        } => {
+            format!("service {service} · {status}")
+        }
+        HarnessEventPayload::Content { label, .. } => format!("content {label}"),
+        HarnessEventPayload::Empty => "redacted/empty payload".into(),
+    }
+}
+
+fn center_trace_source_label(app: &TuiApp) -> String {
+    let Some(snapshot) = app.snapshot() else {
+        return "live session tail".into();
+    };
+    if snapshot.reports.current_trace_path.is_some() {
+        let retained = snapshot.reports.current_trace_events.len();
+        match snapshot.reports.current_trace_total_events {
+            Some(total) if total > retained => {
+                format!("events.jsonl · showing latest {retained}/{total} events")
+            }
+            Some(total) => format!("events.jsonl · {total} cached events"),
+            None => format!("events.jsonl · {retained} cached events"),
+        }
+    } else if snapshot.run.run_id.is_some() {
+        format!(
+            "live session tail · bounded {} events",
+            snapshot.trace.events.len()
+        )
+    } else {
+        "preflight from live session tail".into()
+    }
+}
+
 fn scoped_center_trace_events<'a>(
     snapshot: &TuiSessionSnapshot,
     events: &'a [HarnessEventEnvelope],
 ) -> Vec<&'a HarnessEventEnvelope> {
+    if snapshot.reports.current_trace_path.is_some() {
+        return events.iter().collect();
+    }
     match snapshot.run.run_id.as_deref() {
         Some(run_id) => events
             .iter()
@@ -2045,83 +2415,220 @@ fn scoped_center_trace_events<'a>(
     }
 }
 
+#[cfg(test)]
 fn paginate_trace_lines(
     lines: Vec<Line<'static>>,
     requested_page: PageCursor,
     max_lines: usize,
-) -> TracePage {
+) -> TraceList {
+    paginate_trace_lines_with_label(lines, requested_page, max_lines, usize::MAX, String::new())
+}
+
+#[cfg(test)]
+fn paginate_trace_lines_with_label(
+    lines: Vec<Line<'static>>,
+    requested_page: PageCursor,
+    max_lines: usize,
+    max_width: usize,
+    source_label: String,
+) -> TraceList {
     let max_body_lines = max_lines.max(1);
-    let mut pages: Vec<Vec<Line<'static>>> = lines
-        .chunks(max_body_lines)
-        .map(|chunk| chunk.to_vec())
-        .collect();
+    let lines = wrap_trace_lines(lines, max_width);
+    let mut pages: Vec<Vec<Line<'static>>> = Vec::new();
+    let mut current = Vec::new();
+    for line in lines {
+        if current.len() >= max_body_lines {
+            pages.push(std::mem::take(&mut current));
+        }
+        current.push(line);
+    }
+    if !current.is_empty() {
+        pages.push(current);
+    }
     if pages.is_empty() {
         pages.push(vec![Line::from("No trace events yet.")]);
     }
     let page_count = pages.len().max(1);
     let page_index = page_index_for_cursor(requested_page, page_count);
-    TracePage {
+    TraceList {
         lines: pages.into_iter().nth(page_index).unwrap_or_default(),
-        footer: trace_page_footer(page_index, page_count),
+        footer: trace_page_footer(page_index, page_count, source_label),
     }
+}
+
+#[cfg(test)]
+fn wrap_trace_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    if width == usize::MAX {
+        return lines;
+    }
+    lines
+        .into_iter()
+        .flat_map(|line| wrap_trace_line(line, width))
+        .collect()
+}
+
+#[cfg(test)]
+fn wrap_trace_line(line: Line<'static>, width: usize) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    let text = line.to_string();
+    if text.chars().count() <= width {
+        return vec![line];
+    }
+
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    for ch in text.chars() {
+        if row.chars().count() >= width {
+            rows.push(Line::from(std::mem::take(&mut row)));
+        }
+        row.push(ch);
+    }
+    if !row.is_empty() {
+        rows.push(Line::from(row));
+    }
+    rows
 }
 
 fn page_index_for_cursor(cursor: PageCursor, page_count: usize) -> usize {
     cursor.rem_euclid(page_count.max(1) as PageCursor) as usize
 }
 
-fn trace_page_footer(page_index: usize, page_count: usize) -> Line<'static> {
-    if page_count > 1 {
-        info_line(
-            "",
-            format!(
-                "Page {}/{} · PgUp next · PgDn prev",
-                page_index + 1,
-                page_count
-            ),
+#[cfg(test)]
+fn trace_page_footer(page_index: usize, page_count: usize, source_label: String) -> Line<'static> {
+    let mut text = if page_count > 1 {
+        format!(
+            "Page {}/{} · PgUp next · PgDn prev",
+            page_index + 1,
+            page_count
         )
     } else {
-        info_line("", "Page 1/1")
+        "Page 1/1".into()
+    };
+    if !source_label.is_empty() {
+        text.push_str(" · ");
+        text.push_str(&source_label);
     }
+    info_line("", text)
+}
+
+fn trace_list_footer(selected: usize, count: usize, source_label: String) -> Line<'static> {
+    let mut text = if count > 0 {
+        format!(
+            "Event {}/{} · ↑/↓ select · Enter/D details",
+            selected + 1,
+            count
+        )
+    } else {
+        "No events".into()
+    };
+    if !source_label.is_empty() {
+        text.push_str(" · ");
+        text.push_str(&source_label);
+    }
+    info_line("", text)
 }
 
 fn memory_lines(app: &TuiApp) -> Vec<Line<'_>> {
-    match &app.state {
-        TuiState::Ready { controller } => {
-            let plan = controller.plan();
-            let memory = grouped_capability_counts(plan, "memory");
-            vec![
-                center_header_line(app),
-                Line::from(""),
-                center_tabs_line(app),
-                Line::from(""),
-                Line::from(styled("Memory", app.accent)),
-                Line::from(format!("available: {}", memory.available)),
-                Line::from(format!("pending: {}", memory.pending)),
-                Line::from(format!("suppressed: {}", memory.suppressed)),
-                Line::from(format!("unavailable: {}", memory.unavailable)),
-            ]
+    let mut lines = vec![
+        center_header_line(app),
+        Line::from(""),
+        center_tabs_line(app),
+        Line::from(""),
+        Line::from(styled("Memory", app.accent)),
+    ];
+    let Some(snapshot) = app.snapshot() else {
+        lines.push(Line::from("Memory state pending preflight."));
+        return lines;
+    };
+    if snapshot.memory.spaces.is_empty() {
+        lines.push(Line::from("No Memory spaces configured."));
+    } else {
+        lines.push(info_line(
+            "",
+            format!("{} spaces", snapshot.memory.spaces.len()),
+        ));
+        for (index, space) in snapshot.memory.spaces.iter().enumerate() {
+            push_item_gap(&mut lines, index);
+            lines.push(Line::from(format!(
+                "{} / {} · {} · {} · {}",
+                space.package, space.space, space.state, space.model, space.runtime
+            )));
+            lines.push(info_line(
+                "  modes: ",
+                safe_join(&space.modes, ", ", "none"),
+            ));
+            lines.push(info_line(
+                "  record types: ",
+                safe_join(&space.record_types, ", ", "none"),
+            ));
+            if app.detail_expanded
+                && let Some(reason) = &space.readiness_reason
+            {
+                lines.push(info_line("  reason: ", reason.clone()));
+            }
         }
-        TuiState::Running { snapshot, .. } => vec![
-            center_header_line(app),
-            Line::from(""),
-            center_tabs_line(app),
-            Line::from(""),
-            Line::from(styled("Memory", app.accent)),
-            Line::from(format!(
-                "Run active: {}",
-                snapshot.run.run_id.as_deref().unwrap_or("unknown")
-            )),
-            Line::from("Memory activity detail lands in the Memory panel milestone."),
-        ],
-        _ => vec![
-            center_header_line(app),
-            Line::from(""),
-            center_tabs_line(app),
-            Line::from(""),
-            Line::from("Memory state pending preflight."),
-        ],
     }
+    if !snapshot.memory.operations.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(styled("Memory Operations", app.accent)));
+        for (index, operation) in snapshot.memory.operations.iter().enumerate() {
+            push_item_gap(&mut lines, index);
+            lines.push(Line::from(format!(
+                "{} · {} · {} · trigger {}",
+                operation.identity, operation.operation_type, operation.state, operation.trigger
+            )));
+            lines.push(info_line(
+                "  spaces: ",
+                safe_join(&operation.referenced_spaces, ", ", "none"),
+            ));
+            if app.detail_expanded
+                && let Some(reason) = &operation.readiness_reason
+            {
+                lines.push(info_line("  reason: ", reason.clone()));
+            }
+        }
+    }
+    let memory_events = memory_activity_events(snapshot);
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled("Run Memory Activity", app.accent)));
+    if memory_events.is_empty() {
+        lines.push(Line::from("No Memory activity recorded for this Run yet."));
+    } else {
+        for (index, (event_type, count)) in
+            memory_event_counts(&memory_events).into_iter().enumerate()
+        {
+            push_item_gap(&mut lines, index);
+            lines.push(Line::from(format!("{event_type}: {count}")));
+        }
+        if app.detail_expanded {
+            lines.push(Line::from(""));
+            for (index, event) in memory_events.into_iter().enumerate() {
+                push_item_gap(&mut lines, index);
+                lines.push(info_line("  ", event_trace_line(event)));
+            }
+        }
+    }
+    if let Some(report) = snapshot.reports.current_report.as_ref() {
+        append_operation_summary_lines(&mut lines, "Memory Summaries", &report.memory_summaries);
+        if !report.memory_write_review_summaries.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(styled("Persistence Review", app.accent)));
+            for (index, review) in report.memory_write_review_summaries.iter().enumerate() {
+                push_item_gap(&mut lines, index);
+                lines.push(Line::from(format!(
+                    "{} · {} · {}",
+                    review.point, review.phase_execution_id, review.status
+                )));
+                if app.detail_expanded {
+                    lines.push(info_line("  reason: ", review.reason.clone()));
+                }
+            }
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(info_line("", "redaction-safe summaries only"));
+    lines
 }
 
 fn report_lines(app: &TuiApp) -> Vec<Line<'_>> {
@@ -2145,10 +2652,79 @@ fn report_lines(app: &TuiApp) -> Vec<Line<'_>> {
                         "status: {}",
                         terminal_status_label(report.terminal_status)
                     )));
+                    if let Some(duration_ms) = report.duration_ms {
+                        lines.push(Line::from(format!("duration_ms: {duration_ms}")));
+                    }
+                    lines.push(Line::from(format!(
+                        "report: {}",
+                        controller
+                            .snapshot()
+                            .reports
+                            .current_report_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "not recorded".into())
+                    )));
                     lines.push(Line::from(format!(
                         "trace: {}",
-                        report.trace_path.as_deref().unwrap_or("not recorded")
+                        controller
+                            .snapshot()
+                            .reports
+                            .current_trace_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .or_else(|| report.trace_path.clone())
+                            .unwrap_or_else(|| "not recorded".into())
                     )));
+                    append_consumer_context_report_lines(&mut lines, report);
+                    append_phase_report_lines(&mut lines, report);
+                    append_usage_report_lines(&mut lines, report);
+                    append_action_report_lines(&mut lines, report);
+                    append_operation_summary_lines(
+                        &mut lines,
+                        "Tool Summaries",
+                        &report.tool_summaries,
+                    );
+                    append_operation_summary_lines(
+                        &mut lines,
+                        "MCP Summaries",
+                        &report.mcp_summaries,
+                    );
+                    append_operation_summary_lines(
+                        &mut lines,
+                        "Knowledge Summaries",
+                        &report.knowledge_summaries,
+                    );
+                    append_operation_summary_lines(
+                        &mut lines,
+                        "Memory Summaries",
+                        &report.memory_summaries,
+                    );
+                    if !report.diagnostics.is_empty() {
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(styled("Diagnostics", app.accent)));
+                        for diagnostic in &report.diagnostics {
+                            lines.push(Line::from(format!(
+                                "{} · {}",
+                                diagnostic_severity_label(diagnostic.severity),
+                                diagnostic.code
+                            )));
+                            if app.detail_expanded {
+                                lines.push(info_line("  ", diagnostic.message.clone()));
+                            }
+                        }
+                    }
+                    if app.detail_expanded
+                        && let Some(output) = &report.terminal_output
+                    {
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(styled("Terminal Output", app.accent)));
+                        lines.push(Line::from(truncate_middle(
+                            &serde_json::to_string(output)
+                                .unwrap_or_else(|_| "<unavailable>".into()),
+                            240,
+                        )));
+                    }
                 }
                 (None, None) => {
                     lines.push(Line::from(styled("Preflight Report", app.accent)));
@@ -2207,6 +2783,299 @@ fn report_lines(app: &TuiApp) -> Vec<Line<'_>> {
             Line::from("Report pending preflight."),
         ],
     }
+}
+
+fn safe_join(values: &[String], separator: &str, empty: &str) -> String {
+    if values.is_empty() {
+        empty.into()
+    } else {
+        values.join(separator)
+    }
+}
+
+fn push_item_gap(lines: &mut Vec<Line<'_>>, index: usize) {
+    if index > 0 {
+        lines.push(Line::from(""));
+    }
+}
+
+fn memory_activity_events(snapshot: &TuiSessionSnapshot) -> Vec<&HarnessEventEnvelope> {
+    let events = if snapshot.reports.current_trace_path.is_some() {
+        &snapshot.reports.current_trace_events
+    } else {
+        &snapshot.trace.events
+    };
+    scoped_center_trace_events(snapshot, events)
+        .into_iter()
+        .filter(|event| is_memory_event_type(event.event_type))
+        .collect()
+}
+
+fn is_memory_event_type(event_type: HarnessEventType) -> bool {
+    match event_type {
+        HarnessEventType::MemorySurfaceReady
+        | HarnessEventType::MemorySurfaceUnavailable
+        | HarnessEventType::MemoryReadStarted
+        | HarnessEventType::MemoryReadCompleted
+        | HarnessEventType::MemoryReadFailed
+        | HarnessEventType::MemoryWriteStarted
+        | HarnessEventType::MemoryWriteCompleted
+        | HarnessEventType::MemoryWriteFailed
+        | HarnessEventType::MemoryWriteReviewStarted
+        | HarnessEventType::MemoryWriteReviewCompleted
+        | HarnessEventType::MemoryWriteReviewSkipped
+        | HarnessEventType::MemoryWriteReviewFailed
+        | HarnessEventType::MemoryTriggerEvaluated
+        | HarnessEventType::MemoryOperationEligible
+        | HarnessEventType::MemoryOperationStarted
+        | HarnessEventType::MemoryOperationSource
+        | HarnessEventType::MemoryOperationOutput
+        | HarnessEventType::MemoryOperationCompleted
+        | HarnessEventType::MemoryOperationFailed => true,
+        HarnessEventType::SessionStarting
+        | HarnessEventType::ServiceStarting
+        | HarnessEventType::ServiceHandshaking
+        | HarnessEventType::ServiceReady
+        | HarnessEventType::ServiceUnhealthy
+        | HarnessEventType::ServiceRestarting
+        | HarnessEventType::ServiceFailed
+        | HarnessEventType::ServiceStopped
+        | HarnessEventType::PreflightCompleted
+        | HarnessEventType::SessionStarted
+        | HarnessEventType::SessionUsageUpdated
+        | HarnessEventType::SessionStopping
+        | HarnessEventType::SessionStopped
+        | HarnessEventType::RunStarted
+        | HarnessEventType::ConsumerContextLoaded
+        | HarnessEventType::ConsumerContextUnavailable
+        | HarnessEventType::PhaseEnterRequested
+        | HarnessEventType::EffectivePhaseComputed
+        | HarnessEventType::PhaseStarted
+        | HarnessEventType::PhaseResultReady
+        | HarnessEventType::PhaseFailed
+        | HarnessEventType::RunCompleted
+        | HarnessEventType::RunFailed
+        | HarnessEventType::RunCancelled
+        | HarnessEventType::RunLimitReached
+        | HarnessEventType::RunApprovalRequired
+        | HarnessEventType::PromptPrepared
+        | HarnessEventType::ModelRuntimeRequestPrepared
+        | HarnessEventType::ModelRequestStarted
+        | HarnessEventType::ModelRequestCompleted
+        | HarnessEventType::ModelRequestFailed
+        | HarnessEventType::SemanticActionProposed
+        | HarnessEventType::SemanticActionRejected
+        | HarnessEventType::SemanticActionCompleted
+        | HarnessEventType::ModelRepairRequested
+        | HarnessEventType::OutcomeProposed
+        | HarnessEventType::OutcomeSelected
+        | HarnessEventType::OutcomeInvalid
+        | HarnessEventType::TransitionSelected
+        | HarnessEventType::LoopLimitReached
+        | HarnessEventType::ToolCandidatesComputed
+        | HarnessEventType::ToolInvoked
+        | HarnessEventType::ToolRetrying
+        | HarnessEventType::ToolCompleted
+        | HarnessEventType::ToolFailed
+        | HarnessEventType::SkillActivated
+        | HarnessEventType::SkillResourceRequested
+        | HarnessEventType::SkillResourceLoaded
+        | HarnessEventType::SkillResourceFailed
+        | HarnessEventType::KnowledgeSurfaceReady
+        | HarnessEventType::KnowledgeSurfaceUnavailable
+        | HarnessEventType::KnowledgeRequestStarted
+        | HarnessEventType::KnowledgeRetrieved
+        | HarnessEventType::KnowledgeFailed
+        | HarnessEventType::EmbeddingRequestStarted
+        | HarnessEventType::EmbeddingRequestCompleted
+        | HarnessEventType::EmbeddingRequestFailed
+        | HarnessEventType::HookStarted
+        | HarnessEventType::HookCompleted
+        | HarnessEventType::HookRejected
+        | HarnessEventType::HookFailed
+        | HarnessEventType::ApprovalRequested
+        | HarnessEventType::ApprovalApproved
+        | HarnessEventType::ApprovalDenied
+        | HarnessEventType::ApprovalFailed
+        | HarnessEventType::McpSurfaceStarting
+        | HarnessEventType::McpSurfaceReady
+        | HarnessEventType::McpSurfaceFailed
+        | HarnessEventType::McpSurfaceStopped
+        | HarnessEventType::McpImportConnected
+        | HarnessEventType::McpImportFailed
+        | HarnessEventType::McpToolInvoked
+        | HarnessEventType::McpToolCompleted
+        | HarnessEventType::McpToolFailed
+        | HarnessEventType::CancellationRequested
+        | HarnessEventType::CancellationCompleted => false,
+    }
+}
+
+fn memory_event_counts(events: &[&HarnessEventEnvelope]) -> Vec<(String, usize)> {
+    let mut counts = BTreeMap::new();
+    for event in events {
+        *counts
+            .entry(event_type_label(event.event_type))
+            .or_insert(0) += 1;
+    }
+    counts.into_iter().collect()
+}
+
+fn append_consumer_context_report_lines(lines: &mut Vec<Line<'_>>, report: &RunReport) {
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled("Consumer Context", TEXT_PANEL_TITLE)));
+    match &report.consumer_context {
+        Some(context) => {
+            lines.push(Line::from(format!("status: {}", context.status)));
+            if let Some(path) = &context.path {
+                lines.push(Line::from(format!("path: {path}")));
+            }
+            if let Some(bytes) = context.byte_size {
+                lines.push(Line::from(format!("bytes: {bytes}")));
+            }
+            if let Some(tokens) = context.approximate_tokens {
+                lines.push(Line::from(format!("tokens: ~{tokens}")));
+            }
+            if let Some(hash) = &context.sha256 {
+                lines.push(Line::from(format!("sha256: {hash}")));
+            }
+            lines.push(Line::from(format!(
+                "content_included: {}",
+                context.content_included
+            )));
+        }
+        None => lines.push(Line::from("not configured")),
+    }
+}
+
+fn append_phase_report_lines(lines: &mut Vec<Line<'_>>, report: &RunReport) {
+    if report.phase_summaries.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled("Phases", TEXT_PANEL_TITLE)));
+    for (index, phase) in report.phase_summaries.iter().enumerate() {
+        push_item_gap(lines, index);
+        let mut summary = format!(
+            "{} · {} · outcome {}",
+            phase.phase_id,
+            phase.status,
+            phase.outcome.as_deref().unwrap_or("complete")
+        );
+        if let Some(transition) = phase.transition_to.as_deref() {
+            summary.push_str(&format!(" · transition {transition}"));
+        }
+        lines.push(Line::from(summary));
+    }
+    if !report.checkpoint_summaries.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(styled("Checkpoints", TEXT_PANEL_TITLE)));
+        for (index, checkpoint) in report.checkpoint_summaries.iter().enumerate() {
+            push_item_gap(lines, index);
+            lines.push(Line::from(format!(
+                "{} before {} · {}",
+                checkpoint.checkpoint_id, checkpoint.before_phase, checkpoint.status
+            )));
+        }
+    }
+}
+
+fn append_usage_report_lines(lines: &mut Vec<Line<'_>>, report: &RunReport) {
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled("Usage", TEXT_PANEL_TITLE)));
+    lines.push(Line::from(format!(
+        "model calls: {} · actions: {} · tools: {} · memory: {} · knowledge: {}",
+        report.usage.model_calls,
+        report.usage.accepted_semantic_actions,
+        report.usage.tool_calls,
+        report.usage.memory_requests,
+        report.usage.knowledge_requests
+    )));
+    lines.push(Line::from(format!(
+        "tokens: {}",
+        token_triplet_text(&report.usage.tokens)
+    )));
+    lines.push(Line::from(format!(
+        "repairs: {} · retries: {} · errors: {}",
+        report.repair_count, report.retry_count, report.error_count
+    )));
+}
+
+fn append_action_report_lines(lines: &mut Vec<Line<'_>>, report: &RunReport) {
+    if report.action_summaries.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled("Actions", TEXT_PANEL_TITLE)));
+    for (index, action) in report.action_summaries.iter().enumerate() {
+        push_item_gap(lines, index);
+        lines.push(Line::from(format!(
+            "{} · {} · {}",
+            action.action_kind, action.identity, action.status
+        )));
+        if let Some(error) = &action.error {
+            lines.push(info_line("  error: ", truncate_middle(error, 180)));
+        }
+    }
+}
+
+fn append_operation_summary_lines(
+    lines: &mut Vec<Line<'_>>,
+    title: &'static str,
+    summaries: &[crate::harness_observability::OperationReportSummary],
+) {
+    if summaries.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled(title, TEXT_PANEL_TITLE)));
+    for (index, summary) in summaries.iter().enumerate() {
+        push_item_gap(lines, index);
+        lines.push(Line::from(format!(
+            "{} · {} · {} · count {}",
+            summary.operation_kind, summary.identity, summary.status, summary.count
+        )));
+    }
+}
+
+fn token_triplet_text(tokens: &crate::harness_observability::TokenUsage) -> String {
+    format!(
+        "in {} · out {} · total {}",
+        tokens
+            .input_tokens
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".into()),
+        tokens
+            .output_tokens
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".into()),
+        tokens
+            .total_tokens
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".into())
+    )
+}
+
+fn truncate_middle(value: &str, max_chars: usize) -> String {
+    let length = value.chars().count();
+    if length <= max_chars {
+        return value.into();
+    }
+    if max_chars <= 1 {
+        return "…".into();
+    }
+    let head_len = max_chars / 2;
+    let tail_len = max_chars.saturating_sub(head_len + 1);
+    let head = value.chars().take(head_len).collect::<String>();
+    let tail = value
+        .chars()
+        .rev()
+        .take(tail_len)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("{head}…{tail}")
 }
 
 fn center_header_line(app: &TuiApp) -> Line<'static> {
@@ -2624,6 +3493,71 @@ mod tests {
     }
 
     #[test]
+    fn trace_rail_tail_keeps_newest_event_visible_at_bottom() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.trace.events = vec![
+            test_trace_event("evt-one", HarnessEventType::RunStarted, Some("run-test-3")),
+            test_trace_event(
+                "evt-two",
+                HarnessEventType::ModelRequestStarted,
+                Some("run-test-3"),
+            ),
+            test_trace_event(
+                "evt-three",
+                HarnessEventType::RunCompleted,
+                Some("run-test-3"),
+            ),
+        ];
+
+        let lines = trace_rail_lines(&app, 4, 80)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].contains("latest 2/3"));
+        assert!(!lines.iter().any(|line| line.contains("run_started")));
+        assert!(lines[1].contains("model_request_started"));
+        assert!(lines[2].is_empty());
+        assert!(lines[3].contains("run_completed"));
+        assert!(lines[3].contains("#1"));
+        assert!(!lines[3].contains("#3"));
+    }
+
+    #[test]
+    fn center_trace_list_spacing_respects_visible_height() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.run_id = Some("run-current".into());
+        controller.snapshot.trace.events = vec![
+            test_trace_event(
+                "evt-one",
+                HarnessEventType::ModelRequestStarted,
+                Some("run-current"),
+            ),
+            test_trace_event(
+                "evt-two",
+                HarnessEventType::RunCompleted,
+                Some("run-current"),
+            ),
+        ];
+
+        let list = trace_list(&app, 5, 80);
+
+        assert_eq!(list.lines.len(), 5);
+        assert!(list.lines[0].to_string().contains("model_request_started"));
+        assert!(list.lines[2].to_string().is_empty());
+        assert!(list.lines[3].to_string().contains("run_completed"));
+    }
+
+    #[test]
     fn center_trace_filters_events_to_displayed_run() {
         let mut app =
             TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
@@ -2664,6 +3598,256 @@ mod tests {
         assert!(lines[0].contains("run-current"));
         assert!(!lines[0].contains("run-old"));
         assert!(!lines[0].contains("preflight_completed"));
+    }
+
+    #[test]
+    fn center_trace_uses_cached_artifact_events_without_live_tail_fallback() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.status = TuiRunStatus::Terminal;
+        controller.snapshot.run.run_id = Some("run-current".into());
+        controller.snapshot.reports.current_trace_path = Some(PathBuf::from("events.jsonl"));
+        controller.snapshot.reports.current_trace_total_events = Some(9);
+        controller.snapshot.reports.current_trace_events = vec![test_trace_event(
+            "evt-current-memory",
+            HarnessEventType::MemoryWriteCompleted,
+            Some("run-current"),
+        )];
+        controller
+            .snapshot
+            .reports
+            .current_trace_events
+            .push(test_trace_event(
+                "evt-session-usage",
+                HarnessEventType::SessionUsageUpdated,
+                None,
+            ));
+        controller.snapshot.trace.events = vec![test_trace_event(
+            "evt-live-phase",
+            HarnessEventType::PhaseStarted,
+            Some("run-current"),
+        )];
+
+        let lines = center_trace_event_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("memory_write_completed"));
+        assert!(lines[1].contains("session_usage_updated"));
+        assert!(!lines[0].contains("phase_started"));
+        assert!(
+            trace_list(&app, 10, 80)
+                .footer
+                .to_string()
+                .contains("events.jsonl · showing latest 2/9 events")
+        );
+    }
+
+    #[test]
+    fn trace_pagination_counts_wrapped_detail_rows() {
+        let lines = vec![
+            Line::from("event one"),
+            Line::from("raw: abcdefghijklmnopqrst"),
+            Line::from("event two"),
+        ];
+
+        let first = paginate_trace_lines_with_label(lines.clone(), 0, 2, 10, String::new());
+        assert_eq!(
+            first.lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["event one", "raw: abcde"]
+        );
+        assert!(first.footer.to_string().contains("Page 1/3"));
+
+        let second = paginate_trace_lines_with_label(lines.clone(), 1, 2, 10, String::new());
+        assert_eq!(
+            second.lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["fghijklmno", "pqrst"]
+        );
+
+        let third = paginate_trace_lines_with_label(lines, 2, 2, 10, String::new());
+        assert_eq!(
+            third.lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["event two"]
+        );
+    }
+
+    #[test]
+    fn center_trace_detail_renders_raw_policy_filtered_events() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        app.detail_expanded = true;
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.run_id = Some("run-current".into());
+        controller.snapshot.trace.events = vec![test_trace_event(
+            "evt-current-hook",
+            HarnessEventType::HookCompleted,
+            Some("run-current"),
+        )];
+
+        let lines = center_trace_event_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(lines.iter().any(|line| line.contains("hook_completed")));
+        assert!(lines.iter().any(|line| line.contains("payload:")));
+        assert!(lines.iter().any(|line| line.contains("raw:")));
+    }
+
+    #[test]
+    fn memory_tab_lists_spaces_operations_activity_and_summaries() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.run_id = Some("run-memory".into());
+        controller.snapshot.memory = TuiMemorySnapshot {
+            spaces: vec![TuiMemorySpaceSnapshot {
+                package: "@zack/memory".into(),
+                package_version: "0.1.0".into(),
+                space: "current_note".into(),
+                model: "document".into(),
+                state: "available".into(),
+                runtime: "local".into(),
+                modes: vec!["key".into()],
+                record_types: vec!["note@1.0.0".into()],
+                readiness_reason: None,
+            }],
+            operations: vec![TuiMemoryOperationAvailabilitySnapshot {
+                identity: "@zack/memory/operations/refresh_current_note".into(),
+                operation_type: "transform".into(),
+                state: "available".into(),
+                trigger: "interval".into(),
+                referenced_spaces: vec!["current_note".into()],
+                readiness_reason: None,
+            }],
+        };
+        controller.snapshot.trace.events = vec![test_trace_event(
+            "evt-memory-write",
+            HarnessEventType::MemoryWriteCompleted,
+            Some("run-memory"),
+        )];
+        let mut report = test_run_report();
+        report.run_id = "run-memory".into();
+        report.memory_summaries = vec![crate::harness_observability::OperationReportSummary {
+            operation_kind: "memory_write".into(),
+            identity: "@zack/memory/current_note".into(),
+            status: "completed".into(),
+            count: 1,
+        }];
+        controller.snapshot.reports.current_report = Some(report);
+
+        let text = memory_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("@zack/memory / current_note"));
+        assert!(text.contains("modes: key"));
+        assert!(text.contains("record types: note@1.0.0"));
+        assert!(text.contains("refresh_current_note"));
+        assert!(text.contains("memory_write_completed: 1"));
+        assert!(text.contains("Memory Summaries"));
+    }
+
+    #[test]
+    fn memory_activity_classifier_uses_event_type_variants() {
+        assert!(is_memory_event_type(
+            HarnessEventType::MemoryOperationCompleted
+        ));
+        assert!(is_memory_event_type(HarnessEventType::MemorySurfaceReady));
+        assert!(!is_memory_event_type(HarnessEventType::ToolCompleted));
+        assert!(!is_memory_event_type(HarnessEventType::McpToolCompleted));
+    }
+
+    #[test]
+    fn reports_tab_shows_structured_run_report_context_and_paths() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        app.detail_expanded = true;
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        let mut report = test_run_report();
+        report.run_id = "run-report".into();
+        report.duration_ms = Some(42);
+        report.trace_path = Some("runs/run-report/events.jsonl".into());
+        report.consumer_context =
+            Some(crate::harness_observability::ConsumerContextReportSummary {
+                status: "loaded".into(),
+                path: Some("context.md".into()),
+                byte_size: Some(120),
+                approximate_tokens: Some(30),
+                sha256: Some("sha256:abc".into()),
+                content_included: false,
+            });
+        report.phase_summaries = vec![
+            crate::harness_observability::PhaseReportSummary {
+                phase_execution_id: "phase-exec-1".into(),
+                phase_id: "inspect".into(),
+                outcome: None,
+                transition_to: None,
+                status: "completed".into(),
+            },
+            crate::harness_observability::PhaseReportSummary {
+                phase_execution_id: "phase-exec-2".into(),
+                phase_id: "respond".into(),
+                outcome: Some("done".into()),
+                transition_to: Some("$end".into()),
+                status: "completed".into(),
+            },
+        ];
+        report.action_summaries = vec![crate::harness_observability::ActionReportSummary {
+            action_kind: "agentpm_tool".into(),
+            identity: "@zack/tool".into(),
+            status: "completed".into(),
+            error: None,
+        }];
+        report.mcp_summaries = vec![crate::harness_observability::OperationReportSummary {
+            operation_kind: "mcp_export".into(),
+            identity: "public-tools".into(),
+            status: "ready".into(),
+            count: 2,
+        }];
+        report.memory_summaries = vec![crate::harness_observability::OperationReportSummary {
+            operation_kind: "memory_read".into(),
+            identity: "@zack/memory/current_note".into(),
+            status: "completed".into(),
+            count: 1,
+        }];
+        report.terminal_output = Some(serde_json::json!({"answer": "done"}));
+        controller.snapshot.reports.current_report_path = Some(PathBuf::from("report.json"));
+        controller.snapshot.reports.current_trace_path = Some(PathBuf::from("events.jsonl"));
+        controller.snapshot.reports.current_report = Some(report);
+
+        let text = report_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("Run Report"));
+        assert!(text.contains("report: report.json"));
+        assert!(text.contains("trace: events.jsonl"));
+        assert!(text.contains("Consumer Context"));
+        assert!(text.contains("path: context.md"));
+        assert!(text.contains("Phases"));
+        assert!(text.contains("inspect · completed · outcome complete"));
+        assert!(text.contains("respond · completed · outcome done · transition $end"));
+        assert!(!text.contains("transition none"));
+        assert!(text.contains("Actions"));
+        assert!(text.contains("MCP Summaries"));
+        assert!(text.contains("Memory Summaries"));
+        assert!(text.contains("Terminal Output"));
     }
 
     #[test]

@@ -30,7 +30,7 @@ use crate::harness_runtime::{
     AgentPmActionDispatcher, ApprovalController, ApprovalDecision as RuntimeApprovalDecision,
     ConfiguredHookRuntime, HookRuntime, ModelRuntime, ServiceLifecycleEvents,
 };
-use crate::manifest::LoopCheckpoint;
+use crate::manifest::{LoopCheckpoint, MemoryRetrievalMode, MemorySpaceModel};
 use crate::prelude::*;
 use anyhow::{anyhow, bail};
 use chrono::{DateTime, Utc};
@@ -38,8 +38,10 @@ use serde_json::Value;
 use std::{
     any::Any,
     collections::{BTreeMap, VecDeque},
+    fs::File,
+    io::{BufRead, BufReader},
     panic::{self, AssertUnwindSafe},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -57,6 +59,7 @@ pub(super) const TUI_MEMORY_CONTROL_STATUS_QUEUED: &str = "queued";
 pub(super) const TUI_MEMORY_CONTROL_STATUS_RUNNING: &str = "running";
 pub(super) const TUI_MEMORY_CONTROL_STATUS_COMPLETED: &str = "completed";
 pub(super) const TUI_MEMORY_CONTROL_STATUS_FAILED: &str = "failed";
+const TUI_TRACE_ARTIFACT_EVENT_LIMIT: usize = 1_000;
 
 pub(super) enum BootstrapMessage {
     Progress(TuiBootstrapProgress),
@@ -123,6 +126,7 @@ pub(super) struct TuiSessionSnapshot {
     pub(super) trace: TuiTraceSnapshot,
     pub(super) reports: TuiReportSnapshot,
     pub(super) services: TuiServiceSnapshot,
+    pub(super) memory: TuiMemorySnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -220,6 +224,35 @@ pub(super) struct TuiMemoryOperationControlSnapshot {
     pub(super) message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TuiMemorySnapshot {
+    pub(super) spaces: Vec<TuiMemorySpaceSnapshot>,
+    pub(super) operations: Vec<TuiMemoryOperationAvailabilitySnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TuiMemorySpaceSnapshot {
+    pub(super) package: String,
+    pub(super) package_version: String,
+    pub(super) space: String,
+    pub(super) model: String,
+    pub(super) state: String,
+    pub(super) runtime: String,
+    pub(super) modes: Vec<String>,
+    pub(super) record_types: Vec<String>,
+    pub(super) readiness_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TuiMemoryOperationAvailabilitySnapshot {
+    pub(super) identity: String,
+    pub(super) operation_type: String,
+    pub(super) state: String,
+    pub(super) trigger: String,
+    pub(super) referenced_spaces: Vec<String>,
+    pub(super) readiness_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct TuiTraceSnapshot {
     pub(super) events: Vec<HarnessEventEnvelope>,
@@ -231,6 +264,8 @@ pub(super) struct TuiReportSnapshot {
     pub(super) current_trace_path: Option<PathBuf>,
     pub(super) current_report: Option<RunReport>,
     pub(super) current_trace_events: Vec<HarnessEventEnvelope>,
+    pub(super) current_trace_values: Vec<Value>,
+    pub(super) current_trace_total_events: Option<usize>,
     pub(super) current_report_error: Option<String>,
     pub(super) current_trace_error: Option<String>,
 }
@@ -1093,11 +1128,75 @@ impl TuiSessionController {
             .or_else(|| Some(output_paths.events_path.clone()));
         self.snapshot.reports.current_report = Some(terminal.report.clone());
         self.snapshot.reports.current_report_error = None;
-        self.snapshot.reports.current_trace_events = self.events.events();
-        self.snapshot.reports.current_trace_error = None;
+        match read_trace_artifact(&output_paths.events_path) {
+            Ok(artifact) => {
+                let total_events = artifact.total_events;
+                self.snapshot.reports.current_trace_events = artifact
+                    .events
+                    .iter()
+                    .map(|event| event.envelope.clone())
+                    .collect();
+                self.snapshot.reports.current_trace_values = artifact
+                    .events
+                    .into_iter()
+                    .map(|event| event.value)
+                    .collect();
+                self.snapshot.reports.current_trace_total_events = Some(total_events);
+                self.snapshot.reports.current_trace_error = None;
+            }
+            Err(err) => {
+                self.snapshot.reports.current_trace_events = Vec::new();
+                self.snapshot.reports.current_trace_values = Vec::new();
+                self.snapshot.reports.current_trace_total_events = None;
+                self.snapshot.reports.current_trace_error = Some(format!("{err:#}"));
+            }
+        }
         self.snapshot.usage = self.session.usage.clone();
         self.snapshot.trace.events = self.events.events();
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct TuiTraceArtifactEvent {
+    pub(super) envelope: HarnessEventEnvelope,
+    pub(super) value: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct TuiTraceArtifact {
+    events: Vec<TuiTraceArtifactEvent>,
+    total_events: usize,
+}
+
+fn read_trace_artifact(path: &Path) -> Result<TuiTraceArtifact> {
+    read_trace_artifact_with_limit(path, TUI_TRACE_ARTIFACT_EVENT_LIMIT)
+}
+
+fn read_trace_artifact_with_limit(path: &Path, limit: usize) -> Result<TuiTraceArtifact> {
+    let file = File::open(path).with_context(|| format!("opening trace {}", path.display()))?;
+    let reader = BufReader::new(file);
+    let limit = limit.max(1);
+    let mut events = VecDeque::new();
+    let mut total_events = 0usize;
+    for (index, line) in reader.lines().enumerate() {
+        let line = line.with_context(|| format!("reading trace line {}", index + 1))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value = serde_json::from_str::<Value>(&line)
+            .with_context(|| format!("parsing trace event line {}", index + 1))?;
+        let envelope = serde_json::from_value::<HarnessEventEnvelope>(value.clone())
+            .with_context(|| format!("parsing trace event line {}", index + 1))?;
+        total_events += 1;
+        if events.len() == limit {
+            events.pop_front();
+        }
+        events.push_back(TuiTraceArtifactEvent { envelope, value });
+    }
+    Ok(TuiTraceArtifact {
+        events: events.into_iter().collect(),
+        total_events,
+    })
 }
 
 #[derive(Clone)]
@@ -1377,10 +1476,13 @@ pub(super) fn build_session_snapshot(
             current_trace_path: trace_path,
             current_report: None,
             current_trace_events: Vec::new(),
+            current_trace_values: Vec::new(),
+            current_trace_total_events: None,
             current_report_error: None,
             current_trace_error: None,
         },
         services: service_snapshot_from_session(session),
+        memory: memory_snapshot_from_session(session),
     };
     snapshot.run.phase_objective = run_phase_objective(plan, snapshot.run.phase_id.as_deref());
     if snapshot.run.latest_output.is_none() {
@@ -1388,6 +1490,71 @@ pub(super) fn build_session_snapshot(
     }
     snapshot.run.transcript = events.transcript();
     snapshot
+}
+
+fn memory_snapshot_from_session(session: &HarnessSession) -> TuiMemorySnapshot {
+    let spaces = session
+        .runtime_snapshot
+        .memory
+        .iter()
+        .map(|space| TuiMemorySpaceSnapshot {
+            package: space.package.clone(),
+            package_version: space.package_version.clone(),
+            space: space.space.clone(),
+            model: memory_space_model_label(&space.model).into(),
+            state: space.state.clone(),
+            runtime: space.runtime.clone(),
+            modes: space
+                .retrieval_modes
+                .iter()
+                .map(memory_retrieval_mode_label)
+                .map(str::to_string)
+                .collect(),
+            record_types: space
+                .record_types
+                .iter()
+                .map(|record_type| format!("{}@{}", record_type.name, record_type.schema_version))
+                .collect(),
+            readiness_reason: space.readiness_reason.clone(),
+        })
+        .collect();
+    let operations = session
+        .runtime_snapshot
+        .memory_operations
+        .iter()
+        .map(|operation| TuiMemoryOperationAvailabilitySnapshot {
+            identity: memory_operation_identity(&operation.package, &operation.operation),
+            operation_type: operation.operation_type.clone(),
+            state: operation.state.clone(),
+            trigger: operation
+                .trigger
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            referenced_spaces: operation.referenced_spaces.clone(),
+            readiness_reason: operation.readiness_reason.clone(),
+        })
+        .collect();
+    TuiMemorySnapshot { spaces, operations }
+}
+
+fn memory_space_model_label(model: &MemorySpaceModel) -> &'static str {
+    match model {
+        MemorySpaceModel::Document => "document",
+        MemorySpaceModel::Collection => "collection",
+        MemorySpaceModel::Sequence => "sequence",
+    }
+}
+
+fn memory_retrieval_mode_label(mode: &MemoryRetrievalMode) -> &'static str {
+    match mode {
+        MemoryRetrievalMode::Key => "key",
+        MemoryRetrievalMode::Chronological => "chronological",
+        MemoryRetrievalMode::Filter => "filter",
+        MemoryRetrievalMode::FullText => "full_text",
+        MemoryRetrievalMode::Semantic => "semantic",
+    }
 }
 
 fn run_snapshot_from_session(session: &HarnessSession) -> TuiRunSnapshot {
@@ -1500,6 +1667,55 @@ mod tests {
         }
         assert!(handle.pending().is_none());
         assert!(handle.take_decision().is_none());
+    }
+
+    #[test]
+    fn trace_artifact_reader_keeps_newest_events_and_reports_total() {
+        let path = std::env::temp_dir().join(format!(
+            "agentpm-tui-trace-{}.jsonl",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let events = [
+            test_trace_event("evt-1"),
+            test_trace_event("evt-2"),
+            test_trace_event("evt-3"),
+        ];
+        let body = events
+            .iter()
+            .map(|event| serde_json::to_string(event).expect("event should serialize"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, body).expect("trace artifact should be written");
+
+        let artifact =
+            read_trace_artifact_with_limit(&path, 2).expect("trace artifact should parse");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(artifact.total_events, 3);
+        assert_eq!(artifact.events.len(), 2);
+        assert_eq!(artifact.events[0].envelope.event_id, "evt-2");
+        assert_eq!(artifact.events[1].envelope.event_id, "evt-3");
+        assert_eq!(artifact.events[0].value["event_id"].as_str(), Some("evt-2"));
+    }
+
+    fn test_trace_event(event_id: &str) -> HarnessEventEnvelope {
+        HarnessEventEnvelope {
+            schema_version: 1,
+            event_id: event_id.into(),
+            session_id: "sess-test".into(),
+            run_id: Some("run-test".into()),
+            session_sequence: 1,
+            run_sequence: Some(1),
+            timestamp: Utc::now(),
+            event_type: HarnessEventType::PhaseStarted,
+            phase_execution_id: None,
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Lifecycle {
+                message: "test event".into(),
+                fields: BTreeMap::new(),
+            },
+        }
     }
 }
 
