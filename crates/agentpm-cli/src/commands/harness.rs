@@ -58,6 +58,7 @@ use crate::semver::types::PackageKind;
 mod custom_memory;
 mod host_services;
 mod runtime_snapshot;
+mod tui;
 
 use custom_memory::{
     activate_custom_memory_runtime_for_plan, apply_custom_memory_activation_to_runtime,
@@ -71,7 +72,7 @@ use host_services::{
 use runtime_snapshot::knowledge_snapshots_from_plan;
 use runtime_snapshot::runtime_snapshot_from_plan;
 
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Default)]
 pub struct HarnessArgs {
     /// Agent package identity to run, for example @owner/name or @owner/name@version
     #[arg(value_name = "AGENT")]
@@ -123,12 +124,17 @@ impl HarnessArgs {
         let workspace_root = std::env::current_dir().context("reading current directory")?;
         let surface = self.surface();
         validate_surface_flags(surface, &self)?;
+        if surface == HarnessExecutionSurface::Tui && !self.json {
+            return tui::run_tui_surface(self, workspace_root);
+        }
         let plan = resolve_harness_plan(
             &workspace_root,
             &HarnessBootstrapOptions {
                 agent_selector: self.agent.clone(),
                 config_path: self.config.clone(),
                 state_dir_override: self.state_dir.clone(),
+                model_override: None,
+                model_override_source: None,
                 runtime_scopes: self.scopes.iter().cloned().collect(),
                 surface,
             },
@@ -154,6 +160,10 @@ impl HarnessArgs {
                 bail!("Harness preflight requires an explicit Agent selector")
             }
             PreflightStatus::Failed => bail!("Harness preflight failed"),
+        }
+
+        if surface == HarnessExecutionSurface::Tui {
+            return Ok(());
         }
 
         run_surface(surface, plan, self)
@@ -189,7 +199,9 @@ impl HarnessExecutionSurface {
         match self {
             HarnessExecutionSurface::Headless => run_headless_surface(plan, args),
             HarnessExecutionSurface::Machine => run_machine_surface(plan, args),
-            HarnessExecutionSurface::Tui => run_tui_surface(plan),
+            HarnessExecutionSurface::Tui => {
+                bail!("internal error: TUI surface must be routed before preflight")
+            }
         }
     }
 }
@@ -950,10 +962,6 @@ fn terminate_mcp_export_child(child: &mut Child) {
 #[cfg(not(unix))]
 fn terminate_mcp_export_child(child: &mut Child) {
     let _ = child.kill();
-}
-
-fn run_tui_surface(_plan: &ResolvedHarnessPlan) -> Result<()> {
-    Ok(())
 }
 
 fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result<()> {

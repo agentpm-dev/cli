@@ -1,0 +1,5237 @@
+use super::*;
+use serde_json::Value;
+use std::collections::BTreeMap;
+
+pub(super) fn render_app(frame: &mut Frame<'_>, app: &mut TuiApp) {
+    let area = frame.area();
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Block::default().style(Style::default().bg(SURFACE_BG)),
+        area,
+    );
+    let area = area.inner(Margin {
+        horizontal: 1,
+        vertical: 0,
+    });
+    app.layout_mode = layout_mode_for_width(area.width);
+    app.reconcile_focus();
+
+    let top_bar_height = top_bar_height(area.width, app);
+    let keybar_height = keybar_height(area.width, app);
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(top_bar_height),
+            Constraint::Min(5),
+            Constraint::Length(keybar_height),
+        ])
+        .split(area);
+
+    render_top_bar(frame, layout[0], app);
+    let divider_lanes = render_body(frame, layout[1], app);
+    render_keybar(frame, layout[2], app);
+    render_shell_dividers(frame, layout[0], layout[2], &divider_lanes);
+    render_output_viewer(frame, layout[1], app);
+}
+
+fn layout_mode_for_width(width: u16) -> LayoutMode {
+    if width >= 120 {
+        LayoutMode::Wide
+    } else if width >= 88 {
+        LayoutMode::Medium
+    } else {
+        LayoutMode::Single
+    }
+}
+
+fn trace_level_label(level: &HarnessTraceLevel) -> &'static str {
+    match level {
+        HarnessTraceLevel::Minimal => "minimal",
+        HarnessTraceLevel::Normal => "normal",
+        HarnessTraceLevel::Verbose => "verbose",
+    }
+}
+
+fn trace_content_label(content: &HarnessTraceContent) -> &'static str {
+    match content {
+        HarnessTraceContent::None => "none",
+        HarnessTraceContent::Redacted => "redacted",
+        HarnessTraceContent::Full => "full",
+    }
+}
+
+fn preflight_status_label(status: PreflightStatus) -> &'static str {
+    match status {
+        PreflightStatus::Ready => "ready",
+        PreflightStatus::ReadyWithWarnings => "ready_with_warnings",
+        PreflightStatus::SelectionRequired => "selection_required",
+        PreflightStatus::Failed => "failed",
+    }
+}
+
+fn diagnostic_severity_label(severity: PreflightDiagnosticSeverity) -> &'static str {
+    match severity {
+        PreflightDiagnosticSeverity::Fatal => "fatal",
+        PreflightDiagnosticSeverity::Warning => "warning",
+        PreflightDiagnosticSeverity::Suppressed => "suppressed",
+        PreflightDiagnosticSeverity::Pending => "pending",
+        PreflightDiagnosticSeverity::Info => "info",
+    }
+}
+
+fn bootstrap_stage_label(stage: TuiBootstrapStage) -> &'static str {
+    match stage {
+        TuiBootstrapStage::Bootstrap => "bootstrap",
+        TuiBootstrapStage::Preflight => "preflight",
+        TuiBootstrapStage::Runtime => "runtime",
+    }
+}
+
+fn terminal_status_label(status: HarnessTerminalStatus) -> &'static str {
+    match status {
+        HarnessTerminalStatus::Ended => "ended",
+        HarnessTerminalStatus::HandedOff => "handed_off",
+        HarnessTerminalStatus::Aborted => "aborted",
+        HarnessTerminalStatus::Failed => "failed",
+        HarnessTerminalStatus::Cancelled => "cancelled",
+        HarnessTerminalStatus::LimitReached => "limit_reached",
+        HarnessTerminalStatus::ApprovalRequired => "approval_required",
+    }
+}
+
+fn event_trace_line(event: &HarnessEventEnvelope) -> String {
+    let event_type = event_type_label(event.event_type);
+    match &event.run_id {
+        Some(run_id) => format!(
+            "{}  {} · {}",
+            event.timestamp.format("%H:%M:%S"),
+            event_type,
+            run_id
+        ),
+        None => format!("{}  {}", event.timestamp.format("%H:%M:%S"), event_type),
+    }
+}
+
+fn event_type_label(event_type: HarnessEventType) -> String {
+    serde_json::to_value(event_type)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown_event".into())
+}
+
+fn bar_content_width(width: u16) -> usize {
+    width
+        .saturating_sub(BAR_HORIZONTAL_PADDING.saturating_mul(2))
+        .max(1) as usize
+}
+
+fn line_width(line: &Line<'_>) -> usize {
+    span_width(&line.spans)
+}
+
+fn span_width(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(|span| span.content.chars().count()).sum()
+}
+
+fn wrapped_row_count(width: usize, content_width: usize) -> u16 {
+    let content_width = content_width.max(1);
+    width.div_ceil(content_width).max(1) as u16
+}
+
+fn top_bar_height(width: u16, app: &TuiApp) -> u16 {
+    if top_bar_content_wraps(width, app) {
+        4
+    } else {
+        3
+    }
+}
+
+fn top_bar_content_wraps(width: u16, app: &TuiApp) -> bool {
+    let (left_spans, right_line) = top_bar_content(app);
+    let content_width = bar_content_width(width);
+    span_width(&left_spans)
+        .saturating_add(line_width(&right_line))
+        .saturating_add(2)
+        > content_width
+}
+
+fn top_bar_content(app: &TuiApp) -> (Vec<Span<'static>>, Line<'static>) {
+    let (branding, trace_label) = match &app.state {
+        TuiState::Ready { controller } => {
+            let plan = controller.plan();
+            let branding = &plan.config.config.ui.branding;
+            let mut parts = Vec::new();
+            if branding.name != PRODUCT_TITLE {
+                parts.push(branding.name.clone());
+            }
+            if let Some(subtitle) = &branding.subtitle
+                && !subtitle.trim().is_empty()
+            {
+                parts.push(subtitle.clone());
+            }
+            let trace = format!(
+                "[Trace: {}]  [Content: {}]",
+                trace_level_label(&plan.config.config.trace.level),
+                trace_content_label(&plan.config.config.trace.content)
+            );
+            (parts.join(" · "), trace)
+        }
+        TuiState::Loading { .. } => (String::new(), "[Trace: Pending]".into()),
+        TuiState::Running { .. } => (String::new(), "[Trace: Normal]".into()),
+        TuiState::Failed { .. } => (String::new(), "[Trace: Unavailable]".into()),
+    };
+    let mut left_spans = vec![Span::styled(
+        PRODUCT_TITLE,
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if !branding.is_empty() {
+        left_spans.push(Span::raw("  "));
+        left_spans.push(Span::styled(
+            branding,
+            Style::default().fg(app.accent).add_modifier(Modifier::BOLD),
+        ));
+    }
+    let right_line = Line::from(vec![
+        Span::styled("●", Style::default().fg(STATUS_READY)),
+        Span::styled(
+            " Session Active",
+            Style::default()
+                .fg(STATUS_READY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(trace_label, Style::default().fg(TEXT_MUTED)),
+    ]);
+    (left_spans, right_line)
+}
+
+fn render_top_bar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let (left_spans, right_line) = top_bar_content(app);
+    let block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(PANEL_BORDER_SUBTLE));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let content_area = inner.inner(Margin {
+        horizontal: BAR_HORIZONTAL_PADDING,
+        vertical: 0,
+    });
+
+    if top_bar_content_wraps(area.width, app) {
+        let first_row = Rect {
+            height: 1,
+            ..content_area
+        };
+        let second_row = Rect {
+            y: content_area
+                .y
+                .saturating_add(content_area.height.saturating_sub(1)),
+            height: 1,
+            ..content_area
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(left_spans)).alignment(Alignment::Left),
+            first_row,
+        );
+        frame.render_widget(
+            Paragraph::new(right_line)
+                .alignment(Alignment::Left)
+                .style(Style::default().fg(TEXT_MUTED)),
+            second_row,
+        );
+        return;
+    }
+
+    let content_area = if content_area.height > 1 {
+        Rect {
+            y: content_area.y + content_area.height / 2,
+            height: 1,
+            ..content_area
+        }
+    } else {
+        content_area
+    };
+    let right_width =
+        (line_width(&right_line) + 2).min(content_area.width.saturating_sub(8) as usize) as u16;
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(12), Constraint::Length(right_width)])
+        .split(content_area);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(left_spans)).alignment(Alignment::Left),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(right_line).alignment(Alignment::Right),
+        chunks[1],
+    );
+}
+
+fn render_body(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) -> Vec<Rect> {
+    let content_area = if area.height > 1 {
+        Rect {
+            y: area.y + 1,
+            height: area.height - 1,
+            ..area
+        }
+    } else {
+        area
+    };
+
+    match app.layout_mode {
+        LayoutMode::Wide => render_wide_body(frame, area, content_area, app),
+        LayoutMode::Medium => render_medium_body(frame, area, content_area, app),
+        LayoutMode::Single => {
+            match app.panel {
+                VisiblePanel::Workspace => render_workspace_panel(frame, content_area, app),
+                VisiblePanel::EventStream => render_trace_rail(frame, content_area, app),
+                _ => render_selected_center_panel(frame, content_area, app),
+            }
+            Vec::new()
+        }
+    }
+}
+
+fn render_wide_body(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    content_area: Rect,
+    app: &TuiApp,
+) -> Vec<Rect> {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(38),
+            Constraint::Length(3),
+            Constraint::Min(50),
+            Constraint::Length(3),
+            Constraint::Length(38),
+        ])
+        .split(area);
+    let content_columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(38),
+            Constraint::Length(3),
+            Constraint::Min(50),
+            Constraint::Length(3),
+            Constraint::Length(38),
+        ])
+        .split(content_area);
+    render_workspace_panel(frame, content_columns[0], app);
+    render_selected_center_panel(frame, content_columns[2], app);
+    render_trace_rail(frame, content_columns[4], app);
+    vec![columns[1], columns[3]]
+}
+
+fn render_medium_body(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    content_area: Rect,
+    app: &TuiApp,
+) -> Vec<Rect> {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(38),
+            Constraint::Length(3),
+            Constraint::Min(45),
+        ])
+        .split(area);
+    let content_columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(38),
+            Constraint::Length(3),
+            Constraint::Min(45),
+        ])
+        .split(content_area);
+    render_workspace_panel(frame, content_columns[0], app);
+    render_selected_center_panel(frame, content_columns[2], app);
+    vec![columns[1]]
+}
+
+fn render_shell_dividers(
+    frame: &mut Frame<'_>,
+    top_bar_area: Rect,
+    keybar_area: Rect,
+    divider_lanes: &[Rect],
+) {
+    let top_joint_y = top_bar_area
+        .y
+        .saturating_add(top_bar_area.height.saturating_sub(1));
+    let bottom_joint_y = keybar_area.y;
+    let body_y = top_joint_y.saturating_add(1);
+    let body_height = bottom_joint_y.saturating_sub(body_y);
+    for lane in divider_lanes {
+        let x = lane.x + lane.width / 2;
+        render_rule_glyph(frame, x, top_joint_y, "┬");
+        render_vertical_rule(
+            frame,
+            Rect {
+                x,
+                y: body_y,
+                width: 1,
+                height: body_height,
+            },
+        );
+        render_rule_glyph(frame, x, bottom_joint_y, "┴");
+    }
+}
+
+fn render_vertical_rule(frame: &mut Frame<'_>, area: Rect) {
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::LEFT)
+            .border_style(Style::default().fg(PANEL_BORDER_SUBTLE)),
+        area,
+    );
+}
+
+fn render_rule_glyph(frame: &mut Frame<'_>, x: u16, y: u16, glyph: &'static str) {
+    frame.render_widget(
+        Paragraph::new(glyph).style(Style::default().fg(PANEL_BORDER_SUBTLE)),
+        Rect {
+            x,
+            y,
+            width: 1,
+            height: 1,
+        },
+    );
+}
+
+fn render_selected_center_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    match app.panel {
+        VisiblePanel::Workspace | VisiblePanel::Run => render_run_panel(frame, area, app),
+        VisiblePanel::Trace => render_center_trace_panel(frame, area, app),
+        VisiblePanel::Memory => render_center_content(frame, area, memory_lines(app)),
+        VisiblePanel::Reports => render_center_content(frame, area, report_lines(app)),
+        VisiblePanel::EventStream => render_trace_rail(frame, area, app),
+    }
+}
+
+fn render_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let block = Block::default()
+        .title(" Preflight - Workspace Readiness ")
+        .title_style(panel_title_style())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(PANEL_BORDER));
+    let block_inner = block.inner(area);
+    let inner = panel_inner(&block, area);
+    let footer = Rect {
+        x: block_inner.x.saturating_add(1),
+        y: block_inner.y + block_inner.height.saturating_sub(1),
+        width: block_inner.width.saturating_sub(2),
+        height: if block_inner.height > 0 { 1 } else { 0 },
+    };
+    let body_height = if footer.height > 0 {
+        footer.y.saturating_sub(inner.y)
+    } else {
+        inner.height
+    };
+    let page = workspace_page(app, body_height as usize, inner.width as usize);
+    let body = Rect {
+        height: body_height,
+        ..inner
+    };
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(page.lines)
+            .style(Style::default().fg(TEXT_PRIMARY))
+            .wrap(Wrap { trim: false }),
+        body,
+    );
+    frame.render_widget(
+        Paragraph::new(page.footer)
+            .style(Style::default().fg(TEXT_MUTED))
+            .alignment(Alignment::Right),
+        footer,
+    );
+}
+
+fn render_run_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let inner = area.inner(Margin {
+        horizontal: 1,
+        vertical: 0,
+    });
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .split(inner);
+    frame.render_widget(Paragraph::new(center_header_line(app)), chunks[0]);
+    frame.render_widget(Paragraph::new(center_tabs_line(app)), chunks[2]);
+
+    match run_visual_state(app) {
+        RunVisualState::NoRun => render_no_run_panel(frame, chunks[4], app),
+        RunVisualState::Active => render_active_run_panel(frame, chunks[4], app),
+        RunVisualState::Terminal => render_terminal_run_panel(frame, chunks[4], app),
+        RunVisualState::Loading => {
+            render_run_section(
+                frame,
+                chunks[4],
+                " Bootstrap ",
+                vec![Line::from(
+                    "Resolving workspace, config, lockfile, and Agent graph...",
+                )],
+                app.accent,
+            );
+        }
+        RunVisualState::Failed => {
+            render_run_section(
+                frame,
+                chunks[4],
+                " Run Unavailable ",
+                vec![Line::from(styled(
+                    "Resolve preflight items before starting a Run.",
+                    Color::Red,
+                ))],
+                Color::Red,
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunVisualState {
+    Loading,
+    Failed,
+    NoRun,
+    Active,
+    Terminal,
+}
+
+fn run_visual_state(app: &TuiApp) -> RunVisualState {
+    match &app.state {
+        TuiState::Loading { .. } => RunVisualState::Loading,
+        TuiState::Failed { .. } => RunVisualState::Failed,
+        TuiState::Running { .. } => RunVisualState::Active,
+        TuiState::Ready { controller } => match controller.snapshot().run.status {
+            TuiRunStatus::Active | TuiRunStatus::PendingApproval => RunVisualState::Active,
+            TuiRunStatus::Terminal => RunVisualState::Terminal,
+            TuiRunStatus::Idle if controller.plan.loop_package.is_none() => RunVisualState::Failed,
+            TuiRunStatus::Idle => RunVisualState::NoRun,
+        },
+    }
+}
+
+fn render_no_run_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(5),
+            Constraint::Length(1),
+            Constraint::Length(5),
+            Constraint::Min(1),
+        ])
+        .split(area);
+    render_run_section(
+        frame,
+        layout[0],
+        " Ready ",
+        vec![
+            Line::from(styled("No Run yet", app.accent)),
+            Line::from("Type a request below to start the first Run in this Session."),
+        ],
+        PANEL_BORDER,
+    );
+    render_message_section(frame, layout[2], app, app.accent);
+}
+
+fn render_active_run_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let working_height = working_section_height(app);
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(working_height),
+        ])
+        .split(area);
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(5),
+            Constraint::Length(1),
+            Constraint::Length(6),
+            Constraint::Length(1),
+            Constraint::Length(5),
+            Constraint::Length(1),
+            Constraint::Min(6),
+        ])
+        .split(outer[0]);
+    render_run_section(
+        frame,
+        layout[0],
+        " ⊙ Phase Objective ",
+        phase_objective_content(app),
+        app.accent,
+    );
+    render_run_section(
+        frame,
+        layout[2],
+        " ◇ Effective Capabilities ",
+        effective_capabilities_content(app),
+        PANEL_BORDER,
+    );
+    render_run_section(
+        frame,
+        layout[4],
+        " Σ Usage ",
+        usage_content(app),
+        PANEL_BORDER,
+    );
+    render_assistant_output_section(frame, layout[6], " ⊙ Assistant Output ", app);
+    render_working_section(frame, outer[2], app);
+}
+
+fn working_section_height(app: &TuiApp) -> u16 {
+    let run = app.run_snapshot();
+    let mut content_lines = 2;
+    if run.and_then(|run| run.approval.as_ref()).is_some() {
+        if run.and_then(|run| run.approval_control.as_ref()).is_some() {
+            content_lines += 1;
+        }
+    } else {
+        if latest_run_progress(app).is_some() {
+            content_lines += 1;
+        }
+        if run.and_then(|run| run.approval_control.as_ref()).is_some() {
+            content_lines += 1;
+        }
+    }
+    if app.selected_memory_operation().is_some() {
+        content_lines += 1;
+    }
+    if run
+        .and_then(|run| run.memory_operation_control.as_ref())
+        .is_some()
+    {
+        content_lines += 1;
+    }
+    (content_lines + 2).clamp(5, 9)
+}
+
+fn render_terminal_run_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(8),
+            Constraint::Length(1),
+            Constraint::Length(5),
+            Constraint::Length(1),
+            Constraint::Min(6),
+            Constraint::Length(1),
+            Constraint::Length(5),
+        ])
+        .split(area);
+    render_run_section(
+        frame,
+        layout[0],
+        " ■ Run Summary ",
+        run_summary_content(app),
+        PANEL_BORDER,
+    );
+    render_run_section(
+        frame,
+        layout[2],
+        " Σ Usage ",
+        usage_content(app),
+        PANEL_BORDER,
+    );
+    render_assistant_output_section(frame, layout[4], " ⊙ Assistant Output (Latest) ", app);
+    render_message_section(frame, layout[6], app, app.accent);
+}
+
+fn render_run_section(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &'static str,
+    lines: Vec<Line<'static>>,
+    border: Color,
+) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let block = Block::default()
+        .title(title)
+        .title_style(panel_title_style())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border));
+    let inner = panel_inner(&block, area);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(Style::default().fg(TEXT_PRIMARY))
+            .wrap(Wrap { trim: false }),
+        inner,
+    );
+}
+
+fn render_assistant_output_section(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &'static str,
+    app: &TuiApp,
+) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let block = Block::default()
+        .title(title)
+        .title_style(panel_title_style())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(PANEL_BORDER));
+    let block_inner = block.inner(area);
+    let inner = panel_inner(&block, area);
+    let footer = Rect {
+        x: block_inner.x.saturating_add(1),
+        y: block_inner.y + block_inner.height.saturating_sub(1),
+        width: block_inner.width.saturating_sub(2),
+        height: if block_inner.height > 0 { 1 } else { 0 },
+    };
+    let body_height = if footer.height > 0 {
+        footer.y.saturating_sub(inner.y)
+    } else {
+        inner.height
+    };
+    let body = Rect {
+        height: body_height,
+        ..inner
+    };
+    let page = assistant_output_page(app, body_height as usize, body.width as usize);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(page.lines)
+            .style(Style::default().fg(TEXT_PRIMARY))
+            .wrap(Wrap { trim: false }),
+        body,
+    );
+    frame.render_widget(
+        Paragraph::new(page.footer)
+            .style(Style::default().fg(TEXT_MUTED))
+            .alignment(Alignment::Right),
+        footer,
+    );
+}
+
+fn render_message_section(frame: &mut Frame<'_>, area: Rect, app: &TuiApp, border: Color) {
+    let mut lines = Vec::new();
+    let text = if app.composer_input.is_empty() {
+        let placeholder = if app.focus == TuiFocus::Composer {
+            "Type a message to start the next Run..."
+        } else {
+            "Press Enter to compose the next Run..."
+        };
+        Span::styled(placeholder, Style::default().fg(TEXT_DIM))
+    } else {
+        Span::styled(
+            composer_visible_input(&app.composer_input, area.width.saturating_sub(4) as usize),
+            Style::default().fg(TEXT_PRIMARY),
+        )
+    };
+    lines.push(Line::from(text));
+    if app.focus == TuiFocus::Composer {
+        lines.push(Line::from(vec![
+            key_span("Enter", app.accent),
+            Span::raw(" Send"),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            key_span("Enter", app.accent),
+            Span::raw(" Compose"),
+        ]));
+    }
+    render_run_section(frame, area, " Message ", lines, border);
+}
+
+fn composer_visible_input(input: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let char_count = input.chars().count();
+    if char_count <= width {
+        return input.to_string();
+    }
+    if width == 1 {
+        return input.chars().last().unwrap_or_default().to_string();
+    }
+    let tail = input
+        .chars()
+        .skip(char_count.saturating_sub(width - 1))
+        .collect::<String>();
+    format!("…{tail}")
+}
+
+fn render_working_section(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let run = app.run_snapshot();
+    if let Some(approval) = run.and_then(|run| run.approval.as_ref()) {
+        let mut lines = vec![Line::from(vec![
+            styled(
+                format!(
+                    "Checkpoint {} is waiting before phase {}",
+                    approval.checkpoint_id, approval.before_phase
+                ),
+                STATUS_WARNING,
+            ),
+            Span::raw("    "),
+            key_span("A", app.accent),
+            Span::raw(" Approve  "),
+            key_span("D", app.accent),
+            Span::raw(" Deny"),
+            memory_operation_inline_control(app),
+        ])];
+        if let Some(control) = run.and_then(|run| run.approval_control.as_ref()) {
+            lines.push(approval_control_line(control));
+        }
+        append_memory_operation_status_line(app, &mut lines);
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Run remains active until the approval decision is routed through the Engine.",
+                Style::default().fg(TEXT_MUTED),
+            ),
+            Span::raw("    "),
+            key_span("C", app.accent),
+            Span::raw(" Cancel Run"),
+        ]));
+        render_run_section(frame, area, " Approval Required ", lines, STATUS_WARNING);
+        return;
+    }
+    let phase = app
+        .run_snapshot()
+        .and_then(|run| run.phase_id.as_deref())
+        .unwrap_or("starting");
+    let mut lines = vec![Line::from(vec![
+        styled(
+            format!("Run is active - phase {phase} in progress"),
+            STATUS_WARNING,
+        ),
+        Span::raw("    "),
+        key_span("C", app.accent),
+        Span::raw(" Cancel Run"),
+        memory_operation_inline_control(app),
+    ])];
+    append_memory_operation_status_line(app, &mut lines);
+    lines.push(Line::from(Span::styled(
+        "Composer reopens when this Run reaches a terminal state.",
+        Style::default().fg(TEXT_MUTED),
+    )));
+    if let Some(progress) = latest_run_progress(app) {
+        lines.push(Line::from(vec![
+            styled("status ", STATUS_WARNING),
+            Span::styled(progress.to_string(), Style::default().fg(TEXT_MUTED)),
+        ]));
+    }
+    if let Some(control) = run.and_then(|run| run.approval_control.as_ref()) {
+        lines.push(approval_control_line(control));
+    }
+    render_run_section(frame, area, " Run In Progress ", lines, STATUS_WARNING);
+}
+
+fn memory_operation_inline_control(app: &TuiApp) -> Span<'static> {
+    if app.selected_memory_operation().is_none() {
+        return Span::raw("");
+    }
+    Span::styled(
+        "    X Memory Op",
+        Style::default().fg(app.accent).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn append_memory_operation_status_line(app: &TuiApp, lines: &mut Vec<Line<'static>>) {
+    if let Some(operation) = app.selected_memory_operation() {
+        let count = app
+            .run_snapshot()
+            .map(|run| run.memory_operations.len())
+            .unwrap_or_default();
+        let mut operation_line = vec![
+            Span::styled("External Memory ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(
+                format!("{}/operations/{}", operation.package, operation.operation),
+                Style::default().fg(app.accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("    "),
+            key_span("X", app.accent),
+            Span::raw(" Invoke"),
+        ];
+        if count > 1 {
+            operation_line.extend([
+                Span::raw("  "),
+                key_span("]", app.accent),
+                Span::raw(" Next"),
+            ]);
+        }
+        lines.push(Line::from(operation_line));
+    }
+    if let Some(control) = app
+        .run_snapshot()
+        .and_then(|run| run.memory_operation_control.as_ref())
+    {
+        lines.push(memory_control_line(control));
+    }
+}
+
+fn latest_run_progress(app: &TuiApp) -> Option<&str> {
+    let TuiState::Running { progress, .. } = &app.state else {
+        return None;
+    };
+    progress.last().map(|item| item.message.as_str())
+}
+
+fn approval_control_line(control: &TuiApprovalControlSnapshot) -> Line<'static> {
+    let color = match control.status.as_str() {
+        TUI_APPROVAL_STATUS_APPROVED => STATUS_READY,
+        TUI_APPROVAL_STATUS_DENIED => STATUS_WARNING,
+        _ => TEXT_MUTED,
+    };
+    Line::from(vec![
+        styled(format!("approval {} ", control.status), color),
+        Span::styled(
+            format!("{} - {}", control.checkpoint_id, control.message),
+            Style::default().fg(TEXT_MUTED),
+        ),
+    ])
+}
+
+fn memory_control_line(control: &TuiMemoryOperationControlSnapshot) -> Line<'static> {
+    let color = match control.status.as_str() {
+        TUI_MEMORY_CONTROL_STATUS_COMPLETED => STATUS_READY,
+        TUI_MEMORY_CONTROL_STATUS_FAILED => Color::Red,
+        _ => STATUS_WARNING,
+    };
+    Line::from(vec![
+        styled(format!("memory {} ", control.status), color),
+        Span::styled(
+            format!("{} - {}", control.identity, control.message),
+            Style::default().fg(TEXT_MUTED),
+        ),
+    ])
+}
+
+fn render_center_content(frame: &mut Frame<'_>, area: Rect, lines: Vec<Line<'_>>) {
+    let inner = area.inner(Margin {
+        horizontal: 1,
+        vertical: 0,
+    });
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(Style::default().fg(TEXT_PRIMARY))
+            .wrap(Wrap { trim: false }),
+        inner,
+    );
+}
+
+fn render_center_trace_panel(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let inner = area.inner(Margin {
+        horizontal: 1,
+        vertical: 0,
+    });
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    frame.render_widget(Paragraph::new(center_header_line(app)), chunks[0]);
+    frame.render_widget(Paragraph::new(center_tabs_line(app)), chunks[2]);
+    let list = trace_list(app, chunks[4].height as usize, chunks[4].width as usize);
+    frame.render_widget(
+        Paragraph::new(list.lines)
+            .style(Style::default().fg(TEXT_PRIMARY))
+            .wrap(Wrap { trim: false }),
+        chunks[4],
+    );
+    frame.render_widget(
+        Paragraph::new(list.footer)
+            .style(Style::default().fg(TEXT_MUTED))
+            .alignment(Alignment::Right),
+        chunks[5],
+    );
+}
+
+fn render_output_viewer(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let Some(viewer) = &app.output_viewer else {
+        return;
+    };
+    let Some(content) = output_viewer_content(app, viewer) else {
+        return;
+    };
+    let overlay = centered_overlay(area, app.layout_mode);
+    frame.render_widget(Clear, overlay);
+    let block = Block::default()
+        .title(content.title)
+        .title_style(panel_title_style())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.accent));
+    let inner = panel_inner(&block, overlay);
+    frame.render_widget(block, overlay);
+    frame.render_widget(
+        Paragraph::new(content.lines)
+            .style(Style::default().fg(TEXT_PRIMARY))
+            .scroll((viewer.scroll as u16, 0))
+            .wrap(Wrap { trim: false }),
+        inner,
+    );
+}
+
+struct OutputViewerContent {
+    title: &'static str,
+    lines: Vec<Line<'static>>,
+}
+
+fn output_viewer_content(app: &TuiApp, viewer: &OutputViewerState) -> Option<OutputViewerContent> {
+    match &viewer.kind {
+        OutputViewerKind::AssistantOutput => {
+            let output = assistant_output_text(app)?;
+            let mut lines = Vec::new();
+            if let Some(snapshot) = app.snapshot() {
+                if let Some(path) = &snapshot.reports.current_report_path {
+                    lines.push(Line::from(format!("report: {}", path.display())));
+                }
+                if let Some(path) = &snapshot.reports.current_trace_path {
+                    lines.push(Line::from(format!("trace: {}", path.display())));
+                }
+                if !lines.is_empty() {
+                    lines.push(Line::from(""));
+                }
+            }
+            lines.extend(output.lines().map(|line| Line::from(line.to_string())));
+            Some(OutputViewerContent {
+                title: " Assistant Output ",
+                lines,
+            })
+        }
+        OutputViewerKind::TraceEvent { event_id } => {
+            let value = trace_event_detail_value(app, event_id)?;
+            let pretty = serde_json::to_string_pretty(&value).ok()?;
+            Some(OutputViewerContent {
+                title: " Trace Event ",
+                lines: pretty
+                    .lines()
+                    .map(|line| Line::from(line.to_string()))
+                    .collect(),
+            })
+        }
+    }
+}
+
+fn trace_event_detail_value(app: &TuiApp, event_id: &str) -> Option<Value> {
+    let snapshot = app.snapshot()?;
+    if snapshot.reports.current_trace_path.is_some()
+        && let Some(index) = snapshot
+            .reports
+            .current_trace_events
+            .iter()
+            .position(|event| event.event_id == event_id)
+        && let Some(value) = snapshot.reports.current_trace_values.get(index)
+    {
+        return Some(value.clone());
+    }
+    app.trace_events()
+        .into_iter()
+        .find(|event| event.event_id == event_id)
+        .and_then(|event| serde_json::to_value(event).ok())
+}
+
+fn centered_overlay(area: Rect, layout: LayoutMode) -> Rect {
+    match layout {
+        LayoutMode::Single => area.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        }),
+        LayoutMode::Medium | LayoutMode::Wide => {
+            let width = area.width.saturating_sub(8).max(area.width / 2);
+            let height = area.height.saturating_sub(4).max(area.height / 2);
+            Rect {
+                x: area.x + (area.width.saturating_sub(width)) / 2,
+                y: area.y + (area.height.saturating_sub(height)) / 2,
+                width,
+                height,
+            }
+        }
+    }
+}
+
+fn render_trace_rail(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let block = Block::default()
+        .title(" Trace - Event Stream ")
+        .title_style(panel_title_style())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(PANEL_BORDER));
+    let inner = panel_inner(&block, area);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(trace_rail_lines(
+            app,
+            inner.height as usize,
+            inner.width as usize,
+        ))
+        .style(Style::default().fg(TEXT_PRIMARY))
+        .wrap(Wrap { trim: false }),
+        inner,
+    );
+}
+
+fn panel_inner(block: &Block<'_>, area: Rect) -> Rect {
+    block.inner(area).inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    })
+}
+
+fn panel_title_style() -> Style {
+    Style::default()
+        .fg(TEXT_PANEL_TITLE)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn keybar_spans(app: &TuiApp) -> Vec<Span<'static>> {
+    let mut spans = if app.output_viewer.is_some() {
+        vec![
+            key_span("↑/↓", app.accent),
+            Span::raw(" Scroll  "),
+            key_span("PgUp/PgDn", app.accent),
+            Span::raw(" Page  "),
+            key_span("Esc", app.accent),
+            Span::raw(" Close"),
+        ]
+    } else {
+        vec![
+            key_span("Q", app.accent),
+            Span::raw(" Quit  "),
+            key_span("Tab", app.accent),
+            Span::raw(" Next  "),
+            key_span("Shift+Tab", app.accent),
+            Span::raw(" Prev  "),
+        ]
+    };
+    if app.focus == TuiFocus::Composer {
+        return vec![
+            key_span("Enter", app.accent),
+            Span::raw(" Send  "),
+            key_span("Esc", app.accent),
+            Span::raw(" Navigation  "),
+            Span::raw("Focus: Composer"),
+        ];
+    }
+    if app.output_viewer.is_some() {
+        return spans;
+    }
+    if app.composer_available() {
+        spans.extend([key_span("Enter", app.accent), Span::raw(" Compose  ")]);
+    }
+    if app.can_decide_approval() {
+        spans.extend([key_span("A", app.accent), Span::raw(" Approve  ")]);
+        spans.extend([key_span("D", app.accent), Span::raw(" Deny  ")]);
+    }
+    if app.can_cancel_run() {
+        spans.extend([key_span("C", app.accent), Span::raw(" Cancel Run  ")]);
+    }
+    if app.can_invoke_memory_operation() {
+        spans.extend([key_span("X", app.accent), Span::raw(" Memory Op  ")]);
+        if app
+            .run_snapshot()
+            .is_some_and(|run| run.memory_operations.len() > 1)
+        {
+            spans.extend([key_span("]", app.accent), Span::raw(" Next Op  ")]);
+        }
+    }
+    if app.focus == TuiFocus::Panel(VisiblePanel::Workspace) {
+        spans.extend([key_span("PgUp", app.accent), Span::raw(" Next Page  ")]);
+        spans.extend([key_span("PgDn", app.accent), Span::raw(" Prev Page  ")]);
+    }
+    if app.focus == TuiFocus::Panel(VisiblePanel::Trace) && app.selected_trace_event().is_some() {
+        spans.extend([key_span("↑/↓", app.accent), Span::raw(" Select  ")]);
+        spans.extend([key_span("Enter/D", app.accent), Span::raw(" Details  ")]);
+    }
+    if app.can_open_output_viewer() {
+        spans.extend([key_span("O", app.accent), Span::raw(" Output  ")]);
+    }
+    if app.focus == TuiFocus::Panel(VisiblePanel::Workspace) && app.has_workspace_details() {
+        spans.extend([key_span("D", app.accent), Span::raw(" Details  ")]);
+    }
+    if app.has_secondary_details() {
+        spans.extend([key_span("D", app.accent), Span::raw(" Details  ")]);
+    }
+    if app.can_prompt_agent_selector() {
+        spans.extend([key_span("A", app.accent), Span::raw(" Agent  ")]);
+    }
+    if app.can_prompt_model() {
+        spans.extend([key_span("P", app.accent), Span::raw(" Model  ")]);
+    }
+    if app.can_prompt_scope() {
+        spans.extend([key_span("S", app.accent), Span::raw(" Scope  ")]);
+    }
+    spans.extend([
+        key_span("1", app.accent),
+        Span::raw(" Workspace  "),
+        key_span("2", app.accent),
+        Span::raw(" Run  "),
+        key_span("3", app.accent),
+        Span::raw(" Trace  "),
+        key_span("4", app.accent),
+        Span::raw(" Memory  "),
+        key_span("5", app.accent),
+        Span::raw(" Reports"),
+    ]);
+    if app.layout_mode != LayoutMode::Wide {
+        spans.extend([
+            Span::raw("  "),
+            key_span("6", app.accent),
+            Span::raw(" Events"),
+        ]);
+    }
+    spans.push(Span::raw(format!("    Focus: {}", app.focus.label())));
+    spans
+}
+
+fn keybar_height(width: u16, app: &TuiApp) -> u16 {
+    let content_width = bar_content_width(width);
+    let spans = keybar_spans(app);
+    let spans_width = span_width(&spans);
+    let status_text = keybar_status_text(app);
+    let status_width = status_text.as_ref().map(|text| text.chars().count());
+    if status_width.is_some_and(|status_width| {
+        keybar_can_render_side_by_side(content_width, spans_width, status_width)
+    }) {
+        return 4;
+    }
+    let left_rows = wrapped_row_count(spans_width, content_width);
+    let status_rows = status_width
+        .map(|width| wrapped_row_count(width, content_width))
+        .unwrap_or(0);
+    left_rows
+        .saturating_add(status_rows)
+        .saturating_add(1)
+        .clamp(4, 8)
+}
+
+fn keybar_status_text(app: &TuiApp) -> Option<String> {
+    if app.output_viewer.is_some() || app.focus == TuiFocus::Composer {
+        None
+    } else {
+        bottom_run_status_text(app)
+    }
+}
+
+fn keybar_can_render_side_by_side(
+    content_width: usize,
+    spans_width: usize,
+    status_width: usize,
+) -> bool {
+    content_width > status_width.saturating_add(48)
+        && spans_width <= content_width.saturating_sub(status_width.saturating_add(2))
+}
+
+fn render_keybar(frame: &mut Frame<'_>, area: Rect, app: &TuiApp) {
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(PANEL_BORDER_SUBTLE));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let content_area = inner.inner(Margin {
+        horizontal: BAR_HORIZONTAL_PADDING,
+        vertical: 0,
+    });
+
+    let spans = keybar_spans(app);
+    let status_text = keybar_status_text(app);
+    let status_width = status_text
+        .as_ref()
+        .map(|text| text.chars().count())
+        .unwrap_or(0);
+    let spans_width = span_width(&spans);
+    let content_width = content_area.width.max(1) as usize;
+    let side_by_side = status_text
+        .as_ref()
+        .is_some_and(|_| keybar_can_render_side_by_side(content_width, spans_width, status_width));
+    if side_by_side {
+        let status_width = status_width as u16;
+        let line_area = if content_area.height > 1 {
+            Rect {
+                y: content_area.y + content_area.height / 2,
+                height: 1,
+                ..content_area
+            }
+        } else {
+            content_area
+        };
+        let left_area = Rect {
+            width: content_area
+                .width
+                .saturating_sub(status_width.saturating_add(2)),
+            ..line_area
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(spans))
+                .alignment(Alignment::Left)
+                .style(Style::default().fg(TEXT_MUTED)),
+            left_area,
+        );
+        if let Some(status_text) = status_text {
+            let right_area = Rect {
+                x: content_area
+                    .x
+                    .saturating_add(content_area.width.saturating_sub(status_width)),
+                width: status_width,
+                ..line_area
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(status_text))
+                    .alignment(Alignment::Right)
+                    .style(Style::default().fg(TEXT_MUTED)),
+                right_area,
+            );
+        }
+        return;
+    }
+
+    let left_rows = wrapped_row_count(spans_width, content_width)
+        .min(content_area.height)
+        .max(1);
+    let left_area = if status_text.is_none() && left_rows == 1 && content_area.height > 1 {
+        Rect {
+            y: content_area.y + content_area.height / 2,
+            height: 1,
+            ..content_area
+        }
+    } else {
+        Rect {
+            height: left_rows,
+            ..content_area
+        }
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(spans))
+            .alignment(Alignment::Left)
+            .style(Style::default().fg(TEXT_MUTED))
+            .wrap(Wrap { trim: false }),
+        left_area,
+    );
+    if let Some(status_text) = status_text {
+        let status_y = left_area.y.saturating_add(left_area.height);
+        if status_y < content_area.y.saturating_add(content_area.height) {
+            let status_area = Rect {
+                y: status_y,
+                height: content_area
+                    .height
+                    .saturating_sub(status_y.saturating_sub(content_area.y)),
+                ..content_area
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(status_text))
+                    .alignment(Alignment::Right)
+                    .style(Style::default().fg(TEXT_MUTED))
+                    .wrap(Wrap { trim: false }),
+                status_area,
+            );
+        }
+    }
+}
+
+fn key_span(label: &'static str, accent: Color) -> Span<'static> {
+    Span::styled(
+        label,
+        Style::default().fg(accent).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn bottom_run_status_text(app: &TuiApp) -> Option<String> {
+    let snapshot = app.snapshot()?;
+    let run_id = run_header_text(snapshot.run.run_number, snapshot.run.run_id.as_deref());
+    match snapshot.run.status {
+        TuiRunStatus::Active | TuiRunStatus::PendingApproval => {
+            let phase = snapshot.run.phase_id.as_deref().unwrap_or("starting");
+            let status = match snapshot.run.status {
+                TuiRunStatus::PendingApproval => "approval",
+                _ => "active",
+            };
+            let elapsed = snapshot
+                .run
+                .started_at
+                .map(|started| {
+                    let duration_ms = Utc::now()
+                        .signed_duration_since(started)
+                        .num_milliseconds()
+                        .max(0) as u64;
+                    format_clock_duration_ms(duration_ms)
+                })
+                .unwrap_or_else(|| "--:--:--".into());
+            Some(format!("{run_id} · {phase} · {status} · {elapsed}"))
+        }
+        TuiRunStatus::Terminal => {
+            let report = snapshot.reports.current_report.as_ref();
+            let terminal_status = report
+                .map(|report| report.terminal_status)
+                .or(snapshot.run.terminal_status);
+            let status = terminal_status
+                .map(terminal_status_label)
+                .unwrap_or("terminal");
+            let target = report
+                .and_then(report_terminal_target)
+                .unwrap_or_else(|| status.to_string());
+            let duration = report
+                .and_then(|report| report.duration_ms)
+                .or(snapshot.run.usage.duration_ms)
+                .map(format_clock_duration_ms)
+                .unwrap_or_else(|| "--:--:--".into());
+            Some(format!("{run_id} · {target} -> {status} · {duration}"))
+        }
+        TuiRunStatus::Idle => None,
+    }
+}
+
+impl TuiFocus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Composer => "Composer",
+            Self::Panel(panel) => panel.label(),
+        }
+    }
+}
+
+struct WorkspacePage {
+    lines: Vec<Line<'static>>,
+    footer: Line<'static>,
+}
+
+fn workspace_page(app: &TuiApp, max_lines: usize, line_width: usize) -> WorkspacePage {
+    match &app.state {
+        TuiState::Loading { args, progress } => {
+            let mut lines = vec![
+                Line::from(styled("Loading Harness workspace...", app.accent)),
+                Line::from(""),
+                Line::from(format!(
+                    "Agent selector: {}",
+                    args.agent.as_deref().unwrap_or("auto")
+                )),
+                Line::from(format!(
+                    "Config: {}",
+                    args.config
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "agentpm.harness.json or defaults".into())
+                )),
+                Line::from(""),
+            ];
+            if progress.is_empty() {
+                lines.push(Line::from("Preflight readiness will appear here."));
+            } else {
+                for item in progress.iter().rev().take(5).rev() {
+                    lines.push(Line::from(vec![
+                        styled(bootstrap_stage_label(item.stage), app.accent),
+                        Span::raw(format!(" - {}", item.message)),
+                    ]));
+                }
+            }
+            WorkspacePage {
+                lines,
+                footer: workspace_page_footer(0, 1),
+            }
+        }
+        TuiState::Failed { message } => WorkspacePage {
+            lines: vec![
+                Line::from(styled("Preflight failed", Color::Red)),
+                Line::from(""),
+                Line::from(message.clone()),
+                Line::from(""),
+                Line::from("Press Q to exit."),
+            ],
+            footer: workspace_page_footer(0, 1),
+        },
+        TuiState::Ready { controller } => {
+            workspace_ready_page(app, controller.snapshot(), max_lines, line_width)
+        }
+        TuiState::Running { snapshot, .. } => {
+            workspace_ready_page(app, snapshot, max_lines, line_width)
+        }
+    }
+}
+
+fn workspace_ready_page(
+    app: &TuiApp,
+    snapshot: &TuiSessionSnapshot,
+    max_lines: usize,
+    line_width: usize,
+) -> WorkspacePage {
+    let mut groups = Vec::new();
+    groups.push(vec![state_line(
+        "Readiness",
+        readiness_state(app, snapshot),
+    )]);
+    for category in &snapshot.workspace.categories {
+        let mut group = vec![
+            state_line(&category.label, category.state),
+            info_line("  ", category.summary.clone()),
+        ];
+        if let Some(source) = &category.source {
+            group.push(info_line("  ", readiness_source_text(category, source)));
+        }
+        groups.push(group);
+    }
+    let warnings = warning_lines(app, snapshot);
+    if !warnings.is_empty() {
+        groups.push(vec![
+            preflight_divider_line(),
+            Line::from(""),
+            Line::from(styled(diagnostics_header(snapshot), STATUS_WARNING)),
+        ]);
+        for warning in warnings {
+            groups.push(vec![warning]);
+        }
+    }
+    if let Some(prompt) = &app.resolution_prompt {
+        let mut prompt_group = vec![
+            Line::from(styled("Resolve", app.accent)),
+            info_line("  ", prompt.label.clone()),
+            Line::from(vec![
+                Span::styled("> ", Style::default().fg(app.accent)),
+                Span::styled(prompt.value.clone(), Style::default().fg(TEXT_PRIMARY)),
+            ]),
+        ];
+        if let Some(error) = &prompt.error {
+            prompt_group.push(Line::from(vec![
+                styled("  error - ", Color::Red),
+                Span::styled(error.clone(), Style::default().fg(Color::Red)),
+            ]));
+        }
+        prompt_group.push(info_line("  ", "Enter applies · Esc cancels"));
+        groups.push(prompt_group);
+    } else {
+        let actions = workspace_resolution_actions(app);
+        if !actions.is_empty() {
+            let mut action_group = vec![Line::from(styled("Resolve", app.accent))];
+            action_group.extend(actions.into_iter().map(|action| info_line("  ", action)));
+            groups.push(action_group);
+        }
+    }
+    paginate_workspace_groups(groups, app.workspace_page, max_lines, line_width)
+}
+
+fn paginate_workspace_groups(
+    groups: Vec<Vec<Line<'static>>>,
+    requested_page: PageCursor,
+    max_lines: usize,
+    line_width: usize,
+) -> WorkspacePage {
+    if groups.is_empty() {
+        return WorkspacePage {
+            lines: Vec::new(),
+            footer: workspace_page_footer(0, 1),
+        };
+    }
+    let max_body_lines = max_lines.max(1);
+    let line_width = line_width.max(1);
+    let mut pages: Vec<Vec<Line<'static>>> = Vec::new();
+    let mut current = Vec::new();
+    let mut current_height = 0;
+    for group in groups {
+        let separator = usize::from(!current.is_empty());
+        let group_height = visual_lines_height(&group, line_width);
+        let needed = separator + group_height;
+        if !current.is_empty() && current_height + needed > max_body_lines {
+            pages.push(current);
+            current = Vec::new();
+            current_height = 0;
+        }
+        if !current.is_empty() {
+            current.push(Line::from(""));
+            current_height += 1;
+        }
+        current_height += group_height;
+        current.extend(group);
+    }
+    if !current.is_empty() {
+        pages.push(current);
+    }
+    let page_count = pages.len().max(1);
+    let page_index = page_index_for_cursor(requested_page, page_count);
+    let lines = pages.into_iter().nth(page_index).unwrap_or_default();
+    WorkspacePage {
+        lines,
+        footer: workspace_page_footer(page_index, page_count),
+    }
+}
+
+fn workspace_page_footer(page_index: usize, page_count: usize) -> Line<'static> {
+    if page_count > 1 {
+        info_line(
+            "",
+            format!(
+                "Page {}/{} · PgUp next · PgDn prev",
+                page_index + 1,
+                page_count
+            ),
+        )
+    } else {
+        info_line("", "Page 1/1")
+    }
+}
+
+fn visual_lines_height(lines: &[Line<'static>], width: usize) -> usize {
+    lines
+        .iter()
+        .map(|line| visual_line_height(&line.to_string(), width))
+        .sum()
+}
+
+fn visual_line_height(text: &str, width: usize) -> usize {
+    if text.is_empty() {
+        return 1;
+    }
+    text.lines()
+        .map(|line| {
+            let chars = line.chars().count().max(1);
+            chars.div_ceil(width)
+        })
+        .sum::<usize>()
+        .max(1)
+}
+
+fn preflight_divider_line() -> Line<'static> {
+    Line::from(Span::styled(
+        "─".repeat(PREFLIGHT_LINE_WIDTH),
+        Style::default().fg(PANEL_BORDER_SUBTLE),
+    ))
+}
+
+fn phase_objective_content(app: &TuiApp) -> Vec<Line<'static>> {
+    let objective = app
+        .run_snapshot()
+        .and_then(|run| run.phase_objective.clone())
+        .unwrap_or_else(|| "Preparing the next Harness step.".into());
+    vec![Line::from(objective)]
+}
+
+fn effective_capabilities_content(app: &TuiApp) -> Vec<Line<'static>> {
+    if let TuiState::Ready { controller } = &app.state {
+        let plan = controller.plan();
+        return vec![
+            label_value_line(
+                "Tools",
+                format!(
+                    "{} ready",
+                    grouped_capability_counts(plan, "tool").available
+                ),
+            ),
+            label_value_line(
+                "Skills",
+                format!(
+                    "{} ready",
+                    grouped_capability_counts(plan, "skill").available
+                ),
+            ),
+            label_value_line(
+                "Memory Spaces",
+                format!(
+                    "{} ready",
+                    grouped_capability_counts(plan, "memory").available
+                ),
+            ),
+            label_value_line(
+                "Knowledge",
+                format!(
+                    "{} ready",
+                    grouped_capability_counts(plan, "knowledge").available
+                ),
+            ),
+        ];
+    }
+    let Some(snapshot) = app.snapshot() else {
+        return vec![Line::from("Capabilities pending.")];
+    };
+    let mut lines = Vec::new();
+    for (label, category_label) in [
+        ("Tools", "Tools"),
+        ("Skills", "Skills"),
+        ("Memory Spaces", "Memory"),
+        ("Knowledge", "Knowledge"),
+    ] {
+        let summary = snapshot
+            .workspace
+            .categories
+            .iter()
+            .find(|category| category.label == category_label)
+            .map(|category| category.summary.clone())
+            .unwrap_or_else(|| "pending".into());
+        lines.push(label_value_line(label, summary));
+    }
+    lines
+}
+
+fn usage_content(app: &TuiApp) -> Vec<Line<'static>> {
+    let Some(snapshot) = app.snapshot() else {
+        return vec![Line::from("Usage pending.")];
+    };
+    vec![
+        Line::from(vec![
+            Span::styled("Run: ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(
+                format!("{} model calls", snapshot.run.usage.model_calls),
+                Style::default()
+                    .fg(TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(
+                    " · {} tok",
+                    token_usage_text(snapshot.run.usage.tokens.total_tokens)
+                ),
+                Style::default().fg(TEXT_MUTED),
+            ),
+            Span::raw("    "),
+            Span::styled("Session: ", Style::default().fg(TEXT_MUTED)),
+            Span::styled(
+                format!("{} runs total", snapshot.usage.started_runs),
+                Style::default().fg(TEXT_PRIMARY),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!(
+                "cost: {}",
+                cost_usage_text(
+                    snapshot.run.usage.cost.amount,
+                    snapshot.run.usage.cost.currency.as_deref()
+                )
+            ),
+            Style::default().fg(TEXT_MUTED),
+        )),
+    ]
+}
+
+struct AssistantOutputPage {
+    lines: Vec<Line<'static>>,
+    footer: Line<'static>,
+}
+
+fn assistant_output_page(app: &TuiApp, max_lines: usize, line_width: usize) -> AssistantOutputPage {
+    paginate_assistant_output_lines(
+        assistant_output_lines(app),
+        app.assistant_output_page,
+        max_lines,
+        line_width,
+    )
+}
+
+fn assistant_output_lines(app: &TuiApp) -> Vec<Line<'static>> {
+    let Some(snapshot) = app.snapshot() else {
+        return assistant_output_empty_lines();
+    };
+    let visible_items = visible_transcript_items(snapshot);
+    let mut lines = Vec::new();
+    let mut current_phase: Option<String> = None;
+    let mut phase_item_count = 0usize;
+    for item in visible_items {
+        if item.phase_label != current_phase {
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+            let label = item.phase_label.clone().unwrap_or_else(|| "phase".into());
+            lines.push(Line::from(styled(label, app.accent)));
+            lines.push(Line::from(""));
+            current_phase = item.phase_label.clone();
+            phase_item_count = 0;
+        } else if phase_item_count > 0 {
+            lines.push(Line::from(""));
+        }
+        lines.extend(transcript_item_lines(item));
+        phase_item_count += 1;
+    }
+    if run_visual_state(app) == RunVisualState::Terminal
+        && let Some(output) = terminal_output_text(app)
+    {
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(styled("Terminal output", app.accent)));
+        for line in output.lines() {
+            lines.push(Line::from(line.to_string()));
+        }
+    }
+    if lines.is_empty()
+        && let Some(output) = latest_output_text(app)
+    {
+        lines.push(Line::from(styled("Output", app.accent)));
+        for line in output.lines() {
+            lines.push(Line::from(line.to_string()));
+        }
+    }
+    if lines.is_empty() {
+        assistant_output_empty_lines()
+    } else {
+        lines
+    }
+}
+
+fn assistant_output_empty_lines() -> Vec<Line<'static>> {
+    vec![Line::from(Span::styled(
+        "No assistant or PhaseResult output yet.",
+        Style::default().fg(TEXT_MUTED),
+    ))]
+}
+
+fn visible_transcript_items(snapshot: &TuiSessionSnapshot) -> Vec<&TuiRunTranscriptItem> {
+    if matches!(
+        snapshot.run.status,
+        TuiRunStatus::Active | TuiRunStatus::PendingApproval
+    ) {
+        let current_phase = active_transcript_phase_label(snapshot);
+        return snapshot
+            .run
+            .transcript
+            .iter()
+            .filter(|item| {
+                current_phase
+                    .as_ref()
+                    .is_none_or(|phase| item.phase_label.as_deref() == Some(phase.as_str()))
+            })
+            .collect();
+    }
+    snapshot.run.transcript.iter().collect()
+}
+
+fn active_transcript_phase_label(snapshot: &TuiSessionSnapshot) -> Option<String> {
+    snapshot
+        .run
+        .phase_id
+        .as_ref()
+        .filter(|phase_id| phase_id.as_str() != "starting")
+        .cloned()
+        .or_else(|| {
+            snapshot
+                .run
+                .transcript
+                .iter()
+                .rev()
+                .find_map(|item| item.phase_label.clone())
+        })
+}
+
+fn transcript_item_lines(item: &TuiRunTranscriptItem) -> Vec<Line<'static>> {
+    match &item.kind {
+        TuiRunTranscriptKind::Assistant { content } => {
+            let mut lines = vec![Line::from(styled("Assistant", TEXT_MUTED)), Line::from("")];
+            lines.extend(
+                content
+                    .trim()
+                    .lines()
+                    .map(|line| Line::from(line.to_string())),
+            );
+            lines
+        }
+        TuiRunTranscriptKind::Repair { message } => vec![
+            Line::from(styled("Repair", STATUS_WARNING)),
+            Line::from(message.clone()),
+        ],
+        TuiRunTranscriptKind::PhaseResult { outcome, output } => {
+            let mut lines = vec![Line::from(styled("PhaseResult", TEXT_MUTED))];
+            if let Some(outcome) = outcome {
+                lines.push(Line::from(format!("outcome: {outcome}")));
+            }
+            if let Some(output) = output {
+                lines.push(Line::from(format!("output: {}", pretty_json_text(output))));
+            }
+            lines
+        }
+    }
+}
+
+fn paginate_assistant_output_lines(
+    lines: Vec<Line<'static>>,
+    requested_page: PageCursor,
+    max_lines: usize,
+    line_width: usize,
+) -> AssistantOutputPage {
+    let max_body_lines = max_lines.max(1);
+    let wrapped_lines = wrap_lines_for_width(lines, line_width.max(1));
+    let mut pages: Vec<Vec<Line<'static>>> = wrapped_lines
+        .chunks(max_body_lines)
+        .map(|chunk| chunk.to_vec())
+        .collect();
+    if pages.is_empty() {
+        pages.push(assistant_output_empty_lines());
+    }
+    let page_count = pages.len().max(1);
+    let page_index = page_index_for_cursor(requested_page, page_count);
+    AssistantOutputPage {
+        lines: pages.into_iter().nth(page_index).unwrap_or_default(),
+        footer: assistant_output_footer(page_index, page_count),
+    }
+}
+
+fn wrap_lines_for_width(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    let mut wrapped = Vec::new();
+    for line in lines {
+        if visual_lines_height(std::slice::from_ref(&line), width) <= 1 {
+            wrapped.push(line);
+            continue;
+        }
+        let text = line.to_string();
+        if text.is_empty() {
+            wrapped.push(Line::from(""));
+            continue;
+        }
+        let chars = text.chars().collect::<Vec<_>>();
+        for chunk in chars.chunks(width) {
+            wrapped.push(Line::from(chunk.iter().collect::<String>()));
+        }
+    }
+    wrapped
+}
+
+fn assistant_output_footer(page_index: usize, page_count: usize) -> Line<'static> {
+    if page_count > 1 {
+        info_line(
+            "",
+            format!(
+                "Page {}/{} · PgUp next · PgDn prev · O full",
+                page_index + 1,
+                page_count
+            ),
+        )
+    } else {
+        info_line("", "Page 1/1 · O full")
+    }
+}
+
+fn run_summary_content(app: &TuiApp) -> Vec<Line<'static>> {
+    let Some(snapshot) = app.snapshot() else {
+        return vec![Line::from("Run summary unavailable.")];
+    };
+    let mut lines = match (
+        snapshot.reports.current_report.as_ref(),
+        snapshot.reports.current_report_error.as_ref(),
+    ) {
+        (Some(report), _) => vec![
+            label_value_line(
+                "Terminal status",
+                terminal_status_label(report.terminal_status).to_string(),
+            ),
+            label_value_line(
+                "Duration",
+                report
+                    .duration_ms
+                    .map(format_duration_ms)
+                    .unwrap_or_else(|| "unknown".into()),
+            ),
+            label_value_line("Checkpoints", checkpoint_summary_text(report)),
+            label_value_line("Phase path", phase_path_text(report)),
+        ],
+        (None, None) => vec![
+            label_value_line(
+                "Terminal status",
+                snapshot
+                    .run
+                    .terminal_status
+                    .map(terminal_status_label)
+                    .unwrap_or("unknown")
+                    .to_string(),
+            ),
+            label_value_line("Duration", "unknown".into()),
+            label_value_line("Checkpoints", "unknown".into()),
+            label_value_line("Phase path", "unknown".into()),
+        ],
+        (None, Some(err)) => vec![
+            Line::from(styled("Report unavailable", STATUS_WARNING)),
+            Line::from(err.clone()),
+        ],
+    };
+    if let Some(control) = &snapshot.run.approval_control {
+        lines.push(label_value_line(
+            "Approval",
+            format!("{} - {}", control.status, control.message),
+        ));
+    }
+    if let Some(control) = &snapshot.run.memory_operation_control {
+        lines.push(label_value_line(
+            "Memory control",
+            format!("{} - {}", control.status, control.message),
+        ));
+    }
+    lines
+}
+
+fn label_value_line(label: &'static str, value: String) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<16}"), Style::default().fg(TEXT_MUTED)),
+        Span::styled(
+            value,
+            Style::default()
+                .fg(TEXT_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+fn latest_output_text(app: &TuiApp) -> Option<String> {
+    if let Some(value) = app
+        .run_snapshot()
+        .and_then(|run| run.latest_output.as_ref())
+    {
+        return Some(pretty_json_text(value));
+    }
+    let snapshot = app.snapshot()?;
+    if snapshot.run.status != TuiRunStatus::Terminal {
+        return latest_phase_result_output_text(snapshot);
+    }
+    match snapshot.reports.current_report.as_ref() {
+        Some(report) => report
+            .terminal_output
+            .as_ref()
+            .map(pretty_json_text)
+            .or_else(|| latest_phase_result_output_text(snapshot)),
+        None => latest_phase_result_output_text(snapshot),
+    }
+}
+
+pub(super) fn assistant_output_text(app: &TuiApp) -> Option<String> {
+    let snapshot = app.snapshot()?;
+    if snapshot.run.transcript.is_empty()
+        && terminal_output_text(app).is_none()
+        && latest_output_text(app).is_none()
+    {
+        return None;
+    }
+    Some(
+        assistant_output_lines(app)
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+fn terminal_output_text(app: &TuiApp) -> Option<String> {
+    let snapshot = app.snapshot()?;
+    if snapshot.run.status != TuiRunStatus::Terminal {
+        return None;
+    }
+    snapshot
+        .reports
+        .current_report
+        .as_ref()
+        .and_then(|report| report.terminal_output.as_ref().map(pretty_json_text))
+}
+
+fn latest_phase_result_output_text(snapshot: &TuiSessionSnapshot) -> Option<String> {
+    snapshot.trace.events.iter().rev().find_map(|event| {
+        if snapshot.run.run_id.as_deref().is_some()
+            && event.run_id.as_deref() != snapshot.run.run_id.as_deref()
+        {
+            return None;
+        }
+        if event.event_type != HarnessEventType::PhaseResultReady {
+            return None;
+        }
+        let HarnessEventPayload::Phase {
+            output: Some(output),
+            ..
+        } = &event.payload
+        else {
+            return None;
+        };
+        Some(pretty_json_text(output))
+    })
+}
+
+fn pretty_json_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        _ => serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()),
+    }
+}
+
+fn token_usage_text(tokens: Option<u64>) -> String {
+    tokens
+        .map(compact_count_for_tui)
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn compact_count_for_tui(value: u64) -> String {
+    if value >= 1000 {
+        format!("{:.1}k", value as f64 / 1000.0)
+    } else {
+        value.to_string()
+    }
+}
+
+fn cost_usage_text(amount: Option<f64>, currency: Option<&str>) -> String {
+    match (amount, currency) {
+        (Some(amount), Some(currency)) => format!("{amount:.4} {currency}"),
+        (Some(amount), None) => format!("{amount:.4}"),
+        _ => "unknown (provider does not report pricing)".into(),
+    }
+}
+
+fn format_duration_ms(duration_ms: u64) -> String {
+    if duration_ms >= 60_000 {
+        format!("{:.1}m", duration_ms as f64 / 60_000.0)
+    } else if duration_ms >= 1_000 {
+        format!("{:.1}s", duration_ms as f64 / 1_000.0)
+    } else {
+        format!("{duration_ms}ms")
+    }
+}
+
+fn format_clock_duration_ms(duration_ms: u64) -> String {
+    let total_seconds = duration_ms / 1_000;
+    let hours = total_seconds / 3_600;
+    let minutes = (total_seconds % 3_600) / 60;
+    let seconds = total_seconds % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+fn checkpoint_summary_text(report: &RunReport) -> String {
+    if report.checkpoint_summaries.is_empty() {
+        return "none".into();
+    }
+    let approved = report
+        .checkpoint_summaries
+        .iter()
+        .filter(|checkpoint| checkpoint.status == "approved")
+        .count();
+    let denied = report
+        .checkpoint_summaries
+        .iter()
+        .filter(|checkpoint| checkpoint.status == "denied")
+        .count();
+    format!(
+        "{} total · {} approved · {} denied",
+        report.checkpoint_summaries.len(),
+        approved,
+        denied
+    )
+}
+
+fn phase_path_text(report: &RunReport) -> String {
+    if report.phase_summaries.is_empty() {
+        return "unknown".into();
+    }
+    let mut parts = Vec::new();
+    for phase in &report.phase_summaries {
+        parts.push(phase.phase_id.clone());
+        if let Some(transition) = &phase.transition_to
+            && (transition == "$end" || transition.starts_with('$'))
+        {
+            parts.push(transition.clone());
+        }
+    }
+    parts.dedup();
+    parts.join(" -> ")
+}
+
+fn trace_lines(app: &TuiApp) -> Vec<Line<'static>> {
+    trace_rail_lines(app, usize::MAX, usize::MAX)
+}
+
+fn trace_rail_lines(app: &TuiApp, max_lines: usize, max_width: usize) -> Vec<Line<'static>> {
+    let max_lines = max_lines.max(1);
+    let max_width = max_width.max(1);
+    match &app.state {
+        TuiState::Loading { progress, .. } => {
+            let mut lines = vec![Line::from("bootstrap_started")];
+            let available = max_lines.saturating_sub(lines.len());
+            for item in progress.iter().rev().take(available).rev() {
+                lines.push(Line::from(truncate_right(
+                    &format!("{}: {}", bootstrap_stage_label(item.stage), item.message),
+                    max_width,
+                )));
+            }
+            lines
+        }
+        TuiState::Failed { .. } => vec![Line::from("preflight_failed")],
+        TuiState::Running { snapshot, .. } => {
+            let run_ordinals = trace_rail_run_ordinals(&snapshot.trace.events);
+            let visible_events = trace_spaced_item_capacity(max_lines.saturating_sub(2), 1)
+                .min(snapshot.trace.events.len());
+            let mut lines = vec![info_line(
+                "",
+                trace_rail_header(visible_events, snapshot.trace.events.len()),
+            )];
+            if visible_events > 0 {
+                lines.push(Line::from(""));
+            }
+            let visible_events = snapshot
+                .trace
+                .events
+                .iter()
+                .rev()
+                .take(visible_events)
+                .rev()
+                .collect::<Vec<_>>();
+            for (index, event) in visible_events.iter().enumerate() {
+                if index > 0 {
+                    lines.push(Line::from(""));
+                }
+                lines.push(trace_rail_event_line(event, max_width, &run_ordinals));
+            }
+            if lines.len() == 1 {
+                lines.push(Line::from("Run starting."));
+            }
+            lines
+        }
+        TuiState::Ready { controller } => {
+            let snapshot = controller.snapshot();
+            let run_ordinals = trace_rail_run_ordinals(&snapshot.trace.events);
+            let visible_events = trace_spaced_item_capacity(max_lines.saturating_sub(2), 1)
+                .min(snapshot.trace.events.len());
+            let mut lines = vec![info_line(
+                "",
+                trace_rail_header(visible_events, snapshot.trace.events.len()),
+            )];
+            if visible_events > 0 {
+                lines.push(Line::from(""));
+            }
+            let visible_events = snapshot
+                .trace
+                .events
+                .iter()
+                .rev()
+                .take(visible_events)
+                .rev()
+                .collect::<Vec<_>>();
+            for (index, event) in visible_events.iter().enumerate() {
+                if index > 0 {
+                    lines.push(Line::from(""));
+                }
+                lines.push(trace_rail_event_line(event, max_width, &run_ordinals));
+            }
+            if lines.len() == 1 {
+                lines.push(Line::from("No session events yet."));
+            }
+            lines
+        }
+    }
+}
+
+fn trace_rail_header(visible_events: usize, total_events: usize) -> String {
+    if total_events > visible_events {
+        format!("Session tail · latest {visible_events}/{total_events}")
+    } else {
+        format!("Session tail · latest {visible_events}")
+    }
+}
+
+fn trace_spaced_item_capacity(available_lines: usize, item_lines: usize) -> usize {
+    if available_lines == 0 {
+        0
+    } else {
+        (available_lines + 1) / (item_lines + 1)
+    }
+}
+
+fn trace_rail_run_ordinals(events: &[HarnessEventEnvelope]) -> BTreeMap<String, u64> {
+    let mut ordinals = BTreeMap::new();
+    let mut next = 1;
+    for event in events {
+        if event.event_type == HarnessEventType::RunStarted
+            && let Some(run_id) = &event.run_id
+            && !ordinals.contains_key(run_id)
+        {
+            ordinals.insert(run_id.clone(), next);
+            next += 1;
+        }
+    }
+    ordinals
+}
+
+fn trace_rail_event_line(
+    event: &HarnessEventEnvelope,
+    max_width: usize,
+    run_ordinals: &BTreeMap<String, u64>,
+) -> Line<'static> {
+    let event_type = event_type_label(event.event_type);
+    let (mark, mark_color) = trace_rail_event_mark(&event_type);
+    let run = event
+        .run_id
+        .as_deref()
+        .map(|run_id| trace_rail_run_label(run_id, run_ordinals))
+        .unwrap_or_default();
+    let time = event.timestamp.format("%H:%M:%S").to_string();
+    let text = truncate_right(&format!("{time} {mark} {event_type}{run}"), max_width);
+    let mut chars = text.chars();
+    let time_text = chars.by_ref().take(8).collect::<String>();
+    let rest = chars.collect::<String>();
+    Line::from(vec![
+        Span::styled(time_text, Style::default().fg(TEXT_MUTED)),
+        Span::styled(
+            rest.chars().take(3).collect::<String>(),
+            Style::default().fg(mark_color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            rest.chars().skip(3).collect::<String>(),
+            Style::default().fg(TEXT_PRIMARY),
+        ),
+    ])
+}
+
+fn trace_rail_run_label(run_id: &str, run_ordinals: &BTreeMap<String, u64>) -> String {
+    if let Some(run_number) = run_ordinals.get(run_id) {
+        return format!(" #{run_number}");
+    }
+    let suffix = run_id.rsplit('-').next().unwrap_or(run_id);
+    format!(" · run {suffix}")
+}
+
+fn trace_rail_event_mark(event_type: &str) -> (&'static str, Color) {
+    if event_type.contains("failed") || event_type.contains("rejected") {
+        ("×", Color::Red)
+    } else if event_type.contains("completed")
+        || event_type.contains("ready")
+        || event_type.contains("approved")
+        || event_type.contains("selected")
+        || event_type.contains("result")
+    {
+        ("✓", STATUS_READY)
+    } else if event_type.contains("started")
+        || event_type.contains("starting")
+        || event_type.contains("requested")
+    {
+        ("•", STATUS_WARNING)
+    } else {
+        ("·", TEXT_DIM)
+    }
+}
+
+struct TraceList {
+    lines: Vec<Line<'static>>,
+    footer: Line<'static>,
+}
+
+#[cfg(test)]
+fn center_trace_event_lines(app: &TuiApp) -> Vec<Line<'static>> {
+    if let Some(snapshot) = app.snapshot() {
+        if let Some(err) = &snapshot.reports.current_trace_error {
+            return vec![
+                Line::from(styled("Trace unavailable", STATUS_WARNING)),
+                Line::from(err.clone()),
+            ];
+        }
+        let artifact_loaded = snapshot.reports.current_trace_path.is_some();
+        let events = if artifact_loaded {
+            &snapshot.reports.current_trace_events
+        } else {
+            &snapshot.trace.events
+        };
+        let scoped = scoped_center_trace_events(snapshot, events);
+        let lines = if app.detail_expanded {
+            detailed_trace_event_lines(scoped)
+        } else {
+            scoped
+                .into_iter()
+                .map(|event| Line::from(event_trace_line(event)))
+                .collect::<Vec<_>>()
+        };
+        if !lines.is_empty() {
+            return lines;
+        }
+        return vec![Line::from(if snapshot.run.run_id.is_some() {
+            "No trace events recorded for this Run yet."
+        } else {
+            "preflight_completed has not been recorded yet."
+        })];
+    }
+    trace_lines(app)
+}
+
+fn trace_list(app: &TuiApp, max_lines: usize, max_width: usize) -> TraceList {
+    let Some(snapshot) = app.snapshot() else {
+        return TraceList {
+            lines: trace_lines(app),
+            footer: info_line("", "live session tail"),
+        };
+    };
+    if let Some(err) = &snapshot.reports.current_trace_error {
+        return TraceList {
+            lines: vec![
+                Line::from(styled("Trace unavailable", STATUS_WARNING)),
+                Line::from(err.clone()),
+            ],
+            footer: info_line("", center_trace_source_label(app)),
+        };
+    }
+
+    let events = app.trace_events();
+    if events.is_empty() {
+        let message = if snapshot.run.run_id.is_some() {
+            "No trace events recorded for this Run yet."
+        } else {
+            "preflight_completed has not been recorded yet."
+        };
+        return TraceList {
+            lines: vec![Line::from(message)],
+            footer: info_line("", center_trace_source_label(app)),
+        };
+    }
+
+    let selected = app.trace_selection.min(events.len().saturating_sub(1));
+    let rows_per_event = 2usize;
+    let visible_events = trace_spaced_item_capacity(max_lines.max(1), rows_per_event).max(1);
+    let mut start = selected.saturating_sub(visible_events.saturating_sub(1));
+    if start + visible_events > events.len() {
+        start = events.len().saturating_sub(visible_events);
+    }
+    let end = (start + visible_events).min(events.len());
+    let mut lines = Vec::new();
+    for (index, event) in events.iter().enumerate().take(end).skip(start) {
+        if index > start {
+            lines.push(Line::from(""));
+        }
+        let selected_event = index == selected;
+        lines.push(trace_event_header_line(
+            event,
+            selected_event,
+            app.accent,
+            max_width,
+        ));
+        lines.push(trace_event_json_line(event, selected_event, max_width));
+    }
+    TraceList {
+        lines,
+        footer: trace_list_footer(selected, events.len(), center_trace_source_label(app)),
+    }
+}
+
+fn trace_event_header_line(
+    event: &HarnessEventEnvelope,
+    selected: bool,
+    accent: Color,
+    max_width: usize,
+) -> Line<'static> {
+    let prefix = if selected { "▶ " } else { "  " };
+    let style = if selected {
+        Style::default()
+            .fg(accent)
+            .add_modifier(Modifier::BOLD)
+            .bg(PANEL_BORDER_SUBTLE)
+    } else {
+        Style::default().fg(TEXT_PRIMARY)
+    };
+    let text_width = max_width.saturating_sub(prefix.chars().count()).max(1);
+    Line::from(Span::styled(
+        format!(
+            "{prefix}{}",
+            truncate_right(&event_trace_line(event), text_width)
+        ),
+        style,
+    ))
+}
+
+fn trace_event_json_line(
+    event: &HarnessEventEnvelope,
+    selected: bool,
+    max_width: usize,
+) -> Line<'static> {
+    let json = serde_json::to_string(event).unwrap_or_else(|_| "{}".into());
+    let width = max_width.saturating_sub(4).max(1);
+    let text = format!("    {}", truncate_right(&json, width));
+    let style = if selected {
+        Style::default().fg(TEXT_MUTED).bg(PANEL_BORDER_SUBTLE)
+    } else {
+        Style::default().fg(TEXT_DIM)
+    };
+    Line::from(Span::styled(text, style))
+}
+
+fn truncate_right(value: &str, max_chars: usize) -> String {
+    let max_chars = max_chars.max(1);
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars == 1 {
+        return "…".into();
+    }
+    let keep = max_chars - 1;
+    format!("{}…", value.chars().take(keep).collect::<String>())
+}
+
+#[cfg(test)]
+fn detailed_trace_event_lines(events: Vec<&HarnessEventEnvelope>) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for event in events {
+        lines.push(Line::from(event_trace_line(event)));
+        if let Some(phase_execution_id) = &event.phase_execution_id {
+            lines.push(info_line(
+                "  phase_execution_id: ",
+                phase_execution_id.clone(),
+            ));
+        }
+        lines.push(info_line(
+            "  payload: ",
+            event_payload_detail(&event.payload),
+        ));
+        if let Ok(raw) = serde_json::to_string(event) {
+            lines.push(info_line("  raw: ", truncate_middle(&raw, 220)));
+        }
+        lines.push(Line::from(""));
+    }
+    lines
+}
+
+#[cfg(test)]
+fn event_payload_detail(payload: &HarnessEventPayload) -> String {
+    match payload {
+        HarnessEventPayload::Lifecycle { message, fields } => {
+            if fields.is_empty() {
+                message.clone()
+            } else {
+                format!("{message} · fields: {}", fields.len())
+            }
+        }
+        HarnessEventPayload::Action {
+            action_kind,
+            identity,
+            status,
+            ..
+        } => format!("{action_kind} {identity} · {status}"),
+        HarnessEventPayload::Phase {
+            phase_id,
+            outcome,
+            transition_to,
+            ..
+        } => format!(
+            "phase {phase_id} · outcome {} · transition {}",
+            outcome.as_deref().unwrap_or("pending"),
+            transition_to.as_deref().unwrap_or("pending")
+        ),
+        HarnessEventPayload::Preflight { status, .. } => {
+            format!("preflight {}", preflight_status_label(*status))
+        }
+        HarnessEventPayload::Usage { .. } => "usage update".into(),
+        HarnessEventPayload::Terminal { status, .. } => {
+            format!("terminal {}", terminal_status_label(*status))
+        }
+        HarnessEventPayload::Service {
+            service, status, ..
+        } => {
+            format!("service {service} · {status}")
+        }
+        HarnessEventPayload::Content { label, .. } => format!("content {label}"),
+        HarnessEventPayload::Empty => "redacted/empty payload".into(),
+    }
+}
+
+fn center_trace_source_label(app: &TuiApp) -> String {
+    let Some(snapshot) = app.snapshot() else {
+        return "live session tail".into();
+    };
+    if snapshot.reports.current_trace_path.is_some() {
+        let retained = snapshot.reports.current_trace_events.len();
+        match snapshot.reports.current_trace_total_events {
+            Some(total) if total > retained => {
+                format!("events.jsonl · showing latest {retained}/{total} events")
+            }
+            Some(total) => format!("events.jsonl · {total} cached events"),
+            None => format!("events.jsonl · {retained} cached events"),
+        }
+    } else if snapshot.run.run_id.is_some() {
+        format!(
+            "live session tail · bounded {} events",
+            snapshot.trace.events.len()
+        )
+    } else {
+        "preflight from live session tail".into()
+    }
+}
+
+fn scoped_center_trace_events<'a>(
+    snapshot: &TuiSessionSnapshot,
+    events: &'a [HarnessEventEnvelope],
+) -> Vec<&'a HarnessEventEnvelope> {
+    if snapshot.reports.current_trace_path.is_some() {
+        return events.iter().collect();
+    }
+    match snapshot.run.run_id.as_deref() {
+        Some(run_id) => events
+            .iter()
+            .filter(|event| event.run_id.as_deref() == Some(run_id))
+            .collect(),
+        None => events
+            .iter()
+            .filter(|event| event.event_type == HarnessEventType::PreflightCompleted)
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+fn paginate_trace_lines(
+    lines: Vec<Line<'static>>,
+    requested_page: PageCursor,
+    max_lines: usize,
+) -> TraceList {
+    paginate_trace_lines_with_label(lines, requested_page, max_lines, usize::MAX, String::new())
+}
+
+#[cfg(test)]
+fn paginate_trace_lines_with_label(
+    lines: Vec<Line<'static>>,
+    requested_page: PageCursor,
+    max_lines: usize,
+    max_width: usize,
+    source_label: String,
+) -> TraceList {
+    let max_body_lines = max_lines.max(1);
+    let lines = wrap_trace_lines(lines, max_width);
+    let mut pages: Vec<Vec<Line<'static>>> = Vec::new();
+    let mut current = Vec::new();
+    for line in lines {
+        if current.len() >= max_body_lines {
+            pages.push(std::mem::take(&mut current));
+        }
+        current.push(line);
+    }
+    if !current.is_empty() {
+        pages.push(current);
+    }
+    if pages.is_empty() {
+        pages.push(vec![Line::from("No trace events yet.")]);
+    }
+    let page_count = pages.len().max(1);
+    let page_index = page_index_for_cursor(requested_page, page_count);
+    TraceList {
+        lines: pages.into_iter().nth(page_index).unwrap_or_default(),
+        footer: trace_page_footer(page_index, page_count, source_label),
+    }
+}
+
+#[cfg(test)]
+fn wrap_trace_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    if width == usize::MAX {
+        return lines;
+    }
+    lines
+        .into_iter()
+        .flat_map(|line| wrap_trace_line(line, width))
+        .collect()
+}
+
+#[cfg(test)]
+fn wrap_trace_line(line: Line<'static>, width: usize) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    let text = line.to_string();
+    if text.chars().count() <= width {
+        return vec![line];
+    }
+
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    for ch in text.chars() {
+        if row.chars().count() >= width {
+            rows.push(Line::from(std::mem::take(&mut row)));
+        }
+        row.push(ch);
+    }
+    if !row.is_empty() {
+        rows.push(Line::from(row));
+    }
+    rows
+}
+
+fn page_index_for_cursor(cursor: PageCursor, page_count: usize) -> usize {
+    cursor.rem_euclid(page_count.max(1) as PageCursor) as usize
+}
+
+#[cfg(test)]
+fn trace_page_footer(page_index: usize, page_count: usize, source_label: String) -> Line<'static> {
+    let mut text = if page_count > 1 {
+        format!(
+            "Page {}/{} · PgUp next · PgDn prev",
+            page_index + 1,
+            page_count
+        )
+    } else {
+        "Page 1/1".into()
+    };
+    if !source_label.is_empty() {
+        text.push_str(" · ");
+        text.push_str(&source_label);
+    }
+    info_line("", text)
+}
+
+fn trace_list_footer(selected: usize, count: usize, source_label: String) -> Line<'static> {
+    let mut text = if count > 0 {
+        format!(
+            "Event {}/{} · ↑/↓ select · Enter/D details",
+            selected + 1,
+            count
+        )
+    } else {
+        "No events".into()
+    };
+    if !source_label.is_empty() {
+        text.push_str(" · ");
+        text.push_str(&source_label);
+    }
+    info_line("", text)
+}
+
+fn memory_lines(app: &TuiApp) -> Vec<Line<'_>> {
+    let mut lines = vec![
+        center_header_line(app),
+        Line::from(""),
+        center_tabs_line(app),
+        Line::from(""),
+        Line::from(styled("Memory", app.accent)),
+    ];
+    let Some(snapshot) = app.snapshot() else {
+        lines.push(Line::from("Memory state pending preflight."));
+        return lines;
+    };
+    if snapshot.memory.spaces.is_empty() {
+        lines.push(Line::from("No Memory spaces configured."));
+    } else {
+        lines.push(info_line(
+            "",
+            format!("{} spaces", snapshot.memory.spaces.len()),
+        ));
+        for (index, space) in snapshot.memory.spaces.iter().enumerate() {
+            push_item_gap(&mut lines, index);
+            lines.push(Line::from(format!(
+                "{} / {} · {} · {} · {}",
+                space.package, space.space, space.state, space.model, space.runtime
+            )));
+            lines.push(info_line(
+                "  modes: ",
+                safe_join(&space.modes, ", ", "none"),
+            ));
+            lines.push(info_line(
+                "  record types: ",
+                safe_join(&space.record_types, ", ", "none"),
+            ));
+            if app.detail_expanded
+                && let Some(reason) = &space.readiness_reason
+            {
+                lines.push(info_line("  reason: ", reason.clone()));
+            }
+        }
+    }
+    if !snapshot.memory.operations.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(styled("Memory Operations", app.accent)));
+        for (index, operation) in snapshot.memory.operations.iter().enumerate() {
+            push_item_gap(&mut lines, index);
+            lines.push(Line::from(format!(
+                "{} · {} · {} · trigger {}",
+                operation.identity, operation.operation_type, operation.state, operation.trigger
+            )));
+            lines.push(info_line(
+                "  spaces: ",
+                safe_join(&operation.referenced_spaces, ", ", "none"),
+            ));
+            if app.detail_expanded
+                && let Some(reason) = &operation.readiness_reason
+            {
+                lines.push(info_line("  reason: ", reason.clone()));
+            }
+        }
+    }
+    let memory_events = memory_activity_events(snapshot);
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled("Run Memory Activity", app.accent)));
+    if memory_events.is_empty() {
+        lines.push(Line::from("No Memory activity recorded for this Run yet."));
+    } else {
+        for (index, (event_type, count)) in
+            memory_event_counts(&memory_events).into_iter().enumerate()
+        {
+            push_item_gap(&mut lines, index);
+            lines.push(Line::from(format!("{event_type}: {count}")));
+        }
+        if app.detail_expanded {
+            lines.push(Line::from(""));
+            for (index, event) in memory_events.into_iter().enumerate() {
+                push_item_gap(&mut lines, index);
+                lines.push(info_line("  ", event_trace_line(event)));
+            }
+        }
+    }
+    if let Some(report) = snapshot.reports.current_report.as_ref() {
+        append_operation_summary_lines(&mut lines, "Memory Summaries", &report.memory_summaries);
+        if !report.memory_write_review_summaries.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(styled("Persistence Review", app.accent)));
+            for (index, review) in report.memory_write_review_summaries.iter().enumerate() {
+                push_item_gap(&mut lines, index);
+                lines.push(Line::from(format!(
+                    "{} · {} · {}",
+                    review.point, review.phase_execution_id, review.status
+                )));
+                if app.detail_expanded {
+                    lines.push(info_line("  reason: ", review.reason.clone()));
+                }
+            }
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(info_line("", "redaction-safe summaries only"));
+    lines
+}
+
+fn report_lines(app: &TuiApp) -> Vec<Line<'_>> {
+    match &app.state {
+        TuiState::Ready { controller } => {
+            let plan = controller.plan();
+            let mut lines = vec![
+                center_header_line(app),
+                Line::from(""),
+                center_tabs_line(app),
+                Line::from(""),
+            ];
+            match (
+                controller.snapshot().reports.current_report.as_ref(),
+                controller.snapshot().reports.current_report_error.as_ref(),
+            ) {
+                (Some(report), _) => {
+                    lines.push(Line::from(styled("Run Report", app.accent)));
+                    lines.push(Line::from(format!("run_id: {}", report.run_id)));
+                    lines.push(Line::from(format!(
+                        "status: {}",
+                        terminal_status_label(report.terminal_status)
+                    )));
+                    if let Some(duration_ms) = report.duration_ms {
+                        lines.push(Line::from(format!("duration_ms: {duration_ms}")));
+                    }
+                    lines.push(Line::from(format!(
+                        "report: {}",
+                        controller
+                            .snapshot()
+                            .reports
+                            .current_report_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "not recorded".into())
+                    )));
+                    lines.push(Line::from(format!(
+                        "trace: {}",
+                        controller
+                            .snapshot()
+                            .reports
+                            .current_trace_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .or_else(|| report.trace_path.clone())
+                            .unwrap_or_else(|| "not recorded".into())
+                    )));
+                    append_consumer_context_report_lines(&mut lines, report);
+                    append_phase_report_lines(&mut lines, report);
+                    append_usage_report_lines(&mut lines, report);
+                    append_action_report_lines(&mut lines, report);
+                    append_operation_summary_lines(
+                        &mut lines,
+                        "Tool Summaries",
+                        &report.tool_summaries,
+                    );
+                    append_operation_summary_lines(
+                        &mut lines,
+                        "MCP Summaries",
+                        &report.mcp_summaries,
+                    );
+                    append_operation_summary_lines(
+                        &mut lines,
+                        "Knowledge Summaries",
+                        &report.knowledge_summaries,
+                    );
+                    append_operation_summary_lines(
+                        &mut lines,
+                        "Memory Summaries",
+                        &report.memory_summaries,
+                    );
+                    if !report.diagnostics.is_empty() {
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(styled("Diagnostics", app.accent)));
+                        for diagnostic in &report.diagnostics {
+                            lines.push(Line::from(format!(
+                                "{} · {}",
+                                diagnostic_severity_label(diagnostic.severity),
+                                diagnostic.code
+                            )));
+                            if app.detail_expanded {
+                                lines.push(info_line("  ", diagnostic.message.clone()));
+                            }
+                        }
+                    }
+                    if app.detail_expanded
+                        && let Some(output) = &report.terminal_output
+                    {
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(styled("Terminal Output", app.accent)));
+                        lines.push(Line::from(truncate_middle(
+                            &serde_json::to_string(output)
+                                .unwrap_or_else(|_| "<unavailable>".into()),
+                            240,
+                        )));
+                    }
+                }
+                (None, None) => {
+                    lines.push(Line::from(styled("Preflight Report", app.accent)));
+                    lines.push(Line::from(format!(
+                        "status: {}",
+                        preflight_status_label(plan.report.status)
+                    )));
+                    lines.push(Line::from(format!(
+                        "diagnostics: {}",
+                        plan.report.diagnostics.len()
+                    )));
+                    lines.push(Line::from(format!(
+                        "workspace: {}",
+                        plan.workspace_root.display()
+                    )));
+                    lines.push(Line::from(format!(
+                        "state_dir: {}",
+                        plan.state_dir.display()
+                    )));
+                }
+                (None, Some(err)) => {
+                    lines.push(Line::from(styled("Report unavailable", STATUS_WARNING)));
+                    lines.push(Line::from(err.clone()));
+                }
+            }
+            lines
+        }
+        TuiState::Running { snapshot, .. } => vec![
+            center_header_line(app),
+            Line::from(""),
+            center_tabs_line(app),
+            Line::from(""),
+            Line::from(styled("Run Report", app.accent)),
+            Line::from(format!(
+                "run_id: {}",
+                snapshot.run.run_id.as_deref().unwrap_or("pending")
+            )),
+            Line::from("Report will be written when the Run reaches a terminal status."),
+        ],
+        TuiState::Failed { message } => vec![
+            center_header_line(app),
+            Line::from(""),
+            center_tabs_line(app),
+            Line::from(""),
+            Line::from(styled(
+                "Preflight failed before report was available",
+                Color::Red,
+            )),
+            Line::from(message.clone()),
+        ],
+        TuiState::Loading { .. } => vec![
+            center_header_line(app),
+            Line::from(""),
+            center_tabs_line(app),
+            Line::from(""),
+            Line::from("Report pending preflight."),
+        ],
+    }
+}
+
+fn safe_join(values: &[String], separator: &str, empty: &str) -> String {
+    if values.is_empty() {
+        empty.into()
+    } else {
+        values.join(separator)
+    }
+}
+
+fn push_item_gap(lines: &mut Vec<Line<'_>>, index: usize) {
+    if index > 0 {
+        lines.push(Line::from(""));
+    }
+}
+
+fn memory_activity_events(snapshot: &TuiSessionSnapshot) -> Vec<&HarnessEventEnvelope> {
+    let events = if snapshot.reports.current_trace_path.is_some() {
+        &snapshot.reports.current_trace_events
+    } else {
+        &snapshot.trace.events
+    };
+    scoped_center_trace_events(snapshot, events)
+        .into_iter()
+        .filter(|event| is_memory_event_type(event.event_type))
+        .collect()
+}
+
+fn is_memory_event_type(event_type: HarnessEventType) -> bool {
+    match event_type {
+        HarnessEventType::MemorySurfaceReady
+        | HarnessEventType::MemorySurfaceUnavailable
+        | HarnessEventType::MemoryReadStarted
+        | HarnessEventType::MemoryReadCompleted
+        | HarnessEventType::MemoryReadFailed
+        | HarnessEventType::MemoryWriteStarted
+        | HarnessEventType::MemoryWriteCompleted
+        | HarnessEventType::MemoryWriteFailed
+        | HarnessEventType::MemoryWriteReviewStarted
+        | HarnessEventType::MemoryWriteReviewCompleted
+        | HarnessEventType::MemoryWriteReviewSkipped
+        | HarnessEventType::MemoryWriteReviewFailed
+        | HarnessEventType::MemoryTriggerEvaluated
+        | HarnessEventType::MemoryOperationEligible
+        | HarnessEventType::MemoryOperationStarted
+        | HarnessEventType::MemoryOperationSource
+        | HarnessEventType::MemoryOperationOutput
+        | HarnessEventType::MemoryOperationCompleted
+        | HarnessEventType::MemoryOperationFailed => true,
+        HarnessEventType::SessionStarting
+        | HarnessEventType::ServiceStarting
+        | HarnessEventType::ServiceHandshaking
+        | HarnessEventType::ServiceReady
+        | HarnessEventType::ServiceUnhealthy
+        | HarnessEventType::ServiceRestarting
+        | HarnessEventType::ServiceFailed
+        | HarnessEventType::ServiceStopped
+        | HarnessEventType::PreflightCompleted
+        | HarnessEventType::SessionStarted
+        | HarnessEventType::SessionUsageUpdated
+        | HarnessEventType::SessionStopping
+        | HarnessEventType::SessionStopped
+        | HarnessEventType::RunStarted
+        | HarnessEventType::ConsumerContextLoaded
+        | HarnessEventType::ConsumerContextUnavailable
+        | HarnessEventType::PhaseEnterRequested
+        | HarnessEventType::EffectivePhaseComputed
+        | HarnessEventType::PhaseStarted
+        | HarnessEventType::PhaseResultReady
+        | HarnessEventType::PhaseFailed
+        | HarnessEventType::RunCompleted
+        | HarnessEventType::RunFailed
+        | HarnessEventType::RunCancelled
+        | HarnessEventType::RunLimitReached
+        | HarnessEventType::RunApprovalRequired
+        | HarnessEventType::PromptPrepared
+        | HarnessEventType::ModelRuntimeRequestPrepared
+        | HarnessEventType::ModelRequestStarted
+        | HarnessEventType::ModelRequestCompleted
+        | HarnessEventType::ModelRequestFailed
+        | HarnessEventType::SemanticActionProposed
+        | HarnessEventType::SemanticActionRejected
+        | HarnessEventType::SemanticActionCompleted
+        | HarnessEventType::ModelRepairRequested
+        | HarnessEventType::OutcomeProposed
+        | HarnessEventType::OutcomeSelected
+        | HarnessEventType::OutcomeInvalid
+        | HarnessEventType::TransitionSelected
+        | HarnessEventType::LoopLimitReached
+        | HarnessEventType::ToolCandidatesComputed
+        | HarnessEventType::ToolInvoked
+        | HarnessEventType::ToolRetrying
+        | HarnessEventType::ToolCompleted
+        | HarnessEventType::ToolFailed
+        | HarnessEventType::SkillActivated
+        | HarnessEventType::SkillResourceRequested
+        | HarnessEventType::SkillResourceLoaded
+        | HarnessEventType::SkillResourceFailed
+        | HarnessEventType::KnowledgeSurfaceReady
+        | HarnessEventType::KnowledgeSurfaceUnavailable
+        | HarnessEventType::KnowledgeRequestStarted
+        | HarnessEventType::KnowledgeRetrieved
+        | HarnessEventType::KnowledgeFailed
+        | HarnessEventType::EmbeddingRequestStarted
+        | HarnessEventType::EmbeddingRequestCompleted
+        | HarnessEventType::EmbeddingRequestFailed
+        | HarnessEventType::HookStarted
+        | HarnessEventType::HookCompleted
+        | HarnessEventType::HookRejected
+        | HarnessEventType::HookFailed
+        | HarnessEventType::ApprovalRequested
+        | HarnessEventType::ApprovalApproved
+        | HarnessEventType::ApprovalDenied
+        | HarnessEventType::ApprovalFailed
+        | HarnessEventType::McpSurfaceStarting
+        | HarnessEventType::McpSurfaceReady
+        | HarnessEventType::McpSurfaceFailed
+        | HarnessEventType::McpSurfaceStopped
+        | HarnessEventType::McpImportConnected
+        | HarnessEventType::McpImportFailed
+        | HarnessEventType::McpToolInvoked
+        | HarnessEventType::McpToolCompleted
+        | HarnessEventType::McpToolFailed
+        | HarnessEventType::CancellationRequested
+        | HarnessEventType::CancellationCompleted => false,
+    }
+}
+
+fn memory_event_counts(events: &[&HarnessEventEnvelope]) -> Vec<(String, usize)> {
+    let mut counts = BTreeMap::new();
+    for event in events {
+        *counts
+            .entry(event_type_label(event.event_type))
+            .or_insert(0) += 1;
+    }
+    counts.into_iter().collect()
+}
+
+fn append_consumer_context_report_lines(lines: &mut Vec<Line<'_>>, report: &RunReport) {
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled("Consumer Context", TEXT_PANEL_TITLE)));
+    match &report.consumer_context {
+        Some(context) => {
+            lines.push(Line::from(format!("status: {}", context.status)));
+            if let Some(path) = &context.path {
+                lines.push(Line::from(format!("path: {path}")));
+            }
+            if let Some(bytes) = context.byte_size {
+                lines.push(Line::from(format!("bytes: {bytes}")));
+            }
+            if let Some(tokens) = context.approximate_tokens {
+                lines.push(Line::from(format!("tokens: ~{tokens}")));
+            }
+            if let Some(hash) = &context.sha256 {
+                lines.push(Line::from(format!("sha256: {hash}")));
+            }
+            lines.push(Line::from(format!(
+                "content_included: {}",
+                context.content_included
+            )));
+        }
+        None => lines.push(Line::from("not configured")),
+    }
+}
+
+fn append_phase_report_lines(lines: &mut Vec<Line<'_>>, report: &RunReport) {
+    if report.phase_summaries.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled("Phases", TEXT_PANEL_TITLE)));
+    for (index, phase) in report.phase_summaries.iter().enumerate() {
+        push_item_gap(lines, index);
+        let mut summary = format!(
+            "{} · {} · outcome {}",
+            phase.phase_id,
+            phase.status,
+            phase.outcome.as_deref().unwrap_or("complete")
+        );
+        if let Some(transition) = phase.transition_to.as_deref() {
+            summary.push_str(&format!(" · transition {transition}"));
+        }
+        lines.push(Line::from(summary));
+    }
+    if !report.checkpoint_summaries.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(styled("Checkpoints", TEXT_PANEL_TITLE)));
+        for (index, checkpoint) in report.checkpoint_summaries.iter().enumerate() {
+            push_item_gap(lines, index);
+            lines.push(Line::from(format!(
+                "{} before {} · {}",
+                checkpoint.checkpoint_id, checkpoint.before_phase, checkpoint.status
+            )));
+        }
+    }
+}
+
+fn append_usage_report_lines(lines: &mut Vec<Line<'_>>, report: &RunReport) {
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled("Usage", TEXT_PANEL_TITLE)));
+    lines.push(Line::from(format!(
+        "model calls: {} · actions: {} · tools: {} · memory: {} · knowledge: {}",
+        report.usage.model_calls,
+        report.usage.accepted_semantic_actions,
+        report.usage.tool_calls,
+        report.usage.memory_requests,
+        report.usage.knowledge_requests
+    )));
+    lines.push(Line::from(format!(
+        "tokens: {}",
+        token_triplet_text(&report.usage.tokens)
+    )));
+    lines.push(Line::from(format!(
+        "repairs: {} · retries: {} · errors: {}",
+        report.repair_count, report.retry_count, report.error_count
+    )));
+}
+
+fn append_action_report_lines(lines: &mut Vec<Line<'_>>, report: &RunReport) {
+    if report.action_summaries.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled("Actions", TEXT_PANEL_TITLE)));
+    for (index, action) in report.action_summaries.iter().enumerate() {
+        push_item_gap(lines, index);
+        lines.push(Line::from(format!(
+            "{} · {} · {}",
+            action.action_kind, action.identity, action.status
+        )));
+        if let Some(error) = &action.error {
+            lines.push(info_line("  error: ", truncate_middle(error, 180)));
+        }
+    }
+}
+
+fn append_operation_summary_lines(
+    lines: &mut Vec<Line<'_>>,
+    title: &'static str,
+    summaries: &[crate::harness_observability::OperationReportSummary],
+) {
+    if summaries.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(styled(title, TEXT_PANEL_TITLE)));
+    for (index, summary) in summaries.iter().enumerate() {
+        push_item_gap(lines, index);
+        lines.push(Line::from(format!(
+            "{} · {} · {} · count {}",
+            summary.operation_kind, summary.identity, summary.status, summary.count
+        )));
+    }
+}
+
+fn token_triplet_text(tokens: &crate::harness_observability::TokenUsage) -> String {
+    format!(
+        "in {} · out {} · total {}",
+        tokens
+            .input_tokens
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".into()),
+        tokens
+            .output_tokens
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".into()),
+        tokens
+            .total_tokens
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".into())
+    )
+}
+
+fn truncate_middle(value: &str, max_chars: usize) -> String {
+    let length = value.chars().count();
+    if length <= max_chars {
+        return value.into();
+    }
+    if max_chars <= 1 {
+        return "…".into();
+    }
+    let head_len = max_chars / 2;
+    let tail_len = max_chars.saturating_sub(head_len + 1);
+    let head = value.chars().take(head_len).collect::<String>();
+    let tail = value
+        .chars()
+        .rev()
+        .take(tail_len)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("{head}…{tail}")
+}
+
+fn center_header_line(app: &TuiApp) -> Line<'static> {
+    if let TuiState::Ready { controller } = &app.state {
+        let snapshot = controller.snapshot();
+        if snapshot.run.status == TuiRunStatus::Terminal {
+            return terminal_header_line(snapshot, app.accent);
+        }
+    }
+    let (run, phase, status, status_color) = match &app.state {
+        TuiState::Loading { .. } => (
+            "Run --".to_string(),
+            "bootstrap",
+            "Loading".to_string(),
+            STATUS_WARNING,
+        ),
+        TuiState::Ready { controller } => {
+            let snapshot = controller.snapshot();
+            (
+                run_header_text(snapshot.run.run_number, snapshot.run.run_id.as_deref()),
+                snapshot.run.phase_id.as_deref().unwrap_or("idle"),
+                run_status_display_text(&snapshot.run),
+                run_status_display_color(&snapshot.run),
+            )
+        }
+        TuiState::Running { snapshot, .. } => (
+            run_header_text(snapshot.run.run_number, snapshot.run.run_id.as_deref()),
+            snapshot.run.phase_id.as_deref().unwrap_or("starting"),
+            "In Progress".into(),
+            STATUS_WARNING,
+        ),
+        TuiState::Failed { .. } => (
+            "Run --".to_string(),
+            "preflight",
+            "Failed".to_string(),
+            Color::Red,
+        ),
+    };
+    active_header_line(app.accent, run, phase, status, status_color)
+}
+
+fn active_header_line(
+    accent: Color,
+    run: String,
+    phase: &str,
+    status: String,
+    status_color: Color,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            run,
+            Style::default()
+                .fg(TEXT_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("Phase: ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(
+            phase.to_string(),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("Status: ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(
+            status,
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+fn terminal_header_line(snapshot: &TuiSessionSnapshot, accent: Color) -> Line<'static> {
+    let report = snapshot.reports.current_report.as_ref();
+    let terminal_status = report
+        .map(|report| report.terminal_status)
+        .or(snapshot.run.terminal_status);
+    let status_text = terminal_status
+        .map(terminal_status_label)
+        .unwrap_or("terminal")
+        .to_string();
+    let status_color = terminal_status
+        .map(terminal_status_color)
+        .unwrap_or(TEXT_PRIMARY);
+    let terminal_target = report
+        .and_then(report_terminal_target)
+        .or_else(|| snapshot.run.phase_id.clone())
+        .unwrap_or_else(|| status_text.clone());
+    Line::from(vec![
+        Span::styled(
+            run_header_text(snapshot.run.run_number, snapshot.run.run_id.as_deref()),
+            Style::default()
+                .fg(TEXT_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("Terminal: ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(
+            terminal_target,
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" -> ", Style::default().fg(TEXT_MUTED)),
+        Span::styled(
+            status_text.clone(),
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            terminal_status_badge_text(terminal_status),
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+fn report_terminal_target(report: &RunReport) -> Option<String> {
+    let phase = report.phase_summaries.last()?;
+    phase
+        .transition_to
+        .clone()
+        .or_else(|| phase.outcome.clone())
+        .or_else(|| Some(phase.phase_id.clone()))
+}
+
+fn terminal_status_badge_text(status: Option<HarnessTerminalStatus>) -> String {
+    let label = status
+        .map(terminal_status_label)
+        .unwrap_or("terminal")
+        .to_ascii_uppercase();
+    let mark = match status {
+        Some(HarnessTerminalStatus::Ended | HarnessTerminalStatus::HandedOff) => "✓",
+        Some(_) => "×",
+        None => "•",
+    };
+    format!("[{mark} {label}]")
+}
+
+fn terminal_status_color(status: HarnessTerminalStatus) -> Color {
+    match status {
+        HarnessTerminalStatus::Ended | HarnessTerminalStatus::HandedOff => STATUS_READY,
+        _ => Color::Red,
+    }
+}
+
+fn run_status_display_text(run: &TuiRunSnapshot) -> String {
+    match run.status {
+        TuiRunStatus::Idle => "Ready".into(),
+        TuiRunStatus::Active => "In Progress".into(),
+        TuiRunStatus::PendingApproval => "Approval Required".into(),
+        TuiRunStatus::Terminal => run
+            .terminal_status
+            .map(terminal_status_label)
+            .unwrap_or("terminal")
+            .to_string(),
+    }
+}
+
+fn run_status_display_color(run: &TuiRunSnapshot) -> Color {
+    match run.status {
+        TuiRunStatus::Idle => STATUS_READY,
+        TuiRunStatus::Active | TuiRunStatus::PendingApproval => STATUS_WARNING,
+        TuiRunStatus::Terminal => match run.terminal_status {
+            Some(HarnessTerminalStatus::Ended | HarnessTerminalStatus::HandedOff) => STATUS_READY,
+            Some(_) => Color::Red,
+            None => TEXT_PRIMARY,
+        },
+    }
+}
+
+fn run_header_text(run_number: Option<u64>, run_id: Option<&str>) -> String {
+    run_number
+        .map(|number| format!("Run #{number}"))
+        .or_else(|| {
+            run_id.map(|run_id| format!("Run {}", run_id.rsplit('-').next().unwrap_or(run_id)))
+        })
+        .unwrap_or_else(|| "Run --".into())
+}
+
+fn center_tabs_line(app: &TuiApp) -> Line<'static> {
+    Line::from(vec![
+        tab_span("Run", app.panel == VisiblePanel::Run, app.accent),
+        tab_sep(),
+        tab_span("Trace", app.panel == VisiblePanel::Trace, app.accent),
+        tab_sep(),
+        tab_span("Memory", app.panel == VisiblePanel::Memory, app.accent),
+        tab_sep(),
+        tab_span("Reports", app.panel == VisiblePanel::Reports, app.accent),
+    ])
+}
+
+fn tab_span(label: &'static str, selected: bool, accent: Color) -> Span<'static> {
+    let text = format!(" {label} ");
+    if selected {
+        Span::styled(
+            text,
+            Style::default()
+                .fg(accent)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        )
+    } else {
+        Span::styled(text, Style::default().fg(TEXT_MUTED))
+    }
+}
+
+fn tab_sep() -> Span<'static> {
+    Span::styled(" | ", Style::default().fg(TEXT_DIM))
+}
+
+fn readiness_state(app: &TuiApp, snapshot: &TuiSessionSnapshot) -> CapabilityState {
+    if snapshot
+        .workspace
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == PreflightDiagnosticSeverity::Fatal)
+    {
+        CapabilityState::Unavailable
+    } else if app.has_resolution_actions()
+        || snapshot
+            .workspace
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == PreflightDiagnosticSeverity::Pending)
+    {
+        CapabilityState::Pending
+    } else if snapshot.workspace.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic.severity,
+            PreflightDiagnosticSeverity::Warning | PreflightDiagnosticSeverity::Suppressed
+        )
+    }) {
+        CapabilityState::Suppressed
+    } else {
+        CapabilityState::Available
+    }
+}
+
+fn workspace_resolution_actions(app: &TuiApp) -> Vec<String> {
+    let mut actions = Vec::new();
+    if app.can_prompt_agent_selector() {
+        actions.push("A select Agent".into());
+    }
+    if app.can_prompt_model() {
+        actions.push("P set model provider/model".into());
+    }
+    if app.can_prompt_scope() {
+        actions.push("S set missing runtime scope".into());
+    }
+    actions
+}
+
+fn readiness_source_text(category: &TuiReadinessCategory, source: &str) -> String {
+    if category.label == "Agent" {
+        "selected from workspace".into()
+    } else {
+        format!("from {source}")
+    }
+}
+
+fn diagnostics_header(snapshot: &TuiSessionSnapshot) -> &'static str {
+    if snapshot
+        .workspace
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == PreflightDiagnosticSeverity::Fatal)
+    {
+        "Diagnostics"
+    } else {
+        "Warnings"
+    }
+}
+
+fn warning_lines(app: &TuiApp, snapshot: &TuiSessionSnapshot) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for warning in &app.warnings {
+        lines.push(Line::from(vec![
+            styled("warning", STATUS_WARNING),
+            Span::raw(format!(" - {warning}")),
+        ]));
+    }
+    for diagnostic in &snapshot.workspace.diagnostics {
+        if matches!(
+            diagnostic.severity,
+            PreflightDiagnosticSeverity::Fatal
+                | PreflightDiagnosticSeverity::Warning
+                | PreflightDiagnosticSeverity::Suppressed
+                | PreflightDiagnosticSeverity::Pending
+        ) {
+            let detail = if app.workspace_detail_expanded {
+                format!("{}: {}", diagnostic.code, diagnostic.message)
+            } else {
+                diagnostic.code.clone()
+            };
+            let color = if diagnostic.severity == PreflightDiagnosticSeverity::Fatal {
+                Color::Red
+            } else {
+                STATUS_WARNING
+            };
+            lines.push(Line::from(vec![
+                styled(diagnostic_severity_label(diagnostic.severity), color),
+                Span::raw(format!(" - {detail}")),
+            ]));
+        }
+    }
+    lines
+}
+
+fn state_line(label: &str, state: CapabilityState) -> Line<'static> {
+    let (mark, color, text) = match state {
+        CapabilityState::Available => ("✓", STATUS_READY, "Ready"),
+        CapabilityState::Pending => ("•", STATUS_WARNING, "Pending"),
+        CapabilityState::Unavailable => ("×", Color::Red, "Unavailable"),
+        CapabilityState::Suppressed => ("!", STATUS_WARNING, "Suppressed"),
+        CapabilityState::NotConfigured => ("-", Color::DarkGray, "Not configured"),
+    };
+    let prefix_width = 2 + label.chars().count();
+    let gap = PREFLIGHT_LINE_WIDTH
+        .saturating_sub(prefix_width + text.chars().count())
+        .max(1);
+    Line::from(vec![
+        styled(mark, color),
+        Span::raw(format!(" {label}{}", " ".repeat(gap))),
+        styled(text, color),
+    ])
+}
+
+fn info_line(prefix: &str, value: impl Into<String>) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("{prefix}{}", value.into()),
+        Style::default().fg(Color::DarkGray),
+    ))
+}
+
+fn styled<'a>(text: impl Into<std::borrow::Cow<'a, str>>, color: Color) -> Span<'a> {
+    Span::styled(text, Style::default().fg(color))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::test_support::*;
+    use super::*;
+    use crate::harness_engine::RuntimeTerminalResult;
+    use crate::harness_observability::{
+        HarnessEventEnvelope, HarnessEventPayload, HarnessEventSink, HarnessEventType,
+        RunOutputPaths,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, atomic::AtomicBool, mpsc};
+
+    fn render_app_text(app: &mut TuiApp, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render_app(frame, app))
+            .expect("test terminal should render");
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    #[test]
+    fn layout_mode_breakpoints_are_single_source_of_truth() {
+        assert_eq!(layout_mode_for_width(120), LayoutMode::Wide);
+        assert_eq!(layout_mode_for_width(119), LayoutMode::Medium);
+        assert_eq!(layout_mode_for_width(88), LayoutMode::Medium);
+        assert_eq!(layout_mode_for_width(87), LayoutMode::Single);
+    }
+
+    #[test]
+    fn rendered_layouts_preserve_panel_access_across_sizes() {
+        let mut wide =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let wide_text = render_app_text(&mut wide, 140, 40);
+        assert_eq!(wide.layout_mode, LayoutMode::Wide);
+        assert!(wide_text.contains("Preflight - Workspace Readiness"));
+        assert!(wide_text.contains("Run --"));
+        assert!(wide_text.contains("Trace - Event Stream"));
+
+        let mut medium =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let medium_text = render_app_text(&mut medium, 100, 40);
+        assert_eq!(medium.layout_mode, LayoutMode::Medium);
+        assert!(medium_text.contains("Preflight - Workspace Readiness"));
+        assert!(medium_text.contains("Run --"));
+        assert!(!medium_text.contains("Trace - Event Stream"));
+
+        let mut small_workspace =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        small_workspace.panel = VisiblePanel::Workspace;
+        let workspace_text = render_app_text(&mut small_workspace, 80, 32);
+        assert_eq!(small_workspace.layout_mode, LayoutMode::Single);
+        assert!(workspace_text.contains("Preflight - Workspace Readiness"));
+        assert!(!workspace_text.contains("Trace - Event Stream"));
+
+        let mut small_trace =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        small_trace.panel = VisiblePanel::EventStream;
+        let trace_text = render_app_text(&mut small_trace, 80, 32);
+        assert_eq!(small_trace.layout_mode, LayoutMode::Single);
+        assert!(trace_text.contains("Trace - Event Stream"));
+
+        let mut small_memory =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        small_memory.panel = VisiblePanel::Memory;
+        let memory_text = render_app_text(&mut small_memory, 80, 32);
+        assert!(memory_text.contains("Memory"));
+
+        let mut small_reports =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        small_reports.panel = VisiblePanel::Reports;
+        let reports_text = render_app_text(&mut small_reports, 80, 32);
+        assert!(reports_text.contains("Reports"));
+    }
+
+    #[test]
+    fn rendered_top_bar_applies_branding_and_trace_policy_labels() {
+        let mut controller = test_controller();
+        controller.plan.config.config.ui.branding.name = "Acme Operations".into();
+        controller.plan.config.config.ui.branding.subtitle = Some("M19 TUI fixture".into());
+        controller.plan.config.config.trace.level = HarnessTraceLevel::Verbose;
+        controller.plan.config.config.trace.content = HarnessTraceContent::Full;
+        let mut app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+
+        let text = render_app_text(&mut app, 140, 32);
+
+        assert!(text.contains("AgentPM Harness"));
+        assert!(text.contains("Acme Operations · M19 TUI fixture"));
+        assert!(text.contains("[Trace: verbose]"));
+        assert!(text.contains("[Content: full]"));
+    }
+
+    #[test]
+    fn failed_bootstrap_state_renders_all_primary_surfaces() {
+        let mut app = TuiApp::failed("reading agent.json: expected value".into());
+
+        let text = render_app_text(&mut app, 140, 32);
+
+        assert_eq!(app.layout_mode, LayoutMode::Wide);
+        assert!(text.contains("[Trace: Unavailable]"));
+        assert!(text.contains("Preflight failed"));
+        assert!(text.contains("reading agent.json: expected value"));
+        assert!(text.contains("Press Q to exit."));
+        assert!(text.contains("preflight_failed"));
+        assert!(text.contains("Run --"));
+        assert!(text.contains("Status: Failed"));
+    }
+
+    #[test]
+    fn keybar_always_shows_workspace_target_in_wide_layout() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        app.focus = TuiFocus::Panel(VisiblePanel::Run);
+
+        let text = render_app_text(&mut app, 140, 32);
+
+        assert_eq!(app.layout_mode, LayoutMode::Wide);
+        assert!(text.contains("1 Workspace"));
+        assert!(!text.contains("PgUp Next Page"));
+
+        app.focus = TuiFocus::Panel(VisiblePanel::Workspace);
+        let focused_text = render_app_text(&mut app, 140, 32);
+
+        assert!(focused_text.contains("1 Workspace"));
+        assert!(focused_text.contains("PgUp Next Page"));
+    }
+
+    #[test]
+    fn bars_expand_before_body_pagination_when_content_wraps() {
+        let mut controller = test_controller();
+        controller.plan.config.config.ui.branding.name = "Very Long Operations Brand Name".into();
+        controller.plan.config.config.ui.branding.subtitle =
+            Some("Long Environment Subtitle".into());
+        let state_dir = std::env::temp_dir().join("agentpm-tui-wrapped-bars-test");
+        let paths = RunOutputPaths::resolve(&state_dir, "run-wrapped-bars", None).unwrap();
+        let mut report = test_run_report();
+        report.run_id = "run-wrapped-bars".into();
+        report.duration_ms = Some(42_000);
+        report.terminal_output = Some(serde_json::json!("wrapped bars output"));
+        report
+            .write_pretty(&paths.report_path, &HarnessTraceContent::Redacted)
+            .unwrap();
+        let terminal = RuntimeTerminalResult {
+            status: HarnessTerminalStatus::Ended,
+            output: Some(serde_json::json!("wrapped bars output")),
+            report,
+        };
+        controller.apply_terminal_result(&terminal, &paths);
+        let mut app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+        app.focus = TuiFocus::Panel(VisiblePanel::Run);
+
+        assert_eq!(top_bar_height(140, &app), 3);
+        assert_eq!(top_bar_height(60, &app), 4);
+        assert!(keybar_height(60, &app) > 4);
+
+        let text = render_app_text(&mut app, 60, 30);
+        assert!(text.contains("1 Workspace"));
+        assert!(text.contains("wrapped bars output"));
+        assert!(bottom_run_status_text(&app).is_some());
+    }
+
+    #[test]
+    fn pagination_cursors_wrap_in_both_directions() {
+        let lines = vec![Line::from("one"), Line::from("two"), Line::from("three")];
+        let previous = paginate_trace_lines(lines.clone(), -1, 1);
+        assert_eq!(previous.lines[0].to_string(), "three");
+        assert!(previous.footer.to_string().contains("Page 3/3"));
+
+        let next = paginate_trace_lines(lines, 3, 1);
+        assert_eq!(next.lines[0].to_string(), "one");
+        assert!(next.footer.to_string().contains("Page 1/3"));
+    }
+
+    #[test]
+    fn trace_pagination_slices_event_lines_and_reports_footer() {
+        let lines = (1..=5)
+            .map(|index| Line::from(format!("event {index}")))
+            .collect::<Vec<_>>();
+
+        let first = paginate_trace_lines(lines.clone(), 0, 2);
+        assert_eq!(
+            first.lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["event 1", "event 2"]
+        );
+        assert_eq!(first.footer.to_string(), "Page 1/3 · PgUp next · PgDn prev");
+
+        let third = paginate_trace_lines(lines, 2, 2);
+        assert_eq!(
+            third.lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["event 5"]
+        );
+        assert_eq!(third.footer.to_string(), "Page 3/3 · PgUp next · PgDn prev");
+    }
+
+    #[test]
+    fn center_trace_before_first_run_only_shows_preflight_completed() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.trace.events = vec![
+            test_trace_event("evt-session", HarnessEventType::SessionStarted, None),
+            test_trace_event("evt-preflight", HarnessEventType::PreflightCompleted, None),
+            test_trace_event("evt-surface", HarnessEventType::McpSurfaceReady, None),
+        ];
+
+        let lines = center_trace_event_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("preflight_completed"));
+        assert!(!lines[0].contains("session_started"));
+        assert!(!lines[0].contains("mcp_surface_ready"));
+    }
+
+    #[test]
+    fn trace_rail_tail_keeps_newest_event_visible_at_bottom() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.trace.events = vec![
+            test_trace_event("evt-one", HarnessEventType::RunStarted, Some("run-test-3")),
+            test_trace_event(
+                "evt-two",
+                HarnessEventType::ModelRequestStarted,
+                Some("run-test-3"),
+            ),
+            test_trace_event(
+                "evt-three",
+                HarnessEventType::RunCompleted,
+                Some("run-test-3"),
+            ),
+        ];
+
+        let lines = trace_rail_lines(&app, 5, 80)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 5);
+        assert!(lines[0].contains("latest 2/3"));
+        assert!(lines[1].is_empty());
+        assert!(!lines.iter().any(|line| line.contains("run_started")));
+        assert!(lines[2].contains("model_request_started"));
+        assert!(lines[3].is_empty());
+        assert!(lines[4].contains("run_completed"));
+        assert!(lines[4].contains("#1"));
+        assert!(!lines[4].contains("#3"));
+    }
+
+    #[test]
+    fn center_trace_list_spacing_respects_visible_height() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.run_id = Some("run-current".into());
+        controller.snapshot.trace.events = vec![
+            test_trace_event(
+                "evt-one",
+                HarnessEventType::ModelRequestStarted,
+                Some("run-current"),
+            ),
+            test_trace_event(
+                "evt-two",
+                HarnessEventType::RunCompleted,
+                Some("run-current"),
+            ),
+        ];
+
+        let list = trace_list(&app, 5, 80);
+
+        assert_eq!(list.lines.len(), 5);
+        assert!(list.lines[0].to_string().contains("model_request_started"));
+        assert!(list.lines[2].to_string().is_empty());
+        assert!(list.lines[3].to_string().contains("run_completed"));
+    }
+
+    #[test]
+    fn center_trace_selection_stays_visible_with_short_wrapped_layout() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.status = TuiRunStatus::Terminal;
+        controller.snapshot.run.run_id = Some("run-current".into());
+        controller.snapshot.reports.current_trace_path = Some(PathBuf::from("events.jsonl"));
+        controller.snapshot.reports.current_trace_events = (0..8)
+            .map(|index| {
+                test_trace_event(
+                    &format!("evt-{index}"),
+                    HarnessEventType::ModelRuntimeRequestPrepared,
+                    Some("run-current-with-a-long-visible-label"),
+                )
+            })
+            .collect();
+        app.trace_selection = 4;
+
+        let list = trace_list(&app, 5, 32);
+        let rendered = list.lines.iter().map(Line::to_string).collect::<Vec<_>>();
+
+        assert!(rendered.iter().any(|line| line.starts_with("▶ ")));
+        assert_eq!(
+            rendered
+                .iter()
+                .filter(|line| line.starts_with("▶ "))
+                .count(),
+            1
+        );
+        assert!(rendered.iter().all(|line| line.chars().count() <= 32));
+        assert!(list.footer.to_string().contains("Event 5/8"));
+    }
+
+    #[test]
+    fn center_trace_filters_events_to_displayed_run() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let mut snapshot = ready_snapshot(&app).clone();
+        snapshot.run.status = TuiRunStatus::Active;
+        snapshot.run.run_id = Some("run-current".into());
+        snapshot.trace.events = vec![
+            test_trace_event(
+                "evt-old-model",
+                HarnessEventType::ModelRequestStarted,
+                Some("run-old"),
+            ),
+            test_trace_event(
+                "evt-current-phase",
+                HarnessEventType::PhaseStarted,
+                Some("run-current"),
+            ),
+            test_trace_event("evt-session", HarnessEventType::PreflightCompleted, None),
+        ];
+        let (_sender, receiver) = mpsc::channel();
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![],
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+
+        let lines = center_trace_event_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("phase_started"));
+        assert!(lines[0].contains("run-current"));
+        assert!(!lines[0].contains("run-old"));
+        assert!(!lines[0].contains("preflight_completed"));
+    }
+
+    #[test]
+    fn center_trace_uses_cached_artifact_events_without_live_tail_fallback() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.status = TuiRunStatus::Terminal;
+        controller.snapshot.run.run_id = Some("run-current".into());
+        controller.snapshot.reports.current_trace_path = Some(PathBuf::from("events.jsonl"));
+        controller.snapshot.reports.current_trace_total_events = Some(9);
+        controller.snapshot.reports.current_trace_events = vec![test_trace_event(
+            "evt-current-memory",
+            HarnessEventType::MemoryWriteCompleted,
+            Some("run-current"),
+        )];
+        controller
+            .snapshot
+            .reports
+            .current_trace_events
+            .push(test_trace_event(
+                "evt-session-usage",
+                HarnessEventType::SessionUsageUpdated,
+                None,
+            ));
+        controller.snapshot.trace.events = vec![test_trace_event(
+            "evt-live-phase",
+            HarnessEventType::PhaseStarted,
+            Some("run-current"),
+        )];
+
+        let lines = center_trace_event_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("memory_write_completed"));
+        assert!(lines[1].contains("session_usage_updated"));
+        assert!(!lines[0].contains("phase_started"));
+        assert!(
+            trace_list(&app, 10, 80)
+                .footer
+                .to_string()
+                .contains("events.jsonl · showing latest 2/9 events")
+        );
+    }
+
+    #[test]
+    fn trace_pagination_counts_wrapped_detail_rows() {
+        let lines = vec![
+            Line::from("event one"),
+            Line::from("raw: abcdefghijklmnopqrst"),
+            Line::from("event two"),
+        ];
+
+        let first = paginate_trace_lines_with_label(lines.clone(), 0, 2, 10, String::new());
+        assert_eq!(
+            first.lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["event one", "raw: abcde"]
+        );
+        assert!(first.footer.to_string().contains("Page 1/3"));
+
+        let second = paginate_trace_lines_with_label(lines.clone(), 1, 2, 10, String::new());
+        assert_eq!(
+            second.lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["fghijklmno", "pqrst"]
+        );
+
+        let third = paginate_trace_lines_with_label(lines, 2, 2, 10, String::new());
+        assert_eq!(
+            third.lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["event two"]
+        );
+    }
+
+    #[test]
+    fn center_trace_detail_renders_raw_policy_filtered_events() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        app.detail_expanded = true;
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.run_id = Some("run-current".into());
+        controller.snapshot.trace.events = vec![test_trace_event(
+            "evt-current-hook",
+            HarnessEventType::HookCompleted,
+            Some("run-current"),
+        )];
+
+        let lines = center_trace_event_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(lines.iter().any(|line| line.contains("hook_completed")));
+        assert!(lines.iter().any(|line| line.contains("payload:")));
+        assert!(lines.iter().any(|line| line.contains("raw:")));
+    }
+
+    #[test]
+    fn memory_tab_lists_spaces_operations_activity_and_summaries() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.run_id = Some("run-memory".into());
+        controller.snapshot.memory = TuiMemorySnapshot {
+            spaces: vec![TuiMemorySpaceSnapshot {
+                package: "@zack/memory".into(),
+                package_version: "0.1.0".into(),
+                space: "current_note".into(),
+                model: "document".into(),
+                state: "available".into(),
+                runtime: "local".into(),
+                modes: vec!["key".into()],
+                record_types: vec!["note@1.0.0".into()],
+                readiness_reason: None,
+            }],
+            operations: vec![TuiMemoryOperationAvailabilitySnapshot {
+                identity: "@zack/memory/operations/refresh_current_note".into(),
+                operation_type: "transform".into(),
+                state: "available".into(),
+                trigger: "interval".into(),
+                referenced_spaces: vec!["current_note".into()],
+                readiness_reason: None,
+            }],
+        };
+        controller.snapshot.trace.events = vec![test_trace_event(
+            "evt-memory-write",
+            HarnessEventType::MemoryWriteCompleted,
+            Some("run-memory"),
+        )];
+        let mut report = test_run_report();
+        report.run_id = "run-memory".into();
+        report.memory_summaries = vec![crate::harness_observability::OperationReportSummary {
+            operation_kind: "memory_write".into(),
+            identity: "@zack/memory/current_note".into(),
+            status: "completed".into(),
+            count: 1,
+        }];
+        controller.snapshot.reports.current_report = Some(report);
+
+        let text = memory_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("@zack/memory / current_note"));
+        assert!(text.contains("modes: key"));
+        assert!(text.contains("record types: note@1.0.0"));
+        assert!(text.contains("refresh_current_note"));
+        assert!(text.contains("memory_write_completed: 1"));
+        assert!(text.contains("Memory Summaries"));
+    }
+
+    #[test]
+    fn memory_activity_classifier_uses_event_type_variants() {
+        assert!(is_memory_event_type(
+            HarnessEventType::MemoryOperationCompleted
+        ));
+        assert!(is_memory_event_type(HarnessEventType::MemorySurfaceReady));
+        assert!(!is_memory_event_type(HarnessEventType::ToolCompleted));
+        assert!(!is_memory_event_type(HarnessEventType::McpToolCompleted));
+    }
+
+    #[test]
+    fn reports_tab_shows_structured_run_report_context_and_paths() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        app.detail_expanded = true;
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        let mut report = test_run_report();
+        report.run_id = "run-report".into();
+        report.duration_ms = Some(42);
+        report.trace_path = Some("runs/run-report/events.jsonl".into());
+        report.consumer_context =
+            Some(crate::harness_observability::ConsumerContextReportSummary {
+                status: "loaded".into(),
+                path: Some("context.md".into()),
+                byte_size: Some(120),
+                approximate_tokens: Some(30),
+                sha256: Some("sha256:abc".into()),
+                content_included: false,
+            });
+        report.phase_summaries = vec![
+            crate::harness_observability::PhaseReportSummary {
+                phase_execution_id: "phase-exec-1".into(),
+                phase_id: "inspect".into(),
+                outcome: None,
+                transition_to: None,
+                status: "completed".into(),
+            },
+            crate::harness_observability::PhaseReportSummary {
+                phase_execution_id: "phase-exec-2".into(),
+                phase_id: "respond".into(),
+                outcome: Some("done".into()),
+                transition_to: Some("$end".into()),
+                status: "completed".into(),
+            },
+        ];
+        report.action_summaries = vec![crate::harness_observability::ActionReportSummary {
+            action_kind: "agentpm_tool".into(),
+            identity: "@zack/tool".into(),
+            status: "completed".into(),
+            error: None,
+        }];
+        report.mcp_summaries = vec![crate::harness_observability::OperationReportSummary {
+            operation_kind: "mcp_export".into(),
+            identity: "public-tools".into(),
+            status: "ready".into(),
+            count: 2,
+        }];
+        report.memory_summaries = vec![crate::harness_observability::OperationReportSummary {
+            operation_kind: "memory_read".into(),
+            identity: "@zack/memory/current_note".into(),
+            status: "completed".into(),
+            count: 1,
+        }];
+        report.terminal_output = Some(serde_json::json!({"answer": "done"}));
+        controller.snapshot.reports.current_report_path = Some(PathBuf::from("report.json"));
+        controller.snapshot.reports.current_trace_path = Some(PathBuf::from("events.jsonl"));
+        controller.snapshot.reports.current_report = Some(report);
+
+        let text = report_lines(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("Run Report"));
+        assert!(text.contains("report: report.json"));
+        assert!(text.contains("trace: events.jsonl"));
+        assert!(text.contains("Consumer Context"));
+        assert!(text.contains("path: context.md"));
+        assert!(text.contains("Phases"));
+        assert!(text.contains("inspect · completed · outcome complete"));
+        assert!(text.contains("respond · completed · outcome done · transition $end"));
+        assert!(!text.contains("transition none"));
+        assert!(text.contains("Actions"));
+        assert!(text.contains("MCP Summaries"));
+        assert!(text.contains("Memory Summaries"));
+        assert!(text.contains("Terminal Output"));
+    }
+
+    #[test]
+    fn assistant_output_pagination_accounts_for_wrapped_lines() {
+        let lines = vec![Line::from("abcdefghijkl")];
+
+        let first = paginate_assistant_output_lines(lines.clone(), 0, 2, 5);
+        assert_eq!(
+            first.lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["abcde", "fghij"]
+        );
+        assert_eq!(
+            first.footer.to_string(),
+            "Page 1/2 · PgUp next · PgDn prev · O full"
+        );
+
+        let second = paginate_assistant_output_lines(lines, 1, 2, 5);
+        assert_eq!(
+            second.lines.iter().map(Line::to_string).collect::<Vec<_>>(),
+            vec!["kl"]
+        );
+        assert_eq!(
+            second.footer.to_string(),
+            "Page 2/2 · PgUp next · PgDn prev · O full"
+        );
+    }
+
+    #[test]
+    fn composer_visible_input_tracks_the_prompt_tail() {
+        assert_eq!(composer_visible_input("short", 10), "short");
+        assert_eq!(composer_visible_input("abcdefghij", 5), "…ghij");
+        assert_eq!(composer_visible_input("abcdefghij", 1), "j");
+        assert_eq!(composer_visible_input("abcdefghij", 0), "");
+    }
+
+    #[test]
+    fn trace_labels_are_stable_ui_copy() {
+        assert_eq!(trace_level_label(&HarnessTraceLevel::Minimal), "minimal");
+        assert_eq!(trace_level_label(&HarnessTraceLevel::Normal), "normal");
+        assert_eq!(trace_level_label(&HarnessTraceLevel::Verbose), "verbose");
+        assert_eq!(trace_content_label(&HarnessTraceContent::None), "none");
+        assert_eq!(
+            trace_content_label(&HarnessTraceContent::Redacted),
+            "redacted"
+        );
+        assert_eq!(trace_content_label(&HarnessTraceContent::Full), "full");
+    }
+
+    #[test]
+    fn preflight_labels_are_stable_ui_copy() {
+        assert_eq!(preflight_status_label(PreflightStatus::Ready), "ready");
+        assert_eq!(
+            preflight_status_label(PreflightStatus::ReadyWithWarnings),
+            "ready_with_warnings"
+        );
+        assert_eq!(
+            preflight_status_label(PreflightStatus::SelectionRequired),
+            "selection_required"
+        );
+        assert_eq!(preflight_status_label(PreflightStatus::Failed), "failed");
+        assert_eq!(
+            diagnostic_severity_label(PreflightDiagnosticSeverity::Fatal),
+            "fatal"
+        );
+        assert_eq!(
+            diagnostic_severity_label(PreflightDiagnosticSeverity::Warning),
+            "warning"
+        );
+        assert_eq!(
+            diagnostic_severity_label(PreflightDiagnosticSeverity::Suppressed),
+            "suppressed"
+        );
+        assert_eq!(
+            diagnostic_severity_label(PreflightDiagnosticSeverity::Pending),
+            "pending"
+        );
+        assert_eq!(
+            diagnostic_severity_label(PreflightDiagnosticSeverity::Info),
+            "info"
+        );
+    }
+
+    #[test]
+    fn workspace_readiness_summary_uses_stable_categories_and_counts() {
+        let mut plan = test_plan();
+        plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+            provider: "openai".into(),
+            model: "gpt-4o-mini".into(),
+            options: serde_json::Value::Object(Default::default()),
+        });
+        plan.config.model_source =
+            crate::harness_config::HarnessConfigSource::interactive_override();
+        let readiness = workspace_readiness_from_plan(&plan);
+
+        let profiles = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Profiles")
+            .expect("profiles category");
+        assert_eq!(profiles.summary, "1 profile ready");
+        let skills = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Skills")
+            .expect("skills category");
+        assert_eq!(skills.summary, "1 skill ready");
+        let tools = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Tools")
+            .expect("tools category");
+        assert_eq!(tools.summary, "1 ready, 1 suppressed");
+        let memory = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Memory")
+            .expect("memory category");
+        assert_eq!(memory.state, CapabilityState::Available);
+        assert_eq!(memory.summary, "1 space ready");
+        let model = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Model")
+            .expect("model category");
+        assert_eq!(
+            readiness_source_text(model, model.source.as_deref().unwrap()),
+            "from interactive"
+        );
+
+        let agent = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "Agent")
+            .expect("agent category");
+        assert_eq!(
+            readiness_source_text(agent, agent.source.as_deref().unwrap()),
+            "selected from workspace"
+        );
+    }
+
+    #[test]
+    fn workspace_readiness_paginates_without_splitting_groups() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+
+        let first_page = workspace_page(&app, 8, PREFLIGHT_LINE_WIDTH);
+        assert!(first_page.footer.to_string().contains("Page 1/"));
+        assert!(first_page.footer.to_string().contains("PgUp next"));
+        assert!(first_page.footer.to_string().contains("PgDn prev"));
+        assert!(
+            first_page
+                .lines
+                .iter()
+                .any(|line| line.to_string().contains("Readiness"))
+        );
+
+        app.focus = TuiFocus::Panel(VisiblePanel::Workspace);
+        app.page_focused_panel(PanelPageDirection::Next);
+        let second_page = workspace_page(&app, 8, PREFLIGHT_LINE_WIDTH);
+        assert!(second_page.footer.to_string().contains("Page 2/"));
+        assert!(
+            !second_page
+                .lines
+                .iter()
+                .any(|line| line.to_string().contains("Readiness"))
+        );
+
+        let full_page = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH);
+        assert_eq!(full_page.footer.to_string(), "Page 1/1");
+        assert!(!full_page.footer.to_string().contains("PgUp next"));
+    }
+
+    #[test]
+    fn workspace_resolution_prompt_renders_model_override_input() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        assert!(app.can_prompt_model());
+
+        app.open_resolution_prompt(ResolutionPromptKind::Model);
+        let lines = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH).lines;
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Model provider/model"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Enter applies"))
+        );
+    }
+
+    #[test]
+    fn invalid_resolution_prompt_input_stays_inline() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+
+        app.open_resolution_prompt(ResolutionPromptKind::Scope);
+        let Some(prompt) = &mut app.resolution_prompt else {
+            panic!("resolution prompt expected");
+        };
+        prompt.value = "user".into();
+        let submitted = app
+            .submit_resolution_prompt(&std::env::temp_dir())
+            .expect("inline validation should not crash TUI");
+        assert!(submitted.is_none());
+        assert!(app.resolution_prompt.is_some());
+
+        let lines = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH).lines;
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Use KEY=VALUE."))
+        );
+    }
+
+    #[test]
+    fn invalid_model_provider_stays_inline() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+
+        app.open_resolution_prompt(ResolutionPromptKind::Model);
+        let Some(prompt) = &mut app.resolution_prompt else {
+            panic!("resolution prompt expected");
+        };
+        prompt.value = "not-a-provider/model".into();
+        let submitted = app
+            .submit_resolution_prompt(&std::env::temp_dir())
+            .expect("inline validation should not crash TUI");
+        assert!(submitted.is_none());
+        assert!(app.resolution_prompt.is_some());
+
+        let lines = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH).lines;
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.to_string().contains("Unknown model provider"))
+        );
+    }
+
+    #[test]
+    fn workspace_diagnostics_default_to_codes_and_expand_to_messages() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        assert!(!app.has_workspace_details());
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller
+            .snapshot
+            .workspace
+            .diagnostics
+            .push(TuiDiagnosticSummary {
+                severity: PreflightDiagnosticSeverity::Warning,
+                code: "example_warning".into(),
+                message: "expanded diagnostic detail".into(),
+            });
+        assert!(app.has_workspace_details());
+
+        let compact = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH).lines;
+        assert!(
+            compact
+                .iter()
+                .any(|line| line.to_string().contains("example_warning"))
+        );
+        assert!(
+            !compact
+                .iter()
+                .any(|line| line.to_string().contains("expanded diagnostic detail"))
+        );
+
+        app.workspace_detail_expanded = true;
+        let expanded = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH).lines;
+        assert!(
+            expanded
+                .iter()
+                .any(|line| line.to_string().contains("expanded diagnostic detail"))
+        );
+    }
+
+    #[test]
+    fn workspace_pagination_accounts_for_wrapped_expanded_diagnostics() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller
+            .snapshot
+            .workspace
+            .diagnostics
+            .push(TuiDiagnosticSummary {
+                severity: PreflightDiagnosticSeverity::Warning,
+                code: "first_warning".into(),
+                message: "This diagnostic has a long expanded message that wraps across several visual rows in the preflight rail.".into(),
+            });
+        controller
+            .snapshot
+            .workspace
+            .diagnostics
+            .push(TuiDiagnosticSummary {
+                severity: PreflightDiagnosticSeverity::Warning,
+                code: "second_warning".into(),
+                message: "A second diagnostic proves that warning entries can move onto the next page when details are expanded.".into(),
+            });
+        app.workspace_detail_expanded = true;
+
+        let mut first_warning_page = None;
+        let mut second_warning_page = None;
+        for page_index in 0..10 {
+            app.workspace_page = page_index.into();
+            let page = workspace_page(&app, 10, 24);
+            if page
+                .lines
+                .iter()
+                .any(|line| line.to_string().contains("first_warning"))
+            {
+                first_warning_page = Some(page_index);
+            }
+            if page
+                .lines
+                .iter()
+                .any(|line| line.to_string().contains("second_warning"))
+            {
+                second_warning_page = Some(page_index);
+            }
+        }
+        let first_warning_page = first_warning_page.expect("first warning page");
+        let second_warning_page = second_warning_page.expect("second warning page");
+        assert!(
+            second_warning_page > first_warning_page,
+            "expected second warning to paginate after first warning"
+        );
+    }
+
+    #[test]
+    fn workspace_readiness_is_pending_when_resolution_actions_remain() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        assert_eq!(
+            readiness_state(&app, ready_snapshot(&app)),
+            CapabilityState::Pending
+        );
+
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+            provider: "openai".into(),
+            model: "gpt-4o-mini".into(),
+            options: serde_json::Value::Object(Default::default()),
+        });
+        assert_eq!(
+            readiness_state(&app, ready_snapshot(&app)),
+            CapabilityState::Available
+        );
+
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller
+            .snapshot
+            .workspace
+            .diagnostics
+            .push(TuiDiagnosticSummary {
+                severity: PreflightDiagnosticSeverity::Warning,
+                code: "unresolved_runtime_scope".into(),
+                message: "Memory runtime scope `user` is required by active Memory bindings but has no configured value.".into(),
+            });
+        assert_eq!(
+            readiness_state(&app, ready_snapshot(&app)),
+            CapabilityState::Pending
+        );
+    }
+
+    #[test]
+    fn selection_required_plan_builds_preflight_only_controller() {
+        let mut plan = test_plan();
+        plan.selected_agent = None;
+        plan.loop_package = None;
+        plan.report.status = PreflightStatus::SelectionRequired;
+        plan.report
+            .diagnostics
+            .push(crate::harness_plan::PreflightDiagnostic {
+                severity: PreflightDiagnosticSeverity::Fatal,
+                code: "agent_selection_required".into(),
+                message: "multiple runnable Agents are available; pass `agentpm harness <agent>` to select one.".into(),
+                path: Some("agent.lock".into()),
+            });
+
+        let app = TuiApp::ready_with_runtime_inputs(
+            TuiSessionController::new(plan).expect("preflight-only controller"),
+            HarnessArgs::default(),
+            None,
+        );
+
+        assert!(app.can_prompt_agent_selector());
+        assert!(!app.can_send_message());
+        assert_eq!(run_visual_state(&app), RunVisualState::Failed);
+        assert_eq!(
+            readiness_state(&app, ready_snapshot(&app)),
+            CapabilityState::Unavailable
+        );
+        let page = workspace_page(&app, 80, PREFLIGHT_LINE_WIDTH);
+        assert!(
+            page.lines
+                .iter()
+                .any(|line| line.to_string().contains("Diagnostics"))
+        );
+        assert!(
+            page.lines
+                .iter()
+                .any(|line| line.to_string().contains("agent_selection_required"))
+        );
+    }
+
+    #[test]
+    fn idle_ready_state_uses_no_run_visual_treatment() {
+        let app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+
+        assert_eq!(run_visual_state(&app), RunVisualState::NoRun);
+        assert!(app.can_send_message());
+        assert_eq!(
+            center_header_line(&app).to_string(),
+            "Run --  Phase: idle  Status: Ready"
+        );
+    }
+
+    #[test]
+    fn run_header_prefers_session_ordinal_over_backend_run_id_suffix() {
+        assert_eq!(
+            run_header_text(Some(1), Some("run-18d6e15e0bfc5af0-2")),
+            "Run #1"
+        );
+        assert_eq!(
+            run_header_text(Some(2), Some("run-18d6e15e0bfc5af0-3")),
+            "Run #2"
+        );
+        assert_eq!(run_header_text(None, None), "Run --");
+    }
+
+    #[test]
+    fn composer_is_visible_only_for_idle_or_terminal_ready_run_panel() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        assert!(app.can_send_message());
+
+        let snapshot = ready_snapshot(&app).clone();
+        let (_sender, receiver) = mpsc::channel();
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![TuiRunProgress {
+                message: "starting".into(),
+            }],
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+        app.focus = TuiFocus::Panel(VisiblePanel::Run);
+        assert!(!app.can_send_message());
+        assert!(app.can_cancel_run());
+        assert_eq!(run_visual_state(&app), RunVisualState::Active);
+    }
+
+    #[test]
+    fn active_run_cancel_is_available_from_other_panels() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let snapshot = ready_snapshot(&app).clone();
+        let (_sender, receiver) = mpsc::channel();
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![TuiRunProgress {
+                message: "starting".into(),
+            }],
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+        app.panel = VisiblePanel::Trace;
+        app.focus = TuiFocus::Panel(VisiblePanel::Trace);
+
+        assert!(app.can_cancel_run());
+    }
+
+    #[test]
+    fn rendered_output_viewer_shows_paths_and_modal_keybar() {
+        let mut controller = test_controller();
+        let state_dir = std::env::temp_dir().join("agentpm-tui-output-viewer-render-test");
+        let paths = RunOutputPaths::resolve(&state_dir, "run-output-viewer-render", None).unwrap();
+        let mut report = test_run_report();
+        report.run_id = "run-output-viewer-render".into();
+        report.terminal_output = Some(serde_json::json!("rendered modal output"));
+        report
+            .write_pretty(&paths.report_path, &HarnessTraceContent::Redacted)
+            .unwrap();
+        let terminal = RuntimeTerminalResult {
+            status: HarnessTerminalStatus::Ended,
+            output: Some(serde_json::json!("rendered modal output")),
+            report,
+        };
+        controller.apply_terminal_result(&terminal, &paths);
+        let mut app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+        app.focus = TuiFocus::Panel(VisiblePanel::Run);
+        app.open_output_viewer();
+
+        let text = render_app_text(&mut app, 90, 32);
+
+        assert!(text.contains("Assistant Output"));
+        assert!(text.contains("rendered modal output"));
+        assert!(text.contains("report: "));
+        assert!(text.contains("trace: "));
+        assert!(text.contains("Esc Close"));
+        assert!(!text.contains("Cancel Run"));
+        assert!(!text.contains("Enter Send"));
+    }
+
+    #[test]
+    fn latest_run_progress_is_available_for_active_status_box() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let snapshot = ready_snapshot(&app).clone();
+        let (_sender, receiver) = mpsc::channel();
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![
+                TuiRunProgress {
+                    message: "Starting Run.".into(),
+                },
+                TuiRunProgress {
+                    message: "Cancellation requested; waiting for the active operation to stop."
+                        .into(),
+                },
+            ],
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+
+        assert_eq!(
+            latest_run_progress(&app),
+            Some("Cancellation requested; waiting for the active operation to stop.")
+        );
+    }
+
+    #[test]
+    fn terminal_run_view_shows_summary_and_reopens_composer() {
+        let mut controller = test_controller();
+        let state_dir = std::env::temp_dir().join("agentpm-tui-terminal-view-test");
+        let paths = RunOutputPaths::resolve(&state_dir, "run-terminal-view", None).unwrap();
+        let mut report = test_run_report();
+        report.run_id = "run-terminal-view".into();
+        report.duration_ms = Some(1_250);
+        report.terminal_output = Some(serde_json::json!("done output"));
+        report.phase_summaries = vec![crate::harness_observability::PhaseReportSummary {
+            phase_execution_id: "phase-exec-1".into(),
+            phase_id: "start".into(),
+            outcome: Some("done".into()),
+            transition_to: Some("$end".into()),
+            status: "completed".into(),
+        }];
+        report.checkpoint_summaries = vec![crate::harness_observability::CheckpointReportSummary {
+            checkpoint_id: "approve-response".into(),
+            before_phase: "start".into(),
+            status: TUI_APPROVAL_STATUS_APPROVED.into(),
+            on_reject: Some("$abort".into()),
+        }];
+        report
+            .write_pretty(&paths.report_path, &HarnessTraceContent::Redacted)
+            .unwrap();
+        let terminal = RuntimeTerminalResult {
+            status: HarnessTerminalStatus::Ended,
+            output: Some(serde_json::json!("done output")),
+            report,
+        };
+        controller.apply_terminal_result(&terminal, &paths);
+        let app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+
+        assert_eq!(run_visual_state(&app), RunVisualState::Terminal);
+        let snapshot = ready_snapshot(&app);
+        assert_eq!(snapshot.run.run_id.as_deref(), Some("run-terminal-view"));
+        assert_eq!(snapshot.run.phase_id.as_deref(), Some("start"));
+        assert_eq!(
+            center_header_line(&app).to_string(),
+            "Run view  Terminal: $end -> ended  [✓ ENDED]"
+        );
+        let summary_text = run_summary_content(&app)
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let output_text = assistant_output_page(&app, 5, 80)
+            .lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let usage_text = usage_content(&app)
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(summary_text.contains("Terminal status"));
+        assert!(summary_text.contains("Checkpoints"));
+        assert!(summary_text.contains("1 total"));
+        assert!(summary_text.contains("Phase path"));
+        assert!(summary_text.contains("start -> $end"));
+        assert!(output_text.contains("done output"));
+        assert!(usage_text.contains("cost: unknown"));
+        assert!(app.can_send_message());
+    }
+
+    #[test]
+    fn run_summary_content_shows_control_outcomes() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.approval_control = Some(TuiApprovalControlSnapshot {
+            checkpoint_id: "approve-response".into(),
+            status: TUI_APPROVAL_STATUS_APPROVED.into(),
+            message: "Approval approved for checkpoint `approve-response`.".into(),
+        });
+        controller.snapshot.run.memory_operation_control =
+            Some(TuiMemoryOperationControlSnapshot {
+                identity: "@zack/memory/operations/delete_user_memory".into(),
+                status: TUI_MEMORY_CONTROL_STATUS_COMPLETED.into(),
+                message: "Completed; affected 2 record(s).".into(),
+            });
+
+        let lines = run_summary_content(&app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert!(lines.iter().any(|line| line.contains("Approval")));
+        assert!(lines.iter().any(|line| line.contains("approved")));
+        assert!(lines.iter().any(|line| line.contains("Memory control")));
+        assert!(lines.iter().any(|line| line.contains("completed")));
+    }
+
+    #[test]
+    fn approval_view_can_show_external_memory_operation_control() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.status = TuiRunStatus::PendingApproval;
+        controller.snapshot.run.approval = Some(TuiApprovalSnapshot {
+            checkpoint_id: "approve-memory-control".into(),
+            before_phase: "respond".into(),
+        });
+        controller.snapshot.run.memory_operations = vec![TuiMemoryOperationSnapshot {
+            package: "@zack/m19-memory".into(),
+            operation: "external_delete_current_note".into(),
+            operation_type: "delete".into(),
+            description: "Delete current note.".into(),
+        }];
+        controller.snapshot.run.memory_operation_control =
+            Some(TuiMemoryOperationControlSnapshot {
+                identity: "@zack/m19-memory/operations/external_delete_current_note".into(),
+                status: TUI_MEMORY_CONTROL_STATUS_COMPLETED.into(),
+                message: "Completed; affected 0 record(s).".into(),
+            });
+
+        let mut lines = Vec::new();
+        append_memory_operation_status_line(&app, &mut lines);
+        let text = lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("External Memory"));
+        assert!(text.contains("@zack/m19-memory/operations/external_delete_current_note"));
+        assert!(text.contains("Invoke"));
+        assert!(text.contains("completed"));
+    }
+
+    #[test]
+    fn working_section_reserves_space_for_memory_operation_status() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let TuiState::Ready { controller } = &mut app.state else {
+            panic!("ready app expected");
+        };
+        controller.snapshot.run.status = TuiRunStatus::PendingApproval;
+        controller.snapshot.run.approval = Some(TuiApprovalSnapshot {
+            checkpoint_id: "approve-memory-control".into(),
+            before_phase: "respond".into(),
+        });
+        controller.snapshot.run.approval_control = Some(TuiApprovalControlSnapshot {
+            checkpoint_id: "approve-memory-control".into(),
+            status: TUI_APPROVAL_STATUS_APPROVED.into(),
+            message: "Approval approved.".into(),
+        });
+        controller.snapshot.run.memory_operations = vec![TuiMemoryOperationSnapshot {
+            package: "@zack/m19-memory".into(),
+            operation: "external_delete_current_note".into(),
+            operation_type: "delete".into(),
+            description: "Delete current note.".into(),
+        }];
+        controller.snapshot.run.memory_operation_control =
+            Some(TuiMemoryOperationControlSnapshot {
+                identity: "@zack/m19-memory/operations/external_delete_current_note".into(),
+                status: TUI_MEMORY_CONTROL_STATUS_COMPLETED.into(),
+                message: "Completed; affected 0 record(s).".into(),
+            });
+
+        assert_eq!(working_section_height(&app), 7);
+    }
+
+    #[test]
+    fn terminal_run_view_falls_back_to_latest_phase_result_output() {
+        let mut controller = test_controller();
+        emit_phase_result_output(&mut controller, "phase result output");
+        let state_dir = std::env::temp_dir().join("agentpm-tui-phase-output-test");
+        let paths = RunOutputPaths::resolve(&state_dir, "run-phase-output", None).unwrap();
+        let mut report = test_run_report();
+        report.run_id = "run-phase-output".into();
+        report.terminal_output = None;
+        report
+            .write_pretty(&paths.report_path, &HarnessTraceContent::Redacted)
+            .unwrap();
+        let terminal = RuntimeTerminalResult {
+            status: HarnessTerminalStatus::Ended,
+            output: None,
+            report,
+        };
+        controller.apply_terminal_result(&terminal, &paths);
+        let app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+
+        let output_text = assistant_output_page(&app, 5, 80)
+            .lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(output_text.contains("phase result output"));
+    }
+
+    #[test]
+    fn terminal_run_view_shows_assistant_content_turns() {
+        let mut controller = test_controller();
+        emit_assistant_content(&mut controller, "phase-exec-1", "first assistant answer");
+        emit_assistant_content(&mut controller, "phase-exec-2", "second assistant answer");
+        let state_dir = std::env::temp_dir().join("agentpm-tui-assistant-output-test");
+        let paths = RunOutputPaths::resolve(&state_dir, "run-assistant-output", None).unwrap();
+        let mut report = test_run_report();
+        report.run_id = "run-assistant-output".into();
+        report.terminal_output = None;
+        report
+            .write_pretty(&paths.report_path, &HarnessTraceContent::Redacted)
+            .unwrap();
+        let terminal = RuntimeTerminalResult {
+            status: HarnessTerminalStatus::Ended,
+            output: None,
+            report,
+        };
+        controller.apply_terminal_result(&terminal, &paths);
+        let app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+
+        let output = assistant_output_text(&app).expect("assistant output should render");
+        assert!(output.contains("phase-exec-1"));
+        assert!(output.contains("Assistant"));
+        assert!(output.contains("first assistant answer"));
+        assert!(output.contains("phase-exec-2"));
+        assert!(output.contains("second assistant answer"));
+        assert!(app.has_latest_output());
+    }
+
+    #[test]
+    fn active_run_view_reads_latest_phase_result_output_from_trace() {
+        let mut controller = test_controller();
+        emit_phase_result_output(&mut controller, "active phase result output");
+        controller.refresh_snapshot();
+        let snapshot = controller.snapshot().clone();
+        let (_sender, receiver) = mpsc::channel();
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![],
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+
+        let output_text = assistant_output_page(&app, 5, 80)
+            .lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(output_text.contains("active phase result output"));
+    }
+
+    #[test]
+    fn active_run_assistant_output_shows_only_current_phase_transcript() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let mut snapshot = ready_snapshot(&app).clone();
+        snapshot.run.status = TuiRunStatus::Active;
+        snapshot.run.phase_id = Some("respond".into());
+        snapshot.run.transcript = vec![
+            TuiRunTranscriptItem {
+                phase_label: Some("inspect".into()),
+                kind: TuiRunTranscriptKind::Assistant {
+                    content: "inspect draft".into(),
+                },
+            },
+            TuiRunTranscriptItem {
+                phase_label: Some("respond".into()),
+                kind: TuiRunTranscriptKind::Assistant {
+                    content: "respond draft".into(),
+                },
+            },
+            TuiRunTranscriptItem {
+                phase_label: Some("respond".into()),
+                kind: TuiRunTranscriptKind::Repair {
+                    message: "needs completion".into(),
+                },
+            },
+        ];
+        let (_sender, receiver) = mpsc::channel();
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![],
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+
+        let output = assistant_output_text(&app).expect("assistant output should render");
+        assert!(!output.contains("inspect draft"));
+        assert!(output.contains("respond"));
+        assert!(output.contains("respond draft"));
+        assert!(output.contains("Repair"));
+        assert!(output.contains("needs completion"));
+    }
+
+    #[test]
+    fn running_snapshot_refreshes_from_live_events() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let mut snapshot = ready_snapshot(&app).clone();
+        snapshot.run.status = TuiRunStatus::Active;
+        snapshot.run.run_id = Some("run-live".into());
+        snapshot.run.phase_id = Some("starting".into());
+        snapshot.run.usage.model_calls = 7;
+        let events = TuiEventBuffer::new(HarnessTraceContent::Full, 8);
+        let mut sink = events.sink();
+        sink.record(&HarnessEventEnvelope {
+            schema_version: 1,
+            event_id: "evt-phase".into(),
+            session_id: "sess-test".into(),
+            run_id: Some("run-live".into()),
+            session_sequence: 1,
+            run_sequence: Some(1),
+            timestamp: chrono::Utc::now(),
+            event_type: HarnessEventType::PhaseStarted,
+            phase_execution_id: Some("phase-exec-1".into()),
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Phase {
+                phase_id: "respond".into(),
+                outcome: None,
+                transition_to: None,
+                output: None,
+            },
+        })
+        .unwrap();
+        let mut fields = BTreeMap::new();
+        fields.insert("assistant_content".into(), serde_json::json!("live answer"));
+        sink.record(&HarnessEventEnvelope {
+            schema_version: 1,
+            event_id: "evt-model".into(),
+            session_id: "sess-test".into(),
+            run_id: Some("run-live".into()),
+            session_sequence: 2,
+            run_sequence: Some(2),
+            timestamp: chrono::Utc::now(),
+            event_type: HarnessEventType::ModelRequestCompleted,
+            phase_execution_id: Some("phase-exec-1".into()),
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Lifecycle {
+                message: "Model request completed.".into(),
+                fields,
+            },
+        })
+        .unwrap();
+        let (_sender, receiver) = mpsc::channel();
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![],
+            events,
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+
+        poll_run_result(&mut app);
+
+        let snapshot = app
+            .snapshot()
+            .expect("running snapshot should remain available");
+        assert_eq!(snapshot.run.phase_id.as_deref(), Some("respond"));
+        assert_eq!(snapshot.run.usage.model_calls, 1);
+        assert_eq!(snapshot.run.transcript.len(), 1);
+        let output = assistant_output_text(&app).expect("assistant output should render");
+        assert!(output.contains("live answer"));
+    }
+
+    fn test_trace_event(
+        event_id: &str,
+        event_type: HarnessEventType,
+        run_id: Option<&str>,
+    ) -> HarnessEventEnvelope {
+        HarnessEventEnvelope {
+            schema_version: 1,
+            event_id: event_id.into(),
+            session_id: "sess-test".into(),
+            run_id: run_id.map(str::to_string),
+            session_sequence: 1,
+            run_sequence: run_id.map(|_| 1),
+            timestamp: chrono::Utc::now(),
+            event_type,
+            phase_execution_id: None,
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Lifecycle {
+                message: "test event".into(),
+                fields: BTreeMap::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn active_run_output_ignores_previous_report_and_trace_output() {
+        let mut app =
+            TuiApp::ready_with_runtime_inputs(test_controller(), HarnessArgs::default(), None);
+        let report_path = std::env::temp_dir().join(format!(
+            "agentpm-tui-previous-report-{}.json",
+            std::process::id()
+        ));
+        let mut old_report = test_run_report();
+        old_report.run_id = "run-old".into();
+        old_report.terminal_output = Some(serde_json::json!("previous terminal output"));
+        old_report
+            .write_pretty(&report_path, &HarnessTraceContent::Full)
+            .unwrap();
+        let mut snapshot = ready_snapshot(&app).clone();
+        snapshot.run.status = TuiRunStatus::Active;
+        snapshot.run.run_id = Some("run-new".into());
+        snapshot.run.phase_id = Some("starting".into());
+        snapshot.run.latest_output = None;
+        snapshot.run.transcript.clear();
+        snapshot.reports.current_report_path = Some(report_path.clone());
+        snapshot.trace.events.push(HarnessEventEnvelope {
+            schema_version: 1,
+            event_id: "evt-old-phase".into(),
+            session_id: "sess-test".into(),
+            run_id: Some("run-old".into()),
+            session_sequence: 1,
+            run_sequence: Some(1),
+            timestamp: chrono::Utc::now(),
+            event_type: HarnessEventType::PhaseResultReady,
+            phase_execution_id: Some("phase-exec-old".into()),
+            correlation_id: None,
+            parent_event_id: None,
+            payload: HarnessEventPayload::Phase {
+                phase_id: "old".into(),
+                outcome: Some("done".into()),
+                transition_to: None,
+                output: Some(serde_json::json!("previous phase output")),
+            },
+        });
+        let (_sender, receiver) = mpsc::channel();
+        app.state = TuiState::Running {
+            snapshot: Box::new(snapshot),
+            receiver,
+            progress: vec![],
+            events: TuiEventBuffer::new(HarnessTraceContent::Redacted, 8),
+            cancel: Arc::new(AtomicBool::new(false)),
+            approvals: TuiApprovalHandle::new(),
+            memory_controls: TuiMemoryControlHandle::new(),
+        };
+
+        assert!(assistant_output_text(&app).is_none());
+        let page_text = assistant_output_page(&app, 5, 80)
+            .lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(page_text.contains("No assistant or PhaseResult output yet."));
+        assert!(!page_text.contains("previous terminal output"));
+        assert!(!page_text.contains("previous phase output"));
+
+        let _ = std::fs::remove_file(report_path);
+    }
+
+    #[test]
+    fn agent_not_found_keeps_agent_resolution_available() {
+        let mut controller = test_controller();
+        controller
+            .snapshot
+            .workspace
+            .diagnostics
+            .push(TuiDiagnosticSummary {
+                severity: PreflightDiagnosticSeverity::Fatal,
+                code: "agent_not_found".into(),
+                message: "no runnable Agent in agent.lock/install state matches `missing-agent`."
+                    .into(),
+            });
+        let app = TuiApp::ready_with_runtime_inputs(
+            controller,
+            HarnessArgs {
+                agent: Some("missing-agent".into()),
+                ..HarnessArgs::default()
+            },
+            None,
+        );
+
+        assert!(app.can_prompt_agent_selector());
+        assert!(
+            workspace_resolution_actions(&app)
+                .iter()
+                .any(|action| action.contains("select Agent"))
+        );
+    }
+}

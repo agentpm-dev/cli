@@ -86,7 +86,7 @@ pub enum RuntimeTerminalStatus {
 }
 
 impl RuntimeTerminalStatus {
-    fn harness_status(&self) -> Option<HarnessTerminalStatus> {
+    pub fn harness_status(&self) -> Option<HarnessTerminalStatus> {
         match self {
             Self::Running | Self::PendingApproval => None,
             Self::Ended => Some(HarnessTerminalStatus::Ended),
@@ -171,6 +171,22 @@ impl RunState {
     pub fn pending_approval(&self) -> Option<&PendingApprovalState> {
         self.pending_approval.as_ref()
     }
+
+    pub fn current_phase_id(&self) -> Option<&str> {
+        self.current_phase_id.as_deref()
+    }
+
+    pub fn usage(&self) -> &RunUsage {
+        &self.usage
+    }
+
+    pub fn terminal_output(&self) -> Option<&Value> {
+        self.terminal_output.as_ref()
+    }
+
+    pub fn started_at(&self) -> DateTime<Utc> {
+        self.started_at
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -237,6 +253,16 @@ impl HarnessSession {
             .active_run
             .as_ref()
             .is_some_and(|run| run.status.harness_status().is_some())
+        {
+            self.active_run = None;
+        }
+    }
+
+    pub(crate) fn abandon_nonterminal_active_run_after_runtime_error(&mut self) {
+        if self
+            .active_run
+            .as_ref()
+            .is_some_and(|run| run.status.harness_status().is_none())
         {
             self.active_run = None;
         }
@@ -438,7 +464,7 @@ pub struct HarnessRuntimeServices<'a> {
     pub service_events: Option<&'a mut ServiceLifecycleEvents>,
 }
 
-pub trait EngineControlIngress {
+pub trait EngineControlIngress: Send {
     fn service_memory_operation_controls(
         &mut self,
         engine: &mut HarnessEngine,
