@@ -1287,18 +1287,8 @@ This gives us the Ratatui interactive UI, responsive layout, branding/accent sup
 Covered milestones: 20A-20A.1.
 This gives us reliable canonical phase/final output for explicit-completion phases, a bounded cross-phase prompt section, and compact prior-action history for later phases before the final Template/documentation hardening band.
 
-## Milestone 20B: Templates, Examples, Documentation, End-to-End Hardening, and Release Verification
-> Scope note: close Phase 7B by proving the complete architecture through realistic workspaces and all three execution surfaces, documenting the public configuration/protocol/provider contracts, and running cross-repository regression/conformance suites. Do not introduce new runtime architecture here unless required to satisfy the existing spec.
-- [ ] Create/update a **minimal Harness Template/workspace** that runs a published Agent with little/no runtime config and demonstrates the shortest credible `install -> agentpm harness -> message -> result` path.
-- [ ] Include a local/free Ollama-oriented variant or setup path so the minimal Harness story can be demonstrated without requiring paid hosted-model credentials when a suitable local model is installed.
-- [ ] Create/update an **SDK-hosted Harness** example showing first-class Node or Python Hooks, event streaming, approval callback, cancellation, trusted scope/run overrides, Session usage, and report access.
-- [ ] Create/update a **custom-provider Harness** example showing a configured EmbeddingProvider plus external Knowledge and Memory runtime realization through the public provider bridge contracts.
-- [ ] Create/update an **MCP Harness** example showing both Agent-authored outward MCP surfaces and explicitly scoped external MCP import augmentation.
-- [ ] Create/update a **full reference Harness** example exercising a 3+ phase Loop, 2+ AgentPM Tools, 2+ Skills, Profiles, context/vector Knowledge, Memory direct spaces + lifecycle operations, consumer context, approvals, Hooks, tracing/reports, MCP import/export, repeated Runs, and TUI.
-- [ ] Ensure generated Template README copy teaches `Agent artifacts = portable definition`, `agentpm.harness.json = workspace runtime realization`, and `agentpm harness = AgentPM reference executor`.
-- [ ] Document/prove that Template dependencies do not become Harness bindings, Template entrypoint commands are never auto-executed by Harness, generated files become ordinary consumer-owned workspace inputs, and multi-Agent Template scaffolding still executes one selected Agent per Run.
-- [ ] Gitignore `.agentpm-state/` in generated Harness workspaces while documenting safe inspection/export of Run reports/traces/local Memory.
-
+## Milestone 20B: Documentation, End-to-End Hardening, and Release Verification
+> Scope note: close the non-Template hardening portion of Phase 7B by documenting the public configuration/protocol/provider contracts and running cross-repository regression/conformance suites across all three execution surfaces. Do not introduce new runtime architecture here unless required to satisfy the existing spec.
 - [ ] Document all `agentpm harness` execution surfaces/options: default TUI, `--headless`, `--machine`, Agent selection, direct/stdin/file Run input, config/model/provider/scope overrides, config precedence/source metadata, state directory, limits, approvals, cancellation, terminal statuses, and report/trace output.
 - [ ] Publish the exact `agentpm.harness.json` version-1 reference from `spec.md`, including process/host descriptors, providers, Hook implementations/bindings, Knowledge/Memory mappings, local Memory semantic config, MCP import/export, approvals, trace, lifecycle defaults, and branding.
 - [ ] Document the public Harness machine protocol and common process-service protocol sufficiently for third-party clients/providers without requiring the official SDKs.
@@ -1323,6 +1313,18 @@ This gives us reliable canonical phase/final output for explicit-completion phas
 - [ ] Update version markers/release notes/docs according to repository conventions.
 - [ ] Record exact verification evidence required by `test-plan.md`, including skipped optional external-provider tests and environment blockers.
 
+## Milestone 21: Templates and Examples
+> Scope note: prove the completed Harness architecture through realistic generated workspaces and examples. This milestone owns Template/example authoring and Template-specific contract proof. It should consume the documented Harness behavior from Milestone 20B rather than introduce new runtime architecture.
+- [ ] Create/update a **minimal Harness Template/workspace** that runs a published Agent with little/no runtime config and demonstrates the shortest credible `install -> agentpm harness -> message -> result` path.
+- [ ] Include a local/free Ollama-oriented variant or setup path so the minimal Harness story can be demonstrated without requiring paid hosted-model credentials when a suitable local model is installed.
+- [ ] Create/update an **SDK-hosted Harness** example showing first-class Node or Python Hooks, event streaming, approval callback, cancellation, trusted scope/run overrides, Session usage, and report access.
+- [ ] Create/update a **custom-provider Harness** example showing a configured EmbeddingProvider plus external Knowledge and Memory runtime realization through the public provider bridge contracts.
+- [ ] Create/update an **MCP Harness** example showing both Agent-authored outward MCP surfaces and explicitly scoped external MCP import augmentation.
+- [ ] Create/update a **full reference Harness** example exercising a 3+ phase Loop, 2+ AgentPM Tools, 2+ Skills, Profiles, context/vector Knowledge, Memory direct spaces + lifecycle operations, consumer context, approvals, Hooks, tracing/reports, MCP import/export, repeated Runs, and TUI.
+- [ ] Ensure generated Template README copy teaches `Agent artifacts = portable definition`, `agentpm.harness.json = workspace runtime realization`, and `agentpm harness = AgentPM reference executor`.
+- [ ] Document/prove that Template dependencies do not become Harness bindings, Template entrypoint commands are never auto-executed by Harness, generated files become ordinary consumer-owned workspace inputs, and multi-Agent Template scaffolding still executes one selected Agent per Run.
+- [ ] Gitignore `.agentpm-state/` in generated Harness workspaces while documenting safe inspection/export of Run reports/traces/local Memory.
+
 ## Release Band 10: Templates, Documentation, and Final Hardening
-Covered milestones: 20B.
-This gives us realistic Templates/examples, full documentation, and end-to-end release verification across headless, machine/SDK, and TUI surfaces after the Ratatui UI and phase-output/cross-phase context work have already been proven in earlier release bands.
+Covered milestones: 20B-21.
+This gives us full documentation, end-to-end release verification, and realistic Templates/examples across headless, machine/SDK, and TUI surfaces after the Ratatui UI and phase-output/cross-phase context work have already been proven in earlier release bands.
