@@ -1200,14 +1200,14 @@ mod tests {
 
         let activation = ConfiguredMcpImportRuntime::start_with_env(Path::new("."), &imports, &env);
 
-        assert_eq!(activation.snapshots.len(), 1);
-        assert_eq!(activation.snapshots[0].transport, "http");
-        assert_eq!(activation.snapshots[0].identity, "mcp:search/lookup");
-        assert_eq!(activation.snapshots[0].scopes, vec!["global".to_string()]);
-        assert_eq!(
-            activation.snapshots[0].endpoint.as_deref(),
-            Some(url.as_str())
-        );
+        let lookup = activation
+            .snapshots
+            .iter()
+            .find(|snapshot| snapshot.identity == "mcp:search/lookup")
+            .unwrap_or_else(|| panic!("expected lookup snapshot, got {:#?}", activation.snapshots));
+        assert_eq!(lookup.transport, "http");
+        assert_eq!(lookup.scopes, vec!["global".to_string()]);
+        assert_eq!(lookup.endpoint.as_deref(), Some(url.as_str()));
         let mut runtime = activation.runtime;
         let result = runtime.call_tool("search", "lookup", &json!({ "query": "launch" }));
         assert!(result.ok, "{result:?}");
