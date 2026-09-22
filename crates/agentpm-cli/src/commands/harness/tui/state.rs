@@ -795,48 +795,65 @@ fn execute_tui_run_worker_inner(
     )?;
 
     let output_paths = RunOutputPaths::resolve(&plan.state_dir, &run_id, None)?;
-    if plan.config.config.trace.enabled {
-        controller
-            .session
-            .emitter
-            .add_sink(Box::new(JsonlTraceSink::create(
-                &output_paths.events_path,
-                plan.config.config.trace.clone(),
-            )?));
-    }
-    controller.session.runtime_snapshot = runtime;
-    memory_controls.set_operations_from_session(&controller.session);
-    if let Some(engine) = controller.engine.as_mut() {
-        engine.set_control_ingress(Box::new(memory_controls.clone()));
-    }
-    let mcp_import_snapshots = controller.session.runtime_snapshot.mcp_imports.clone();
-    emit_mcp_import_activation_events(&mut controller.session, &mcp_import_snapshots)?;
-    controller.refresh_snapshot();
-
-    send_run_progress(sender, "Executing Run.");
-    let mut services = HarnessRuntimeServices {
-        model: model.as_mut(),
-        dispatcher: &mut dispatcher,
-        knowledge: knowledge.as_mut(),
-        memory: custom_memory.runtime,
-        embedding_provider: memory_embedding_provider,
-        approvals: approvals.as_mut(),
-        hooks: &mut hooks,
-        service_events: Some(&mut service_events),
+    let trace_sink_id = if plan.config.config.trace.enabled {
+        Some(
+            controller
+                .session
+                .emitter
+                .add_sink(Box::new(JsonlTraceSink::create(
+                    &output_paths.events_path,
+                    plan.config.config.trace.clone(),
+                )?)),
+        )
+    } else {
+        None
     };
-    let result = controller.start_run_with_services(run_id, input, &output_paths, &mut services)?;
-    if let HarnessRunResult::Terminal(terminal) = result {
-        let mut terminal = *terminal;
-        if plan.config.config.trace.enabled {
-            terminal.report.trace_path = Some(output_paths.events_path.display().to_string());
+    let result = (|| -> Result<()> {
+        controller.session.runtime_snapshot = runtime;
+        memory_controls.set_operations_from_session(&controller.session);
+        if let Some(engine) = controller.engine.as_mut() {
+            engine.set_control_ingress(Box::new(memory_controls.clone()));
         }
-        terminal
-            .report
-            .write_pretty(&output_paths.report_path, &plan.config.config.trace.content)?;
-        controller.apply_terminal_result(&terminal, &output_paths);
-        controller.session.emitter.flush()?;
+        let mcp_import_snapshots = controller.session.runtime_snapshot.mcp_imports.clone();
+        emit_mcp_import_activation_events(&mut controller.session, &mcp_import_snapshots)?;
+        controller.refresh_snapshot();
+
+        send_run_progress(sender, "Executing Run.");
+        let mut services = HarnessRuntimeServices {
+            model: model.as_mut(),
+            dispatcher: &mut dispatcher,
+            knowledge: knowledge.as_mut(),
+            memory: custom_memory.runtime,
+            embedding_provider: memory_embedding_provider,
+            approvals: approvals.as_mut(),
+            hooks: &mut hooks,
+            service_events: Some(&mut service_events),
+        };
+        let result =
+            controller.start_run_with_services(run_id, input, &output_paths, &mut services)?;
+        if let HarnessRunResult::Terminal(terminal) = result {
+            let mut terminal = *terminal;
+            if plan.config.config.trace.enabled {
+                terminal.report.trace_path = Some(output_paths.events_path.display().to_string());
+            }
+            terminal
+                .report
+                .write_pretty(&output_paths.report_path, &plan.config.config.trace.content)?;
+            controller.apply_terminal_result(&terminal, &output_paths);
+            controller.session.emitter.flush()?;
+        }
+        Ok(())
+    })();
+    let remove_result = if let Some(trace_sink_id) = trace_sink_id {
+        controller.session.emitter.remove_sink(trace_sink_id)
+    } else {
+        Ok(false)
+    };
+    match (result, remove_result) {
+        (Ok(()), Ok(_)) => Ok(()),
+        (Err(err), _) => Err(err),
+        (Ok(()), Err(err)) => Err(err),
     }
-    Ok(())
 }
 
 fn send_run_progress(sender: &Sender<TuiRunMessage>, message: impl Into<String>) {
@@ -1433,6 +1450,7 @@ impl TuiEventSink {
 fn event_phase_id(event: &HarnessEventEnvelope) -> Option<String> {
     match &event.payload {
         HarnessEventPayload::Phase { phase_id, .. } => Some(phase_id.clone()),
+        HarnessEventPayload::PhaseOutputFallback { phase_id, .. } => Some(phase_id.clone()),
         HarnessEventPayload::Lifecycle { fields, .. } => fields
             .get("phase_id")
             .and_then(Value::as_str)

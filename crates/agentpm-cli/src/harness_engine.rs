@@ -130,6 +130,29 @@ pub struct PhaseResult {
     pub metadata: BTreeMap<String, Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PhaseOutputFallbackSource {
+    CompletingTurn,
+    PriorAssistant,
+    None,
+}
+
+impl PhaseOutputFallbackSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CompletingTurn => "completing_turn",
+            Self::PriorAssistant => "prior_assistant",
+            Self::None => "none",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct PhaseCompletionOutput {
+    output: Option<Value>,
+    fallback_source: Option<PhaseOutputFallbackSource>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PendingApprovalState {
     pub checkpoint_id: String,
@@ -410,9 +433,30 @@ impl HarnessSession {
     }
 }
 
-fn estimate_tokens(content: &str) -> u64 {
+pub(crate) fn estimate_tokens(content: &str) -> u64 {
     let words = content.split_whitespace().count() as u64;
     words.max((content.len() as u64).div_ceil(4))
+}
+
+fn latest_safe_phase_assistant_output(state: &PhaseExecutionState) -> Option<String> {
+    let mut disqualified_by_later_turn = false;
+    for entry in state.transcript.iter().rev() {
+        match entry.kind {
+            TranscriptEntryKind::Assistant => {
+                let Some(content) = entry.content.as_str() else {
+                    continue;
+                };
+                if !disqualified_by_later_turn && !content.trim().is_empty() {
+                    return Some(content.to_string());
+                }
+            }
+            TranscriptEntryKind::ActionResult | TranscriptEntryKind::RepairFeedback => {
+                disqualified_by_later_turn = true;
+            }
+            TranscriptEntryKind::UserInput => {}
+        }
+    }
+    None
 }
 
 impl Default for HarnessSession {
@@ -798,6 +842,67 @@ impl HarnessEngine {
                 },
             )?;
         }
+        Ok(())
+    }
+
+    fn phase_completion_output(
+        explicit_output: Option<&Value>,
+        completing_assistant_content: Option<&str>,
+        state: &PhaseExecutionState,
+    ) -> PhaseCompletionOutput {
+        if let Some(output) = explicit_output {
+            return PhaseCompletionOutput {
+                output: Some(output.clone()),
+                fallback_source: None,
+            };
+        }
+        if let Some(content) = completing_assistant_content
+            && !content.trim().is_empty()
+        {
+            return PhaseCompletionOutput {
+                output: Some(Value::String(content.to_string())),
+                fallback_source: Some(PhaseOutputFallbackSource::CompletingTurn),
+            };
+        }
+        if let Some(content) = latest_safe_phase_assistant_output(state) {
+            return PhaseCompletionOutput {
+                output: Some(Value::String(content)),
+                fallback_source: Some(PhaseOutputFallbackSource::PriorAssistant),
+            };
+        }
+        PhaseCompletionOutput {
+            output: None,
+            fallback_source: Some(PhaseOutputFallbackSource::None),
+        }
+    }
+
+    fn emit_phase_output_fallback(
+        &self,
+        session: &mut HarnessSession,
+        run_id: &str,
+        phase_id: &str,
+        phase_execution_id: &str,
+        source: PhaseOutputFallbackSource,
+    ) -> Result<()> {
+        let status = if source == PhaseOutputFallbackSource::None {
+            "unavailable"
+        } else {
+            "applied"
+        };
+        session.emitter.emit(
+            HarnessEventType::PhaseOutputFallback,
+            HarnessEventPayload::PhaseOutputFallback {
+                phase_id: phase_id.to_string(),
+                phase_execution_id: phase_execution_id.to_string(),
+                status: status.into(),
+                source: source.as_str().into(),
+            },
+            HarnessEventBuilder {
+                run_id: Some(run_id.to_string()),
+                phase_execution_id: Some(phase_execution_id.to_string()),
+                ..HarnessEventBuilder::default()
+            },
+        )?;
         Ok(())
     }
 
@@ -1734,8 +1839,10 @@ impl HarnessEngine {
                         output,
                     );
                 }
-                repair_feedback =
-                    Some("This phase requires an explicit completion outcome.".to_string());
+                repair_feedback = Some(
+                    "This phase requires an explicit completion outcome. Propose phase_completion with one declared outcome. If your previous assistant message answered the phase objective, include that answer in phase_completion.output rather than leaving output empty."
+                        .to_string(),
+                );
                 self.request_repair(
                     session,
                     &mut state,
@@ -1809,11 +1916,25 @@ impl HarnessEngine {
                         output: None,
                     },
                     HarnessEventBuilder {
-                        run_id: Some(run_id),
+                        run_id: Some(run_id.clone()),
                         phase_execution_id: Some(phase_execution_id.clone()),
                         ..HarnessEventBuilder::default()
                     },
                 )?;
+                let completion_output = Self::phase_completion_output(
+                    output.as_ref(),
+                    turn.assistant_content.as_deref(),
+                    &state,
+                );
+                if let Some(source) = completion_output.fallback_source {
+                    self.emit_phase_output_fallback(
+                        session,
+                        &run_id,
+                        &phase.id,
+                        &phase_execution_id,
+                        source,
+                    )?;
+                }
                 let target = self.transition_target(&phase.id, &selected)?;
                 self.run_memory_write_review_if_configured(
                     session,
@@ -1834,7 +1955,7 @@ impl HarnessEngine {
                     phase,
                     &phase_execution_id,
                     selected,
-                    output.clone(),
+                    completion_output.output,
                 );
             }
 

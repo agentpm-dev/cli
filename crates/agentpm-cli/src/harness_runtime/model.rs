@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use super::action::SemanticActionProposal;
-use crate::harness_engine::{EffectivePhase, PhaseResult};
+use crate::harness_engine::{EffectivePhase, PhaseResult, estimate_tokens};
 use crate::harness_observability::RunUsage;
 use crate::manifest::{
     MemoryRetrievalMode, MemorySpaceModel, ProfileConstraintStrength, ProfileMetadata,
@@ -23,6 +23,9 @@ pub(crate) const PERSISTENCE_REVIEW_TARGET_SELECTION_CONTROL: &str = "Choose the
 const PROVIDER_ACTION_ALIAS_MAX_LEN: usize = 64;
 const PROVIDER_ACTION_HASH_LEN: usize = 8;
 const MEMORY_FILTER_PATH_ENUMERATION_LIMIT: usize = 128;
+const CROSS_PHASE_DETAIL_BUDGET_TOKENS: u64 = 1_200;
+const CROSS_PHASE_LEDGER_FLOOR_TOKENS: u64 = 160;
+const CROSS_PHASE_OUTPUT_ENTRY_MAX_TOKENS: u64 = 320;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -734,28 +737,7 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         }
     }
 
-    let cross_phase = if input.prior_phase_results.is_empty() {
-        "No prior PhaseResults.".to_string()
-    } else {
-        input
-            .prior_phase_results
-            .iter()
-            .map(|result| {
-                format!(
-                    "- step {} phase `{}` outcome `{}` output: {}",
-                    result.loop_step_number,
-                    result.phase_id,
-                    result.outcome,
-                    result
-                        .output
-                        .as_ref()
-                        .map(Value::to_string)
-                        .unwrap_or_else(|| "null".into())
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    let cross_phase = render_cross_phase_state(input.prior_phase_results, &mut diagnostics);
 
     let capability_catalog = if input.effective_phase.capability_catalog.is_empty() {
         "No executable capability descriptors are available for this phase.".to_string()
@@ -811,6 +793,97 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         completion,
         diagnostics,
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CrossPhaseDetailPlan {
+    render_output: bool,
+    output_stub_reason: Option<&'static str>,
+}
+
+fn render_cross_phase_state(
+    prior_phase_results: &[PhaseResult],
+    diagnostics: &mut Vec<String>,
+) -> String {
+    if prior_phase_results.is_empty() {
+        return "No prior PhaseResults.".to_string();
+    }
+
+    let mut plans = vec![CrossPhaseDetailPlan::default(); prior_phase_results.len()];
+    let mut remaining_budget = CROSS_PHASE_DETAIL_BUDGET_TOKENS;
+    let mut budget_omitted_outputs = 0usize;
+    let mut capped_outputs = 0usize;
+    let mut detailed_outputs = 0usize;
+    let mut ledger_floor_reserved_tokens = 0u64;
+
+    for (index, result) in prior_phase_results.iter().enumerate().rev() {
+        let Some(output) = &result.output else {
+            continue;
+        };
+        let rendered_output = output.to_string();
+        let output_tokens = estimate_tokens(&rendered_output);
+        let floor_and_output = CROSS_PHASE_LEDGER_FLOOR_TOKENS.saturating_add(output_tokens);
+        if output_tokens > CROSS_PHASE_OUTPUT_ENTRY_MAX_TOKENS {
+            plans[index].output_stub_reason = Some("omitted: exceeds per-phase output cap");
+            capped_outputs += 1;
+            continue;
+        }
+        if floor_and_output <= remaining_budget {
+            plans[index].render_output = true;
+            remaining_budget = remaining_budget.saturating_sub(floor_and_output);
+            ledger_floor_reserved_tokens =
+                ledger_floor_reserved_tokens.saturating_add(CROSS_PHASE_LEDGER_FLOOR_TOKENS);
+            detailed_outputs += 1;
+        } else {
+            plans[index].output_stub_reason =
+                Some("omitted: cross-phase detail budget reserved for more recent phases");
+            budget_omitted_outputs += 1;
+        }
+    }
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "[cross-phase detail budget: {} tokens; ledger floor: {} tokens per detailed phase; output entry cap: {} tokens]",
+        CROSS_PHASE_DETAIL_BUDGET_TOKENS,
+        CROSS_PHASE_LEDGER_FLOOR_TOKENS,
+        CROSS_PHASE_OUTPUT_ENTRY_MAX_TOKENS
+    ));
+    for (result, plan) in prior_phase_results.iter().zip(plans.iter()) {
+        lines.push(format!(
+            "- step {} phase `{}` outcome `{}`",
+            result.loop_step_number, result.phase_id, result.outcome
+        ));
+        match &result.output {
+            Some(output) if plan.render_output => {
+                lines.push(format!("  output: {}", output));
+            }
+            Some(_output) => {
+                let reason = plan
+                    .output_stub_reason
+                    .unwrap_or("omitted: cross-phase detail budget unavailable");
+                lines.push(format!("  output: [{reason}]"));
+            }
+            None => {
+                lines.push("  output: null".into());
+            }
+        }
+    }
+    if budget_omitted_outputs > 0 || capped_outputs > 0 {
+        lines.push(format!(
+            "[cross-phase output detail marker: {budget_omitted_outputs} output entries omitted by budget; {capped_outputs} output entries stubbed by per-entry cap]"
+        ));
+    }
+    if detailed_outputs > 0 {
+        diagnostics.push(format!(
+            "cross-phase budget: {detailed_outputs} output entries rendered; {budget_omitted_outputs} output entries omitted by budget; {capped_outputs} output entries stubbed by cap; {ledger_floor_reserved_tokens} ledger-floor tokens reserved"
+        ));
+    } else if budget_omitted_outputs > 0 || capped_outputs > 0 {
+        diagnostics.push(format!(
+            "cross-phase budget: no output entries rendered; {budget_omitted_outputs} output entries omitted by budget; {capped_outputs} output entries stubbed by cap; ledger floor {} tokens per detailed phase",
+            CROSS_PHASE_LEDGER_FLOOR_TOKENS
+        ));
+    }
+    lines.join("\n")
 }
 
 fn render_capability_catalog_lines(
@@ -1834,6 +1907,23 @@ mod tests {
         }
     }
 
+    fn phase_result(
+        step: u64,
+        phase_id: &str,
+        outcome: &str,
+        output: Option<Value>,
+    ) -> PhaseResult {
+        PhaseResult {
+            phase_execution_id: format!("phase-exec-{step}"),
+            phase_id: phase_id.into(),
+            loop_step_number: step,
+            outcome: outcome.into(),
+            output,
+            usage: RunUsage::default(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
     fn mcp_tool(server_id: &str, tool_name: &str) -> McpImportRuntimeSnapshot {
         McpImportRuntimeSnapshot {
             server_id: server_id.into(),
@@ -2298,6 +2388,96 @@ mod tests {
                 .lines()
                 .any(|line| line.contains("[memory_read (chronological)]"))
         );
+    }
+
+    #[test]
+    fn cross_phase_state_keeps_all_phase_stubs_and_recent_output_detail() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "remember/completion")],
+            vec![],
+        );
+        let prior = (1..=8)
+            .map(|step| {
+                let output = format!("phase {step} {}", "detail ".repeat(90));
+                phase_result(step, &format!("phase-{step}"), "done", Some(json!(output)))
+            })
+            .collect::<Vec<_>>();
+
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &["done".into()],
+            run_input: "input",
+            consumer_context: None,
+            prior_phase_results: &prior,
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+        let cross_phase = prompt
+            .sections
+            .iter()
+            .find(|section| section.title == "CROSS-PHASE STATE")
+            .expect("cross-phase section")
+            .content
+            .clone();
+
+        assert!(cross_phase.contains("- step 1 phase `phase-1` outcome `done`"));
+        assert!(cross_phase.contains("- step 8 phase `phase-8` outcome `done`"));
+        assert!(cross_phase.contains("phase 8 detail"));
+        assert!(
+            cross_phase.contains(
+                "output: [omitted: cross-phase detail budget reserved for more recent phases]"
+            ),
+            "{cross_phase}"
+        );
+        assert!(cross_phase.contains("[cross-phase output detail marker:"));
+        assert!(
+            prompt
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("cross-phase budget:"))
+        );
+    }
+
+    #[test]
+    fn cross_phase_state_stubs_oversized_output_without_cutting_prose() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "remember/completion")],
+            vec![],
+        );
+        let oversized = format!("the answer is {}", "not ready ".repeat(700));
+        let prior = vec![phase_result(
+            1,
+            "assess",
+            "done",
+            Some(json!(oversized.clone())),
+        )];
+
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &["done".into()],
+            run_input: "input",
+            consumer_context: None,
+            prior_phase_results: &prior,
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+        let cross_phase = prompt
+            .sections
+            .iter()
+            .find(|section| section.title == "CROSS-PHASE STATE")
+            .expect("cross-phase section")
+            .content
+            .clone();
+
+        assert!(cross_phase.contains("- step 1 phase `assess` outcome `done`"));
+        assert!(cross_phase.contains("output: [omitted: exceeds per-phase output cap]"));
+        assert!(!cross_phase.contains(&oversized));
     }
 
     #[test]

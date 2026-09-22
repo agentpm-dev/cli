@@ -23,12 +23,20 @@ pub struct ProviderRequest {
     pub prompt: String,
     pub include_capability_catalog: bool,
     pub turn_strategy: String,
+    pub tool_choice_policy: ProviderToolChoicePolicy,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub turns: Vec<ModelRequestTurn>,
     // Provider-safe alias -> canonical Harness identity. Provider adapters use
     // aliases in native tool/function definitions and map calls back here.
     pub action_aliases: BTreeMap<String, String>,
     pub actions: Vec<ProviderActionTool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderToolChoicePolicy {
+    Auto,
+    Required,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -345,6 +353,16 @@ impl BuiltInModelRuntime {
         let actions = provider_action_tools(request);
         let include_capability_catalog = actions.is_empty();
         let native_turns_available = !actions.is_empty();
+        let supports_required_tool_choice =
+            matches!(selection.provider.as_str(), "openai" | "anthropic");
+        let tool_choice_policy = if native_turns_available
+            && !request.prompt.completion.implicit_complete
+            && supports_required_tool_choice
+        {
+            ProviderToolChoicePolicy::Required
+        } else {
+            ProviderToolChoicePolicy::Auto
+        };
         let turn_strategy = if native_turns_available {
             "native_action_result_turns"
         } else {
@@ -371,6 +389,7 @@ impl BuiltInModelRuntime {
             actions,
             include_capability_catalog,
             turn_strategy: turn_strategy.into(),
+            tool_choice_policy,
             turns: if native_turns_available {
                 if request.ordered_turns.is_empty() {
                     vec![ModelRequestTurn::UserInput {
@@ -535,7 +554,7 @@ fn provider_action_description(
 ) -> String {
     match alias.action_kind.as_str() {
         "phase_completion" => format!(
-            "{} Use this action when the phase objective is satisfied. Other available actions do not need to be called just because they remain available.",
+            "{} Use this action when the phase objective is satisfied. When the phase produced an answer, decision, summary, or terminal response, include it in output. Omit output only when the phase has no result payload. Other available actions do not need to be called just because they remain available.",
             descriptor.description
         ),
         "persistence_review_complete" => {
@@ -1431,7 +1450,7 @@ fn phase_completion_parameters_schema(request: &ModelRequest) -> Value {
             "output": {
                 "type": "object",
                 "additionalProperties": true,
-                "description": "Structured phase output to pass to later phases or terminal output."
+                "description": "Structured phase output to pass to later phases or terminal output. Include the phase answer, decision, summary, or terminal response when one exists; omit only when the phase has no result payload."
             }
         },
         "required": ["outcome"]
@@ -2102,7 +2121,11 @@ fn openai_request_body(request: &ProviderRequest) -> Map<String, Value> {
     body.insert("messages".into(), json!(openai_messages(request)));
     if !request.actions.is_empty() {
         body.insert("tools".into(), openai_tool_definitions(&request.actions));
-        body.entry("tool_choice").or_insert(json!("auto"));
+        let tool_choice = match request.tool_choice_policy {
+            ProviderToolChoicePolicy::Auto => json!("auto"),
+            ProviderToolChoicePolicy::Required => json!("required"),
+        };
+        body.entry("tool_choice").or_insert(tool_choice);
     }
     body
 }
@@ -2241,6 +2264,10 @@ fn anthropic_request_body(request: &ProviderRequest) -> Map<String, Value> {
     body.insert("messages".into(), json!(anthropic_messages(request)));
     if !request.actions.is_empty() {
         body.insert("tools".into(), anthropic_tool_definitions(&request.actions));
+        if request.tool_choice_policy == ProviderToolChoicePolicy::Required {
+            body.entry("tool_choice")
+                .or_insert(json!({ "type": "any" }));
+        }
     }
     body
 }
@@ -3540,6 +3567,7 @@ mod tests {
                 .description
                 .contains("phase objective is satisfied")
         );
+        assert!(phase_tool.description.contains("include it in output"));
         let memory_tool = tools
             .iter()
             .find(|tool| {
@@ -4731,6 +4759,98 @@ mod tests {
     }
 
     #[test]
+    fn explicit_outcome_phase_requires_native_tool_choice_when_supported() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let request = model_request();
+        let provider_request = runtime.provider_request(&request);
+
+        assert_eq!(
+            provider_request.tool_choice_policy,
+            ProviderToolChoicePolicy::Required
+        );
+
+        let openai_body = Value::Object(openai_request_body(&provider_request));
+        assert_eq!(openai_body["tool_choice"], "required");
+
+        let anthropic_runtime = BuiltInModelRuntime::new(
+            selection("anthropic"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut anthropic_model_request = request.clone();
+        anthropic_model_request.model = Some(selection("anthropic"));
+        let anthropic_request = anthropic_runtime.provider_request(&anthropic_model_request);
+        assert_eq!(
+            anthropic_request.tool_choice_policy,
+            ProviderToolChoicePolicy::Required
+        );
+        let anthropic_body = Value::Object(anthropic_request_body(&anthropic_request));
+        assert_eq!(anthropic_body["tool_choice"], json!({ "type": "any" }));
+
+        let ollama_runtime = BuiltInModelRuntime::new(
+            selection("ollama"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut ollama_model_request = request;
+        ollama_model_request.model = Some(selection("ollama"));
+        let ollama_request = ollama_runtime.provider_request(&ollama_model_request);
+        assert_eq!(
+            ollama_request.tool_choice_policy,
+            ProviderToolChoicePolicy::Auto
+        );
+        let ollama_body = Value::Object(ollama_request_body(&ollama_request));
+        assert!(ollama_body.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn implicit_complete_phase_preserves_auto_tool_choice() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.prompt.completion.implicit_complete = true;
+        request.prompt.completion.explicit_outcomes.clear();
+
+        let provider_request = runtime.provider_request(&request);
+
+        assert_eq!(
+            provider_request.tool_choice_policy,
+            ProviderToolChoicePolicy::Auto
+        );
+        let openai_body = Value::Object(openai_request_body(&provider_request));
+        assert_eq!(openai_body["tool_choice"], "auto");
+        let anthropic_body = Value::Object(anthropic_request_body(&provider_request));
+        assert!(anthropic_body.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn configured_provider_tool_choice_overrides_required_default() {
+        let runtime = BuiltInModelRuntime::new(
+            selection("openai"),
+            Box::new(MockModelTransport::new(vec![])),
+        );
+        let mut request = model_request();
+        request.model.as_mut().expect("model selection").options["tool_choice"] = json!("auto");
+
+        let provider_request = runtime.provider_request(&request);
+        assert_eq!(
+            provider_request.tool_choice_policy,
+            ProviderToolChoicePolicy::Required
+        );
+        let openai_body = Value::Object(openai_request_body(&provider_request));
+        assert_eq!(openai_body["tool_choice"], "auto");
+
+        let mut anthropic_request = provider_request;
+        anthropic_request.selection = selection("anthropic");
+        anthropic_request.selection.options = json!({ "tool_choice": { "type": "auto" } });
+        let anthropic_body = Value::Object(anthropic_request_body(&anthropic_request));
+        assert_eq!(anthropic_body["tool_choice"], json!({ "type": "auto" }));
+    }
+
+    #[test]
     fn built_in_provider_bodies_preserve_native_action_result_correlation() {
         let request = correlated_provider_request("openai");
         let openai_body = Value::Object(openai_request_body(&request));
@@ -4949,12 +5069,36 @@ mod tests {
             openai_tools[0]["function"]["parameters"]["properties"]["outcome"]["enum"],
             json!(["ready"])
         );
+        assert!(
+            openai_tools[0]["function"]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("include it in output")
+        );
+        assert!(
+            openai_tools[0]["function"]["parameters"]["properties"]["output"]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Include the phase answer")
+        );
 
         let anthropic_tools = anthropic_tool_definitions(&tools);
         assert_eq!(anthropic_tools[0]["name"], "phase_complete");
         assert_eq!(
             anthropic_tools[0]["input_schema"]["properties"]["outcome"]["enum"],
             json!(["ready"])
+        );
+        assert!(
+            anthropic_tools[0]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("include it in output")
+        );
+        assert!(
+            anthropic_tools[0]["input_schema"]["properties"]["output"]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Include the phase answer")
         );
 
         let openai = provider_response_from_openai(json!({
@@ -5455,6 +5599,7 @@ for line in sys.stdin:
             prompt: "Provider control.".into(),
             include_capability_catalog: false,
             turn_strategy: "native_action_result_turns".into(),
+            tool_choice_policy: ProviderToolChoicePolicy::Auto,
             turns: vec![
                 ModelRequestTurn::UserInput {
                     content: "Write one note.".into(),
@@ -5540,6 +5685,7 @@ for line in sys.stdin:
             prompt: "Provider control.".into(),
             include_capability_catalog: false,
             turn_strategy: "native_action_result_turns".into(),
+            tool_choice_policy: ProviderToolChoicePolicy::Auto,
             turns: vec![
                 ModelRequestTurn::UserInput {
                     content: "Check notes.".into(),

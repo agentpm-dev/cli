@@ -218,6 +218,26 @@ fn completion(id: &str, outcome: &str) -> ModelTurn {
     }
 }
 
+fn completion_without_output(
+    id: &str,
+    outcome: &str,
+    assistant_content: Option<&str>,
+) -> ModelTurn {
+    ModelTurn {
+        assistant_content: assistant_content.map(str::to_string),
+        actions: vec![SemanticActionProposal::new(
+            id,
+            SemanticAction::PhaseCompletion {
+                outcome: Some(outcome.into()),
+                output: None,
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: None,
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
 fn profile_snapshot(name: &str, version: &str, role: &str) -> ProfileSnapshot {
     ProfileSnapshot {
         name: name.into(),

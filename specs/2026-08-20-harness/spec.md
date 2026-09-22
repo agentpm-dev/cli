@@ -1469,6 +1469,18 @@ Conceptually each phase ModelRequest is assembled as:
      during this phase
 ```
 
+Rendered prompt text for section 4 is budgeted independently from the canonical
+`ModelRequest.prior_phase_results` vector. The rendered section must keep a
+chronological phase stub for every prior phase and may degrade older or oversized
+phase output to visible truncation markers, but the structured
+`prior_phase_results` field remains complete. The strict token budget governs
+detail, not the skeleton: stubs are still bounded by the Loop step limit and
+grow by one compact row per completed phase. Custom process/host ModelRuntimes
+therefore receive the full canonical vector alongside a rendered prompt that may
+explicitly state that its section-4 text is a bounded subset. This preserves the
+existing provider-neutral request contract while preventing the prose prompt
+detail from growing without bound as phase output becomes more reliable.
+
 The Effective Capability Catalog is a logical part of the `ModelRequest`, not necessarily a literal prose block sent to the model provider. Harness's canonical `ModelRequest` remains the source of truth for action aliases, canonical identities, input schemas, and argument constraints. For ModelRuntimes with native structured action support, the catalog should be translated into provider-native tool/function/structured action declarations as the authoritative wire representation of that canonical request.
 
 Prompt text should provide Harness control and behavioral guidance about how and when to use available actions. It should not duplicate full action schemas already supplied through the structured provider API unless a runtime explicitly supports a text-action emulation mode with its own validation and repair semantics.

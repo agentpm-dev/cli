@@ -25,6 +25,241 @@ fn executes_multi_phase_loop_and_accumulates_session_usage() {
 }
 
 #[test]
+fn explicit_completion_without_output_uses_completing_turn_assistant_content() {
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let mut session = HarnessSession::new();
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion_without_output("a", "execute", Some("Assessment answer.")),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    assert!(matches!(result, HarnessRunResult::Terminal(_)));
+    assert_eq!(
+        model.requests[1].prior_phase_results[0].output,
+        Some(json!("Assessment answer."))
+    );
+    let fallback = handle
+        .events()
+        .into_iter()
+        .find(|event| event.event_type == HarnessEventType::PhaseOutputFallback)
+        .expect("fallback event");
+    let HarnessEventPayload::PhaseOutputFallback { status, source, .. } = fallback.payload else {
+        panic!("expected phase output fallback payload");
+    };
+    assert_eq!(status, "applied");
+    assert_eq!(source, "completing_turn");
+}
+
+#[test]
+fn explicit_completion_output_remains_authoritative() {
+    let (_, _, model) = run_engine(
+        base_loop(),
+        vec![
+            completion("a", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ],
+    );
+
+    assert_eq!(
+        model.requests[1].prior_phase_results[0].output,
+        Some(json!({ "outcome": "execute" }))
+    );
+}
+
+#[test]
+fn explicit_completion_without_assistant_reports_unavailable_fallback() {
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let mut session = HarnessSession::new();
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion_without_output("a", "execute", None),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    assert!(matches!(result, HarnessRunResult::Terminal(_)));
+    assert_eq!(model.requests[1].prior_phase_results[0].output, None);
+    let fallback = handle
+        .events()
+        .into_iter()
+        .find(|event| event.event_type == HarnessEventType::PhaseOutputFallback)
+        .expect("fallback event");
+    let HarnessEventPayload::PhaseOutputFallback { status, source, .. } = fallback.payload else {
+        panic!("expected phase output fallback payload");
+    };
+    assert_eq!(status, "unavailable");
+    assert_eq!(source, "none");
+}
+
+#[test]
+fn post_action_assistant_intention_is_not_promoted_to_output() {
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let mut session = session_with_tool_and_skill();
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: Some("I'll query the deployment status.".into()),
+            actions: vec![SemanticActionProposal::new(
+                "tool",
+                SemanticAction::AgentPmTool {
+                    tool: "@zack/search".into(),
+                    arguments: json!({ "query": "deployment status" }),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: None,
+            provider_metadata: BTreeMap::new(),
+        },
+        completion_without_output("a", "execute", None),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    assert!(matches!(result, HarnessRunResult::Terminal(_)));
+    assert_eq!(model.requests[2].prior_phase_results[0].output, None);
+}
+
+#[test]
+fn prior_phase_assistant_content_does_not_leak_to_terminal_phase() {
+    let (result, _, model) = run_engine(
+        base_loop(),
+        vec![
+            completion_without_output("a", "execute", Some("Assessment answer.")),
+            completion("b", "review"),
+            completion_without_output("c", "ready", None),
+        ],
+    );
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(
+        model.requests[1].prior_phase_results[0].output,
+        Some(json!("Assessment answer."))
+    );
+    assert_eq!(result.output, None);
+    assert_eq!(result.report.terminal_output, None);
+}
+
+#[test]
+fn phase_completion_output_can_use_latest_safe_prior_assistant() {
+    let state = PhaseExecutionState {
+        phase_execution_id: "phase-exec-test".into(),
+        phase_id: "assess".into(),
+        transcript: vec![
+            TranscriptEntry {
+                kind: TranscriptEntryKind::UserInput,
+                content: json!("hello"),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::Assistant,
+                content: json!("Earlier draft."),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::Assistant,
+                content: json!("Final answer."),
+                action_succeeded: None,
+            },
+        ],
+        model_calls: 0,
+        accepted_actions: 0,
+        logical_tool_calls: 0,
+        structured_repairs: 0,
+        tool_call_repairs: 0,
+    };
+
+    let selected = HarnessEngine::phase_completion_output(None, None, &state);
+
+    assert_eq!(selected.output, Some(json!("Final answer.")));
+    assert_eq!(
+        selected.fallback_source,
+        Some(PhaseOutputFallbackSource::PriorAssistant)
+    );
+}
+
+#[test]
+fn phase_completion_output_rejects_prior_assistant_after_action_result() {
+    let state = PhaseExecutionState {
+        phase_execution_id: "phase-exec-test".into(),
+        phase_id: "assess".into(),
+        transcript: vec![
+            TranscriptEntry {
+                kind: TranscriptEntryKind::UserInput,
+                content: json!("hello"),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::Assistant,
+                content: json!("I'll query first."),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::ActionResult,
+                content: json!({ "ok": true }),
+                action_succeeded: Some(true),
+            },
+        ],
+        model_calls: 0,
+        accepted_actions: 0,
+        logical_tool_calls: 0,
+        structured_repairs: 0,
+        tool_call_repairs: 0,
+    };
+
+    let selected = HarnessEngine::phase_completion_output(None, None, &state);
+
+    assert_eq!(selected.output, None);
+    assert_eq!(
+        selected.fallback_source,
+        Some(PhaseOutputFallbackSource::None)
+    );
+}
+
+#[test]
 fn supports_cycles_and_phase_reentry() {
     let (result, _, _) = run_engine(
         base_loop(),
@@ -778,6 +1013,35 @@ fn invalid_tool_arguments_request_repair_before_dispatch() {
             .render_text()
             .contains("arguments are invalid")
     );
+}
+
+#[test]
+fn missing_explicit_completion_repair_tells_model_to_preserve_prior_answer_as_output() {
+    let (result, _, model) = run_engine(
+        base_loop(),
+        vec![
+            ModelTurn {
+                assistant_content: Some("I inspect Harness behavior and summarize it.".into()),
+                actions: Vec::new(),
+                usage: RunUsage::default(),
+                finish_reason: Some("stop".into()),
+                provider_metadata: BTreeMap::new(),
+            },
+            completion("repair", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ],
+    );
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.repair_count, 1);
+    let feedback = model.requests[1]
+        .repair_feedback
+        .as_deref()
+        .expect("repair feedback should be provided");
+    assert!(feedback.contains("requires an explicit completion outcome"));
+    assert!(feedback.contains("include that answer in phase_completion.output"));
 }
 
 #[test]
