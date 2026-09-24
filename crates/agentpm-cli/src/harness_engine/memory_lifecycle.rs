@@ -1882,6 +1882,7 @@ fn lifecycle_logical_prompt(
         completion: CompletionContract {
             phase_id: String::new(),
             explicit_outcomes: Vec::new(),
+            authored_outcomes: Vec::new(),
             implicit_complete: true,
         },
         diagnostics: Vec::new(),

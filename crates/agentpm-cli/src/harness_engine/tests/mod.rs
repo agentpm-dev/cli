@@ -1,5 +1,6 @@
 use super::*;
-use crate::harness_observability::{HarnessEventEnvelope, InMemoryEventSink};
+use crate::harness_config::{HarnessTraceConfig, HarnessTraceContent, HarnessTraceLevel};
+use crate::harness_observability::{HarnessEventEnvelope, InMemoryEventSink, JsonlTraceSink};
 use crate::harness_runtime::action::{
     ActionDispatchResult, ActionFailureCategory, MemoryReadMode, MemoryWriteOperation,
     ScriptedActionDispatcher, SemanticActionProposal,

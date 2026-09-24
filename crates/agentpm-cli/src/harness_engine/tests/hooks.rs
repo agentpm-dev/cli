@@ -771,6 +771,22 @@ fn before_model_request_hook_appends_context_and_merges_provider_options() {
         hook_input.phase.completion.explicit_outcomes,
         vec!["execute", "handoff"]
     );
+    assert_eq!(
+        hook_input
+            .phase
+            .completion
+            .authored_outcomes
+            .iter()
+            .map(|outcome| (outcome.id.as_str(), outcome.description.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("execute", "Execute."), ("handoff", "Hand off.")]
+    );
+    assert!(
+        request
+            .prompt
+            .render_text()
+            .contains("- `handoff`: Hand off.")
+    );
     assert!(
         hook_input
             .sections

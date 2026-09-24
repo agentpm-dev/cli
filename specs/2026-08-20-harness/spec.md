@@ -1317,6 +1317,7 @@ A new phase execution starts with fresh assembled context from:
 - effective capability descriptors.
 
 Tool/Knowledge/Memory results enter the current phase context when requested and do not automatically become global transcript history.
+Each `PhaseResult` may also carry a compact `action_ledger` for prior-phase executable semantic actions. The ledger records action kind, canonical identity, a short lossy argument digest, and normalized execution status only; it never carries result payloads and never suppresses or authorizes actions in later phases.
 
 Re-entering a phase creates a new phase execution and context.
 
@@ -1429,11 +1430,31 @@ Harness should have one canonical provider-neutral `ModelRequest` structure even
 
 Conceptually each phase ModelRequest is assembled as:
 
+Sections differ in reach, and that difference governs where model-facing
+semantics may live. Sections 1-4 are sent to every provider. Sections 5 and 6
+are rendered only for `prompt_text_fallback` requests: a provider using native
+tool calling receives the capability catalog as native tool definitions and the
+phase-local history as native action/result turns, and
+`render_provider_text_with_native_turns` omits both prose sections from the wire.
+Any statement the model must understand therefore belongs in Sections 1-4.
+Placing it in Section 5 or 6 silently excludes OpenAI and Anthropic.
+
 ```text
 1. HARNESS CONTROL (immutable authority)
    - Harness semantic-action protocol/instructions
+   - execution-model orientation: one phase of a Run, Harness owns transitions
+     and executes proposed semantic actions
+   - Run input is the operator goal; the phase objective is the current
+     responsibility; later phases are not this phase's work
+   - phase-boundary semantics: the working transcript is phase-local, and a
+     later phase receives only the completion output, the selected outcome,
+     and the compact cross-phase action ledger
+   - action-result authority: Harness returns authoritative results for
+     executed actions, stated provider-neutrally because native providers
+     receive that history as turns rather than as Section 6
    - current phase identity
-   - valid completion/outcome contract
+   - valid completion/outcome contract, rendering each authored outcome id
+     with its authored description
    - authority rule: model proposes; Harness validates/executes
    - after Engine-recorded successful executable ActionResults, guidance to
      avoid repeating completed actions by action kind, identity, and arguments,
@@ -1452,6 +1473,8 @@ Conceptually each phase ModelRequest is assembled as:
 
 4. CROSS-PHASE STATE
    - relevant prior PhaseResults in deterministic chronological order
+   - compact handoff semantics: prior outputs carry conclusions forward, and
+     ledger entries show execution history without result payloads/resources
    - no raw prior provider transcript unless it was intentionally captured
      into a PhaseResult/other authorized state
 
@@ -1464,6 +1487,8 @@ Conceptually each phase ModelRequest is assembled as:
    - PhaseCompletion descriptor where needed
 
 6. CURRENT PHASE-LOCAL TRANSCRIPT
+   - short prose-fallback preamble naming this transcript as authoritative for
+     current-phase executed actions/results
    - assistant turns already produced in this phase
    - structured Tool/MCP/Knowledge/Memory/Skill-resource results returned
      during this phase
@@ -1472,7 +1497,7 @@ Conceptually each phase ModelRequest is assembled as:
 Rendered prompt text for section 4 is budgeted independently from the canonical
 `ModelRequest.prior_phase_results` vector. The rendered section must keep a
 chronological phase stub for every prior phase and may degrade older or oversized
-phase output to visible truncation markers, but the structured
+phase output and prior-action ledger detail to visible truncation markers, but the structured
 `prior_phase_results` field remains complete. The strict token budget governs
 detail, not the skeleton: stubs are still bounded by the Loop step limit and
 grow by one compact row per completed phase. Custom process/host ModelRuntimes
@@ -1480,6 +1505,9 @@ therefore receive the full canonical vector alongside a rendered prompt that may
 explicitly state that its section-4 text is a bounded subset. This preserves the
 existing provider-neutral request contract while preventing the prose prompt
 detail from growing without bound as phase output becomes more reliable.
+Ledger text in Section 4 is informational history, not cached result content:
+later phases may repeat a prior action when they need the result, refreshed
+state, or a resource loaded into the current phase.
 
 The Effective Capability Catalog is a logical part of the `ModelRequest`, not necessarily a literal prose block sent to the model provider. Harness's canonical `ModelRequest` remains the source of truth for action aliases, canonical identities, input schemas, and argument constraints. For ModelRuntimes with native structured action support, the catalog should be translated into provider-native tool/function/structured action declarations as the authoritative wire representation of that canonical request.
 
@@ -1541,7 +1569,8 @@ Rules:
 - action execution results are data returned to the current phase model, not new Harness authority;
 - malformed/unauthorized action proposals are returned as structured repair/error feedback when repair is possible and never executed speculatively;
 - the Engine continues the inner loop until valid PhaseCompletion/implicit completion, phase failure, cancellation, approval/runtime terminal, or a safety limit is reached;
-- phase-local raw transcripts are discarded from automatic cross-phase context after PhaseResult creation, though they may remain in trace/report according to content policy.
+- phase-local raw transcripts are discarded from automatic cross-phase context after PhaseResult creation, though they may remain in trace/report according to content policy;
+- prior-phase action ledgers are model-context state, independent of trace content policy, and are redacted for secrets before rendering.
 
 ### Agentic Turn Progression and Action-Result Feedback
 

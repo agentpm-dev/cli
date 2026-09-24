@@ -554,7 +554,7 @@ fn provider_action_description(
 ) -> String {
     match alias.action_kind.as_str() {
         "phase_completion" => format!(
-            "{} Use this action when the phase objective is satisfied. When the phase produced an answer, decision, summary, or terminal response, include it in output. Omit output only when the phase has no result payload. Other available actions do not need to be called just because they remain available.",
+            "{} Use this action when the current phase responsibility is satisfied; it ends the current phase. When the phase produced an answer, decision, summary, or terminal response, include it in output. Omit output only when the phase has no result payload. Other available actions do not need to be called just because they remain available.",
             descriptor.description
         ),
         "persistence_review_complete" => {
@@ -3565,8 +3565,9 @@ mod tests {
         assert!(
             phase_tool
                 .description
-                .contains("phase objective is satisfied")
+                .contains("current phase responsibility is satisfied")
         );
+        assert!(phase_tool.description.contains("ends the current phase"));
         assert!(phase_tool.description.contains("include it in output"));
         let memory_tool = tools
             .iter()
@@ -5432,6 +5433,7 @@ for line in sys.stdin:
                 completion: CompletionContract {
                     phase_id: "review".into(),
                     explicit_outcomes: vec!["ready".into()],
+                    authored_outcomes: Vec::new(),
                     implicit_complete: false,
                 },
                 diagnostics: Vec::new(),

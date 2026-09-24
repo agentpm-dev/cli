@@ -1,12 +1,14 @@
 #![allow(dead_code)]
 
-use crate::harness_config::{HarnessHookId, HarnessMemoryWriteReviewPoint, HarnessRuntimeLimits};
+use crate::harness_config::{
+    HarnessHookId, HarnessMemoryWriteReviewPoint, HarnessRuntimeLimits, HarnessTraceContent,
+};
 use crate::harness_observability::{
     ActionReportSummary, CheckpointReportSummary, HARNESS_REPORT_SCHEMA_VERSION,
     HarnessEventBuilder, HarnessEventEmitter, HarnessEventPayload, HarnessEventType,
     HarnessTerminalStatus, MemoryWriteReviewReportSummary, OperationReportSummary,
     PhaseReportSummary, ReportPackageIdentity, RunReport, RunUsage, SessionUsage,
-    allocate_harness_run_id, allocate_harness_session_id,
+    allocate_harness_run_id, allocate_harness_session_id, apply_content_policy_to_value,
 };
 use crate::harness_plan::{PreflightDiagnostic, PreflightStatus};
 use crate::harness_runtime::action::{ActionFailureCategory, MemoryReadMode, MemoryWriteOperation};
@@ -25,7 +27,9 @@ use crate::harness_runtime::memory::{
 };
 use crate::harness_runtime::model::ModelTurn;
 use crate::harness_runtime::model::PromptAssemblyPurpose;
-use crate::harness_runtime::model::{CONSUMER_RUN_CONTEXT_SECTION_TITLE, CompletionContract};
+use crate::harness_runtime::model::{
+    AuthoredOutcomeContract, CONSUMER_RUN_CONTEXT_SECTION_TITLE, CompletionContract,
+};
 use crate::harness_runtime::{
     ActionDispatchResult, ActionDispatcher, ApprovalController, ApprovalDecision,
     BeforeToolCallHook, CapabilityDescriptor, CustomMemoryRuntime, HookRuntime,
@@ -126,9 +130,22 @@ pub struct PhaseResult {
     pub loop_step_number: u64,
     pub outcome: String,
     pub output: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub action_ledger: Vec<PhaseActionLedgerEntry>,
     pub usage: RunUsage,
     pub metadata: BTreeMap<String, Value>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhaseActionLedgerEntry {
+    pub action_kind: String,
+    pub identity: String,
+    pub argument_digest: String,
+    pub status: String,
+}
+
+const ACTION_STATUS_COMPLETED: &str = "completed";
+const ACTION_STATUS_FAILED: &str = "failed";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PhaseOutputFallbackSource {
@@ -145,6 +162,204 @@ impl PhaseOutputFallbackSource {
             Self::None => "none",
         }
     }
+}
+
+fn phase_action_ledger_entry(
+    action: &SemanticAction,
+    status: impl Into<String>,
+) -> Option<PhaseActionLedgerEntry> {
+    is_ledger_action(action).then(|| PhaseActionLedgerEntry {
+        action_kind: action.kind().into(),
+        identity: action.identity(),
+        argument_digest: action_argument_digest(action),
+        status: status.into(),
+    })
+}
+
+fn is_ledger_action(action: &SemanticAction) -> bool {
+    match action {
+        SemanticAction::AgentPmTool { .. }
+        | SemanticAction::ExternalMcpTool { .. }
+        | SemanticAction::SkillResourceRead { .. }
+        | SemanticAction::KnowledgeRequest { .. }
+        | SemanticAction::MemoryRead { .. }
+        | SemanticAction::MemoryWrite { .. } => true,
+        SemanticAction::PhaseCompletion { .. } | SemanticAction::PersistenceReviewComplete => false,
+    }
+}
+
+fn action_argument_digest(action: &SemanticAction) -> String {
+    let mut parts = Vec::new();
+    match action {
+        SemanticAction::AgentPmTool { arguments, .. }
+        | SemanticAction::ExternalMcpTool { arguments, .. } => {
+            parts.extend(argument_digest_parts(arguments));
+        }
+        SemanticAction::SkillResourceRead { resource, .. } => {
+            parts.push(format!("resource={resource}"));
+        }
+        SemanticAction::KnowledgeRequest {
+            mode,
+            document,
+            query,
+            top_k,
+            score_threshold,
+            return_citations,
+            ..
+        } => {
+            if let Some(mode) = mode {
+                parts.push(format!("mode={}", knowledge_request_mode_label(mode)));
+            }
+            if let Some(document) = document {
+                parts.push(format!("document={document}"));
+            }
+            if let Some(query) = query {
+                parts.push(format!("query={}", digest_string(query)));
+            }
+            if let Some(top_k) = top_k {
+                parts.push(format!("top_k={top_k}"));
+            }
+            if let Some(score_threshold) = score_threshold {
+                parts.push(format!("score_threshold={score_threshold}"));
+            }
+            if let Some(return_citations) = return_citations {
+                parts.push(format!("return_citations={return_citations}"));
+            }
+        }
+        SemanticAction::MemoryRead {
+            mode,
+            record_id,
+            record_type,
+            filter,
+            query,
+            limit,
+            ..
+        } => {
+            parts.push(format!("mode={}", memory_read_mode_label(*mode)));
+            if let Some(record_id) = record_id {
+                parts.push(format!("record_id={}", digest_string(record_id)));
+            }
+            if let Some(record_type) = record_type {
+                parts.push(format!("record_type={record_type}"));
+            }
+            if !filter.is_empty() {
+                let keys = filter.keys().cloned().collect::<Vec<_>>().join(",");
+                parts.push(format!("filter_keys={keys}"));
+            }
+            if let Some(query) = query {
+                parts.push(format!("query={}", digest_string(query)));
+            }
+            if let Some(limit) = limit {
+                parts.push(format!("limit={limit}"));
+            }
+        }
+        SemanticAction::MemoryWrite {
+            operation,
+            record_type,
+            record_id,
+            content,
+            ..
+        } => {
+            parts.push(format!(
+                "operation={}",
+                memory_write_operation_label(*operation)
+            ));
+            parts.push(format!("record_type={record_type}"));
+            if let Some(record_id) = record_id {
+                parts.push(format!("record_id={}", digest_string(record_id)));
+            }
+            if let Some(content) = content {
+                let descriptor = content
+                    .as_object()
+                    .map(|object| {
+                        let keys = object.keys().cloned().collect::<Vec<_>>().join(",");
+                        format!("content_keys={keys}")
+                    })
+                    .unwrap_or_else(|| format!("content_type={}", value_type_name(content)));
+                parts.push(descriptor);
+            }
+        }
+        SemanticAction::PhaseCompletion { .. } | SemanticAction::PersistenceReviewComplete => {}
+    }
+    if parts.is_empty() {
+        "args=none".into()
+    } else {
+        parts.join("; ")
+    }
+}
+
+fn argument_digest_parts(arguments: &Value) -> Vec<String> {
+    let redacted = redact_digest_value(arguments);
+    match redacted {
+        Value::Object(map) if map.is_empty() => vec!["args=none".into()],
+        Value::Object(map) => map
+            .iter()
+            .take(6)
+            .map(|(key, value)| format!("{key}={}", digest_value(value)))
+            .chain((map.len() > 6).then(|| format!("... {} more args", map.len() - 6)))
+            .collect(),
+        other => vec![format!("args={}", digest_value(&other))],
+    }
+}
+
+fn knowledge_request_mode_label(
+    mode: &crate::harness_runtime::KnowledgeRequestMode,
+) -> &'static str {
+    match mode {
+        crate::harness_runtime::KnowledgeRequestMode::ContextDocument => "context_document",
+        crate::harness_runtime::KnowledgeRequestMode::VectorQuery => "vector_query",
+    }
+}
+
+fn redact_digest_value(value: &Value) -> Value {
+    let mut redacted = value.clone();
+    apply_content_policy_to_value(&mut redacted, &HarnessTraceContent::Full);
+    redacted
+}
+
+fn digest_value(value: &Value) -> String {
+    match value {
+        Value::String(value) => digest_string(value),
+        Value::Number(_) | Value::Bool(_) | Value::Null => value.to_string(),
+        Value::Array(items) => format!("[{} item{}]", items.len(), plural_suffix(items.len())),
+        Value::Object(object) => {
+            let keys = object.keys().take(6).cloned().collect::<Vec<_>>().join(",");
+            if object.len() > 6 {
+                format!("{{keys:{keys},...}}")
+            } else {
+                format!("{{keys:{keys}}}")
+            }
+        }
+    }
+}
+
+fn digest_string(value: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    if value.chars().count() <= MAX_CHARS {
+        quote_digest_string(value)
+    } else {
+        let truncated = value.chars().take(MAX_CHARS).collect::<String>();
+        format!("{}...", quote_digest_string(&truncated))
+    }
+}
+
+fn quote_digest_string(value: &str) -> String {
+    format!("{value:?}")
+}
+
+fn value_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn plural_suffix(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -998,15 +1213,23 @@ impl HarnessEngine {
                 ..HarnessEventBuilder::default()
             },
         )?;
-        let explicit_outcomes: Vec<String> = phase
+        let explicit_outcomes: Vec<AuthoredOutcomeContract> = phase
             .outcomes
+            .iter()
+            .map(|outcome| AuthoredOutcomeContract {
+                id: outcome.id.clone(),
+                description: outcome.description.clone(),
+            })
+            .collect();
+        let explicit_outcome_ids: Vec<String> = explicit_outcomes
             .iter()
             .map(|outcome| outcome.id.clone())
             .collect();
         let completion = CompletionContract {
             phase_id: phase.id.clone(),
-            explicit_outcomes: explicit_outcomes.clone(),
-            implicit_complete: explicit_outcomes.is_empty(),
+            explicit_outcomes: explicit_outcome_ids.clone(),
+            authored_outcomes: explicit_outcomes.clone(),
+            implicit_complete: explicit_outcome_ids.is_empty(),
         };
         let before_tool_selection_hook = HarnessHookId::BeforeToolSelection;
         let before_tool_selection_binding_count = hooks.binding_count(&before_tool_selection_hook);
@@ -1471,6 +1694,7 @@ impl HarnessEngine {
             structured_repairs: 0,
             tool_call_repairs: 0,
         };
+        let mut action_ledger = Vec::new();
         self.evaluate_memory_lifecycle_intervals_at_phase_start(
             session,
             &effective_phase,
@@ -1829,7 +2053,7 @@ impl HarnessEngine {
             // phase. Explicit-outcome phases require a structured completion so
             // transition choice is observable and repairable.
             if turn.actions.is_empty() {
-                if explicit_outcomes.is_empty() {
+                if explicit_outcome_ids.is_empty() {
                     let output = turn.assistant_content.map(Value::String);
                     return self.phase_result(
                         session,
@@ -1837,6 +2061,7 @@ impl HarnessEngine {
                         &phase_execution_id,
                         "complete".to_string(),
                         output,
+                        action_ledger,
                     );
                 }
                 repair_feedback = Some(
@@ -1867,7 +2092,7 @@ impl HarnessEngine {
                     .usage
                     .accepted_semantic_actions += 1;
                 let selected = outcome.clone().unwrap_or_else(|| "complete".to_string());
-                if !explicit_outcomes.is_empty() && !explicit_outcomes.contains(&selected) {
+                if !explicit_outcome_ids.is_empty() && !explicit_outcome_ids.contains(&selected) {
                     session.emitter.emit(
                         HarnessEventType::OutcomeInvalid,
                         HarnessEventPayload::Phase {
@@ -1894,7 +2119,7 @@ impl HarnessEngine {
                     )?;
                     continue;
                 }
-                if explicit_outcomes.is_empty() && selected != "complete" {
+                if explicit_outcome_ids.is_empty() && selected != "complete" {
                     repair_feedback = Some(format!(
                         "Phase `{}` has implicit outcome `complete`; `{selected}` is invalid.",
                         phase.id
@@ -1956,6 +2181,7 @@ impl HarnessEngine {
                     &phase_execution_id,
                     selected,
                     completion_output.output,
+                    action_ledger,
                 );
             }
 
@@ -2994,12 +3220,15 @@ impl HarnessEngine {
                     }
                     let error = result.error.unwrap_or_else(|| "action failed".to_string());
                     let terminal_status = result.terminal_status;
+                    if let Some(entry) = phase_action_ledger_entry(&action, ACTION_STATUS_FAILED) {
+                        action_ledger.push(entry);
+                    }
                     self.active_run_mut(session)?
                         .action_summaries
                         .push(ActionReportSummary {
                             action_kind: action.kind().into(),
                             identity: action.identity(),
-                            status: "failed".into(),
+                            status: ACTION_STATUS_FAILED.into(),
                             error: Some(error.clone()),
                         });
                     if action.is_tool_call() {
@@ -3007,17 +3236,18 @@ impl HarnessEngine {
                             OperationReportSummary {
                                 operation_kind: action.kind().into(),
                                 identity: action.identity(),
-                                status: "failed".into(),
+                                status: ACTION_STATUS_FAILED.into(),
                                 count: 1,
                             },
                         );
                     }
-                    return self.fail_phase(
+                    return self.fail_phase_with_ledger(
                         session,
                         &phase.id,
                         &phase_execution_id,
                         error,
                         terminal_status,
+                        action_ledger,
                     );
                 }
                 if matches!(action, SemanticAction::KnowledgeRequest { .. })
@@ -3032,7 +3262,7 @@ impl HarnessEngine {
                         .push(ActionReportSummary {
                             action_kind: action.kind().into(),
                             identity: action.identity(),
-                            status: "failed".into(),
+                            status: ACTION_STATUS_FAILED.into(),
                             error: result
                                 .output
                                 .get("error")
@@ -3040,6 +3270,9 @@ impl HarnessEngine {
                                 .and_then(Value::as_str)
                                 .map(str::to_string),
                         });
+                    if let Some(entry) = phase_action_ledger_entry(&action, ACTION_STATUS_FAILED) {
+                        action_ledger.push(entry);
+                    }
                     state.transcript.push(TranscriptEntry {
                         kind: TranscriptEntryKind::ActionResult,
                         content: action_result_transcript_content(
@@ -3065,7 +3298,7 @@ impl HarnessEngine {
                         .push(ActionReportSummary {
                             action_kind: action.kind().into(),
                             identity: action.identity(),
-                            status: "failed".into(),
+                            status: ACTION_STATUS_FAILED.into(),
                             error: result
                                 .output
                                 .get("error")
@@ -3073,6 +3306,9 @@ impl HarnessEngine {
                                 .and_then(Value::as_str)
                                 .map(str::to_string),
                         });
+                    if let Some(entry) = phase_action_ledger_entry(&action, ACTION_STATUS_FAILED) {
+                        action_ledger.push(entry);
+                    }
                     state.transcript.push(TranscriptEntry {
                         kind: TranscriptEntryKind::ActionResult,
                         content: action_result_transcript_content(
@@ -3105,12 +3341,15 @@ impl HarnessEngine {
                     content: action_result_transcript_content(&proposal, &action, result.output),
                     action_succeeded: Some(true),
                 });
+                if let Some(entry) = phase_action_ledger_entry(&action, ACTION_STATUS_COMPLETED) {
+                    action_ledger.push(entry);
+                }
                 self.active_run_mut(session)?
                     .action_summaries
                     .push(ActionReportSummary {
                         action_kind: action.kind().into(),
                         identity: action.identity(),
-                        status: "completed".into(),
+                        status: ACTION_STATUS_COMPLETED.into(),
                         error: None,
                     });
                 if action.is_tool_call() {
@@ -3118,7 +3357,7 @@ impl HarnessEngine {
                         OperationReportSummary {
                             operation_kind: action.kind().into(),
                             identity: action.identity(),
-                            status: "completed".into(),
+                            status: ACTION_STATUS_COMPLETED.into(),
                             count: 1,
                         },
                     );

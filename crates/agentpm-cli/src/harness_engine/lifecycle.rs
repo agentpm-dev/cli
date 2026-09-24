@@ -8,6 +8,7 @@ impl HarnessEngine {
         phase_execution_id: &str,
         outcome: String,
         output: Option<Value>,
+        action_ledger: Vec<PhaseActionLedgerEntry>,
     ) -> Result<PhaseResult> {
         let usage = self.active_run(session)?.usage.clone();
         let result = PhaseResult {
@@ -16,6 +17,7 @@ impl HarnessEngine {
             loop_step_number: self.active_run(session)?.step_count,
             outcome: outcome.clone(),
             output: output.clone(),
+            action_ledger,
             usage,
             metadata: BTreeMap::new(),
         };
@@ -54,6 +56,25 @@ impl HarnessEngine {
         message: String,
         terminal_status: Option<HarnessTerminalStatus>,
     ) -> Result<PhaseResult> {
+        self.fail_phase_with_ledger(
+            session,
+            phase_id,
+            phase_execution_id,
+            message,
+            terminal_status,
+            Vec::new(),
+        )
+    }
+
+    pub(super) fn fail_phase_with_ledger(
+        &self,
+        session: &mut HarnessSession,
+        phase_id: &str,
+        phase_execution_id: &str,
+        message: String,
+        terminal_status: Option<HarnessTerminalStatus>,
+        action_ledger: Vec<PhaseActionLedgerEntry>,
+    ) -> Result<PhaseResult> {
         self.active_run_mut(session)?.error_count += 1;
         let terminal_status = terminal_status.unwrap_or_else(|| self.phase_failure_status());
         let run_id = self.active_run(session)?.run_id().to_string();
@@ -84,6 +105,7 @@ impl HarnessEngine {
             loop_step_number: self.active_run(session)?.step_count,
             outcome: "failed".into(),
             output: Some(json!({ "error": message })),
+            action_ledger,
             usage: self.active_run(session)?.usage.clone(),
             metadata: BTreeMap::from([
                 ("phase_failed".into(), json!(true)),
@@ -137,6 +159,7 @@ impl HarnessEngine {
             loop_step_number: self.active_run(session)?.step_count,
             outcome: "limit_reached".into(),
             output: Some(json!({ "reason": reason })),
+            action_ledger: Vec::new(),
             usage: self.active_run(session)?.usage.clone(),
             metadata: BTreeMap::from([
                 ("limit_reached".into(), json!(true)),

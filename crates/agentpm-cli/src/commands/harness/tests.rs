@@ -4207,6 +4207,7 @@ fn empty_model_request(selection: ModelProviderSelection) -> ModelRequest {
             completion: crate::harness_runtime::model::CompletionContract {
                 phase_id: "respond".into(),
                 explicit_outcomes: Vec::new(),
+                authored_outcomes: Vec::new(),
                 implicit_complete: true,
             },
             diagnostics: Vec::new(),
