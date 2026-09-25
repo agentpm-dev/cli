@@ -1772,6 +1772,7 @@ for line in sys.stdin:
                     completion: CompletionContract {
                         phase_id: "classify".into(),
                         explicit_outcomes: vec!["draft".into()],
+                        authored_outcomes: Vec::new(),
                         implicit_complete: false,
                     },
                 },
@@ -1935,6 +1936,7 @@ for line in sys.stdin:
             CompletionContract {
                 phase_id: "classify".into(),
                 explicit_outcomes: vec!["draft".into()],
+                authored_outcomes: Vec::new(),
                 implicit_complete: false,
             },
             &phase,
@@ -2351,6 +2353,7 @@ for line in sys.stdin:
                 completion: CompletionContract {
                     phase_id: "assess".into(),
                     explicit_outcomes: vec!["done".into()],
+                    authored_outcomes: Vec::new(),
                     implicit_complete: false,
                 },
                 diagnostics: Vec::new(),

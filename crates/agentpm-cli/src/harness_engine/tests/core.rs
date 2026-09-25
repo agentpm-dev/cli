@@ -25,6 +25,241 @@ fn executes_multi_phase_loop_and_accumulates_session_usage() {
 }
 
 #[test]
+fn explicit_completion_without_output_uses_completing_turn_assistant_content() {
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let mut session = HarnessSession::new();
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion_without_output("a", "execute", Some("Assessment answer.")),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    assert!(matches!(result, HarnessRunResult::Terminal(_)));
+    assert_eq!(
+        model.requests[1].prior_phase_results[0].output,
+        Some(json!("Assessment answer."))
+    );
+    let fallback = handle
+        .events()
+        .into_iter()
+        .find(|event| event.event_type == HarnessEventType::PhaseOutputFallback)
+        .expect("fallback event");
+    let HarnessEventPayload::PhaseOutputFallback { status, source, .. } = fallback.payload else {
+        panic!("expected phase output fallback payload");
+    };
+    assert_eq!(status, "applied");
+    assert_eq!(source, "completing_turn");
+}
+
+#[test]
+fn explicit_completion_output_remains_authoritative() {
+    let (_, _, model) = run_engine(
+        base_loop(),
+        vec![
+            completion("a", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ],
+    );
+
+    assert_eq!(
+        model.requests[1].prior_phase_results[0].output,
+        Some(json!({ "outcome": "execute" }))
+    );
+}
+
+#[test]
+fn explicit_completion_without_assistant_reports_unavailable_fallback() {
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let mut session = HarnessSession::new();
+    let memory = InMemoryEventSink::default();
+    let handle = memory.clone();
+    session.emitter.add_sink(Box::new(memory));
+    let mut model = ScriptedModelRuntime::new(vec![
+        completion_without_output("a", "execute", None),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    assert!(matches!(result, HarnessRunResult::Terminal(_)));
+    assert_eq!(model.requests[1].prior_phase_results[0].output, None);
+    let fallback = handle
+        .events()
+        .into_iter()
+        .find(|event| event.event_type == HarnessEventType::PhaseOutputFallback)
+        .expect("fallback event");
+    let HarnessEventPayload::PhaseOutputFallback { status, source, .. } = fallback.payload else {
+        panic!("expected phase output fallback payload");
+    };
+    assert_eq!(status, "unavailable");
+    assert_eq!(source, "none");
+}
+
+#[test]
+fn post_action_assistant_intention_is_not_promoted_to_output() {
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let mut session = session_with_tool_and_skill();
+    let mut model = ScriptedModelRuntime::new(vec![
+        ModelTurn {
+            assistant_content: Some("I'll query the deployment status.".into()),
+            actions: vec![SemanticActionProposal::new(
+                "tool",
+                SemanticAction::AgentPmTool {
+                    tool: "@zack/search".into(),
+                    arguments: json!({ "query": "deployment status" }),
+                },
+            )],
+            usage: RunUsage::default(),
+            finish_reason: None,
+            provider_metadata: BTreeMap::new(),
+        },
+        completion_without_output("a", "execute", None),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+
+    assert!(matches!(result, HarnessRunResult::Terminal(_)));
+    assert_eq!(model.requests[2].prior_phase_results[0].output, None);
+}
+
+#[test]
+fn prior_phase_assistant_content_does_not_leak_to_terminal_phase() {
+    let (result, _, model) = run_engine(
+        base_loop(),
+        vec![
+            completion_without_output("a", "execute", Some("Assessment answer.")),
+            completion("b", "review"),
+            completion_without_output("c", "ready", None),
+        ],
+    );
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(
+        model.requests[1].prior_phase_results[0].output,
+        Some(json!("Assessment answer."))
+    );
+    assert_eq!(result.output, None);
+    assert_eq!(result.report.terminal_output, None);
+}
+
+#[test]
+fn phase_completion_output_can_use_latest_safe_prior_assistant() {
+    let state = PhaseExecutionState {
+        phase_execution_id: "phase-exec-test".into(),
+        phase_id: "assess".into(),
+        transcript: vec![
+            TranscriptEntry {
+                kind: TranscriptEntryKind::UserInput,
+                content: json!("hello"),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::Assistant,
+                content: json!("Earlier draft."),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::Assistant,
+                content: json!("Final answer."),
+                action_succeeded: None,
+            },
+        ],
+        model_calls: 0,
+        accepted_actions: 0,
+        logical_tool_calls: 0,
+        structured_repairs: 0,
+        tool_call_repairs: 0,
+    };
+
+    let selected = HarnessEngine::phase_completion_output(None, None, &state);
+
+    assert_eq!(selected.output, Some(json!("Final answer.")));
+    assert_eq!(
+        selected.fallback_source,
+        Some(PhaseOutputFallbackSource::PriorAssistant)
+    );
+}
+
+#[test]
+fn phase_completion_output_rejects_prior_assistant_after_action_result() {
+    let state = PhaseExecutionState {
+        phase_execution_id: "phase-exec-test".into(),
+        phase_id: "assess".into(),
+        transcript: vec![
+            TranscriptEntry {
+                kind: TranscriptEntryKind::UserInput,
+                content: json!("hello"),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::Assistant,
+                content: json!("I'll query first."),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::ActionResult,
+                content: json!({ "ok": true }),
+                action_succeeded: Some(true),
+            },
+        ],
+        model_calls: 0,
+        accepted_actions: 0,
+        logical_tool_calls: 0,
+        structured_repairs: 0,
+        tool_call_repairs: 0,
+    };
+
+    let selected = HarnessEngine::phase_completion_output(None, None, &state);
+
+    assert_eq!(selected.output, None);
+    assert_eq!(
+        selected.fallback_source,
+        Some(PhaseOutputFallbackSource::None)
+    );
+}
+
+#[test]
 fn supports_cycles_and_phase_reentry() {
     let (result, _, _) = run_engine(
         base_loop(),
@@ -703,6 +938,11 @@ fn persistence_review_complete_is_rejected_in_normal_phase_before_dispatch() {
     assert_eq!(result.status, HarnessTerminalStatus::Ended);
     assert_eq!(result.report.repair_count, 1);
     assert_eq!(result.report.usage.accepted_semantic_actions, 3);
+    assert!(
+        model.requests[2].prior_phase_results[0]
+            .action_ledger
+            .is_empty()
+    );
     assert!(dispatcher.dispatched.is_empty());
     assert!(handle.events().iter().any(|event| {
         if event.event_type != HarnessEventType::SemanticActionRejected {
@@ -778,6 +1018,111 @@ fn invalid_tool_arguments_request_repair_before_dispatch() {
             .render_text()
             .contains("arguments are invalid")
     );
+}
+
+#[test]
+fn missing_explicit_completion_repair_tells_model_to_preserve_prior_answer_as_output() {
+    let (result, _, model) = run_engine(
+        base_loop(),
+        vec![
+            ModelTurn {
+                assistant_content: Some("I inspect Harness behavior and summarize it.".into()),
+                actions: Vec::new(),
+                usage: RunUsage::default(),
+                finish_reason: Some("stop".into()),
+                provider_metadata: BTreeMap::new(),
+            },
+            completion("repair", "execute"),
+            completion("b", "review"),
+            completion("c", "ready"),
+        ],
+    );
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+    assert_eq!(result.report.repair_count, 1);
+    let feedback = model.requests[1]
+        .repair_feedback
+        .as_deref()
+        .expect("repair feedback should be provided");
+    assert!(feedback.contains("requires an explicit completion outcome"));
+    assert!(feedback.contains("include that answer in phase_completion.output"));
+}
+
+#[test]
+fn action_ledger_digest_is_stable_lossy_and_diverges_on_distinguishing_arguments() {
+    let first = SemanticAction::AgentPmTool {
+        tool: "@zack/search".into(),
+        arguments: json!({
+            "query": "launch readiness",
+            "api_key": "sk-test-secret"
+        }),
+    };
+    let equivalent = SemanticAction::AgentPmTool {
+        tool: "@zack/search".into(),
+        arguments: json!({
+            "api_key": "sk-test-secret",
+            "query": "launch readiness"
+        }),
+    };
+    let different = SemanticAction::AgentPmTool {
+        tool: "@zack/search".into(),
+        arguments: json!({
+            "query": "incident summary",
+            "api_key": "sk-test-secret"
+        }),
+    };
+    let memory_write = SemanticAction::MemoryWrite {
+        package: "@zack/memory".into(),
+        space: "notes".into(),
+        operation: MemoryWriteOperation::Create,
+        record_type: "note".into(),
+        record_id: None,
+        content: Some(json!({
+            "body": "do not put this note body in the ledger",
+            "title": "Launch note"
+        })),
+    };
+    let memory_read = SemanticAction::MemoryRead {
+        package: "@zack/memory".into(),
+        space: "notes".into(),
+        mode: MemoryReadMode::FullText,
+        record_id: None,
+        record_type: Some("note".into()),
+        filter: BTreeMap::new(),
+        query: Some("launch readiness".into()),
+        limit: Some(3),
+    };
+    let knowledge_request = SemanticAction::KnowledgeRequest {
+        package: "@zack/guide".into(),
+        mode: Some(crate::harness_runtime::KnowledgeRequestMode::VectorQuery),
+        document: None,
+        query: Some("launch readiness".into()),
+        top_k: Some(2),
+        score_threshold: None,
+        return_citations: Some(true),
+    };
+
+    let first_digest = action_argument_digest(&first);
+    assert_eq!(first_digest, action_argument_digest(&equivalent));
+    assert_ne!(first_digest, action_argument_digest(&different));
+    assert!(first_digest.contains("launch readiness"));
+    assert!(first_digest.contains("[secret redacted]"));
+    assert!(!first_digest.contains("sk-test-secret"));
+
+    let write_digest = action_argument_digest(&memory_write);
+    assert!(write_digest.contains("operation=create"));
+    assert!(write_digest.contains("content_keys=body,title"));
+    assert!(!write_digest.contains("do not put this note body"));
+    assert!(!write_digest.contains("Launch note"));
+
+    let read_digest = action_argument_digest(&memory_read);
+    assert!(read_digest.contains("mode=full_text"));
+    assert!(read_digest.contains("record_type=note"));
+
+    let knowledge_digest = action_argument_digest(&knowledge_request);
+    assert!(knowledge_digest.contains("mode=vector_query"));
+    assert!(knowledge_digest.contains("query=\"launch readiness\""));
 }
 
 #[test]
@@ -1024,6 +1369,17 @@ fn knowledge_backend_failure_is_returned_to_phase_transcript() {
     assert!(next_prompt.contains("\"ok\":false"));
     assert!(next_prompt.contains("knowledge_backend_down"));
     assert!(next_prompt.contains("backend unavailable"));
+    let cross_phase_prompt = model.requests[2].prompt.render_text();
+    let prior = &model.requests[2].prior_phase_results[0];
+    assert_eq!(prior.action_ledger.len(), 1);
+    let entry = &prior.action_ledger[0];
+    assert_eq!(entry.action_kind, "knowledge_request");
+    assert_eq!(entry.identity, "@zack/guide");
+    assert_eq!(entry.status, "failed");
+    assert!(entry.argument_digest.contains("query=\"alpha\""));
+    assert!(!entry.argument_digest.contains("backend unavailable"));
+    assert!(cross_phase_prompt.contains("knowledge_request @zack/guide args:"));
+    assert!(cross_phase_prompt.contains("status: failed"));
     let event_types = handle
         .events()
         .iter()
@@ -1503,6 +1859,118 @@ fn tool_retry_counts_additional_attempts_after_initial_failure() {
     let next_prompt = model.requests[1].prompt.render_text();
     assert!(next_prompt.contains("ActionResult [agentpm_tool @zack/search]"));
     assert!(next_prompt.contains(SUCCESSFUL_ACTION_RESULT_CONTROL));
+}
+
+#[test]
+fn action_ledger_records_one_logical_action_after_retry_without_result_payload() {
+    let mut loop_manifest = base_loop();
+    loop_manifest.r#loop.error_policy = Some(LoopErrorPolicy {
+        tool_failure: Some(LoopToolFailurePolicy {
+            action: LoopToolFailureAction::Retry,
+            max_retries: Some(2),
+            on_exhausted: Some(LoopToolFailureExhaustedAction::FailPhase),
+        }),
+        phase_failure: None,
+    });
+    let mut engine = HarnessEngine::new(loop_manifest, HarnessEngineOptions::new(limits()));
+    let mut session = session_with_tool_and_skill();
+    let mut model = ScriptedModelRuntime::new(vec![
+        tool_turn_with_arguments("@zack/search", json!({ "query": "launch readiness" })),
+        completion("a", "execute"),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    dispatcher.push_result("@zack/search", ActionDispatchResult::failure("temporary"));
+    dispatcher.push_result(
+        "@zack/search",
+        ActionDispatchResult::success(json!({"results": ["cached hit"]})),
+    );
+    let mut approvals = ScriptedApprovalController::default();
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(dispatcher.dispatched.len(), 2);
+    let prior = &model.requests[2].prior_phase_results[0];
+    assert_eq!(prior.action_ledger.len(), 1);
+    let entry = &prior.action_ledger[0];
+    assert_eq!(entry.action_kind, "agentpm_tool");
+    assert_eq!(entry.identity, "@zack/search");
+    assert_eq!(entry.status, "completed");
+    assert!(entry.argument_digest.contains("launch readiness"));
+    assert!(!entry.argument_digest.contains("cached hit"));
+
+    let prompt = model.requests[2].prompt.render_text();
+    assert!(prompt.contains("cross-phase action ledger: history only"));
+    assert!(prompt.contains("agentpm_tool @zack/search args:"));
+    assert!(prompt.contains("status: completed"));
+    assert!(!prompt.contains("cached hit"));
+    assert!(
+        model.requests[2]
+            .effective_phase
+            .capability_catalog
+            .iter()
+            .any(|descriptor| descriptor.action_kind == "agentpm_tool"
+                && descriptor.identity == "@zack/search")
+    );
+}
+
+#[test]
+fn action_ledger_prompt_context_is_not_controlled_by_trace_content_policy() {
+    let mut engine = HarnessEngine::new(base_loop(), HarnessEngineOptions::new(limits()));
+    let mut session = session_with_tool_and_skill();
+    let trace_path = temp_workspace_dir("ledger-trace-none").join("events.jsonl");
+    session.emitter.add_sink(Box::new(
+        JsonlTraceSink::create(
+            &trace_path,
+            HarnessTraceConfig {
+                enabled: true,
+                level: HarnessTraceLevel::Verbose,
+                content: HarnessTraceContent::None,
+            },
+        )
+        .unwrap(),
+    ));
+    let mut model = ScriptedModelRuntime::new(vec![
+        tool_turn_with_arguments("@zack/search", json!({ "query": "launch readiness" })),
+        completion("a", "execute"),
+        completion("b", "review"),
+        completion("c", "ready"),
+    ]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+    let mut approvals = ScriptedApprovalController::default();
+
+    let result = engine
+        .execute_run(
+            &mut session,
+            "hello",
+            &mut model,
+            &mut dispatcher,
+            &mut approvals,
+        )
+        .unwrap();
+    session.emitter.flush().unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected terminal result");
+    };
+
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    let prompt = model.requests[2].prompt.render_text();
+    assert!(prompt.contains("agentpm_tool @zack/search args: query=\"launch readiness\""));
+    let trace = std::fs::read_to_string(trace_path).unwrap();
+    assert!(!trace.contains("launch readiness"));
 }
 
 #[test]

@@ -71,6 +71,7 @@ pub enum HarnessEventType {
     EffectivePhaseComputed,
     PhaseStarted,
     PhaseResultReady,
+    PhaseOutputFallback,
     PhaseFailed,
     RunCompleted,
     RunFailed,
@@ -200,6 +201,12 @@ pub enum HarnessEventPayload {
         #[serde(skip_serializing_if = "Option::is_none")]
         output: Option<Value>,
     },
+    PhaseOutputFallback {
+        phase_id: String,
+        phase_execution_id: String,
+        status: String,
+        source: String,
+    },
     Action {
         action_kind: String,
         identity: String,
@@ -235,11 +242,20 @@ pub trait HarnessEventSink: Send {
     fn flush(&mut self) -> Result<()>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HarnessEventSinkId(u64);
+
+struct HarnessEventSinkEntry {
+    id: HarnessEventSinkId,
+    sink: Box<dyn HarnessEventSink>,
+}
+
 pub struct HarnessEventEmitter {
     session_id: String,
     session_sequence: u64,
     run_sequences: BTreeMap<String, u64>,
-    sinks: Vec<Box<dyn HarnessEventSink>>,
+    next_sink_id: u64,
+    sinks: Vec<HarnessEventSinkEntry>,
 }
 
 impl HarnessEventEmitter {
@@ -248,12 +264,25 @@ impl HarnessEventEmitter {
             session_id: session_id.into(),
             session_sequence: 0,
             run_sequences: BTreeMap::new(),
+            next_sink_id: 1,
             sinks: Vec::new(),
         }
     }
 
-    pub fn add_sink(&mut self, sink: Box<dyn HarnessEventSink>) {
-        self.sinks.push(sink);
+    pub fn add_sink(&mut self, sink: Box<dyn HarnessEventSink>) -> HarnessEventSinkId {
+        let id = HarnessEventSinkId(self.next_sink_id);
+        self.next_sink_id += 1;
+        self.sinks.push(HarnessEventSinkEntry { id, sink });
+        id
+    }
+
+    pub fn remove_sink(&mut self, id: HarnessEventSinkId) -> Result<bool> {
+        let Some(position) = self.sinks.iter().position(|entry| entry.id == id) else {
+            return Ok(false);
+        };
+        let mut entry = self.sinks.remove(position);
+        entry.sink.flush()?;
+        Ok(true)
     }
 
     pub fn emit(
@@ -282,15 +311,15 @@ impl HarnessEventEmitter {
             parent_event_id: builder.parent_event_id,
             payload,
         };
-        for sink in &mut self.sinks {
-            sink.record(&event)?;
+        for entry in &mut self.sinks {
+            entry.sink.record(&event)?;
         }
         Ok(event)
     }
 
     pub fn flush(&mut self) -> Result<()> {
-        for sink in &mut self.sinks {
-            sink.flush()?;
+        for entry in &mut self.sinks {
+            entry.sink.flush()?;
         }
         Ok(())
     }
@@ -385,6 +414,7 @@ fn trace_level_includes(level: &HarnessTraceLevel, event_type: HarnessEventType)
                 | HarnessEventType::RunStarted
                 | HarnessEventType::PhaseStarted
                 | HarnessEventType::PhaseResultReady
+                | HarnessEventType::PhaseOutputFallback
                 | HarnessEventType::TransitionSelected
                 | HarnessEventType::RunCompleted
                 | HarnessEventType::RunFailed
@@ -1255,6 +1285,66 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[1].session_sequence, 2);
+    }
+
+    #[test]
+    fn removed_trace_sink_does_not_receive_later_run_events() {
+        let dir = temp_dir("jsonl-remove-sink");
+        let first_path = dir.join("run-1-events.jsonl");
+        let second_path = dir.join("run-2-events.jsonl");
+        let mut emitter = HarnessEventEmitter::new("session-1");
+        let first_sink = emitter.add_sink(Box::new(
+            JsonlTraceSink::create(
+                &first_path,
+                trace_config(HarnessTraceLevel::Verbose, HarnessTraceContent::Redacted),
+            )
+            .unwrap(),
+        ));
+        emitter
+            .emit(
+                HarnessEventType::RunStarted,
+                HarnessEventPayload::Empty,
+                HarnessEventBuilder {
+                    run_id: Some("run-1".into()),
+                    ..HarnessEventBuilder::default()
+                },
+            )
+            .unwrap();
+        assert!(emitter.remove_sink(first_sink).unwrap());
+
+        emitter.add_sink(Box::new(
+            JsonlTraceSink::create(
+                &second_path,
+                trace_config(HarnessTraceLevel::Verbose, HarnessTraceContent::Redacted),
+            )
+            .unwrap(),
+        ));
+        emitter
+            .emit(
+                HarnessEventType::RunStarted,
+                HarnessEventPayload::Empty,
+                HarnessEventBuilder {
+                    run_id: Some("run-2".into()),
+                    ..HarnessEventBuilder::default()
+                },
+            )
+            .unwrap();
+        emitter.flush().unwrap();
+
+        let first_events = fs::read_to_string(&first_path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<HarnessEventEnvelope>(line).unwrap())
+            .collect::<Vec<_>>();
+        let second_events = fs::read_to_string(&second_path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<HarnessEventEnvelope>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(first_events.len(), 1);
+        assert_eq!(first_events[0].run_id.as_deref(), Some("run-1"));
+        assert_eq!(second_events.len(), 1);
+        assert_eq!(second_events[0].run_id.as_deref(), Some("run-2"));
     }
 
     #[test]

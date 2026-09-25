@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use super::action::SemanticActionProposal;
-use crate::harness_engine::{EffectivePhase, PhaseResult};
+use crate::harness_engine::{EffectivePhase, PhaseActionLedgerEntry, PhaseResult, estimate_tokens};
 use crate::harness_observability::RunUsage;
 use crate::manifest::{
     MemoryRetrievalMode, MemorySpaceModel, ProfileConstraintStrength, ProfileMetadata,
@@ -23,6 +23,9 @@ pub(crate) const PERSISTENCE_REVIEW_TARGET_SELECTION_CONTROL: &str = "Choose the
 const PROVIDER_ACTION_ALIAS_MAX_LEN: usize = 64;
 const PROVIDER_ACTION_HASH_LEN: usize = 8;
 const MEMORY_FILTER_PATH_ENUMERATION_LIMIT: usize = 128;
+const CROSS_PHASE_DETAIL_BUDGET_TOKENS: u64 = 1_200;
+const CROSS_PHASE_LEDGER_FLOOR_TOKENS: u64 = 160;
+const CROSS_PHASE_OUTPUT_ENTRY_MAX_TOKENS: u64 = 320;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -515,9 +518,17 @@ pub struct ActionAlias {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoredOutcomeContract {
+    pub id: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompletionContract {
     pub phase_id: String,
     pub explicit_outcomes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authored_outcomes: Vec<AuthoredOutcomeContract>,
     pub implicit_complete: bool,
 }
 
@@ -619,7 +630,34 @@ fn render_prompt_section_content(
     if section.title == "HARNESS CONTROL" && !options.include_repair_feedback_control {
         content = omit_repair_feedback_control(&content);
     }
+    if section.title == CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE {
+        content = render_current_phase_transcript_section(&content);
+    }
     content
+}
+
+fn render_implicit_completion_contract() -> String {
+    "This phase has implicit outcome `complete`; final assistant text with no action may complete the phase. If you propose actions, Harness returns authoritative results before completion.".to_string()
+}
+
+fn render_explicit_completion_contract(outcomes: &[AuthoredOutcomeContract]) -> String {
+    let mut lines = vec![
+        "This phase must complete with exactly one authored outcome. Choose the outcome whose authored description matches this phase result:"
+            .to_string(),
+    ];
+    for outcome in outcomes {
+        lines.push(format!("- `{}`: {}", outcome.id, outcome.description));
+    }
+    lines.join("\n")
+}
+
+fn render_current_phase_transcript_section(content: &str) -> String {
+    let preamble = "This phase-local transcript is authoritative for actions and results already executed in the current phase. Harness returns authoritative results for executed actions.";
+    if content.trim().is_empty() {
+        preamble.to_string()
+    } else {
+        format!("{preamble}\n{content}")
+    }
 }
 
 fn omit_run_input_from_context_section(content: &str) -> String {
@@ -647,7 +685,7 @@ pub struct PromptAssemblyInput<'a> {
     pub purpose: PromptAssemblyPurpose<'a>,
     pub phase_id: &'a str,
     pub phase_objective: &'a str,
-    pub explicit_outcomes: &'a [String],
+    pub explicit_outcomes: &'a [AuthoredOutcomeContract],
     pub run_input: &'a str,
     pub consumer_context: Option<&'a ConsumerContextSnapshot>,
     pub prior_phase_results: &'a [PhaseResult],
@@ -667,22 +705,25 @@ pub enum PromptAssemblyPurpose<'a> {
 
 pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt {
     let implicit_complete = input.explicit_outcomes.is_empty();
+    let explicit_outcome_ids = input
+        .explicit_outcomes
+        .iter()
+        .map(|outcome| outcome.id.clone())
+        .collect::<Vec<_>>();
     let completion = CompletionContract {
         phase_id: input.phase_id.to_string(),
-        explicit_outcomes: input.explicit_outcomes.to_vec(),
+        explicit_outcomes: explicit_outcome_ids,
+        authored_outcomes: input.explicit_outcomes.to_vec(),
         implicit_complete,
     };
     let mut diagnostics = Vec::new();
     let action_aliases = provider_action_aliases(input.effective_phase);
 
     let outcome_contract = match input.purpose {
-        PromptAssemblyPurpose::Phase if implicit_complete => {
-            "This phase has implicit outcome `complete`; final assistant text with no action may complete the phase.".to_string()
+        PromptAssemblyPurpose::Phase if implicit_complete => render_implicit_completion_contract(),
+        PromptAssemblyPurpose::Phase => {
+            render_explicit_completion_contract(input.explicit_outcomes)
         }
-        PromptAssemblyPurpose::Phase => format!(
-            "This phase must complete with exactly one authored outcome: {}.",
-            input.explicit_outcomes.join(", ")
-        ),
         PromptAssemblyPurpose::MemoryWriteReview {
             point,
             pending_outcome,
@@ -691,7 +732,7 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         ),
     };
     let mut control = format!(
-        "Harness authority: propose semantic actions only; Harness validates and executes them.\nCurrent phase: {}\n{}",
+        "Harness authority: propose semantic actions only; Harness validates and executes them.\nExecution model: This is one phase of one Run. Harness owns transitions, executes proposed semantic actions, and returns authoritative results for executed actions. The Run input is the operator goal; the phase objective is this phase's current responsibility. Advance the Run by satisfying this phase rather than doing work assigned to later phases.\nPhase boundary: this phase's working transcript is local. Later phases receive only the selected outcome, phase output, and compact cross-phase action ledger.\nCurrent phase: {}\n{}",
         input.phase_id, outcome_contract
     );
     if let Some(feedback) = input.repair_feedback {
@@ -734,28 +775,7 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         }
     }
 
-    let cross_phase = if input.prior_phase_results.is_empty() {
-        "No prior PhaseResults.".to_string()
-    } else {
-        input
-            .prior_phase_results
-            .iter()
-            .map(|result| {
-                format!(
-                    "- step {} phase `{}` outcome `{}` output: {}",
-                    result.loop_step_number,
-                    result.phase_id,
-                    result.outcome,
-                    result
-                        .output
-                        .as_ref()
-                        .map(Value::to_string)
-                        .unwrap_or_else(|| "null".into())
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    let cross_phase = render_cross_phase_state(input.prior_phase_results, &mut diagnostics);
 
     let capability_catalog = if input.effective_phase.capability_catalog.is_empty() {
         "No executable capability descriptors are available for this phase.".to_string()
@@ -811,6 +831,221 @@ pub fn assemble_logical_prompt(input: PromptAssemblyInput<'_>) -> LogicalPrompt 
         completion,
         diagnostics,
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CrossPhaseDetailPlan {
+    render_output: bool,
+    output_stub_reason: Option<&'static str>,
+    ledger_entries: usize,
+    ledger_stub_reason: Option<&'static str>,
+}
+
+fn render_cross_phase_state(
+    prior_phase_results: &[PhaseResult],
+    diagnostics: &mut Vec<String>,
+) -> String {
+    if prior_phase_results.is_empty() {
+        return "No prior PhaseResults.".to_string();
+    }
+
+    let mut plans = vec![CrossPhaseDetailPlan::default(); prior_phase_results.len()];
+    let mut remaining_budget = CROSS_PHASE_DETAIL_BUDGET_TOKENS;
+    let mut budget_omitted_outputs = 0usize;
+    let mut capped_outputs = 0usize;
+    let mut detailed_outputs = 0usize;
+    let mut rendered_ledger_entries = 0usize;
+    let mut budget_omitted_ledger_entries = 0usize;
+    let mut floor_omitted_ledger_entries = 0usize;
+    let mut ledger_floor_reserved_tokens = 0u64;
+
+    for (index, result) in prior_phase_results.iter().enumerate().rev() {
+        let has_detail = result.output.is_some() || !result.action_ledger.is_empty();
+        if !has_detail {
+            continue;
+        }
+
+        let mut reserved_ledger_floor = false;
+        if !result.action_ledger.is_empty() {
+            if CROSS_PHASE_LEDGER_FLOOR_TOKENS <= remaining_budget {
+                let entries_to_render = ledger_entries_within_floor(
+                    &result.action_ledger,
+                    CROSS_PHASE_LEDGER_FLOOR_TOKENS,
+                );
+                let entries_to_render = entries_to_render.max(1).min(result.action_ledger.len());
+                plans[index].ledger_entries = entries_to_render;
+                rendered_ledger_entries += entries_to_render;
+                if entries_to_render < result.action_ledger.len() {
+                    floor_omitted_ledger_entries += result.action_ledger.len() - entries_to_render;
+                    plans[index].ledger_stub_reason =
+                        Some("omitted: exceeds per-phase ledger floor");
+                }
+                remaining_budget = remaining_budget.saturating_sub(CROSS_PHASE_LEDGER_FLOOR_TOKENS);
+                reserved_ledger_floor = true;
+            } else {
+                budget_omitted_ledger_entries += result.action_ledger.len();
+                plans[index].ledger_stub_reason =
+                    Some("omitted: cross-phase detail budget reserved for more recent phases");
+            }
+        }
+
+        let Some(output) = &result.output else {
+            if reserved_ledger_floor {
+                ledger_floor_reserved_tokens =
+                    ledger_floor_reserved_tokens.saturating_add(CROSS_PHASE_LEDGER_FLOOR_TOKENS);
+            }
+            continue;
+        };
+        if !result.action_ledger.is_empty() && !reserved_ledger_floor {
+            plans[index].output_stub_reason =
+                Some("omitted: cross-phase detail budget reserved for more recent phases");
+            budget_omitted_outputs += 1;
+            continue;
+        }
+        let rendered_output = output.to_string();
+        let output_tokens = estimate_tokens(&rendered_output);
+        if output_tokens > CROSS_PHASE_OUTPUT_ENTRY_MAX_TOKENS {
+            plans[index].output_stub_reason = Some("omitted: exceeds per-phase output cap");
+            capped_outputs += 1;
+            if reserved_ledger_floor {
+                ledger_floor_reserved_tokens =
+                    ledger_floor_reserved_tokens.saturating_add(CROSS_PHASE_LEDGER_FLOOR_TOKENS);
+            }
+            continue;
+        }
+        if output_tokens <= remaining_budget {
+            plans[index].render_output = true;
+            remaining_budget = remaining_budget.saturating_sub(output_tokens);
+            if reserved_ledger_floor {
+                ledger_floor_reserved_tokens =
+                    ledger_floor_reserved_tokens.saturating_add(CROSS_PHASE_LEDGER_FLOOR_TOKENS);
+            } else if !result.action_ledger.is_empty() {
+                budget_omitted_ledger_entries += result.action_ledger.len();
+            }
+            detailed_outputs += 1;
+        } else {
+            plans[index].output_stub_reason =
+                Some("omitted: cross-phase detail budget reserved for more recent phases");
+            budget_omitted_outputs += 1;
+            if reserved_ledger_floor {
+                ledger_floor_reserved_tokens =
+                    ledger_floor_reserved_tokens.saturating_add(CROSS_PHASE_LEDGER_FLOOR_TOKENS);
+            }
+        }
+    }
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "[cross-phase detail budget: {} tokens; ledger floor: {} tokens per detailed phase; output entry cap: {} tokens]",
+        CROSS_PHASE_DETAIL_BUDGET_TOKENS,
+        CROSS_PHASE_LEDGER_FLOOR_TOKENS,
+        CROSS_PHASE_OUTPUT_ENTRY_MAX_TOKENS
+    ));
+    lines.push(
+        "[cross-phase state: compact handoff from earlier phases, not their transcripts. Prior outputs carry conclusions forward; ledger entries show execution history without result payloads or loaded resources.]"
+            .into(),
+    );
+    if prior_phase_results
+        .iter()
+        .any(|result| !result.action_ledger.is_empty())
+    {
+        lines.push(
+            "[cross-phase action ledger: history only; result payloads and loaded resources are not carried here. Repeat a prior action when the current phase needs its result, refreshed state, or an independently loaded resource.]"
+                .into(),
+        );
+    }
+    for (result, plan) in prior_phase_results.iter().zip(plans.iter()) {
+        lines.push(format!(
+            "- step {} phase `{}` outcome `{}`",
+            result.loop_step_number, result.phase_id, result.outcome
+        ));
+        match &result.output {
+            Some(output) if plan.render_output => {
+                lines.push(format!("  output: {}", output));
+            }
+            Some(_output) => {
+                let reason = plan
+                    .output_stub_reason
+                    .unwrap_or("omitted: cross-phase detail budget unavailable");
+                lines.push(format!("  output: [{reason}]"));
+            }
+            None => {
+                lines.push("  output: null".into());
+            }
+        }
+        if !result.action_ledger.is_empty() {
+            if plan.ledger_entries > 0 {
+                lines.push("  action ledger:".into());
+                for entry in result.action_ledger.iter().take(plan.ledger_entries) {
+                    lines.push(format!(
+                        "    - {} {} args: {} status: {}",
+                        entry.action_kind, entry.identity, entry.argument_digest, entry.status
+                    ));
+                }
+                if let Some(reason) = plan.ledger_stub_reason {
+                    lines.push(format!(
+                        "    - [{}; {} prior action entries omitted]",
+                        reason,
+                        result
+                            .action_ledger
+                            .len()
+                            .saturating_sub(plan.ledger_entries)
+                    ));
+                }
+            } else {
+                let reason = plan
+                    .ledger_stub_reason
+                    .unwrap_or("omitted: cross-phase detail budget unavailable");
+                lines.push(format!(
+                    "  action ledger: [{reason}; {} prior action entries omitted]",
+                    result.action_ledger.len()
+                ));
+            }
+        }
+    }
+    if budget_omitted_outputs > 0 || capped_outputs > 0 {
+        lines.push(format!(
+            "[cross-phase output detail marker: {budget_omitted_outputs} output entries omitted by budget; {capped_outputs} output entries stubbed by per-entry cap]"
+        ));
+    }
+    if budget_omitted_ledger_entries > 0 || floor_omitted_ledger_entries > 0 {
+        lines.push(format!(
+            "[cross-phase action ledger marker: {budget_omitted_ledger_entries} entries omitted by budget; {floor_omitted_ledger_entries} entries omitted by per-phase ledger floor]"
+        ));
+    }
+    if detailed_outputs > 0 || rendered_ledger_entries > 0 {
+        diagnostics.push(format!(
+            "cross-phase budget: {detailed_outputs} output entries rendered; {budget_omitted_outputs} output entries omitted by budget; {capped_outputs} output entries stubbed by cap; {rendered_ledger_entries} ledger entries rendered; {budget_omitted_ledger_entries} ledger entries omitted by budget; {floor_omitted_ledger_entries} ledger entries omitted by floor; {ledger_floor_reserved_tokens} ledger-floor tokens reserved"
+        ));
+    } else if budget_omitted_outputs > 0
+        || capped_outputs > 0
+        || budget_omitted_ledger_entries > 0
+        || floor_omitted_ledger_entries > 0
+    {
+        diagnostics.push(format!(
+            "cross-phase budget: no output entries rendered; {budget_omitted_outputs} output entries omitted by budget; {capped_outputs} output entries stubbed by cap; no ledger entries rendered; {budget_omitted_ledger_entries} ledger entries omitted by budget; {floor_omitted_ledger_entries} ledger entries omitted by floor; ledger floor {} tokens per detailed phase",
+            CROSS_PHASE_LEDGER_FLOOR_TOKENS
+        ));
+    }
+    lines.join("\n")
+}
+
+fn ledger_entries_within_floor(entries: &[PhaseActionLedgerEntry], token_floor: u64) -> usize {
+    let mut tokens = 0u64;
+    let mut count = 0usize;
+    for entry in entries {
+        let rendered = format!(
+            "{} {} args: {} status: {}",
+            entry.action_kind, entry.identity, entry.argument_digest, entry.status
+        );
+        let entry_tokens = estimate_tokens(&rendered);
+        if count > 0 && tokens.saturating_add(entry_tokens) > token_floor {
+            break;
+        }
+        tokens = tokens.saturating_add(entry_tokens);
+        count += 1;
+    }
+    count
 }
 
 fn render_capability_catalog_lines(
@@ -1779,6 +2014,13 @@ mod tests {
         }
     }
 
+    fn outcome(id: &str, description: &str) -> AuthoredOutcomeContract {
+        AuthoredOutcomeContract {
+            id: id.into(),
+            description: description.into(),
+        }
+    }
+
     fn memory_space(
         package: &str,
         space: &str,
@@ -1831,6 +2073,24 @@ mod tests {
             active_memory_operations: Vec::new(),
             capability_catalog,
             suppressed_capabilities: Vec::new(),
+        }
+    }
+
+    fn phase_result(
+        step: u64,
+        phase_id: &str,
+        outcome: &str,
+        output: Option<Value>,
+    ) -> PhaseResult {
+        PhaseResult {
+            phase_execution_id: format!("phase-exec-{step}"),
+            phase_id: phase_id.into(),
+            loop_step_number: step,
+            outcome: outcome.into(),
+            output,
+            action_ledger: Vec::new(),
+            usage: RunUsage::default(),
+            metadata: BTreeMap::new(),
         }
     }
 
@@ -2263,7 +2523,7 @@ mod tests {
             purpose: PromptAssemblyPurpose::Phase,
             phase_id: "remember",
             phase_objective: "Remember useful details.",
-            explicit_outcomes: &["done".into()],
+            explicit_outcomes: &[outcome("done", "Finish the phase successfully.")],
             run_input: "exercise aliases",
             consumer_context: None,
             prior_phase_results: &[],
@@ -2297,6 +2557,308 @@ mod tests {
             catalog
                 .lines()
                 .any(|line| line.contains("[memory_read (chronological)]"))
+        );
+    }
+
+    #[test]
+    fn explicit_outcome_descriptions_reach_harness_control_contract() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "triage/completion")],
+            vec![],
+        );
+        let outcomes = vec![
+            outcome(
+                "handoff",
+                "Route the incident to another owner with enough context to continue.",
+            ),
+            outcome(
+                "resolve",
+                "Close the incident because the current phase confirmed it is resolved.",
+            ),
+        ];
+
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "triage",
+            phase_objective: "Decide the next incident owner.",
+            explicit_outcomes: &outcomes,
+            run_input: "triage the incident",
+            consumer_context: None,
+            prior_phase_results: &[],
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+        let control = prompt
+            .sections
+            .iter()
+            .find(|section| section.title == "HARNESS CONTROL")
+            .expect("control section")
+            .content
+            .clone();
+
+        assert_eq!(
+            prompt.completion.explicit_outcomes,
+            vec!["handoff", "resolve"]
+        );
+        assert_eq!(prompt.completion.authored_outcomes, outcomes);
+        assert!(control.contains("This phase must complete with exactly one authored outcome"));
+        assert!(control.contains(
+            "- `handoff`: Route the incident to another owner with enough context to continue."
+        ));
+        assert!(control.contains(
+            "- `resolve`: Close the incident because the current phase confirmed it is resolved."
+        ));
+        assert!(!control.contains("handoff, resolve"));
+    }
+
+    #[test]
+    fn implicit_complete_phase_renders_parallel_short_form_without_outcome_block() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "inspect/completion")],
+            vec![],
+        );
+
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "inspect",
+            phase_objective: "Inspect the request.",
+            explicit_outcomes: &[],
+            run_input: "inspect",
+            consumer_context: None,
+            prior_phase_results: &[],
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+        let control = prompt
+            .sections
+            .iter()
+            .find(|section| section.title == "HARNESS CONTROL")
+            .expect("control section")
+            .content
+            .clone();
+
+        assert!(prompt.completion.implicit_complete);
+        assert!(prompt.completion.authored_outcomes.is_empty());
+        assert!(control.contains("implicit outcome `complete`"));
+        assert!(control.contains("final assistant text with no action may complete the phase"));
+        assert!(!control.contains("exactly one authored outcome"));
+    }
+
+    #[test]
+    fn harness_control_orientation_reaches_native_and_fallback_provider_text() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "respond/completion")],
+            vec![],
+        );
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "respond",
+            phase_objective: "Respond to the operator.",
+            explicit_outcomes: &[outcome("done", "The response satisfies the operator goal.")],
+            run_input: "answer",
+            consumer_context: None,
+            prior_phase_results: &[],
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+
+        let fallback = prompt.render_provider_text(true);
+        let native = prompt.render_provider_text_with_native_turns(false);
+
+        for rendered in [fallback, native] {
+            assert!(rendered.contains("Execution model: This is one phase of one Run."));
+            assert!(rendered.contains(
+                "Run input is the operator goal; the phase objective is this phase's current responsibility."
+            ));
+            assert!(rendered.contains("Phase boundary: this phase's working transcript is local."));
+        }
+    }
+
+    #[test]
+    fn transcript_preamble_is_only_present_when_transcript_section_renders() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "remember/completion")],
+            vec![],
+        );
+        let transcript = vec![TranscriptEntry {
+            kind: TranscriptEntryKind::ActionResult,
+            content: json!({
+                "action_kind": "agentpm_tool",
+                "identity": "@zack/search",
+                "result": { "ok": true }
+            }),
+            action_succeeded: Some(true),
+        }];
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &[outcome("done", "Finish the phase successfully.")],
+            run_input: "input",
+            consumer_context: None,
+            prior_phase_results: &[],
+            effective_phase: &phase,
+            transcript: &transcript,
+            repair_feedback: None,
+        });
+
+        let fallback = prompt.render_provider_text(true);
+        assert!(fallback.contains(
+            "This phase-local transcript is authoritative for actions and results already executed in the current phase."
+        ));
+
+        let native = prompt.render_provider_text_with_native_turns(false);
+        assert!(!native.contains(CURRENT_PHASE_LOCAL_TRANSCRIPT_SECTION_TITLE));
+        assert!(!native.contains("This phase-local transcript is authoritative"));
+    }
+
+    #[test]
+    fn cross_phase_state_keeps_all_phase_stubs_and_recent_output_detail() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "remember/completion")],
+            vec![],
+        );
+        let prior = (1..=8)
+            .map(|step| {
+                let output = format!("phase {step} {}", "detail ".repeat(90));
+                phase_result(step, &format!("phase-{step}"), "done", Some(json!(output)))
+            })
+            .collect::<Vec<_>>();
+
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &[outcome("done", "Finish the phase successfully.")],
+            run_input: "input",
+            consumer_context: None,
+            prior_phase_results: &prior,
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+        let cross_phase = prompt
+            .sections
+            .iter()
+            .find(|section| section.title == "CROSS-PHASE STATE")
+            .expect("cross-phase section")
+            .content
+            .clone();
+
+        assert!(cross_phase.contains(
+            "cross-phase state: compact handoff from earlier phases, not their transcripts"
+        ));
+        assert!(cross_phase.contains("Prior outputs carry conclusions forward"));
+        assert!(cross_phase.contains("- step 1 phase `phase-1` outcome `done`"));
+        assert!(cross_phase.contains("- step 8 phase `phase-8` outcome `done`"));
+        assert!(cross_phase.contains("phase 8 detail"));
+        assert!(
+            cross_phase.contains(
+                "output: [omitted: cross-phase detail budget reserved for more recent phases]"
+            ),
+            "{cross_phase}"
+        );
+        assert!(cross_phase.contains("[cross-phase output detail marker:"));
+        assert!(
+            prompt
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("cross-phase budget:"))
+        );
+    }
+
+    #[test]
+    fn cross_phase_state_stubs_oversized_output_without_cutting_prose() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "remember/completion")],
+            vec![],
+        );
+        let oversized = format!("the answer is {}", "not ready ".repeat(700));
+        let prior = vec![phase_result(
+            1,
+            "assess",
+            "done",
+            Some(json!(oversized.clone())),
+        )];
+
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &[outcome("done", "Finish the phase successfully.")],
+            run_input: "input",
+            consumer_context: None,
+            prior_phase_results: &prior,
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+        let cross_phase = prompt
+            .sections
+            .iter()
+            .find(|section| section.title == "CROSS-PHASE STATE")
+            .expect("cross-phase section")
+            .content
+            .clone();
+
+        assert!(cross_phase.contains("- step 1 phase `assess` outcome `done`"));
+        assert!(cross_phase.contains("output: [omitted: exceeds per-phase output cap]"));
+        assert!(!cross_phase.contains(&oversized));
+    }
+
+    #[test]
+    fn cross_phase_state_renders_bounded_action_ledger_with_visible_marker() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "remember/completion")],
+            vec![],
+        );
+        let mut result = phase_result(1, "assess", "done", Some(json!("assessment complete")));
+        result.action_ledger = (0..40)
+            .map(|index| PhaseActionLedgerEntry {
+                action_kind: "agentpm_tool".into(),
+                identity: "@zack/search".into(),
+                argument_digest: format!("query=\"launch readiness {index}\""),
+                status: "completed".into(),
+            })
+            .collect();
+        let prior = vec![result];
+
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &[outcome("done", "Finish the phase successfully.")],
+            run_input: "input",
+            consumer_context: None,
+            prior_phase_results: &prior,
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+        let cross_phase = prompt
+            .sections
+            .iter()
+            .find(|section| section.title == "CROSS-PHASE STATE")
+            .expect("cross-phase section")
+            .content
+            .clone();
+
+        assert!(cross_phase.contains("cross-phase action ledger: history only"));
+        assert!(cross_phase.contains("action ledger:"));
+        assert!(cross_phase.contains(
+            "agentpm_tool @zack/search args: query=\"launch readiness 0\" status: completed"
+        ));
+        assert!(cross_phase.contains("[cross-phase action ledger marker:"));
+        assert!(cross_phase.contains("entries omitted by per-phase ledger floor"));
+        assert!(cross_phase.contains("output: \"assessment complete\""));
+        assert!(
+            prompt
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("ledger entries rendered"))
         );
     }
 
@@ -2540,7 +3102,7 @@ mod tests {
             purpose: PromptAssemblyPurpose::Phase,
             phase_id: "remember",
             phase_objective: "Remember useful details.",
-            explicit_outcomes: &["done".into()],
+            explicit_outcomes: &[outcome("done", "Finish the phase successfully.")],
             run_input: "multi-line\nrun input",
             consumer_context: Some(&ConsumerContextSnapshot {
                 state: "NotConfigured".into(),
@@ -2612,7 +3174,7 @@ mod tests {
             },
             phase_id: "remember",
             phase_objective: "Remember useful details.",
-            explicit_outcomes: &["done".into()],
+            explicit_outcomes: &[outcome("done", "Finish the phase successfully.")],
             run_input: "input",
             consumer_context: None,
             prior_phase_results: &[],

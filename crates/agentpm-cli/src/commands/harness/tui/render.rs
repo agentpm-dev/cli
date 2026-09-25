@@ -2509,6 +2509,12 @@ fn event_payload_detail(payload: &HarnessEventPayload) -> String {
             outcome.as_deref().unwrap_or("pending"),
             transition_to.as_deref().unwrap_or("pending")
         ),
+        HarnessEventPayload::PhaseOutputFallback {
+            phase_id,
+            status,
+            source,
+            ..
+        } => format!("phase {phase_id} · output fallback {status} · {source}"),
         HarnessEventPayload::Preflight { status, .. } => {
             format!("preflight {}", preflight_status_label(*status))
         }
@@ -3005,6 +3011,7 @@ fn is_memory_event_type(event_type: HarnessEventType) -> bool {
         | HarnessEventType::EffectivePhaseComputed
         | HarnessEventType::PhaseStarted
         | HarnessEventType::PhaseResultReady
+        | HarnessEventType::PhaseOutputFallback
         | HarnessEventType::PhaseFailed
         | HarnessEventType::RunCompleted
         | HarnessEventType::RunFailed

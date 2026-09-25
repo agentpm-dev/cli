@@ -1,5 +1,6 @@
 use super::*;
-use crate::harness_observability::{HarnessEventEnvelope, InMemoryEventSink};
+use crate::harness_config::{HarnessTraceConfig, HarnessTraceContent, HarnessTraceLevel};
+use crate::harness_observability::{HarnessEventEnvelope, InMemoryEventSink, JsonlTraceSink};
 use crate::harness_runtime::action::{
     ActionDispatchResult, ActionFailureCategory, MemoryReadMode, MemoryWriteOperation,
     ScriptedActionDispatcher, SemanticActionProposal,
@@ -210,6 +211,26 @@ fn completion(id: &str, outcome: &str) -> ModelTurn {
             SemanticAction::PhaseCompletion {
                 outcome: Some(outcome.into()),
                 output: Some(json!({ "outcome": outcome })),
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: None,
+        provider_metadata: BTreeMap::new(),
+    }
+}
+
+fn completion_without_output(
+    id: &str,
+    outcome: &str,
+    assistant_content: Option<&str>,
+) -> ModelTurn {
+    ModelTurn {
+        assistant_content: assistant_content.map(str::to_string),
+        actions: vec![SemanticActionProposal::new(
+            id,
+            SemanticAction::PhaseCompletion {
+                outcome: Some(outcome.into()),
+                output: None,
             },
         )],
         usage: RunUsage::default(),

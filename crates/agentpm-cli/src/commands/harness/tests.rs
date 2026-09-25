@@ -3348,6 +3348,94 @@ fn headless_execution_runs_three_phase_loop_and_writes_report() {
 }
 
 #[test]
+fn headless_execution_reports_phase_completion_output_fallback() {
+    let root = temp_dir("headless-output-fallback");
+    let loop_root = root.join(".agentpm/loops/zack/review-loop/0.1.0");
+    write_json(
+        &loop_root.join("agent.json"),
+        json!({
+            "kind": "loop",
+            "name": "@zack/review-loop",
+            "version": "0.1.0",
+            "loop": {
+                "entry_phase": "respond",
+                "phases": [
+                    {
+                        "id": "respond",
+                        "objective": "Respond to the request.",
+                        "outcomes": [
+                            { "id": "done", "description": "Done." }
+                        ]
+                    }
+                ],
+                "transitions": [
+                    { "from": "respond", "on": "done", "to": "$end" }
+                ]
+            }
+        }),
+    );
+    let mut plan = minimal_plan(&root);
+    plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+        provider: "ollama".into(),
+        model: "test-model".into(),
+        options: json!({}),
+    });
+    plan.config.config.trace = HarnessTraceConfig {
+        enabled: true,
+        level: HarnessTraceLevel::Verbose,
+        content: HarnessTraceContent::Full,
+    };
+    plan.loop_package = Some(ResolvedPackageInfo {
+        key: "loop:@zack/review-loop@0.1.0".into(),
+        kind: PackageKind::Loop,
+        name: "@zack/review-loop".into(),
+        version: "0.1.0".into(),
+        root: loop_root,
+    });
+    let mut model = ScriptedModelRuntime::new(vec![ModelTurn {
+        assistant_content: Some("final answer from completion turn".into()),
+        actions: vec![SemanticActionProposal::new(
+            "complete",
+            SemanticAction::PhaseCompletion {
+                outcome: Some("done".into()),
+                output: None,
+            },
+        )],
+        usage: RunUsage::default(),
+        finish_reason: Some("tool_calls".into()),
+        provider_metadata: BTreeMap::new(),
+    }]);
+    let mut dispatcher = ScriptedActionDispatcher::default();
+
+    let result = execute_headless_plan(
+        &plan,
+        "write a response".into(),
+        None,
+        &mut model,
+        &mut dispatcher,
+    )
+    .unwrap();
+
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert_eq!(
+        result.output,
+        Some(json!("final answer from completion turn"))
+    );
+    assert_eq!(
+        result.report.terminal_output,
+        Some(json!("final answer from completion turn"))
+    );
+    let trace_path = result
+        .report
+        .trace_path
+        .as_ref()
+        .expect("trace path should be written");
+    let trace = fs::read_to_string(trace_path).unwrap();
+    assert!(trace.contains("\"event_type\":\"phase_output_fallback\""));
+    assert!(trace.contains("\"source\":\"completing_turn\""));
+}
+
+#[test]
 fn headless_execution_reports_approval_required_terminal_status() {
     let root = temp_dir("headless-approval-required");
     let loop_root = root.join(".agentpm/loops/zack/review-loop/0.1.0");
@@ -4119,6 +4207,7 @@ fn empty_model_request(selection: ModelProviderSelection) -> ModelRequest {
             completion: crate::harness_runtime::model::CompletionContract {
                 phase_id: "respond".into(),
                 explicit_outcomes: Vec::new(),
+                authored_outcomes: Vec::new(),
                 implicit_complete: true,
             },
             diagnostics: Vec::new(),

@@ -210,6 +210,7 @@ Verify:
 - runtime max steps use the stricter authored/runtime ceiling;
 - max-step exhaustion is `limit_reached`;
 - Tool retry `max_retries` means additional attempts after the initial call;
+- prior-phase action ledger records one logical executable action after retry resolution, excludes rejected/control actions, carries success/failure status without result payloads, remains model-visible regardless of trace content policy, and renders bounded Section 4 markers without changing later action availability;
 - default error policy is visible when Loop omits it.
 
 ## Model provider checks
@@ -240,7 +241,12 @@ Verify:
 - direct + Skill-inherited same Tool in same scope warns/de-dupes;
 - runtime MCP imports are clearly marked runtime augmentation rather than authored dependency;
 - capability readiness and Loop suppression reasons are independently observable;
-- consumer context is lower authority than Harness/Loop/Profiles/Skills and cannot change capability topology.
+- consumer context is lower authority than Harness/Loop/Profiles/Skills and cannot change capability topology;
+- authored outcome descriptions render with explicit outcome IDs in the completion contract while validation remains ID-based;
+- implicit-complete phases render their parallel short form without an explicit outcome block;
+- Section 1 execution-model and phase-boundary orientation reaches native-turn and prose-fallback provider prompt text;
+- Section 4 names prior PhaseResults as compact handoff state and distinguishes output conclusions from action-ledger history;
+- Section 6's current-phase transcript preamble appears only when prose transcript rendering is included, not in native-turn provider text.
 
 ## Tool and Skill checks
 
