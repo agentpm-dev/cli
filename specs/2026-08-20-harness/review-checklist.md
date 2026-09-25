@@ -11,6 +11,8 @@
 - Confirm an Agent without a Loop remains valid package metadata but is non-runnable by Harness.
 - Confirm Harness never invents a default Loop.
 - Confirm `loop.archetype` remains descriptive and there is no runtime switch/enumeration over archetype names.
+- Confirm Harness never infers meaning from authored strings: no switching on outcome ids such as `handoff`/`retry`/`resolve`, no deriving intent from phase objective text, no synthesizing outcome meanings the author did not write. Authored content is exposed verbatim and interpreted by the model, never by the runtime.
+- Confirm Harness does not compensate for weak authoring. A thin objective, an uninformative outcome description, or a low-quality PhaseResult handoff must not trigger runtime repair, enrichment, or substitution; the same Agent has to behave the same way regardless of how clever the runtime chooses to be. Making Harness's own execution semantics explicit and universal is the supported lever, so a thin package still receives a complete picture of the runtime; author-facing quality feedback belongs in `agentpm lint`, never in a Run.
 - Confirm EffectivePhase/runtime state is never written back into Agent/Loop/bindings/lockfile.
 - Confirm `.agentpm/` remains installed package state and no live Memory/trace/run state is written into installed package roots.
 - Confirm mutable runtime state uses `.agentpm-state/` by default or a clearly configured equivalent.

@@ -6,6 +6,8 @@ APM_BIN="$ROOT/target/debug/agentpm"
 BASE="$ROOT/harness-m20a-test"
 WORK="$BASE/workspace"
 BUDGET_WORK="$BASE/budget-workspace"
+OUTCOME_WORK="$BASE/outcome-workspace"
+QUALITY_WORK="$BASE/quality-workspace"
 RUNS="$BASE/runs"
 PYTHON_CMD="${AGENTPM_MANUAL_PYTHON:-python3}"
 
@@ -35,6 +37,8 @@ cat >"$BASE/env.sh" <<SH
 export M20A_ROOT="$BASE"
 export M20A_WORK="$WORK"
 export M20A_BUDGET_WORK="$BUDGET_WORK"
+export M20A_OUTCOME_WORK="$OUTCOME_WORK"
+export M20A_QUALITY_WORK="$QUALITY_WORK"
 export M20A_RUNS="$RUNS"
 export APM="$APM_BIN"
 export AGENTPM_MANUAL_PYTHON="\${AGENTPM_MANUAL_PYTHON:-$PYTHON_CMD}"
@@ -51,7 +55,9 @@ The workspace includes:
 
 - deterministic OpenAI/Anthropic capture tests for required tool choice and phase-output fallback
 - a deterministic long-output budget fixture
-- live OpenAI/Anthropic measurement commands for the Milestone 20A measurement checklist
+- an outcome-routing fixture with competing authored outcome descriptions
+- a high-authoring-quality variant of the objective fixture with identical tool availability
+- live OpenAI/Anthropic measurement commands for the Milestone 20A/20A.1 measurement checklist
 
 Generated run output goes under `harness-m20a-test/runs/`.
 MD
@@ -96,7 +102,7 @@ write_json "$WORK/agentpm.m20a.anthropic.harness.json" <<'JSON'
   "version": 1,
   "model": {
     "provider": "anthropic",
-    "model": "claude-3-5-haiku-latest"
+    "model": "claude-haiku-4-5-20251001"
   },
   "scopes": {
     "user": "m20a-user-anthropic"
@@ -292,6 +298,138 @@ agent["bindings"]["phases"] = {f"step{i}": {"tools": ["@zack/m20a-search"]} for 
 agent_path.write_text(json.dumps(agent, indent=2) + "\n")
 PY
 
+cp -R "$WORK" "$QUALITY_WORK"
+"$PYTHON_CMD" - "$QUALITY_WORK" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+for config_name, state_dir in [
+    ("agentpm.m20a.openai.harness.json", ".agentpm-state-m20a-quality-openai"),
+    ("agentpm.m20a.anthropic.harness.json", ".agentpm-state-m20a-quality-anthropic"),
+]:
+    path = root / config_name
+    config = json.loads(path.read_text())
+    config["runtime"]["state_dir"] = state_dir
+    path.write_text(json.dumps(config, indent=2) + "\n")
+
+loop_path = root / ".agentpm" / "loops" / "zack" / "m20a-output-loop" / "0.1.0" / "agent.json"
+loop = json.loads(loop_path.read_text())
+loop["description"] = "High-authoring-quality M20A objective fixture with unchanged tool availability."
+loop["loop"]["phases"] = [
+    {
+        "id": "inspect",
+        "objective": (
+            "Investigate whether the agentpm new command is ready. Use the search tool if needed, "
+            "then produce a phase output that preserves the evidence needed by the response phase: "
+            "what was checked, what readiness evidence was found or not found, and whether readiness "
+            "can be confirmed."
+        ),
+        "outcomes": [
+            {
+                "id": "respond",
+                "description": (
+                    "Continue to the response phase after the investigation has captured the facts "
+                    "the final answer should convey."
+                ),
+            }
+        ],
+    },
+    {
+        "id": "respond",
+        "objective": (
+            "Write the final operator-facing answer from the inspect phase output. Do not re-investigate "
+            "when the prior output already states what was checked and whether readiness can be confirmed."
+        ),
+        "outcomes": [
+            {
+                "id": "done",
+                "description": (
+                    "Finish the run after returning the answer using the prior phase evidence."
+                ),
+            }
+        ],
+    },
+]
+loop_path.write_text(json.dumps(loop, indent=2) + "\n")
+
+agent_path = root / "agent.json"
+agent = json.loads(agent_path.read_text())
+agent["name"] = "m20a-quality-agent"
+agent["description"] = "Manual fixture Agent for M20A.1 high-quality authoring measurement."
+agent_path.write_text(json.dumps(agent, indent=2) + "\n")
+PY
+
+cp -R "$WORK" "$OUTCOME_WORK"
+"$PYTHON_CMD" - "$OUTCOME_WORK" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+for config_name, state_dir in [
+    ("agentpm.m20a.openai.harness.json", ".agentpm-state-m20a-outcome-openai"),
+    ("agentpm.m20a.anthropic.harness.json", ".agentpm-state-m20a-outcome-anthropic"),
+]:
+    path = root / config_name
+    config = json.loads(path.read_text())
+    config["runtime"]["state_dir"] = state_dir
+    path.write_text(json.dumps(config, indent=2) + "\n")
+
+loop_path = root / ".agentpm" / "loops" / "zack" / "m20a-output-loop" / "0.1.0" / "agent.json"
+loop = json.loads(loop_path.read_text())
+loop["description"] = "Outcome routing fixture for M20A.1 authored outcome descriptions."
+loop["loop"]["entry_phase"] = "classify"
+loop["loop"]["phases"] = [
+    {
+        "id": "classify",
+        "objective": "Classify whether the operator request should be answered here, handed off, or blocked.",
+        "outcomes": [
+            {
+                "id": "respond",
+                "description": "Use this when the current agent owns the answer and can complete it directly."
+            },
+            {
+                "id": "handoff",
+                "description": "Use this when another owner should continue because the request is outside this agent's responsibility."
+            },
+            {
+                "id": "blocked",
+                "description": "Use this when required information or authorization is missing and no owner can proceed yet."
+            }
+        ],
+    },
+    {
+        "id": "respond",
+        "objective": "Write the final answer using the classify phase output.",
+        "outcomes": [
+            {
+                "id": "done",
+                "description": "Finish the run after providing the operator-facing response."
+            }
+        ],
+    },
+]
+loop["loop"]["transitions"] = [
+    {"from": "classify", "on": "respond", "to": "respond"},
+    {"from": "classify", "on": "handoff", "to": "$handoff"},
+    {"from": "classify", "on": "blocked", "to": "$abort"},
+    {"from": "respond", "on": "done", "to": "$end"},
+]
+loop_path.write_text(json.dumps(loop, indent=2) + "\n")
+
+agent_path = root / "agent.json"
+agent = json.loads(agent_path.read_text())
+agent["name"] = "m20a-outcome-agent"
+agent["description"] = "Manual fixture Agent for M20A.1 outcome-description routing."
+agent["bindings"]["phases"] = {
+    "classify": {"tools": ["@zack/m20a-search"]},
+    "respond": {"tools": ["@zack/m20a-comment"]},
+}
+agent_path.write_text(json.dumps(agent, indent=2) + "\n")
+PY
+
 cat >"$WORK/scripts/m20a_capture_server.py" <<'PY'
 #!/usr/bin/env python3
 import argparse
@@ -329,6 +467,22 @@ def alias_for(body, prefix):
         if name.startswith(prefix):
             return name
     raise RuntimeError(f"missing tool alias starting with {prefix}")
+
+def phase_complete_outcomes(body):
+    for tool in body.get("tools") or []:
+        if args.provider == "openai":
+            function = tool.get("function") or {}
+            if function.get("name") != "phase_complete":
+                continue
+            schema = function.get("parameters") or {}
+        else:
+            if tool.get("name") != "phase_complete":
+                continue
+            schema = tool.get("input_schema") or {}
+        outcome = ((schema.get("properties") or {}).get("outcome") or {})
+        enum = outcome.get("enum") or []
+        return [str(value) for value in enum]
+    return []
 
 def openai_tool_response(alias, call_id, arguments, text=None):
     return {
@@ -379,11 +533,12 @@ def long_output(n):
 
 def response_for(body):
     if args.scenario == "fallback":
-        if sequence == 1:
+        outcomes = phase_complete_outcomes(body)
+        if "respond" in outcomes and "done" not in outcomes:
             return tool_response(
                 body,
                 "phase_complete",
-                "call_m20a_fallback_1",
+                f"call_m20a_fallback_{sequence}",
                 {"outcome": "respond"},
                 "M20A fallback answer from completing assistant content.",
             )
@@ -439,6 +594,8 @@ ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
 PY
 chmod +x "$WORK/scripts/m20a_capture_server.py"
 cp "$WORK/scripts/m20a_capture_server.py" "$BUDGET_WORK/scripts/m20a_capture_server.py"
+cp "$WORK/scripts/m20a_capture_server.py" "$OUTCOME_WORK/scripts/m20a_capture_server.py"
+cp "$WORK/scripts/m20a_capture_server.py" "$QUALITY_WORK/scripts/m20a_capture_server.py"
 
 cat >"$WORK/scripts/m20a_assert_capture.py" <<'PY'
 #!/usr/bin/env python3
@@ -474,11 +631,38 @@ tool_text = json.dumps(phase_tools[0])
 if "include" not in tool_text.lower() or "output" not in tool_text.lower():
     raise SystemExit("phase_complete schema/description does not mention including output")
 
-print(f"ok: {provider} {scenario} required tool choice and phase_complete output guidance present")
+body_text = json.dumps(first)
+for expected in [
+    "Execution model: This is one phase of one Run.",
+    "Phase boundary: this phase's working transcript is local.",
+    "Current phase:",
+]:
+    if expected not in body_text:
+        raise SystemExit(f"provider body missing prompt contract text: {expected}")
+if scenario == "fallback":
+    for expected in [
+        "`respond`: Continue to the response phase.",
+        "This phase must complete with exactly one authored outcome.",
+    ]:
+        if expected not in body_text:
+            raise SystemExit(f"provider body missing authored outcome text: {expected}")
+
+if scenario == "budget" and len(bodies) > 1:
+    later_text = "\n".join(json.dumps(body) for body in bodies[1:])
+    for expected in [
+        "[cross-phase state: compact handoff from earlier phases, not their transcripts.",
+        "Prior outputs carry conclusions forward",
+    ]:
+        if expected not in later_text:
+            raise SystemExit(f"later provider body missing cross-phase state semantics: {expected}")
+
+print(f"ok: {provider} {scenario} required tool choice, phase_complete output guidance, and prompt contract text present")
 print(f"captured bodies: {path}")
 PY
 chmod +x "$WORK/scripts/m20a_assert_capture.py"
 cp "$WORK/scripts/m20a_assert_capture.py" "$BUDGET_WORK/scripts/m20a_assert_capture.py"
+cp "$WORK/scripts/m20a_assert_capture.py" "$OUTCOME_WORK/scripts/m20a_assert_capture.py"
+cp "$WORK/scripts/m20a_assert_capture.py" "$QUALITY_WORK/scripts/m20a_assert_capture.py"
 
 cat >"$WORK/scripts/m20a_analyze_trace.py" <<'PY'
 #!/usr/bin/env python3
@@ -497,6 +681,25 @@ def stable_json(value: Any) -> str:
 def load_events(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
+RUNTIME_FIELD_KEYS = {
+    "attempt",
+    "error",
+    "provider_alias",
+    "provider_call_id",
+    "result",
+    "source",
+}
+
+def model_argument_fields(event: dict[str, Any]) -> dict[str, Any]:
+    fields = (event.get("payload") or {}).get("fields") or {}
+    if isinstance(fields.get("arguments"), dict):
+        return fields["arguments"]
+    return {
+        key: value
+        for key, value in fields.items()
+        if key not in RUNTIME_FIELD_KEYS
+    }
+
 def action_key(event: dict[str, Any]) -> tuple[str, str, str] | None:
     payload = event.get("payload") or {}
     if payload.get("payload_type") != "action":
@@ -505,7 +708,7 @@ def action_key(event: dict[str, Any]) -> tuple[str, str, str] | None:
     identity = payload.get("identity")
     if not kind or not identity or kind == "phase_completion":
         return None
-    return str(kind), str(identity), stable_json((payload.get("fields") or {}))
+    return str(kind), str(identity), stable_json(model_argument_fields(event))
 
 def action_identity_key(event: dict[str, Any]) -> tuple[str, str] | None:
     payload = event.get("payload") or {}
@@ -524,14 +727,39 @@ def proposed_phase_completions(fields: dict[str, Any]) -> list[dict[str, Any]]:
         if action.get("action_kind") == "phase_completion"
     ]
 
+COMPLETED_EVENTS = {
+    "knowledge_retrieved",
+    "mcp_tool_completed",
+    "memory_read_completed",
+    "memory_write_completed",
+    "semantic_action_completed",
+    "skill_resource_loaded",
+    "tool_completed",
+}
+
+FAILED_EVENTS = {
+    "knowledge_failed",
+    "mcp_tool_failed",
+    "memory_read_failed",
+    "memory_write_failed",
+    "semantic_action_failed",
+    "skill_resource_failed",
+    "tool_failed",
+}
+
 def summarize(events: list[dict[str, Any]]) -> dict[str, Any]:
     by_phase: dict[str, Counter[tuple[str, str, str]]] = defaultdict(Counter)
     seen_phase_for_action: dict[tuple[str, str, str], set[str]] = defaultdict(set)
     by_phase_identity: dict[str, dict[tuple[str, str], Counter[str]]] = defaultdict(lambda: defaultdict(Counter))
     seen_phase_for_identity: dict[tuple[str, str], dict[str, Counter[str]]] = defaultdict(lambda: defaultdict(Counter))
+    action_status_by_phase: dict[str, dict[tuple[str, str, str], str]] = defaultdict(dict)
+    prior_status_by_action: dict[tuple[str, str, str], list[str]] = defaultdict(list)
     repairs = Counter()
     fallback = Counter()
     budget_headers = Counter()
+    outcome_distribution = Counter()
+    successful_cross_repeats = 0
+    failed_cross_repeats = 0
     counters = Counter()
 
     for event in events:
@@ -544,13 +772,29 @@ def summarize(events: list[dict[str, Any]]) -> dict[str, Any]:
             key = action_key(event)
             if key:
                 by_phase[str(phase_id)][key] += 1
+                prior_statuses = prior_status_by_action.get(key, [])
+                if "completed" in prior_statuses:
+                    successful_cross_repeats += 1
+                elif "failed" in prior_statuses:
+                    failed_cross_repeats += 1
                 seen_phase_for_action[key].add(str(phase_id))
             identity_key = action_identity_key(event)
             if identity_key:
-                fields_key = stable_json((payload.get("fields") or {}))
+                fields_key = stable_json(model_argument_fields(event))
                 by_phase_identity[str(phase_id)][identity_key][fields_key] += 1
                 seen_phase_for_identity[identity_key][str(phase_id)][fields_key] += 1
+        elif event_type in COMPLETED_EVENTS | FAILED_EVENTS:
+            key = action_key(event)
+            if key:
+                action_status_by_phase[str(phase_id)][key] = (
+                    "completed" if event_type in COMPLETED_EVENTS else "failed"
+                )
         elif event_type == "phase_result_ready":
+            phase_payload_id = payload.get("phase_id") or "unknown"
+            outcome = payload.get("outcome") or "unknown"
+            outcome_distribution[f"{phase_payload_id}:{outcome}"] += 1
+            for key, status in action_status_by_phase.pop(str(phase_id), {}).items():
+                prior_status_by_action[key].append(status)
             if payload.get("output") is None:
                 counters["phase_result_null_outputs"] += 1
             else:
@@ -622,7 +866,10 @@ def summarize(events: list[dict[str, Any]]) -> dict[str, Any]:
         "within_phase_changed_argument_rework": within_changed_argument_rework,
         "cross_phase_same_action_rework": cross_same_action_rework,
         "cross_phase_changed_argument_rework": cross_changed_argument_rework,
+        "cross_phase_repeats_after_success": successful_cross_repeats,
+        "cross_phase_repeats_after_failure": failed_cross_repeats,
         **dict(counters),
+        "outcome_distribution": dict(sorted(outcome_distribution.items())),
         "section4_budget_headers": dict(budget_headers),
         "repairs_by_kind": dict(repairs),
         "phase_output_fallback": dict(fallback),
@@ -649,10 +896,79 @@ if __name__ == "__main__":
 PY
 chmod +x "$WORK/scripts/m20a_analyze_trace.py"
 cp "$WORK/scripts/m20a_analyze_trace.py" "$BUDGET_WORK/scripts/m20a_analyze_trace.py"
+cp "$WORK/scripts/m20a_analyze_trace.py" "$OUTCOME_WORK/scripts/m20a_analyze_trace.py"
+cp "$WORK/scripts/m20a_analyze_trace.py" "$QUALITY_WORK/scripts/m20a_analyze_trace.py"
+
+cat >"$WORK/scripts/m20a_analyze_trace_selftest.py" <<'PY'
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+module_path = Path(__file__).with_name("m20a_analyze_trace.py")
+spec = importlib.util.spec_from_file_location("m20a_analyze_trace", module_path)
+if spec is None or spec.loader is None:
+    raise SystemExit("unable to load m20a_analyze_trace.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def action_event(event_type, phase, status, query, *, result=None):
+    fields = {"arguments": {"query": query}, "source": "agent_binding"}
+    if result is not None:
+        fields.update({"attempt": 1, "result": result})
+    return {
+        "event_type": event_type,
+        "phase_execution_id": phase,
+        "payload": {
+            "payload_type": "action",
+            "action_kind": "agentpm_tool",
+            "identity": "@zack/m20a-search",
+            "status": status,
+            "fields": fields,
+        },
+    }
+
+def phase_result(phase):
+    return {
+        "event_type": "phase_result_ready",
+        "phase_execution_id": phase,
+        "payload": {
+            "payload_type": "phase",
+            "phase_id": phase,
+            "outcome": "next",
+            "output": {"ok": True},
+        },
+    }
+
+events = [
+    action_event("semantic_action_proposed", "phase-exec-1", "accepted", "agentpm new"),
+    action_event("tool_completed", "phase-exec-1", "completed", "agentpm new", result={"ok": True}),
+    phase_result("phase-exec-1"),
+    action_event("semantic_action_proposed", "phase-exec-2", "accepted", "agentpm new"),
+    action_event("tool_completed", "phase-exec-2", "completed", "agentpm new", result={"ok": True}),
+    phase_result("phase-exec-2"),
+    action_event("semantic_action_proposed", "phase-exec-3", "accepted", "agentpm failed"),
+    action_event("tool_failed", "phase-exec-3", "failed", "agentpm failed", result={"ok": False}),
+    phase_result("phase-exec-3"),
+    action_event("semantic_action_proposed", "phase-exec-4", "accepted", "agentpm failed"),
+]
+summary = module.summarize(events)
+assert summary["cross_phase_exact_repeats"] == 2, summary
+assert summary["cross_phase_repeats_after_success"] == 1, summary
+assert summary["cross_phase_repeats_after_failure"] == 1, summary
+print("m20a_analyze_trace_selftest: ok")
+PY
+chmod +x "$WORK/scripts/m20a_analyze_trace_selftest.py"
+cp "$WORK/scripts/m20a_analyze_trace_selftest.py" "$BUDGET_WORK/scripts/m20a_analyze_trace_selftest.py"
+cp "$WORK/scripts/m20a_analyze_trace_selftest.py" "$OUTCOME_WORK/scripts/m20a_analyze_trace_selftest.py"
+cp "$WORK/scripts/m20a_analyze_trace_selftest.py" "$QUALITY_WORK/scripts/m20a_analyze_trace_selftest.py"
 
 if [ -x "$APM_BIN" ]; then
   "$APM_BIN" lint "$WORK/agent.json" >/dev/null
   "$APM_BIN" lint "$BUDGET_WORK/agent.json" >/dev/null
+  "$APM_BIN" lint "$OUTCOME_WORK/agent.json" >/dev/null
+  "$APM_BIN" lint "$QUALITY_WORK/agent.json" >/dev/null
 fi
 
 cat <<MSG
@@ -660,6 +976,8 @@ Harness M20A manual workspace generated.
   root:       $BASE
   workspace:  $WORK
   budget:     $BUDGET_WORK
+  outcome:    $OUTCOME_WORK
+  quality:    $QUALITY_WORK
   runs:       $RUNS
 
 Next:
