@@ -183,7 +183,7 @@ Example with local runtime defaults:
     "model": "gpt-4o-mini"
   },
   "runtime": {
-    "state_dir": ".agentpm/state",
+    "state_dir": ".agentpm-state",
     "limits": {
       "max_steps": 20,
       "max_tool_calls_per_phase": 8
@@ -200,6 +200,8 @@ Example with local runtime defaults:
 
 Harness config paths are validated as safe relative paths where path fields are constrained. Environment variable names are validated separately from values, so config files can declare which environment variables a local implementation expects without storing secrets in the file.
 
+Harness runtime state belongs under `.agentpm-state/` by default. `.agentpm/` remains installed dependency state and should not contain mutable Harness records. See `../agentpm-api/docs/v0.1/advanced/harness-config.mdx` for the full version-1 Harness config reference.
+
 ---
 
 ## Field reference (overview)
@@ -207,15 +209,15 @@ Harness config paths are validated as safe relative paths where path fields are 
 | Field         | Type     | Required | Allowed on | Notes                                                                               |
 |---------------|----------|----------|-----------|-------------------------------------------------------------------------------------|
 | `$schema`     | string   | no       | all       | URI to this schema (optional but recommended)                                       |
-| `kind`        | enum     | **yes**  | all       | `"tool"`, `"skill"`, `"agent"`, or `"template"` (discriminator)                     |
+| `kind`        | enum     | **yes**  | all       | `"tool"`, `"skill"`, `"agent"`, `"template"`, `"knowledge"`, `"memory"`, `"profile"`, or `"loop"` |
 | `name`        | string   | **yes**  | all       | `^[a-z][a-z0-9-]{0,63}$`                                                            |
 | `version`     | semver   | **yes**  | all       | SemVer string (supports pre/metadata)                                               |
 | `description` | string   | **yes**  | all       | Free text                                                                           |
 | `tools`       | array    | **yes**¹ | **agent**, **skill** | Array of tool refs: string or `{name, version}`                           |
 | `skills`      | array    | no       | **agent** | Array of skill refs: string or `{name, version}`                                    |
-| `knowledge`   | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
-| `memory`      | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
-| `profiles`    | array    | no       | **agent** | Reserved future refs. Validated and preserved, but not resolved today.              |
+| `knowledge`   | array    | no       | **agent** | Knowledge dependencies resolved into installed Knowledge packages.                   |
+| `memory`      | array    | no       | **agent** | Memory Blueprint dependencies resolved into installed Memory packages.               |
+| `profiles`    | array    | no       | **agent** | Instruction Profile dependencies resolved into installed Profile packages.           |
 | `examples`    | array    | no       | **agent** | Inline prompt examples `{ title, prompt }`.                                         |
 | `skill`       | object   | **yes**⁴ | **skill** | Skill metadata including `entrypoint`, optional references, scripts, and compatibility |
 | `template`    | object   | **yes**³ | **template** | Template metadata including files root, dependencies, variables, and entrypoints |
