@@ -506,16 +506,37 @@ fn is_content_key(key: &str) -> bool {
 }
 
 fn is_secret_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
+    let key = normalized_policy_key(key);
+    if is_known_non_secret_key_name(&key) {
+        return false;
+    }
     key.contains("secret")
         || key == "token"
-        || key.ends_with("_token")
-        || key.ends_with("-token")
+        || key.ends_with("token")
         || key.contains("password")
-        || key.contains("api_key")
-        || key == "key"
+        || key.ends_with("key")
         || key == "authorization"
         || key == "cookie"
+}
+
+fn normalized_policy_key(key: &str) -> String {
+    key.chars()
+        .filter(|character| *character != '_' && *character != '-')
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn is_known_non_secret_key_name(key: &str) -> bool {
+    matches!(
+        key,
+        "cachekey"
+            | "foreignkey"
+            | "idempotencykey"
+            | "partitionkey"
+            | "primarykey"
+            | "publickey"
+            | "sortkey"
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1194,6 +1215,15 @@ mod tests {
         let mut fields = BTreeMap::new();
         fields.insert("prompt".into(), json!("visible prompt"));
         fields.insert("api_token".into(), json!("secret-token"));
+        fields.insert("apiKey".into(), json!("secret-camel"));
+        fields.insert("private_key".into(), json!("secret-private-key"));
+        fields.insert("privateKey".into(), json!("secret-private-camel"));
+        fields.insert("signingKey".into(), json!("secret-signing-camel"));
+        fields.insert("encryptionKey".into(), json!("secret-encryption-camel"));
+        fields.insert("partition_key".into(), json!("tenant-2026"));
+        fields.insert("partitionKey".into(), json!("tenant-camel-2026"));
+        fields.insert("idempotency_key".into(), json!("operation-123"));
+        fields.insert("idempotencyKey".into(), json!("operation-camel-123"));
         let event = HarnessEventEnvelope {
             schema_version: HARNESS_EVENT_SCHEMA_VERSION,
             event_id: "evt-1".into(),
@@ -1221,18 +1251,99 @@ mod tests {
             redacted["payload"]["fields"]["api_token"],
             "[secret redacted]"
         );
+        assert_eq!(redacted["payload"]["fields"]["apiKey"], "[secret redacted]");
+        assert_eq!(
+            redacted["payload"]["fields"]["private_key"],
+            "[secret redacted]"
+        );
+        assert_eq!(
+            redacted["payload"]["fields"]["privateKey"],
+            "[secret redacted]"
+        );
+        assert_eq!(
+            redacted["payload"]["fields"]["signingKey"],
+            "[secret redacted]"
+        );
+        assert_eq!(
+            redacted["payload"]["fields"]["encryptionKey"],
+            "[secret redacted]"
+        );
+        assert_eq!(
+            redacted["payload"]["fields"]["partition_key"],
+            "tenant-2026"
+        );
+        assert_eq!(
+            redacted["payload"]["fields"]["partitionKey"],
+            "tenant-camel-2026"
+        );
+        assert_eq!(
+            redacted["payload"]["fields"]["idempotency_key"],
+            "operation-123"
+        );
+        assert_eq!(
+            redacted["payload"]["fields"]["idempotencyKey"],
+            "operation-camel-123"
+        );
 
         let full =
             serde_json::to_value(apply_content_policy(&event, &HarnessTraceContent::Full).unwrap())
                 .unwrap();
         assert_eq!(full["payload"]["fields"]["prompt"], "visible prompt");
         assert_eq!(full["payload"]["fields"]["api_token"], "[secret redacted]");
+        assert_eq!(full["payload"]["fields"]["apiKey"], "[secret redacted]");
+        assert_eq!(
+            full["payload"]["fields"]["private_key"],
+            "[secret redacted]"
+        );
+        assert_eq!(full["payload"]["fields"]["privateKey"], "[secret redacted]");
+        assert_eq!(full["payload"]["fields"]["signingKey"], "[secret redacted]");
+        assert_eq!(
+            full["payload"]["fields"]["encryptionKey"],
+            "[secret redacted]"
+        );
+        assert_eq!(full["payload"]["fields"]["partition_key"], "tenant-2026");
+        assert_eq!(
+            full["payload"]["fields"]["partitionKey"],
+            "tenant-camel-2026"
+        );
+        assert_eq!(
+            full["payload"]["fields"]["idempotency_key"],
+            "operation-123"
+        );
+        assert_eq!(
+            full["payload"]["fields"]["idempotencyKey"],
+            "operation-camel-123"
+        );
 
         let none =
             serde_json::to_value(apply_content_policy(&event, &HarnessTraceContent::None).unwrap())
                 .unwrap();
         assert!(none["payload"]["fields"].get("prompt").is_none());
         assert_eq!(none["payload"]["fields"]["api_token"], "[secret redacted]");
+        assert_eq!(none["payload"]["fields"]["apiKey"], "[secret redacted]");
+        assert_eq!(
+            none["payload"]["fields"]["private_key"],
+            "[secret redacted]"
+        );
+        assert_eq!(none["payload"]["fields"]["privateKey"], "[secret redacted]");
+        assert_eq!(none["payload"]["fields"]["signingKey"], "[secret redacted]");
+        assert_eq!(
+            none["payload"]["fields"]["encryptionKey"],
+            "[secret redacted]"
+        );
+        assert_eq!(none["payload"]["fields"]["partition_key"], "tenant-2026");
+        assert_eq!(
+            none["payload"]["fields"]["partitionKey"],
+            "tenant-camel-2026"
+        );
+        assert_eq!(
+            none["payload"]["fields"]["idempotency_key"],
+            "operation-123"
+        );
+        assert_eq!(
+            none["payload"]["fields"]["idempotencyKey"],
+            "operation-camel-123"
+        );
     }
 
     #[test]

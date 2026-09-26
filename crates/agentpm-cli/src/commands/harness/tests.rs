@@ -3238,6 +3238,32 @@ fn failed_headless_terminal_status_includes_terminal_error_detail() {
 }
 
 #[test]
+fn headless_terminal_stdout_redacts_secret_keyed_output() {
+    let rendered = terminal_output_for_stdout(&json!({
+        "answer": "ready",
+        "api_secret": "raw-secret",
+        "apiKey": "raw-camel-secret",
+        "private_key": "raw-private-key",
+        "privateKey": "raw-private-key-camel",
+        "partition_key": "tenant-2026",
+        "partitionKey": "tenant-camel-2026"
+    }))
+    .unwrap();
+
+    assert!(rendered.contains("\"answer\": \"ready\""));
+    assert!(rendered.contains("\"api_secret\": \"[secret redacted]\""));
+    assert!(rendered.contains("\"apiKey\": \"[secret redacted]\""));
+    assert!(rendered.contains("\"private_key\": \"[secret redacted]\""));
+    assert!(rendered.contains("\"privateKey\": \"[secret redacted]\""));
+    assert!(rendered.contains("\"partition_key\": \"tenant-2026\""));
+    assert!(rendered.contains("\"partitionKey\": \"tenant-camel-2026\""));
+    assert!(!rendered.contains("raw-secret"));
+    assert!(!rendered.contains("raw-camel-secret"));
+    assert!(!rendered.contains("raw-private-key"));
+    assert!(!rendered.contains("raw-private-key-camel"));
+}
+
+#[test]
 fn model_capability_validation_rejects_missing_semantic_or_structured_support() {
     let runtime = UnsupportedModelRuntime {
         semantic_actions: false,

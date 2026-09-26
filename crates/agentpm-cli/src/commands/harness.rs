@@ -2380,12 +2380,21 @@ fn print_terminal_output(terminal: &RuntimeTerminalResult) -> Result<()> {
     let Some(output) = &terminal.output else {
         return Ok(());
     };
-    if let Some(text) = output.as_str() {
-        println!("{text}");
-    } else {
-        println!("{}", serde_json::to_string_pretty(output)?);
-    }
+    println!("{}", terminal_output_for_stdout(output)?);
     Ok(())
+}
+
+fn terminal_output_for_stdout(output: &Value) -> Result<String> {
+    let mut output = output.clone();
+    apply_content_policy_to_value(
+        &mut output,
+        &crate::harness_config::HarnessTraceContent::Full,
+    );
+    if let Some(text) = output.as_str() {
+        Ok(text.to_string())
+    } else {
+        Ok(serde_json::to_string_pretty(&output)?)
+    }
 }
 
 fn print_memory_write_review_warnings(terminal: &RuntimeTerminalResult) {

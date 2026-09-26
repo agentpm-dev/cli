@@ -5,10 +5,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="$ROOT/harness-release-verify-test"
 WORK="$BASE/workspace"
 APPROVAL_WORK="$BASE/approval-workspace"
+REDACTION_WORK="$BASE/redaction-workspace"
 RUNNERS="$BASE/runners"
 RUNS="$BASE/runs"
 APM_BIN="$ROOT/target/debug/agentpm"
 PYTHON_CMD="${AGENTPM_MANUAL_PYTHON:-python3}"
+SECRET_MARKER="HARNESS_VERIFY_SUPER_SECRET"
+CAMEL_SECRET_MARKER="HARNESS_VERIFY_CAMEL_SECRET"
+PRIVATE_KEY_SECRET_MARKER="HARNESS_VERIFY_PRIVATE_KEY_SECRET"
 
 write_json() {
   local path="$1"
@@ -25,13 +29,19 @@ pkg_root() {
 }
 
 rm -rf "$BASE"
-mkdir -p "$WORK" "$APPROVAL_WORK" "$RUNNERS" "$RUNS"
+mkdir -p "$WORK" "$APPROVAL_WORK" "$REDACTION_WORK" "$RUNNERS" "$RUNS"
 
 cat >"$BASE/env.sh" <<SH
 export HARNESS_VERIFY_ROOT="$BASE"
 export HARNESS_VERIFY_WORK="$WORK"
 export HARNESS_VERIFY_APPROVAL_WORK="$APPROVAL_WORK"
 export HARNESS_VERIFY_APPROVAL_CONFIG="$APPROVAL_WORK/agentpm.harness.json"
+export HARNESS_VERIFY_REDACTION_WORK="$REDACTION_WORK"
+export HARNESS_VERIFY_REDACTION_FULL_CONFIG="$REDACTION_WORK/agentpm.full.harness.json"
+export HARNESS_VERIFY_REDACTION_REDACTED_CONFIG="$REDACTION_WORK/agentpm.redacted.harness.json"
+export HARNESS_VERIFY_REDACTION_NONE_CONFIG="$REDACTION_WORK/agentpm.none.harness.json"
+export HARNESS_VERIFY_LIMIT_CONFIG="$REDACTION_WORK/agentpm.limit.harness.json"
+export HARNESS_VERIFY_FAILURE_CONFIG="$REDACTION_WORK/agentpm.failure.harness.json"
 export HARNESS_VERIFY_RUNNERS="$RUNNERS"
 export HARNESS_VERIFY_OUT="$RUNS"
 export HARNESS_VERIFY_AGENT=""
@@ -39,6 +49,9 @@ export HARNESS_VERIFY_CONFIG="$WORK/agentpm.harness.json"
 export HARNESS_VERIFY_SCOPE_KEY="user"
 export HARNESS_VERIFY_SCOPE_VALUE="release-verify-user"
 export HARNESS_VERIFY_INPUT="Check release readiness and produce the final verification answer."
+export HARNESS_VERIFY_SECRET_MARKER="$SECRET_MARKER"
+export HARNESS_VERIFY_CAMEL_SECRET_MARKER="$CAMEL_SECRET_MARKER"
+export HARNESS_VERIFY_PRIVATE_KEY_SECRET_MARKER="$PRIVATE_KEY_SECRET_MARKER"
 export APM="$APM_BIN"
 export OPENAI_API_KEY="harness-release-verify-key"
 export OPENAI_BASE_URL="http://127.0.0.1:18130/v1/chat/completions"
@@ -373,10 +386,204 @@ write_json "$APPROVAL_WORK/agent.lock" <<'JSON'
 }
 JSON
 
+cat >"$REDACTION_WORK/context.md" <<'MD'
+# Terminal And Redaction Verification Context
+
+The terminal/redaction scenario should inspect once and finish from preserved
+phase output. Secret markers are supplied only under secret-named JSON keys so
+release verification can prove unconditional secret redaction.
+MD
+
+write_redaction_config() {
+  local path="$1"
+  local state_dir="$2"
+  local content="$3"
+  local max_steps="$4"
+  local model="$5"
+  write_json "$path" <<JSON
+{
+  "version": 1,
+  "model": {
+    "provider": "openai",
+    "model": "$model"
+  },
+  "scopes": {
+    "user": "release-verify-user"
+  },
+  "runtime": {
+    "state_dir": "$state_dir",
+    "limits": {
+      "max_steps": $max_steps,
+      "max_model_calls_per_phase": 4,
+      "max_tool_calls_per_phase": 2,
+      "max_actions_per_phase": 8,
+      "max_structured_output_repairs": 1,
+      "max_tool_call_repairs": 1
+    }
+  },
+  "trace": {
+    "enabled": true,
+    "level": "verbose",
+    "content": "$content"
+  }
+}
+JSON
+}
+
+write_redaction_config "$REDACTION_WORK/agentpm.full.harness.json" ".agentpm-state-release-verify-full" "full" 4 "release-verifier"
+write_redaction_config "$REDACTION_WORK/agentpm.redacted.harness.json" ".agentpm-state-release-verify-redacted" "redacted" 4 "release-verifier"
+write_redaction_config "$REDACTION_WORK/agentpm.none.harness.json" ".agentpm-state-release-verify-none" "none" 4 "release-verifier"
+write_redaction_config "$REDACTION_WORK/agentpm.limit.harness.json" ".agentpm-state-release-verify-limit" "full" 1 "release-verifier"
+write_redaction_config "$REDACTION_WORK/agentpm.failure.harness.json" ".agentpm-state-release-verify-failure" "full" 4 "release-verifier-fail"
+
+write_json "$REDACTION_WORK/agent.json" <<'JSON'
+{
+  "kind": "agent",
+  "name": "release-redaction-agent",
+  "version": "0.1.0",
+  "description": "AgentPM Harness terminal/redaction verification fixture Agent.",
+  "tools": ["@zack/release-redaction-lookup@0.1.0"],
+  "loop": "@zack/release-redaction-loop@0.1.0",
+  "bindings": {
+    "consumer_context": { "file": "context.md" },
+    "phases": {
+      "inspect": { "tools": ["@zack/release-redaction-lookup"] },
+      "respond": { "tools": [] }
+    }
+  }
+}
+JSON
+
+write_json "$REDACTION_WORK/.agentpm/loops/zack/release-redaction-loop/0.1.0/agent.json" <<'JSON'
+{
+  "kind": "loop",
+  "name": "@zack/release-redaction-loop",
+  "version": "0.1.0",
+  "description": "Two-phase terminal/redaction verification loop.",
+  "loop": {
+    "entry_phase": "inspect",
+    "phases": [
+      {
+        "id": "inspect",
+        "objective": "Inspect terminal verification once using the lookup Tool, then preserve the finding for the response phase.",
+        "access": {
+          "tools": true,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "respond",
+            "description": "Terminal verification was inspected and the response phase should answer from the preserved finding."
+          }
+        ]
+      },
+      {
+        "id": "respond",
+        "objective": "Answer from the inspect phase output without re-running investigation.",
+        "access": {
+          "tools": false,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "done",
+            "description": "The terminal/redaction verification answer is complete."
+          }
+        ]
+      }
+    ],
+    "transitions": [
+      { "from": "inspect", "on": "respond", "to": "respond" },
+      { "from": "respond", "on": "done", "to": "$end" }
+    ]
+  }
+}
+JSON
+
+write_json "$REDACTION_WORK/.agentpm/tools/zack/release-redaction-lookup/0.1.0/agent.json" <<JSON
+{
+  "kind": "tool",
+  "name": "@zack/release-redaction-lookup",
+  "version": "0.1.0",
+  "description": "Deterministic terminal/redaction verification lookup Tool.",
+  "entrypoint": {
+    "command": "$PYTHON_CMD",
+    "args": ["tool.py"],
+    "cwd": ".",
+    "timeout_ms": 1000,
+    "env": {}
+  },
+  "inputs": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["query"],
+    "properties": {
+      "query": { "type": "string" }
+    }
+  },
+  "outputs": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["ready", "summary"],
+    "properties": {
+      "ready": { "type": "boolean" },
+      "summary": { "type": "string" }
+    }
+  }
+}
+JSON
+
+cat >"$REDACTION_WORK/.agentpm/tools/zack/release-redaction-lookup/0.1.0/tool.py" <<'PY'
+#!/usr/bin/env python3
+import json
+import sys
+
+payload = json.load(sys.stdin)
+print(json.dumps({
+    "ready": True,
+    "summary": "Terminal/redaction lookup completed for " + payload.get("query", "release readiness"),
+}))
+PY
+chmod +x "$REDACTION_WORK/.agentpm/tools/zack/release-redaction-lookup/0.1.0/tool.py"
+
+write_json "$REDACTION_WORK/agent.lock" <<'JSON'
+{
+  "lockfile_version": 3,
+  "generated": "2026-09-26T00:00:00Z",
+  "packages": {
+    "tool:@zack/release-redaction-lookup@0.1.0": {
+      "kind": "tool",
+      "name": "@zack/release-redaction-lookup",
+      "version": "0.1.0",
+      "integrity": "sha256-release-verify-redaction"
+    },
+    "loop:@zack/release-redaction-loop@0.1.0": {
+      "kind": "loop",
+      "name": "@zack/release-redaction-loop",
+      "version": "0.1.0",
+      "integrity": "sha256-release-verify-redaction"
+    }
+  },
+  "roots": {
+    "local:agent": {
+      "name": "release-redaction-agent",
+      "version": "0.1.0",
+      "tools": [
+        "tool:@zack/release-redaction-lookup@0.1.0"
+      ],
+      "loop": "loop:@zack/release-redaction-loop@0.1.0"
+    }
+  }
+}
+JSON
+
 cat >"$BASE/fake_openai_server.py" <<'PY'
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -389,6 +596,15 @@ args = parser.parse_args()
 
 args.log.parent.mkdir(parents=True, exist_ok=True)
 sequence = 0
+SECRET_MARKER = os.environ.get("HARNESS_VERIFY_SECRET_MARKER", "HARNESS_VERIFY_SUPER_SECRET")
+CAMEL_SECRET_MARKER = os.environ.get(
+    "HARNESS_VERIFY_CAMEL_SECRET_MARKER",
+    "HARNESS_VERIFY_CAMEL_SECRET",
+)
+PRIVATE_KEY_SECRET_MARKER = os.environ.get(
+    "HARNESS_VERIFY_PRIVATE_KEY_SECRET_MARKER",
+    "HARNESS_VERIFY_PRIVATE_KEY_SECRET",
+)
 
 
 def write_log(path, body):
@@ -452,6 +668,8 @@ def response_with_tool(alias, call_id, arguments, text=None):
 
 
 def response_for(body):
+    if body.get("model") == "release-verifier-fail":
+        raise RuntimeError("deterministic provider failure for terminal-path verification")
     names = tool_names(body)
     outcomes = phase_outcomes(body)
     action_tools = [name for name in names if name != "phase_complete"]
@@ -471,6 +689,10 @@ def response_for(body):
                 "output": {
                     "ready": True,
                     "summary": "Release readiness was inspected once and is ready for response.",
+                    "api_secret": SECRET_MARKER,
+                    "apiKey": CAMEL_SECRET_MARKER,
+                    "private_key": PRIVATE_KEY_SECRET_MARKER,
+                    "privateKey": PRIVATE_KEY_SECRET_MARKER,
                 },
             },
         )
@@ -482,13 +704,26 @@ def response_for(body):
                 "outcome": "done",
                 "output": {
                     "answer": "Release verification completed successfully from the preserved inspect output.",
+                    "api_secret": SECRET_MARKER,
+                    "apiKey": CAMEL_SECRET_MARKER,
+                    "private_key": PRIVATE_KEY_SECRET_MARKER,
+                    "privateKey": PRIVATE_KEY_SECRET_MARKER,
                 },
             },
         )
     return response_with_tool(
         "phase_complete",
         f"call_release_complete_{sequence}",
-        {"outcome": outcomes[0] if outcomes else "complete", "output": {"answer": "complete"}},
+        {
+            "outcome": outcomes[0] if outcomes else "complete",
+            "output": {
+                "answer": "complete",
+                "api_secret": SECRET_MARKER,
+                "apiKey": CAMEL_SECRET_MARKER,
+                "private_key": PRIVATE_KEY_SECRET_MARKER,
+                "privateKey": PRIVATE_KEY_SECRET_MARKER,
+            },
+        },
     )
 
 
@@ -673,6 +908,139 @@ from pathlib import Path
 print(json.loads(Path(sys.argv[1]).read_text())["trace_path"])
 PY
 chmod +x "$RUNNERS/extract_trace.py"
+
+cat >"$RUNNERS/check_terminal_artifacts.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+TERMINAL_EVENTS = {
+    "ended": "run_completed",
+    "handed_off": "run_completed",
+    "aborted": "run_failed",
+    "failed": "run_failed",
+    "cancelled": "run_cancelled",
+    "limit_reached": "run_limit_reached",
+    "approval_required": "run_approval_required",
+}
+
+
+def parse_case(raw: str) -> tuple[str, str, Path, Path]:
+    parts = raw.split(":", 3)
+    if len(parts) != 4:
+        raise SystemExit(f"--case must be label:status:report:trace, got {raw!r}")
+    label, status, report, trace = parts
+    return label, status, Path(report), Path(trace)
+
+
+def load_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise AssertionError(f"{path} is not valid JSON: {exc}") from exc
+
+
+def load_jsonl(path: Path) -> list[dict]:
+    events = []
+    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            events.append(json.loads(line))
+        except Exception as exc:
+            raise AssertionError(f"{path}:{line_no} is not valid JSONL: {exc}") from exc
+    return events
+
+
+def assert_secret_absent(label: str, secrets: list[str], path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    for secret in secrets:
+        if secret and secret in text:
+            raise AssertionError(f"{label}: secret marker leaked in {path}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--secret", action="append", default=[], required=True)
+    parser.add_argument("--provider-log", type=Path)
+    parser.add_argument("--stdout", action="append", default=[], type=Path)
+    parser.add_argument("--case", action="append", default=[], help="label:status:report:trace")
+    args = parser.parse_args()
+
+    if not args.case:
+        raise SystemExit("at least one --case is required")
+
+    results = []
+    for raw in args.case:
+        label, expected_status, report_path, trace_path = parse_case(raw)
+        if not report_path.is_file():
+            raise AssertionError(f"{label}: missing report {report_path}")
+        if not trace_path.is_file():
+            raise AssertionError(f"{label}: missing trace {trace_path}")
+
+        report = load_json(report_path)
+        events = load_jsonl(trace_path)
+        status = report.get("terminal_status")
+        if status != expected_status:
+            raise AssertionError(f"{label}: expected {expected_status}, got {status}")
+        if not report.get("trace_path"):
+            raise AssertionError(f"{label}: report does not record trace_path")
+        if not events:
+            raise AssertionError(f"{label}: trace has no events")
+
+        expected_event = TERMINAL_EVENTS.get(expected_status)
+        if expected_event and not any(event.get("event_type") == expected_event for event in events):
+            raise AssertionError(f"{label}: trace missing terminal event {expected_event}")
+
+        if expected_status in {"ended", "limit_reached"} and not report.get("phase_summaries"):
+            raise AssertionError(f"{label}: report has no phase summaries")
+
+        assert_secret_absent(label, args.secret, report_path)
+        assert_secret_absent(label, args.secret, trace_path)
+        results.append(
+            {
+                "label": label,
+                "terminal_status": status,
+                "events": len(events),
+                "report_path": str(report_path),
+                "trace_path": str(trace_path),
+            }
+        )
+
+    if args.provider_log is not None:
+        if not args.provider_log.is_file():
+            raise AssertionError(f"missing provider log {args.provider_log}")
+        assert_secret_absent("provider-log", args.secret, args.provider_log)
+
+    for stdout_path in args.stdout:
+        if not stdout_path.is_file():
+            raise AssertionError(f"missing stdout file {stdout_path}")
+        assert_secret_absent("stdout", args.secret, stdout_path)
+
+    print(
+        json.dumps(
+            {
+                "status": "passed",
+                "cases": results,
+                "provider_log": str(args.provider_log) if args.provider_log else None,
+                "stdout_files": [str(path) for path in args.stdout],
+            },
+            indent=2,
+        )
+    )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except AssertionError as exc:
+        print(f"terminal artifact check failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+PY
+chmod +x "$RUNNERS/check_terminal_artifacts.py"
 
 cat <<MSG
 Created Harness release verification fixture:

@@ -385,6 +385,217 @@ one TUI Session, edit `context.md` between Runs, and confirm the Reports tab
 shows distinct Run report/trace paths for each terminal Run. Keep terminal
 captures or notes with the release evidence.
 
+## 8. Terminal Paths And Redaction
+
+These checks prove representative terminal paths still write syntactically
+valid report/trace artifacts, and that planted secret markers do not appear in
+reports, traces, captured provider request bodies, or headless stdout under
+`trace.content = full`, `redacted`, or `none`.
+
+The setup fixture creates a separate workspace for this so the main
+cross-surface equivalence evidence remains stable:
+
+```bash
+echo "$HARNESS_VERIFY_REDACTION_WORK"
+echo "$HARNESS_VERIFY_REDACTION_FULL_CONFIG"
+echo "$HARNESS_VERIFY_REDACTION_REDACTED_CONFIG"
+echo "$HARNESS_VERIFY_REDACTION_NONE_CONFIG"
+echo "$HARNESS_VERIFY_LIMIT_CONFIG"
+echo "$HARNESS_VERIFY_FAILURE_CONFIG"
+```
+
+Run the three trace-content success cases:
+
+```bash
+FULL_REPORT="$HARNESS_VERIFY_OUT/terminal-redaction-full-report.json"
+(
+  cd "$HARNESS_VERIFY_REDACTION_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_REDACTION_FULL_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$FULL_REPORT" \
+    >"$HARNESS_VERIFY_OUT/terminal-redaction-full-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/terminal-redaction-full-stderr.txt"
+)
+FULL_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$FULL_REPORT")"
+
+REDACTED_REPORT="$HARNESS_VERIFY_OUT/terminal-redaction-redacted-report.json"
+(
+  cd "$HARNESS_VERIFY_REDACTION_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_REDACTION_REDACTED_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$REDACTED_REPORT" \
+    >"$HARNESS_VERIFY_OUT/terminal-redaction-redacted-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/terminal-redaction-redacted-stderr.txt"
+)
+REDACTED_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$REDACTED_REPORT")"
+
+NONE_REPORT="$HARNESS_VERIFY_OUT/terminal-redaction-none-report.json"
+(
+  cd "$HARNESS_VERIFY_REDACTION_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_REDACTION_NONE_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$NONE_REPORT" \
+    >"$HARNESS_VERIFY_OUT/terminal-redaction-none-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/terminal-redaction-none-stderr.txt"
+)
+NONE_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$NONE_REPORT")"
+```
+
+Run the `limit_reached` and `failed` terminal paths. These commands are
+expected to exit non-zero after writing their report/trace artifacts.
+
+```bash
+LIMIT_REPORT="$HARNESS_VERIFY_OUT/terminal-limit-report.json"
+set +e
+(
+  cd "$HARNESS_VERIFY_REDACTION_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_LIMIT_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$LIMIT_REPORT" \
+    >"$HARNESS_VERIFY_OUT/terminal-limit-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/terminal-limit-stderr.txt"
+)
+LIMIT_EXIT=$?
+set -e
+test "$LIMIT_EXIT" -ne 0
+LIMIT_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$LIMIT_REPORT")"
+
+FAILURE_REPORT="$HARNESS_VERIFY_OUT/terminal-failure-report.json"
+set +e
+(
+  cd "$HARNESS_VERIFY_REDACTION_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_FAILURE_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$FAILURE_REPORT" \
+    >"$HARNESS_VERIFY_OUT/terminal-failure-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/terminal-failure-stderr.txt"
+)
+FAILURE_EXIT=$?
+set -e
+test "$FAILURE_EXIT" -ne 0
+FAILURE_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$FAILURE_REPORT")"
+```
+
+Validate the generated artifacts and secret redaction. If you did not run the
+approval-required case in Section 6, remove the final `approval` case line.
+
+```bash
+"$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/check_terminal_artifacts.py" \
+  --secret "$HARNESS_VERIFY_SECRET_MARKER" \
+  --secret "$HARNESS_VERIFY_CAMEL_SECRET_MARKER" \
+  --secret "$HARNESS_VERIFY_PRIVATE_KEY_SECRET_MARKER" \
+  --provider-log "$HARNESS_VERIFY_OUT/provider-bodies.jsonl" \
+  --stdout "$HARNESS_VERIFY_OUT/terminal-redaction-full-stdout.txt" \
+  --stdout "$HARNESS_VERIFY_OUT/terminal-redaction-redacted-stdout.txt" \
+  --stdout "$HARNESS_VERIFY_OUT/terminal-redaction-none-stdout.txt" \
+  --case full:ended:"$FULL_REPORT":"$FULL_TRACE" \
+  --case redacted:ended:"$REDACTED_REPORT":"$REDACTED_TRACE" \
+  --case none:ended:"$NONE_REPORT":"$NONE_TRACE" \
+  --case limit:limit_reached:"$LIMIT_REPORT":"$LIMIT_TRACE" \
+  --case failure:failed:"$FAILURE_REPORT":"$FAILURE_TRACE" \
+  --case approval:approval_required:"$APPROVAL_REPORT":"$APPROVAL_TRACE" \
+  | tee "$HARNESS_VERIFY_OUT/terminal-artifacts-redaction-check.json"
+```
+
+Expected:
+
+- exit code `0`
+- `"status": "passed"`
+- every case has a non-empty trace
+- every case records `trace_path`
+- the planted secret marker values are absent from every report, trace,
+  captured provider request body, and headless stdout file
+
+Cancellation and handoff are surface-specific interactive paths. Retain the TUI
+or SDK cancellation evidence with the release notes when those paths are
+exercised; this generated headless matrix does not attempt to simulate a human
+cancelling an active Run.
+
+## 9. Compatibility Sweep
+
+These commands provide the evidence for package-kind compatibility and existing
+publish/install/new/build/query/registry/API/web behavior. Run the applicable
+commands and retain stdout/stderr under `harness-release-verify-test/runs/` or
+in the release notes. If a command is skipped because credentials or external
+services are unavailable, record the skip reason.
+
+Define a quiet runner first. It writes the full command output to the named log
+file and only prints the tail when a command fails:
+
+```bash
+run_compat() {
+  local label="$1"
+  local log="$2"
+  shift 2
+  echo "running $label..."
+  if "$@" >"$log" 2>&1; then
+    echo "passed $label -> $log"
+  else
+    local exit_code=$?
+    echo "failed $label -> $log"
+    tail -80 "$log"
+    return "$exit_code"
+  fi
+}
+```
+
+CLI compatibility:
+
+```bash
+run_compat "CLI new" "$HARNESS_VERIFY_OUT/compat-cli-new.txt" \
+  cargo test -p agentpm-cli commands::new::tests
+run_compat "CLI install" "$HARNESS_VERIFY_OUT/compat-cli-install.txt" \
+  cargo test -p agentpm-cli commands::install::tests
+run_compat "CLI publish" "$HARNESS_VERIFY_OUT/compat-cli-publish.txt" \
+  cargo test -p agentpm-cli commands::publish::tests
+run_compat "CLI manifest" "$HARNESS_VERIFY_OUT/compat-cli-manifest.txt" \
+  cargo test -p agentpm-cli manifest::tests
+run_compat "CLI run" "$HARNESS_VERIFY_OUT/compat-cli-run.txt" \
+  cargo test -p agentpm-cli commands::run::tests
+run_compat "CLI export" "$HARNESS_VERIFY_OUT/compat-cli-export.txt" \
+  cargo test -p agentpm-cli commands::export::tests
+```
+
+SDK metadata-loader compatibility:
+
+```bash
+run_compat "Node SDK" "$HARNESS_VERIFY_OUT/compat-node-sdk.txt" \
+  bash -lc 'cd ../agentpm-sdk-node && pnpm test'
+run_compat "Python SDK" "$HARNESS_VERIFY_OUT/compat-python-sdk.txt" \
+  bash -lc 'cd ../agentpm-sdk-python && uv run pytest -q'
+```
+
+Registry/API and web compatibility:
+
+```bash
+run_compat "API" "$HARNESS_VERIFY_OUT/compat-api.txt" \
+  bash -lc 'cd ../agentpm-api && REGISTRY_PRIVATE_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= uv run python -m pytest -q'
+run_compat "Web tests" "$HARNESS_VERIFY_OUT/compat-web-test.txt" \
+  bash -lc 'cd ../agentpm-web && pnpm test'
+run_compat "Web typecheck" "$HARNESS_VERIFY_OUT/compat-web-typecheck.txt" \
+  bash -lc 'cd ../agentpm-web && pnpm typecheck'
+```
+
+This sweep is intentionally broad. The expected release result is that all
+commands pass, except for explicitly recorded environment skips. The only
+intentional compatibility exceptions for this release band remain the Loop
+checkpoint relaxation and Memory transform `output_mode` addition.
+
 ## What To Keep
 
 Retain this directory with the release verification notes:
@@ -399,6 +610,17 @@ harness-release-verify-test/runs/
   headless-stdin-report.json
   headless-input-file-report.json
   headless-approval-required-report.json
+  terminal-redaction-full-report.json
+  terminal-redaction-redacted-report.json
+  terminal-redaction-none-report.json
+  terminal-limit-report.json
+  terminal-failure-report.json
+  terminal-artifacts-redaction-check.json
+  compat-cli-*.txt
+  compat-node-sdk.txt
+  compat-python-sdk.txt
+  compat-api.txt
+  compat-web-*.txt
   node-repeat-run-1-report.json
   node-repeat-run-2-report.json
   node-repeat-runs-summary.json
