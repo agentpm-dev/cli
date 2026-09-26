@@ -7,6 +7,7 @@ WORK="$BASE/workspace"
 APPROVAL_WORK="$BASE/approval-workspace"
 REDACTION_WORK="$BASE/redaction-workspace"
 PROVIDER_WORK="$BASE/provider-workspace"
+SDK_WORK="$BASE/sdk-parity-workspace"
 RUNNERS="$BASE/runners"
 RUNS="$BASE/runs"
 APM_BIN="$ROOT/target/debug/agentpm"
@@ -30,7 +31,7 @@ pkg_root() {
 }
 
 rm -rf "$BASE"
-mkdir -p "$WORK" "$APPROVAL_WORK" "$REDACTION_WORK" "$PROVIDER_WORK" "$RUNNERS" "$RUNS"
+mkdir -p "$WORK" "$APPROVAL_WORK" "$REDACTION_WORK" "$PROVIDER_WORK" "$SDK_WORK" "$RUNNERS" "$RUNS"
 
 cat >"$BASE/env.sh" <<SH
 export HARNESS_VERIFY_ROOT="$BASE"
@@ -53,6 +54,16 @@ export HARNESS_VERIFY_PROVIDER_PROCESS_REQUEST_TIMEOUT_CONFIG="$PROVIDER_WORK/ag
 export HARNESS_VERIFY_PROVIDER_PROCESS_MALFORMED_CONFIG="$PROVIDER_WORK/agentpm.process-malformed.harness.json"
 export HARNESS_VERIFY_PROVIDER_PROCESS_BAD_COMMAND_CONFIG="$PROVIDER_WORK/agentpm.process-bad-command.harness.json"
 export HARNESS_VERIFY_PROVIDER_PROCESS_STARTUP_TIMEOUT_CONFIG="$PROVIDER_WORK/agentpm.process-startup-timeout.harness.json"
+export HARNESS_VERIFY_SDK_WORK="$SDK_WORK"
+export HARNESS_VERIFY_SDK_CONFIG="$SDK_WORK/agentpm.harness.json"
+export HARNESS_VERIFY_SDK_KNOWLEDGE_RUNTIME="kb"
+export HARNESS_VERIFY_SDK_KNOWLEDGE_PACKAGE="@zack/manual-context"
+export HARNESS_VERIFY_SDK_EMBEDDING_KNOWLEDGE_PACKAGE="@zack/manual-vector"
+export HARNESS_VERIFY_SDK_EMBEDDING_PROVIDER="embedder"
+export HARNESS_VERIFY_SDK_EMBEDDING_SPACE_PROVIDER="openai"
+export HARNESS_VERIFY_SDK_EMBEDDING_SPACE_MODEL="text-embedding-3-small"
+export HARNESS_VERIFY_SDK_EMBEDDING_DIMENSIONS="3"
+export HARNESS_VERIFY_SDK_EMBEDDING_NORMALIZED="true"
 export HARNESS_VERIFY_RUNNERS="$RUNNERS"
 export HARNESS_VERIFY_OUT="$RUNS"
 export HARNESS_VERIFY_AGENT=""
@@ -70,6 +81,17 @@ export ANTHROPIC_API_KEY="harness-release-verify-key"
 export ANTHROPIC_BASE_URL="http://127.0.0.1:18130/v1/messages"
 export OLLAMA_BASE_URL="http://127.0.0.1:18130"
 export AGENTPM_MANUAL_PYTHON="\${AGENTPM_MANUAL_PYTHON:-$PYTHON_CMD}"
+export AGENTPM_HARNESS_CLI="$APM_BIN"
+export AGENTPM_HARNESS_WORKSPACE="$SDK_WORK"
+export AGENTPM_HARNESS_EMBEDDING_PROVIDER="embedder"
+export AGENTPM_HARNESS_EMBEDDING_SPACE_PROVIDER="openai"
+export AGENTPM_HARNESS_EMBEDDING_SPACE_MODEL="text-embedding-3-small"
+export AGENTPM_HARNESS_EMBEDDING_DIMENSIONS="3"
+export AGENTPM_HARNESS_EMBEDDING_NORMALIZED="true"
+export AGENTPM_HARNESS_KNOWLEDGE_RUNTIME="kb"
+export AGENTPM_HARNESS_KNOWLEDGE_PACKAGE="@zack/manual-context"
+export AGENTPM_HARNESS_KNOWLEDGE_VERSION="0.1.0"
+export AGENTPM_HARNESS_EMBEDDING_KNOWLEDGE_PACKAGE="@zack/manual-vector"
 SH
 
 cat >"$BASE/README.md" <<'MD'
@@ -719,6 +741,288 @@ write_process_provider_config "$PROVIDER_WORK/agentpm.process-bad-command.harnes
 write_process_provider_config "$PROVIDER_WORK/agentpm.process-startup-timeout.harness.json" \
   "release-process-startup-timeout" ".agentpm-state-provider-process-startup-timeout" 200 1000 "$PYTHON_CMD" \
   "$RUNNERS/process_model_service.py" "--hang-startup"
+
+mkdir -p "$SDK_WORK/.agentpm/loops/zack/sdk-parity-loop/0.1.0"
+mkdir -p "$SDK_WORK/.agentpm/knowledge/zack/manual-context/0.1.0/knowledge/docs"
+mkdir -p "$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/knowledge/embeddings"
+
+cat >"$SDK_WORK/context.md" <<'MD'
+# SDK Parity Context
+
+This workspace verifies Node and Python SDK Harness host-service parity.
+MD
+
+write_json "$SDK_WORK/agent.json" <<'JSON'
+{
+  "kind": "agent",
+  "name": "sdk-parity-agent",
+  "version": "0.1.0",
+  "description": "AgentPM Harness SDK parity verification Agent.",
+  "knowledge": [
+    "@zack/manual-context@0.1.0",
+    "@zack/manual-vector@0.1.0"
+  ],
+  "loop": "@zack/sdk-parity-loop@0.1.0",
+  "bindings": {
+    "consumer_context": { "file": "context.md" },
+    "phases": {
+      "inspect": {
+        "knowledge": [
+          "@zack/manual-context",
+          "@zack/manual-vector"
+        ]
+      },
+      "respond": {
+        "knowledge": []
+      }
+    }
+  }
+}
+JSON
+
+write_json "$SDK_WORK/.agentpm/loops/zack/sdk-parity-loop/0.1.0/agent.json" <<'JSON'
+{
+  "kind": "loop",
+  "name": "@zack/sdk-parity-loop",
+  "version": "0.1.0",
+  "description": "Two-phase SDK parity loop with host services and an approval checkpoint.",
+  "loop": {
+    "entry_phase": "inspect",
+    "checkpoints": [
+      {
+        "id": "approve-sdk-parity-response",
+        "type": "approval",
+        "before_phase": "respond",
+        "on_reject": "$handoff"
+      }
+    ],
+    "phases": [
+      {
+        "id": "inspect",
+        "objective": "Use the available Knowledge capabilities to inspect SDK parity evidence, then preserve the result for the response phase.",
+        "access": {
+          "tools": false,
+          "knowledge": true,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "answer",
+            "description": "Knowledge evidence was gathered and the answer can be prepared."
+          }
+        ]
+      },
+      {
+        "id": "respond",
+        "objective": "Respond from the prior phase result after approval.",
+        "access": {
+          "tools": false,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "complete",
+            "description": "The SDK parity response is complete."
+          }
+        ]
+      }
+    ],
+    "transitions": [
+      { "from": "inspect", "on": "answer", "to": "respond" },
+      { "from": "respond", "on": "complete", "to": "$end" }
+    ]
+  }
+}
+JSON
+
+cat >"$SDK_WORK/.agentpm/knowledge/zack/manual-context/0.1.0/knowledge/docs/overview.md" <<'MD'
+# Manual Context
+
+The SDK parity context document is available through the host KnowledgeRuntime.
+MD
+
+write_json "$SDK_WORK/.agentpm/knowledge/zack/manual-context/0.1.0/agent.json" <<'JSON'
+{
+  "kind": "knowledge",
+  "name": "manual-context",
+  "version": "0.1.0",
+  "description": "Context Knowledge package for SDK parity verification.",
+  "knowledge": {
+    "mode": "context",
+    "content_type": "text/markdown",
+    "documents": [
+      { "path": "knowledge/docs/overview.md", "content_type": "text/markdown" }
+    ]
+  }
+}
+JSON
+
+cat >"$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/knowledge/chunks.jsonl" <<'JSONL'
+{"id":"sdk-parity-chunk","source_id":"sdk-parity-source","text":"SDK parity vector Knowledge result."}
+JSONL
+cat >"$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/knowledge/sources.jsonl" <<'JSONL'
+{"id":"sdk-parity-source","title":"SDK Parity Source","uri":"file://sdk-parity"}
+JSONL
+"$PYTHON_CMD" - <<PY
+from pathlib import Path
+import struct
+
+path = Path("$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/knowledge/embeddings/default.f32")
+with path.open("wb") as handle:
+    for value in (1.0, 0.0, 0.0):
+        handle.write(struct.pack("<f", value))
+PY
+
+write_json "$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/agent.json" <<'JSON'
+{
+  "kind": "knowledge",
+  "name": "manual-vector",
+  "version": "0.1.0",
+  "description": "Vector Knowledge package for SDK parity verification.",
+  "knowledge": {
+    "mode": "vector",
+    "corpus": {
+      "chunks_path": "knowledge/chunks.jsonl",
+      "sources_path": "knowledge/sources.jsonl"
+    },
+    "embedding": {
+      "id": "default",
+      "provider": "openai",
+      "model": "text-embedding-3-small",
+      "dimensions": 3,
+      "metric": "cosine",
+      "normalized": true,
+      "vectors_path": "knowledge/embeddings/default.f32"
+    },
+    "retrieval": {
+      "strategy": "exact",
+      "default_top_k": 1,
+      "return_citations": true
+    }
+  }
+}
+JSON
+
+"$APM_BIN" knowledge build --manifest "$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/agent.json" >/dev/null
+
+write_json "$SDK_WORK/agent.lock" <<'JSON'
+{
+  "lockfile_version": 3,
+  "generated": "2026-09-26T00:00:00Z",
+  "packages": {
+    "knowledge:@zack/manual-context@0.1.0": {
+      "kind": "knowledge",
+      "name": "@zack/manual-context",
+      "version": "0.1.0",
+      "integrity": "sha256-sdk-parity-context"
+    },
+    "knowledge:@zack/manual-vector@0.1.0": {
+      "kind": "knowledge",
+      "name": "@zack/manual-vector",
+      "version": "0.1.0",
+      "integrity": "sha256-sdk-parity-vector"
+    },
+    "loop:@zack/sdk-parity-loop@0.1.0": {
+      "kind": "loop",
+      "name": "@zack/sdk-parity-loop",
+      "version": "0.1.0",
+      "integrity": "sha256-sdk-parity-loop"
+    }
+  },
+  "roots": {
+    "local:agent": {
+      "name": "sdk-parity-agent",
+      "version": "0.1.0",
+      "knowledge": [
+        "knowledge:@zack/manual-context@0.1.0",
+        "knowledge:@zack/manual-vector@0.1.0"
+      ],
+      "loop": "loop:@zack/sdk-parity-loop@0.1.0"
+    }
+  }
+}
+JSON
+
+write_json "$SDK_WORK/agentpm.harness.json" <<'JSON'
+{
+  "version": 1,
+  "providers": {
+    "models": {
+      "company-model": {
+        "implementation": {
+          "type": "host",
+          "request_timeout_ms": 5000
+        }
+      }
+    },
+    "embeddings": {
+      "embedder": {
+        "implementation": {
+          "type": "host",
+          "request_timeout_ms": 5000
+        }
+      }
+    }
+  },
+  "model": {
+    "provider": "company-model",
+    "model": "sdk-parity-model"
+  },
+  "knowledge": {
+    "runtimes": {
+      "kb": {
+        "implementation": {
+          "type": "host",
+          "request_timeout_ms": 5000
+        }
+      }
+    },
+    "packages": {
+      "@zack/manual-context": { "runtime": "kb" }
+    },
+    "embedding_matches": [
+      {
+        "match": {
+          "provider": "openai",
+          "model": "text-embedding-3-small",
+          "dimensions": 3,
+          "normalized": true
+        },
+        "embedding_provider": "embedder"
+      }
+    ]
+  },
+  "approvals": {
+    "controller": {
+      "implementation": {
+        "type": "host",
+        "request_timeout_ms": 5000
+      }
+    },
+    "timeout_ms": 300000
+  },
+  "scopes": {
+    "user": "sdk-parity-user"
+  },
+  "runtime": {
+    "state_dir": ".agentpm-state-sdk-parity",
+    "limits": {
+      "max_steps": 5,
+      "max_model_calls_per_phase": 4,
+      "max_tool_calls_per_phase": 2,
+      "max_actions_per_phase": 8,
+      "max_structured_output_repairs": 1,
+      "max_tool_call_repairs": 1
+    }
+  },
+  "trace": {
+    "enabled": true,
+    "level": "verbose",
+    "content": "full"
+  }
+}
+JSON
 
 cat >"$BASE/fake_openai_server.py" <<'PY'
 #!/usr/bin/env python3
@@ -1496,6 +1800,513 @@ finally:
     harness.shutdown()
 PY
 chmod +x "$RUNNERS/python_runner.py"
+
+cat >"$RUNNERS/node-sdk-parity-runner.mjs" <<'JS'
+import { writeFileSync } from 'node:fs';
+import { HarnessClient } from '../../../agentpm-sdk-node/dist/index.js';
+
+const calls = [];
+let modelCalls = 0;
+const harness = new HarnessClient({
+  configPath: process.env.HARNESS_VERIFY_SDK_CONFIG,
+  cwd: process.env.HARNESS_VERIFY_SDK_WORK,
+  agentpmPath: process.env.APM,
+});
+harness.onStderr((chunk) => process.stderr.write(chunk));
+
+harness
+  .registerModelProvider('company-model', () => {
+    calls.push('model');
+    modelCalls += 1;
+    if (modelCalls === 1) {
+      return {
+        assistant_content: null,
+        actions: [
+          {
+            id: 'node-sdk-parity-context',
+            action: {
+              type: 'knowledge_request',
+              package: process.env.HARNESS_VERIFY_SDK_KNOWLEDGE_PACKAGE,
+              mode: 'context_document',
+              document: 'knowledge/docs/overview.md',
+              return_citations: true,
+            },
+          },
+          {
+            id: 'node-sdk-parity-vector',
+            action: {
+              type: 'knowledge_request',
+              package: process.env.HARNESS_VERIFY_SDK_EMBEDDING_KNOWLEDGE_PACKAGE,
+              mode: 'vector_query',
+              query: 'SDK parity vector query',
+              top_k: 1,
+              return_citations: true,
+            },
+          },
+        ],
+        usage: { model_calls: 1, input_tokens: 11, output_tokens: 7, total_tokens: 18 },
+        finish_reason: 'tool_calls',
+        provider_metadata: { surface: 'node-sdk' },
+      };
+    }
+    const outcome = modelCalls === 2 ? 'answer' : 'complete';
+    return {
+      assistant_content: null,
+      actions: [
+        {
+          id: `node-sdk-parity-complete-${modelCalls}`,
+          action: {
+            type: 'phase_completion',
+            outcome,
+            output: { message: `Node SDK parity ${outcome}` },
+          },
+        },
+      ],
+      usage: { model_calls: 1, input_tokens: 13, output_tokens: 5, total_tokens: 18 },
+      finish_reason: 'tool_calls',
+      provider_metadata: { surface: 'node-sdk' },
+    };
+  })
+  .onBeforeModelRequest(() => {
+    calls.push('before_model_request');
+    return { decision: 'continue' };
+  })
+  .onBeforeKnowledgeRequest((input) => {
+    calls.push(`before_knowledge_request:${input.request.package}:${input.request.mode}`);
+    return { decision: 'continue' };
+  })
+  .onAfterKnowledgeRetrieval((input) => {
+    calls.push(`after_knowledge_retrieval:${input.result.package}:${input.result.mode}`);
+    return { decision: 'continue' };
+  })
+  .onApproval(() => {
+    calls.push('approval');
+    return 'approve';
+  });
+
+harness.registerEmbeddingProvider(
+  process.env.HARNESS_VERIFY_SDK_EMBEDDING_PROVIDER,
+  (request) => {
+    calls.push(`embedding:${request.provider}:${request.model}:${request.text}`);
+    return {
+      vector: Array.from({ length: request.dimensions }, (_, index) => (index === 0 ? 1 : 0)),
+      provider: request.provider,
+      model: request.model,
+      dimensions: request.dimensions,
+      normalized: request.normalized,
+    };
+  },
+  {
+    embedding_spaces: [
+      {
+        provider: process.env.HARNESS_VERIFY_SDK_EMBEDDING_SPACE_PROVIDER,
+        model: process.env.HARNESS_VERIFY_SDK_EMBEDDING_SPACE_MODEL,
+        dimensions: Number(process.env.HARNESS_VERIFY_SDK_EMBEDDING_DIMENSIONS),
+        normalized: process.env.HARNESS_VERIFY_SDK_EMBEDDING_NORMALIZED !== 'false',
+      },
+    ],
+  },
+);
+
+harness.registerKnowledgeRuntime(
+  process.env.HARNESS_VERIFY_SDK_KNOWLEDGE_RUNTIME,
+  (request) => {
+    calls.push(`knowledge:${request.package}:${request.mode}:${request.query ?? ''}`);
+    return {
+      ok: true,
+      package: request.package,
+      version: request.version,
+      mode: request.mode,
+      document: request.document,
+      query: request.query,
+      content: request.document ? 'Node SDK parity host Knowledge document' : undefined,
+      results: request.query
+        ? [
+            {
+              rank: 1,
+              score: 1,
+              chunk_id: 'node-sdk-parity-chunk',
+              source_id: 'node-sdk-parity-source',
+              text: 'Node SDK parity host Knowledge result',
+            },
+          ]
+        : [],
+      citations: request.return_citations
+        ? [{ chunk_id: 'node-sdk-parity-chunk', source_id: 'node-sdk-parity-source' }]
+        : [],
+    };
+  },
+  {
+    modes: ['context_document', 'vector_query'],
+    features: ['citations'],
+    packages: [
+      {
+        package: process.env.HARNESS_VERIFY_SDK_KNOWLEDGE_PACKAGE,
+        version: '0.1.0',
+        ready: true,
+      },
+    ],
+  },
+);
+
+try {
+  const result = await harness.run('Run the SDK parity fixture.');
+  writeFileSync(process.env.NODE_SDK_PARITY_REPORT, JSON.stringify(result.report, null, 2) + '\n');
+  writeFileSync(
+    process.env.NODE_SDK_PARITY_SUMMARY,
+    JSON.stringify({ status: result.status, output: result.output, calls, report: result.report }, null, 2) +
+      '\n',
+  );
+} finally {
+  await harness.shutdown();
+}
+JS
+
+cat >"$RUNNERS/python_sdk_parity_runner.py" <<PY
+#!/usr/bin/env python3
+import json
+import os
+import sys
+import importlib.util
+from pathlib import Path
+from typing import Any
+
+spec = importlib.util.spec_from_file_location(
+    "agentpm_harness_direct",
+    "$ROOT/../agentpm-sdk-python/src/agentpm/harness.py",
+)
+if spec is None or spec.loader is None:
+    raise RuntimeError("could not load Python SDK harness module")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+HarnessClient = module.HarnessClient
+
+calls: list[str] = []
+model_calls = 0
+harness = HarnessClient(
+    config_path=os.environ["HARNESS_VERIFY_SDK_CONFIG"],
+    cwd=os.environ["HARNESS_VERIFY_SDK_WORK"],
+    agentpm_path=os.environ["APM"],
+)
+
+
+def model_provider(_: Any) -> dict[str, Any]:
+    global model_calls
+    calls.append("model")
+    model_calls += 1
+    if model_calls == 1:
+        return {
+            "assistant_content": None,
+            "actions": [
+                {
+                    "id": "python-sdk-parity-context",
+                    "action": {
+                        "type": "knowledge_request",
+                        "package": os.environ["HARNESS_VERIFY_SDK_KNOWLEDGE_PACKAGE"],
+                        "mode": "context_document",
+                        "document": "knowledge/docs/overview.md",
+                        "return_citations": True,
+                    },
+                },
+                {
+                    "id": "python-sdk-parity-vector",
+                    "action": {
+                        "type": "knowledge_request",
+                        "package": os.environ["HARNESS_VERIFY_SDK_EMBEDDING_KNOWLEDGE_PACKAGE"],
+                        "mode": "vector_query",
+                        "query": "SDK parity vector query",
+                        "top_k": 1,
+                        "return_citations": True,
+                    },
+                },
+            ],
+            "usage": {"model_calls": 1, "input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
+            "finish_reason": "tool_calls",
+            "provider_metadata": {"surface": "python-sdk"},
+        }
+    outcome = "answer" if model_calls == 2 else "complete"
+    return {
+        "assistant_content": None,
+        "actions": [
+            {
+                "id": f"python-sdk-parity-complete-{model_calls}",
+                "action": {
+                    "type": "phase_completion",
+                    "outcome": outcome,
+                    "output": {"message": f"Python SDK parity {outcome}"},
+                },
+            }
+        ],
+        "usage": {"model_calls": 1, "input_tokens": 13, "output_tokens": 5, "total_tokens": 18},
+        "finish_reason": "tool_calls",
+        "provider_metadata": {"surface": "python-sdk"},
+    }
+
+
+def before_model_request(_: Any) -> dict[str, str]:
+    calls.append("before_model_request")
+    return {"decision": "continue"}
+
+
+def before_knowledge_request(input: Any) -> dict[str, str]:
+    request = input["request"]
+    calls.append(f"before_knowledge_request:{request['package']}:{request['mode']}")
+    return {"decision": "continue"}
+
+
+def after_knowledge_retrieval(input: Any) -> dict[str, str]:
+    result = input["result"]
+    calls.append(f"after_knowledge_retrieval:{result['package']}:{result['mode']}")
+    return {"decision": "continue"}
+
+
+def approval(_: Any) -> str:
+    calls.append("approval")
+    return "approve"
+
+
+def embedding_provider(request: Any) -> dict[str, Any]:
+    calls.append(f"embedding:{request['provider']}:{request['model']}:{request['text']}")
+    return {
+        "vector": [1.0 if index == 0 else 0.0 for index in range(request["dimensions"])],
+        "provider": request["provider"],
+        "model": request["model"],
+        "dimensions": request["dimensions"],
+        "normalized": request["normalized"],
+    }
+
+
+def knowledge_runtime(request: Any) -> dict[str, Any]:
+    calls.append(f"knowledge:{request['package']}:{request['mode']}:{request.get('query', '')}")
+    result: dict[str, Any] = {
+        "ok": True,
+        "package": request["package"],
+        "version": request["version"],
+        "mode": request["mode"],
+        "content": "Python SDK parity host Knowledge document" if request.get("document") else "",
+        "results": [
+            {
+                "rank": 1,
+                "score": 1.0,
+                "chunk_id": "python-sdk-parity-chunk",
+                "source_id": "python-sdk-parity-source",
+                "text": "Python SDK parity host Knowledge result",
+            }
+        ]
+        if request.get("query")
+        else [],
+        "citations": [
+            {
+                "chunk_id": "python-sdk-parity-chunk",
+                "source_id": "python-sdk-parity-source",
+            }
+        ]
+        if request.get("return_citations")
+        else [],
+    }
+    if "document" in request:
+        result["document"] = request["document"]
+    if "query" in request:
+        result["query"] = request["query"]
+    return result
+
+
+harness.register_model_provider("company-model", model_provider).on_before_model_request(
+    before_model_request
+).on_before_knowledge_request(before_knowledge_request).on_after_knowledge_retrieval(
+    after_knowledge_retrieval
+).on_approval(approval)
+harness.register_embedding_provider(
+    os.environ["HARNESS_VERIFY_SDK_EMBEDDING_PROVIDER"],
+    embedding_provider,
+    {
+        "embedding_spaces": [
+            {
+                "provider": os.environ["HARNESS_VERIFY_SDK_EMBEDDING_SPACE_PROVIDER"],
+                "model": os.environ["HARNESS_VERIFY_SDK_EMBEDDING_SPACE_MODEL"],
+                "dimensions": int(os.environ["HARNESS_VERIFY_SDK_EMBEDDING_DIMENSIONS"]),
+                "normalized": os.environ["HARNESS_VERIFY_SDK_EMBEDDING_NORMALIZED"] != "false",
+            }
+        ]
+    },
+)
+harness.register_knowledge_runtime(
+    os.environ["HARNESS_VERIFY_SDK_KNOWLEDGE_RUNTIME"],
+    knowledge_runtime,
+    {
+        "modes": ["context_document", "vector_query"],
+        "features": ["citations"],
+        "packages": [
+            {
+                "package": os.environ["HARNESS_VERIFY_SDK_KNOWLEDGE_PACKAGE"],
+                "version": "0.1.0",
+                "ready": True,
+            }
+        ],
+    },
+)
+
+try:
+    result = harness.run("Run the SDK parity fixture.")
+    Path(os.environ["PYTHON_SDK_PARITY_REPORT"]).write_text(
+        json.dumps(result["report"], indent=2) + "\\n",
+        encoding="utf-8",
+    )
+    Path(os.environ["PYTHON_SDK_PARITY_SUMMARY"]).write_text(
+        json.dumps(
+            {
+                "status": result["status"],
+                "output": result.get("output"),
+                "calls": calls,
+                "report": result["report"],
+            },
+            indent=2,
+        )
+        + "\\n",
+        encoding="utf-8",
+    )
+finally:
+    harness.shutdown()
+PY
+chmod +x "$RUNNERS/python_sdk_parity_runner.py"
+
+cat >"$RUNNERS/check_sdk_parity.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+from collections import Counter
+from pathlib import Path
+
+
+REQUIRED_CALL_PREFIXES = [
+    "model",
+    "before_model_request",
+    "before_knowledge_request:",
+    "after_knowledge_retrieval:",
+    "knowledge:",
+    "embedding:",
+    "approval",
+]
+
+COMPARABLE_USAGE_KEYS = [
+    "accepted_semantic_actions",
+    "embedding_requests",
+    "knowledge_requests",
+    "memory_requests",
+    "model_calls",
+    "tool_calls",
+    "tool_retries",
+]
+
+
+def load_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def parse_case(raw: str):
+    parts = raw.split(":", 2)
+    if len(parts) != 3:
+        raise SystemExit(f"--case must be label:summary:report, got {raw!r}")
+    label, summary, report = parts
+    return label, Path(summary), Path(report)
+
+
+def normalized_phases(report):
+    return [
+        {
+            "phase_id": item.get("phase_id"),
+            "status": item.get("status"),
+            "outcome": item.get("outcome"),
+        }
+        for item in report.get("phase_summaries") or []
+    ]
+
+
+def action_counts(report):
+    return Counter(item.get("action_kind") for item in report.get("action_summaries") or [])
+
+
+def comparable_usage(report):
+    usage = report.get("usage") or {}
+    return {key: usage.get(key, 0) for key in COMPARABLE_USAGE_KEYS}
+
+
+def assert_case(label, summary_path, report_path):
+    summary = load_json(summary_path)
+    report = load_json(report_path)
+    if summary.get("status") != "ended":
+        raise AssertionError(f"{label}: expected ended status, got {summary.get('status')}")
+    if report.get("terminal_status") != "ended":
+        raise AssertionError(f"{label}: expected ended report, got {report.get('terminal_status')}")
+    calls = summary.get("calls") or []
+    for prefix in REQUIRED_CALL_PREFIXES:
+        if not any(call == prefix or str(call).startswith(prefix) for call in calls):
+            raise AssertionError(f"{label}: missing call prefix {prefix!r}")
+    phases = normalized_phases(report)
+    expected_phases = [
+        {"phase_id": "inspect", "status": "completed", "outcome": "answer"},
+        {"phase_id": "respond", "status": "completed", "outcome": "complete"},
+    ]
+    if phases != expected_phases:
+        raise AssertionError(f"{label}: unexpected phase summaries {phases!r}")
+    counts = action_counts(report)
+    if counts.get("knowledge_request", 0) < 2:
+        raise AssertionError(f"{label}: expected at least two Knowledge actions, got {dict(counts)}")
+    if not report.get("trace_path"):
+        raise AssertionError(f"{label}: missing trace_path")
+    usage = report.get("usage") or {}
+    if usage.get("model_calls", 0) < 3:
+        raise AssertionError(f"{label}: expected Run usage to include model calls, got {usage}")
+    if usage.get("embedding_requests", 0) < 1:
+        raise AssertionError(f"{label}: expected host embedding request, got {usage}")
+    call_counts = Counter(calls)
+    return {
+        "label": label,
+        "status": summary.get("status"),
+        "phases": phases,
+        "action_counts": dict(counts),
+        "call_counts": dict(call_counts),
+        "trace_path": report.get("trace_path"),
+        "usage": usage,
+        "comparable_usage": comparable_usage(report),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--case", action="append", default=[])
+    parser.add_argument("--node-log", type=Path, required=True)
+    parser.add_argument("--python-log", type=Path, required=True)
+    args = parser.parse_args()
+    if len(args.case) != 2:
+        raise SystemExit("expected exactly two --case entries: node and python")
+
+    cases = [assert_case(*parse_case(raw)) for raw in args.case]
+    labels = {case["label"] for case in cases}
+    if labels != {"node", "python"}:
+        raise AssertionError(f"expected node/python cases, got {sorted(labels)}")
+    for label, path in [("node", args.node_log), ("python", args.python_log)]:
+        if not path.is_file() or not path.read_text(encoding="utf-8", errors="replace").strip():
+            raise AssertionError(f"{label}: missing SDK focused test log {path}")
+
+    node = next(case for case in cases if case["label"] == "node")
+    python = next(case for case in cases if case["label"] == "python")
+    comparable_fields = ["phases", "action_counts", "call_counts", "comparable_usage"]
+    mismatches = [
+        field
+        for field in comparable_fields
+        if node.get(field) != python.get(field)
+    ]
+    if mismatches:
+        raise AssertionError(f"SDK parity mismatches: {mismatches}")
+    print(json.dumps({"status": "passed", "cases": cases}, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+PY
+chmod +x "$RUNNERS/check_sdk_parity.py"
 
 cat >"$RUNNERS/extract_trace.py" <<'PY'
 #!/usr/bin/env python3

@@ -838,6 +838,82 @@ fixture is deterministic mocked coverage; it does not replace optional live
 provider smoke evidence where credentials and a local Ollama runtime are
 available.
 
+## 11. SDK Host-Service Parity
+
+These checks cover Node/Python parity for host model, embedding, Knowledge,
+Hook, approval, cancellation, Memory provider/control, reports, and usage.
+
+The generated `env.sh` exports the `AGENTPM_HARNESS_*` variables used by both
+SDKs' real CLI integration tests. If you regenerated the fixture in a new
+terminal, source it again before running this section:
+
+```bash
+source harness-release-verify-test/env.sh
+```
+
+Build the Node SDK once so the generated runner can import the package entry:
+If you have not already defined `run_compat` from Section 9, define it first.
+
+```bash
+run_compat "Node SDK build" "$HARNESS_VERIFY_OUT/sdk-node-build.txt" \
+  bash -lc 'cd ../agentpm-sdk-node && pnpm build'
+```
+
+Run the real Node/Python SDK parity runners. These use the same generated
+workspace and register the same host model, embedding provider, Knowledge
+runtime, Hooks, and approval controller:
+
+```bash
+export NODE_SDK_PARITY_REPORT="$HARNESS_VERIFY_OUT/sdk-node-parity-report.json"
+export NODE_SDK_PARITY_SUMMARY="$HARNESS_VERIFY_OUT/sdk-node-parity-summary.json"
+node "$HARNESS_VERIFY_RUNNERS/node-sdk-parity-runner.mjs" \
+  >"$HARNESS_VERIFY_OUT/sdk-node-parity-stdout.txt" \
+  2>"$HARNESS_VERIFY_OUT/sdk-node-parity-stderr.txt"
+
+export PYTHON_SDK_PARITY_REPORT="$HARNESS_VERIFY_OUT/sdk-python-parity-report.json"
+export PYTHON_SDK_PARITY_SUMMARY="$HARNESS_VERIFY_OUT/sdk-python-parity-summary.json"
+"$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/python_sdk_parity_runner.py" \
+  >"$HARNESS_VERIFY_OUT/sdk-python-parity-stdout.txt" \
+  2>"$HARNESS_VERIFY_OUT/sdk-python-parity-stderr.txt"
+```
+
+Run the focused SDK contract tests. These include fake-machine protocol tests
+for cancellation and external Memory-operation control, typed Hook capability
+advertisement, typed embedding/Knowledge providers, Knowledge and Memory
+process-provider serving, and each SDK's real CLI integration test against the
+generated host-service workspace:
+
+```bash
+run_compat "Node SDK Harness parity" "$HARNESS_VERIFY_OUT/sdk-node-harness-parity.txt" \
+  bash -lc 'cd ../agentpm-sdk-node && pnpm vitest run test/harness.spec.ts -t "routes host model, Hook, and approval requests through typed callbacks|advertises role-specific host service capabilities|registers typed embedding and Knowledge providers and dispatches host requests|maps cancellation and external Memory-operation control through machine requests|runs a real agentpm harness process with host model, embedding, Knowledge, Hook, approval, and report|serveKnowledgeRuntimeProcess|serveMemoryRuntimeProcess"'
+
+run_compat "Python SDK Harness parity" "$HARNESS_VERIFY_OUT/sdk-python-harness-parity.txt" \
+  bash -lc 'cd ../agentpm-sdk-python && uv run pytest -q tests/test_harness.py -k "routes_model_hook_and_approval_callbacks or advertises_typed_hook_helpers or registers_typed_embedding_and_knowledge_providers or cancellation_and_memory_operation_errors or real_agentpm_harness_process_when_fixture_env_is_set or serve_knowledge_runtime_process or serve_memory_runtime_process"'
+```
+
+Validate the parity artifacts:
+
+```bash
+"$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/check_sdk_parity.py" \
+  --case node:"$NODE_SDK_PARITY_SUMMARY":"$NODE_SDK_PARITY_REPORT" \
+  --case python:"$PYTHON_SDK_PARITY_SUMMARY":"$PYTHON_SDK_PARITY_REPORT" \
+  --node-log "$HARNESS_VERIFY_OUT/sdk-node-harness-parity.txt" \
+  --python-log "$HARNESS_VERIFY_OUT/sdk-python-harness-parity.txt" \
+  | tee "$HARNESS_VERIFY_OUT/sdk-parity-check.json"
+```
+
+Expected:
+
+- exit code `0`
+- `"status": "passed"`
+- Node and Python both reach terminal status `ended`
+- both reports show the same phase path: `inspect -> answer`, then
+  `respond -> complete`
+- both reports include at least two Knowledge actions, non-empty usage, and a
+  trace path
+- both summaries show model, Hook, Knowledge, embedding, and approval callbacks
+- focused SDK logs are non-empty and passing
+
 ## What To Keep
 
 Retain this directory with the release verification notes:
@@ -871,6 +947,14 @@ harness-release-verify-test/runs/
   provider-schema-*.txt
   provider-process-contract.txt
   provider-host-*.txt
+  sdk-node-build.txt
+  sdk-node-parity-report.json
+  sdk-node-parity-summary.json
+  sdk-node-harness-parity.txt
+  sdk-python-parity-report.json
+  sdk-python-parity-summary.json
+  sdk-python-harness-parity.txt
+  sdk-parity-check.json
   compat-cli-*.txt
   compat-node-sdk.txt
   compat-python-sdk.txt
