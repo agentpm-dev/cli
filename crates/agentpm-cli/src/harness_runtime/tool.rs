@@ -113,43 +113,7 @@ impl AgentPmActionDispatcher {
                 );
             }
         };
-        let parsed = match serde_json::from_slice::<MachineRunEnvelope>(&output.stdout) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return ActionDispatchResult::failure_with_category(
-                    ActionFailureCategory::MalformedOutput,
-                    format!(
-                        "ToolRuntime could not parse machine output for `{tool_name}`: {err}; stderr: {stderr}"
-                    ),
-                );
-            }
-        };
-        if parsed.schema_version != 1 {
-            return ActionDispatchResult::failure_with_category(
-                ActionFailureCategory::MalformedOutput,
-                format!(
-                    "ToolRuntime received unsupported machine schema_version {} for `{tool_name}`",
-                    parsed.schema_version
-                ),
-            );
-        }
-        match parsed.status.as_str() {
-            "success" => ActionDispatchResult::success(parsed.output.unwrap_or(Value::Null)),
-            "error" => {
-                let error = parsed.error.unwrap_or(MachineRunError {
-                    category: "other".into(),
-                    message: "agentpm run failed without a machine error payload".into(),
-                });
-                let category = ActionFailureCategory::from_machine_category(&error.category)
-                    .unwrap_or(ActionFailureCategory::Other);
-                ActionDispatchResult::failure_with_category(category, error.message)
-            }
-            other => ActionDispatchResult::failure_with_category(
-                ActionFailureCategory::MalformedOutput,
-                format!("ToolRuntime received unknown machine status `{other}` for `{tool_name}`"),
-            ),
-        }
+        interpret_machine_run_output(tool_name, &output.stdout, &output.stderr)
     }
 
     fn dispatch_skill_resource(&self, skill_name: &str, resource_id: &str) -> ActionDispatchResult {
@@ -187,6 +151,50 @@ impl AgentPmActionDispatcher {
             "resource": resource_id,
             "content": content,
         }))
+    }
+}
+
+fn interpret_machine_run_output(
+    tool_name: &str,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> ActionDispatchResult {
+    let parsed = match serde_json::from_slice::<MachineRunEnvelope>(stdout) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            let stderr = String::from_utf8_lossy(stderr);
+            return ActionDispatchResult::failure_with_category(
+                ActionFailureCategory::MalformedOutput,
+                format!(
+                    "ToolRuntime could not parse machine output for `{tool_name}`: {err}; stderr: {stderr}"
+                ),
+            );
+        }
+    };
+    if parsed.schema_version != 1 {
+        return ActionDispatchResult::failure_with_category(
+            ActionFailureCategory::MalformedOutput,
+            format!(
+                "ToolRuntime received unsupported machine schema_version {} for `{tool_name}`",
+                parsed.schema_version
+            ),
+        );
+    }
+    match parsed.status.as_str() {
+        "success" => ActionDispatchResult::success(parsed.output.unwrap_or(Value::Null)),
+        "error" => {
+            let error = parsed.error.unwrap_or(MachineRunError {
+                category: "other".into(),
+                message: "agentpm run failed without a machine error payload".into(),
+            });
+            let category = ActionFailureCategory::from_machine_category(&error.category)
+                .unwrap_or(ActionFailureCategory::Other);
+            ActionDispatchResult::failure_with_category(category, error.message)
+        }
+        other => ActionDispatchResult::failure_with_category(
+            ActionFailureCategory::MalformedOutput,
+            format!("ToolRuntime received unknown machine status `{other}` for `{tool_name}`"),
+        ),
     }
 }
 
@@ -467,42 +475,13 @@ printf '%s\n' '{{"schema_version":1,"status":"success","output":{{"ok":false,"re
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn tool_dispatch_preserves_machine_error_category() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = temp_dir("tool-machine-error");
-        let script = temp.join("agentpm");
-        std::fs::write(
-            &script,
-            r#"#!/bin/sh
-printf '%s\n' '{"schema_version":1,"status":"error","error":{"category":"schema","message":"invalid arguments"}}'
-"#,
-        )
-        .unwrap();
-        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&script, permissions).unwrap();
-
-        let mut runtime = RuntimeSnapshot::empty("session".into());
-        runtime.workspace_root = temp.clone();
-        runtime.tools.push(ToolRuntimeSnapshot {
-            name: "@zack/schema-tool".into(),
-            version: "0.1.0".into(),
-            description: "Schema failure tool.".into(),
-            root: Some(temp),
-            input_schema: json!({ "type": "object", "additionalProperties": true }),
-            state: "available".into(),
-            source: "agent_binding".into(),
-        });
-        let mut dispatcher =
-            AgentPmActionDispatcher::with_agentpm_binary(&runtime, script).unwrap();
-
-        let result = dispatcher.dispatch(&SemanticAction::AgentPmTool {
-            tool: "@zack/schema-tool".into(),
-            arguments: json!({}),
-        });
+        let result = interpret_machine_run_output(
+            "@zack/schema-tool",
+            br#"{"schema_version":1,"status":"error","error":{"category":"schema","message":"invalid arguments"}}"#,
+            b"",
+        );
 
         assert!(!result.ok);
         assert_eq!(result.failure_category, Some(ActionFailureCategory::Schema));
@@ -536,42 +515,13 @@ printf '%s\n' '{"schema_version":1,"status":"error","error":{"category":"schema"
         assert_eq!(std::fs::read_to_string(marker).unwrap(), "term");
     }
 
-    #[cfg(unix)]
     #[test]
     fn tool_dispatch_rejects_unsupported_machine_schema_version() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = temp_dir("tool-machine-version");
-        let script = temp.join("agentpm");
-        std::fs::write(
-            &script,
-            r#"#!/bin/sh
-printf '%s\n' '{"schema_version":2,"status":"success","output":{"ok":true}}'
-"#,
-        )
-        .unwrap();
-        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&script, permissions).unwrap();
-
-        let mut runtime = RuntimeSnapshot::empty("session".into());
-        runtime.workspace_root = temp.clone();
-        runtime.tools.push(ToolRuntimeSnapshot {
-            name: "@zack/versioned-tool".into(),
-            version: "0.1.0".into(),
-            description: "Versioned tool.".into(),
-            root: Some(temp),
-            input_schema: json!({ "type": "object", "additionalProperties": true }),
-            state: "available".into(),
-            source: "agent_binding".into(),
-        });
-        let mut dispatcher =
-            AgentPmActionDispatcher::with_agentpm_binary(&runtime, script).unwrap();
-
-        let result = dispatcher.dispatch(&SemanticAction::AgentPmTool {
-            tool: "@zack/versioned-tool".into(),
-            arguments: json!({}),
-        });
+        let result = interpret_machine_run_output(
+            "@zack/versioned-tool",
+            br#"{"schema_version":2,"status":"success","output":{"ok":true}}"#,
+            b"",
+        );
 
         assert!(!result.ok);
         assert_eq!(
