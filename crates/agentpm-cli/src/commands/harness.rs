@@ -211,16 +211,23 @@ fn run_surface(
     plan: ResolvedHarnessPlan,
     args: HarnessArgs,
 ) -> Result<()> {
-    if surface == HarnessExecutionSurface::Headless {
-        return run_headless_worker(move || surface.run(&plan, &args));
+    if requires_blocking_surface_worker(surface) {
+        return run_blocking_surface_worker(move || surface.run(&plan, &args));
     }
     surface.run(&plan, &args)
 }
 
-fn run_headless_worker(run: impl FnOnce() -> Result<()> + Send + 'static) -> Result<()> {
+fn requires_blocking_surface_worker(surface: HarnessExecutionSurface) -> bool {
+    matches!(
+        surface,
+        HarnessExecutionSurface::Headless | HarnessExecutionSurface::Machine
+    )
+}
+
+fn run_blocking_surface_worker(run: impl FnOnce() -> Result<()> + Send + 'static) -> Result<()> {
     std::thread::spawn(run)
         .join()
-        .map_err(|_| anyhow!("Harness headless worker panicked"))?
+        .map_err(|_| anyhow!("Harness execution worker panicked"))?
 }
 
 #[derive(Debug)]

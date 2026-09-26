@@ -3133,9 +3133,22 @@ fn model_capability_validation_rejects_missing_semantic_or_structured_support() 
     assert!(err.to_string().contains("structured output support"));
 }
 
+#[test]
+fn blocking_surface_worker_routing_covers_non_tui_surfaces() {
+    assert!(requires_blocking_surface_worker(
+        HarnessExecutionSurface::Headless
+    ));
+    assert!(requires_blocking_surface_worker(
+        HarnessExecutionSurface::Machine
+    ));
+    assert!(!requires_blocking_surface_worker(
+        HarnessExecutionSurface::Tui
+    ));
+}
+
 #[tokio::test]
-async fn headless_worker_constructs_blocking_provider_outside_tokio_runtime() {
-    run_headless_worker(|| {
+async fn blocking_surface_worker_constructs_provider_outside_tokio_runtime() {
+    run_blocking_surface_worker(|| {
         let _runtime = BuiltInModelRuntime::from_selection(ModelProviderSelection {
             provider: "openai".into(),
             model: "gpt-4o-mini".into(),

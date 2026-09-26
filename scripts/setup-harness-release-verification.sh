@@ -327,7 +327,7 @@ def response_for(body):
         return response_with_tool(
             action_tools[0],
             f"call_release_lookup_{sequence}",
-            {"query": "release readiness"},
+            {"arguments": {"query": "release readiness"}},
             "I will inspect release readiness once.",
         )
     if "respond" in outcomes:
@@ -410,6 +410,7 @@ const harness = new HarnessClient({
     OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
   },
 });
+harness.onStderr((chunk) => process.stderr.write(chunk));
 
 try {
   const result = await harness.run(process.env.HARNESS_VERIFY_INPUT);
@@ -424,11 +425,19 @@ cat >"$RUNNERS/python_runner.py" <<PY
 import json
 import os
 import sys
+import importlib.util
 from pathlib import Path
 
-sys.path.insert(0, "$ROOT/../agentpm-sdk-python/src")
-
-from agentpm import HarnessClient
+spec = importlib.util.spec_from_file_location(
+    "agentpm_harness_direct",
+    "$ROOT/../agentpm-sdk-python/src/agentpm/harness.py",
+)
+if spec is None or spec.loader is None:
+    raise RuntimeError("could not load Python SDK harness module")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+HarnessClient = module.HarnessClient
 
 scope_key = os.environ.get("HARNESS_VERIFY_SCOPE_KEY")
 scope_value = os.environ.get("HARNESS_VERIFY_SCOPE_VALUE")
