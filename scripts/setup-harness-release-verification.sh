@@ -2425,6 +2425,209 @@ if __name__ == "__main__":
 PY
 chmod +x "$RUNNERS/check_mcp_verification.py"
 
+cat >"$RUNNERS/check_reference_providers.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+
+MOCKED_MARKERS = {
+    "knowledge-node": [
+        "pinecone metadata maps to normalized Knowledge results and citations",
+        "pgvector query values map vector, attestation filters, and top_k",
+        "pgvector rows normalize to stable results and citations",
+        "pinecone metadata identity mismatch is rejected",
+    ],
+    "knowledge-python": [
+        "test_pinecone_metadata_maps_to_normalized_knowledge_results_and_citations",
+        "test_pgvector_query_values_map_vector_attestation_filters_and_top_k",
+        "test_pgvector_rows_normalize_to_stable_results_and_citations",
+        "test_pinecone_metadata_identity_mismatch_is_rejected",
+    ],
+    "memory-node": [
+        "pgvector capabilities omit semantic and reject the unfinished semantic flag",
+        "redis capabilities omit semantic and reject the unfinished Redis Stack flag",
+        "store handles direct write, filter read, count, and operation state",
+        "cross-backend conformance uses one scenario with advertised capability skips",
+    ],
+    "memory-python": [
+        "test_pgvector_capabilities_omit_semantic_and_reject_unfinished_flag",
+        "test_redis_capabilities_omit_semantic_and_reject_unfinished_flag",
+        "test_store_handles_direct_write_read_count_and_state",
+        "test_lifecycle_commit_writes_outputs_mutates_sources_and_rolls_back_stale",
+    ],
+}
+
+
+LIVE_LABELS = {
+    "pinecone-knowledge",
+    "pgvector-knowledge",
+    "pgvector-memory",
+    "redis-memory",
+}
+
+
+FAILURE_MARKERS = [
+    "not ok",
+    "ERR_ASSERTION",
+    "FAILED",
+    "failures:",
+    "Traceback",
+    "panicked at",
+]
+
+
+LOG_FORMAT = {
+    "knowledge-node": "tap",
+    "knowledge-python": "pytest",
+    "memory-node": "tap",
+    "memory-python": "pytest",
+}
+
+
+def parse_label_path(raw: str, flag: str) -> tuple[str, Path]:
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        raise SystemExit(f"{flag} must be label:path, got {raw!r}")
+    return parts[0], Path(parts[1])
+
+
+def parse_live_skip(raw: str) -> tuple[str, str]:
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        raise SystemExit(f"--live-skip must be label:reason, got {raw!r}")
+    label, reason = parts[0], parts[1].strip()
+    if not reason:
+        raise SystemExit(f"--live-skip reason must not be empty for {label!r}")
+    return label, reason
+
+
+def read_log(label: str, path: Path) -> str:
+    if not path.is_file():
+        raise AssertionError(f"{label}: missing log {path}")
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if not text.strip():
+        raise AssertionError(f"{label}: empty log {path}")
+    return text
+
+
+def assert_no_failures(label: str, text: str) -> None:
+    for marker in FAILURE_MARKERS:
+        if marker in text:
+            raise AssertionError(f"{label}: failure marker {marker!r} found")
+    if re.search(r"=+ FAILURES =+", text):
+        raise AssertionError(f"{label}: pytest failure section found")
+    if re.search(r"\b[1-9]\d* failed\b", text):
+        raise AssertionError(f"{label}: nonzero pytest failures found")
+    if re.search(r"# fail [1-9]\d*", text):
+        raise AssertionError(f"{label}: nonzero node test failures found")
+
+
+def assert_no_skips(label: str, text: str) -> None:
+    if LOG_FORMAT.get(label) == "tap":
+        if not re.search(r"^# skipped 0$", text, re.MULTILINE):
+            raise AssertionError(f"{label}: missing TAP skipped 0 summary")
+        if not re.search(r"^# todo 0$", text, re.MULTILINE):
+            raise AssertionError(f"{label}: missing TAP todo 0 summary")
+        if re.search(r"^ok \d+ - .*# SKIP", text, re.MULTILINE):
+            raise AssertionError(f"{label}: TAP skipped test found")
+    elif LOG_FORMAT.get(label) == "pytest":
+        if re.search(r"\b[1-9]\d* skipped\b", text):
+            raise AssertionError(f"{label}: nonzero pytest skipped tests found")
+        if re.search(r"\b[1-9]\d* xfailed\b|\b[1-9]\d* xpassed\b", text):
+            raise AssertionError(f"{label}: nonzero pytest expected-failure results found")
+
+
+def marker_passed(label: str, marker: str, text: str) -> bool:
+    if LOG_FORMAT.get(label) == "tap":
+        return re.search(rf"^ok \d+ - {re.escape(marker)}$", text, re.MULTILINE) is not None
+    if LOG_FORMAT.get(label) == "pytest":
+        return re.search(rf"{re.escape(marker)} PASSED", text) is not None
+    return False
+
+
+def assert_mocked(label: str, path: Path) -> dict:
+    if label not in MOCKED_MARKERS:
+        raise AssertionError(f"unexpected mocked label {label!r}")
+    text = read_log(label, path)
+    assert_no_failures(label, text)
+    assert_no_skips(label, text)
+    missing = [
+        marker for marker in MOCKED_MARKERS[label]
+        if not marker_passed(label, marker, text)
+    ]
+    if missing:
+        raise AssertionError(f"{label}: missing passing markers {missing}")
+    return {"label": label, "path": str(path), "markers": MOCKED_MARKERS[label]}
+
+
+def assert_live(label: str, path: Path) -> dict:
+    if label not in LIVE_LABELS:
+        raise AssertionError(f"unexpected live label {label!r}")
+    text = read_log(label, path)
+    assert_no_failures(label, text)
+    if "live" not in text.lower():
+        raise AssertionError(f"{label}: live log does not look like a live provider check")
+    return {"label": label, "path": str(path), "status": "passed"}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mocked-log", action="append", default=[])
+    parser.add_argument("--live-log", action="append", default=[])
+    parser.add_argument("--live-skip", action="append", default=[])
+    args = parser.parse_args()
+
+    mocked = [parse_label_path(raw, "--mocked-log") for raw in args.mocked_log]
+    mocked_labels = {label for label, _ in mocked}
+    expected_mocked = set(MOCKED_MARKERS)
+    if mocked_labels != expected_mocked:
+        raise AssertionError(
+            f"expected mocked labels {sorted(expected_mocked)}, got {sorted(mocked_labels)}"
+        )
+    mocked_results = [assert_mocked(label, path) for label, path in mocked]
+
+    live_logs = [parse_label_path(raw, "--live-log") for raw in args.live_log]
+    live_skips = [parse_live_skip(raw) for raw in args.live_skip]
+    live_seen = {label for label, _ in live_logs} | {label for label, _ in live_skips}
+    if live_seen != LIVE_LABELS:
+        raise AssertionError(
+            f"expected live result or skip for {sorted(LIVE_LABELS)}, got {sorted(live_seen)}"
+        )
+    duplicated = {label for label, _ in live_logs} & {label for label, _ in live_skips}
+    if duplicated:
+        raise AssertionError(f"live labels cannot be both run and skipped: {sorted(duplicated)}")
+    live_results = [assert_live(label, path) for label, path in live_logs]
+    live_skip_results = [
+        {"label": label, "status": "skipped", "reason": reason}
+        for label, reason in live_skips
+    ]
+
+    print(
+        json.dumps(
+            {
+                "status": "passed",
+                "mocked": mocked_results,
+                "live": sorted(live_results + live_skip_results, key=lambda row: row["label"]),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except AssertionError as exc:
+        print(f"reference provider verification failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+PY
+chmod +x "$RUNNERS/check_reference_providers.py"
+
 cat >"$RUNNERS/extract_trace.py" <<'PY'
 #!/usr/bin/env python3
 import json

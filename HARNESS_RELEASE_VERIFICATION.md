@@ -980,6 +980,75 @@ Expected:
 - provider-schema log covers provider-facing imported MCP schema simplification
   while Harness still enforces the canonical schema internally
 
+## 13. Reference Provider Conformance
+
+These checks verify the canonical reference-provider examples in
+`agentpm-examples`, rather than duplicating provider fixtures inside the CLI
+repo:
+
+- `agentpm-examples/knowledge-packages/m13-reference-providers`
+- `agentpm-examples/memory-packages/m16-reference-providers`
+
+The required release evidence is mocked/offline conformance for Pinecone and
+pgvector Knowledge providers plus PostgreSQL/pgvector and Redis Memory
+providers. Live infrastructure checks are optional and must be recorded as
+either a passing live log or an explicit skip/blocker.
+
+If you regenerated the fixture in a new terminal, source it again before
+running this section:
+
+```bash
+source harness-release-verify-test/env.sh
+```
+
+If you have not already defined `run_compat` from Section 9, define it first.
+
+Run the mocked/offline provider conformance checks:
+
+```bash
+run_compat "Knowledge reference providers Node mocked/offline" "$HARNESS_VERIFY_OUT/reference-knowledge-node.txt" \
+  bash -lc 'cd ../agentpm-examples/knowledge-packages/m13-reference-providers && node --test test/node-provider.test.mjs'
+
+run_compat "Knowledge reference providers Python mocked/offline" "$HARNESS_VERIFY_OUT/reference-knowledge-python.txt" \
+  bash -lc 'cd ../agentpm-examples/knowledge-packages/m13-reference-providers && uv run --extra test --extra pgvector pytest -vv test/test_python_provider.py'
+
+run_compat "Memory reference providers Node mocked/offline" "$HARNESS_VERIFY_OUT/reference-memory-node.txt" \
+  bash -lc 'cd ../agentpm-examples/memory-packages/m16-reference-providers && node --test test/node-provider.test.mjs'
+
+run_compat "Memory reference providers Python mocked/offline" "$HARNESS_VERIFY_OUT/reference-memory-python.txt" \
+  bash -lc 'cd ../agentpm-examples/memory-packages/m16-reference-providers && uv run --python 3.13 --extra test pytest -vv test/test_python_provider.py'
+```
+
+Validate the evidence and record live-provider skips. If you run any optional
+live provider, replace that provider's `--live-skip` line with
+`--live-log label:path-to-log`.
+
+```bash
+"$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/check_reference_providers.py" \
+  --mocked-log knowledge-node:"$HARNESS_VERIFY_OUT/reference-knowledge-node.txt" \
+  --mocked-log knowledge-python:"$HARNESS_VERIFY_OUT/reference-knowledge-python.txt" \
+  --mocked-log memory-node:"$HARNESS_VERIFY_OUT/reference-memory-node.txt" \
+  --mocked-log memory-python:"$HARNESS_VERIFY_OUT/reference-memory-python.txt" \
+  --live-skip pinecone-knowledge:"not run in release verification; requires Pinecone index, API key, namespace, and embedded corpus" \
+  --live-skip pgvector-knowledge:"not run in release verification; requires PostgreSQL/pgvector service, loaded corpus, and embedding setup" \
+  --live-skip pgvector-memory:"not run in release verification; requires PostgreSQL/pgvector service and initialized Memory tables" \
+  --live-skip redis-memory:"not run in release verification; requires Redis or Redis Stack service and initialized Memory state" \
+  | tee "$HARNESS_VERIFY_OUT/reference-provider-check.json"
+```
+
+Expected:
+
+- exit code `0`
+- `"status": "passed"`
+- Knowledge Node/Python logs cover Pinecone normalization, pgvector query/value
+  mapping, pgvector result normalization, citations, attestation, and typed
+  failure behavior
+- Memory Node/Python logs cover PostgreSQL/pgvector and Redis capability
+  advertisement, unsupported semantic flags, direct read/write/count/state, and
+  lifecycle/conformance behavior
+- each optional live provider has either a passing live log or a concrete skip
+  reason in `reference-provider-check.json`
+
 ## What To Keep
 
 Retain this directory with the release verification notes:
@@ -1027,6 +1096,11 @@ harness-release-verify-test/runs/
   mcp-serve-surface.txt
   mcp-provider-schema.txt
   mcp-lifecycle-check.json
+  reference-knowledge-node.txt
+  reference-knowledge-python.txt
+  reference-memory-node.txt
+  reference-memory-python.txt
+  reference-provider-check.json
   compat-cli-*.txt
   compat-node-sdk.txt
   compat-python-sdk.txt
