@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 
 use super::action::SemanticActionProposal;
+use crate::harness_config::HarnessTraceContent;
 use crate::harness_engine::{EffectivePhase, PhaseActionLedgerEntry, PhaseResult, estimate_tokens};
-use crate::harness_observability::RunUsage;
+use crate::harness_observability::{RunUsage, apply_content_policy_to_value};
 use crate::manifest::{
     MemoryRetrievalMode, MemorySpaceModel, ProfileConstraintStrength, ProfileMetadata,
 };
@@ -902,7 +903,7 @@ fn render_cross_phase_state(
             budget_omitted_outputs += 1;
             continue;
         }
-        let rendered_output = output.to_string();
+        let rendered_output = render_prompt_value(output);
         let output_tokens = estimate_tokens(&rendered_output);
         if output_tokens > CROSS_PHASE_OUTPUT_ENTRY_MAX_TOKENS {
             plans[index].output_stub_reason = Some("omitted: exceeds per-phase output cap");
@@ -961,7 +962,7 @@ fn render_cross_phase_state(
         ));
         match &result.output {
             Some(output) if plan.render_output => {
-                lines.push(format!("  output: {}", output));
+                lines.push(format!("  output: {}", render_prompt_value(output)));
             }
             Some(_output) => {
                 let reason = plan
@@ -1128,7 +1129,7 @@ pub fn model_request_turns(transcript: &[TranscriptEntry]) -> Vec<ModelRequestTu
                     });
                 } else {
                     turns.push(ModelRequestTurn::UserInput {
-                        content: entry.content.to_string(),
+                        content: prompt_content_string(&entry.content),
                     });
                 }
             }
@@ -1139,7 +1140,7 @@ pub fn model_request_turns(transcript: &[TranscriptEntry]) -> Vec<ModelRequestTu
                     });
                 } else {
                     turns.push(ModelRequestTurn::AssistantContent {
-                        content: entry.content.to_string(),
+                        content: prompt_content_string(&entry.content),
                     });
                 }
             }
@@ -1150,7 +1151,7 @@ pub fn model_request_turns(transcript: &[TranscriptEntry]) -> Vec<ModelRequestTu
                     });
                 } else {
                     turns.push(ModelRequestTurn::RepairFeedback {
-                        content: entry.content.to_string(),
+                        content: prompt_content_string(&entry.content),
                     });
                 }
             }
@@ -1171,7 +1172,8 @@ pub fn model_request_turns(transcript: &[TranscriptEntry]) -> Vec<ModelRequestTu
                     .content
                     .get("result")
                     .cloned()
-                    .unwrap_or_else(|| entry.content.clone());
+                    .map(sanitize_prompt_value)
+                    .unwrap_or_else(|| sanitize_prompt_value(entry.content.clone()));
                 let provider_call_id = entry
                     .content
                     .get("provider_call_id")
@@ -1193,6 +1195,7 @@ pub fn model_request_turns(transcript: &[TranscriptEntry]) -> Vec<ModelRequestTu
                                 .content
                                 .get("provider_arguments")
                                 .cloned()
+                                .map(sanitize_prompt_value)
                                 .unwrap_or_else(|| json!({})),
                         });
                         Some(provider_call_id)
@@ -1210,6 +1213,10 @@ pub fn model_request_turns(transcript: &[TranscriptEntry]) -> Vec<ModelRequestTu
         }
     }
     turns
+}
+
+fn prompt_content_string(content: &Value) -> String {
+    render_prompt_value(content)
 }
 
 pub(crate) fn provider_action_aliases(effective_phase: &EffectivePhase) -> Vec<ActionAlias> {
@@ -1696,9 +1703,25 @@ fn render_transcript_entry(entry: &TranscriptEntry) -> String {
             entry.content.get("result"),
         )
     {
-        return format!("- ActionResult [{action_kind} {identity}]: {result}");
+        return format!(
+            "- ActionResult [{action_kind} {identity}]: {}",
+            render_prompt_value(result)
+        );
     }
-    format!("- {:?}: {}", entry.kind, entry.content)
+    format!(
+        "- {:?}: {}",
+        entry.kind,
+        render_prompt_value(&entry.content)
+    )
+}
+
+fn render_prompt_value(value: &Value) -> String {
+    sanitize_prompt_value(value.clone()).to_string()
+}
+
+fn sanitize_prompt_value(mut sanitized: Value) -> Value {
+    apply_content_policy_to_value(&mut sanitized, &HarnessTraceContent::Full);
+    sanitized
 }
 
 fn render_loaded_skill_resources(transcript: &[TranscriptEntry]) -> String {
@@ -2860,6 +2883,202 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.contains("ledger entries rendered"))
         );
+    }
+
+    #[test]
+    fn cross_phase_state_redacts_secret_fields_before_rendering_prompt_text() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "remember/completion")],
+            vec![],
+        );
+        let prior = vec![phase_result(
+            1,
+            "inspect",
+            "done",
+            Some(json!({
+                "answer": "ready",
+                "api_secret": "raw-secret-marker",
+                "partition_key": "tenant-2026"
+            })),
+        )];
+
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &[outcome("done", "Finish the phase successfully.")],
+            run_input: "input",
+            consumer_context: None,
+            prior_phase_results: &prior,
+            effective_phase: &phase,
+            transcript: &[],
+            repair_feedback: None,
+        });
+        let cross_phase = prompt
+            .sections
+            .iter()
+            .find(|section| section.title == "CROSS-PHASE STATE")
+            .expect("cross-phase section")
+            .content
+            .clone();
+
+        assert!(cross_phase.contains("\"answer\":\"ready\""));
+        assert!(cross_phase.contains("\"api_secret\":\"[secret redacted]\""));
+        assert!(cross_phase.contains("\"partition_key\":\"tenant-2026\""));
+        assert!(!cross_phase.contains("raw-secret-marker"));
+        assert!(!prompt.render_text().contains("raw-secret-marker"));
+    }
+
+    #[test]
+    fn current_phase_transcript_redacts_secret_fields_before_rendering_prompt_text() {
+        let phase = phase_with(
+            vec![descriptor("phase_completion", "remember/completion")],
+            vec![],
+        );
+        let transcript = vec![TranscriptEntry {
+            kind: TranscriptEntryKind::ActionResult,
+            content: json!({
+                "action_kind": "agentpm_tool",
+                "identity": "@zack/search",
+                "result": {
+                    "summary": "ready",
+                    "api_secret": "raw-secret-marker",
+                    "partition_key": "tenant-2026"
+                }
+            }),
+            action_succeeded: Some(true),
+        }];
+
+        let prompt = assemble_logical_prompt(PromptAssemblyInput {
+            purpose: PromptAssemblyPurpose::Phase,
+            phase_id: "remember",
+            phase_objective: "Remember useful details.",
+            explicit_outcomes: &[outcome("done", "Finish the phase successfully.")],
+            run_input: "input",
+            consumer_context: None,
+            prior_phase_results: &[],
+            effective_phase: &phase,
+            transcript: &transcript,
+            repair_feedback: None,
+        });
+        let rendered = prompt.render_text();
+
+        assert!(rendered.contains("\"summary\":\"ready\""));
+        assert!(rendered.contains("\"api_secret\":\"[secret redacted]\""));
+        assert!(rendered.contains("\"partition_key\":\"tenant-2026\""));
+        assert!(!rendered.contains("raw-secret-marker"));
+    }
+
+    #[test]
+    fn native_model_request_turns_redact_secret_fields_before_provider_egress() {
+        let transcript = vec![TranscriptEntry {
+            kind: TranscriptEntryKind::ActionResult,
+            content: json!({
+                "action_kind": "agentpm_tool",
+                "identity": "@zack/search",
+                "provider_call_id": "call-1",
+                "provider_alias": "search",
+                "provider_arguments": {
+                    "query": "release readiness",
+                    "apiKey": "raw-camel-secret",
+                    "idempotency_key": "operation-123"
+                },
+                "result": {
+                    "summary": "ready",
+                    "api_secret": "raw-secret-marker",
+                    "private_key": "raw-private-key",
+                    "privateKey": "raw-private-key-camel",
+                    "partition_key": "tenant-2026",
+                    "partitionKey": "tenant-camel-2026"
+                }
+            }),
+            action_succeeded: Some(true),
+        }];
+
+        let turns = model_request_turns(&transcript);
+        let rendered = serde_json::to_string(&turns).unwrap();
+
+        assert!(rendered.contains("\"api_secret\":\"[secret redacted]\""));
+        assert!(rendered.contains("\"apiKey\":\"[secret redacted]\""));
+        assert!(rendered.contains("\"private_key\":\"[secret redacted]\""));
+        assert!(rendered.contains("\"privateKey\":\"[secret redacted]\""));
+        assert!(rendered.contains("\"idempotency_key\":\"operation-123\""));
+        assert!(rendered.contains("\"partition_key\":\"tenant-2026\""));
+        assert!(rendered.contains("\"partitionKey\":\"tenant-camel-2026\""));
+        assert!(!rendered.contains("raw-secret-marker"));
+        assert!(!rendered.contains("raw-camel-secret"));
+        assert!(!rendered.contains("raw-private-key"));
+        assert!(!rendered.contains("raw-private-key-camel"));
+    }
+
+    #[test]
+    fn native_model_request_turns_redact_non_string_transcript_content() {
+        let transcript = vec![
+            TranscriptEntry {
+                kind: TranscriptEntryKind::UserInput,
+                content: json!({
+                    "request": "inspect tenant",
+                    "api_secret": "raw-user-secret",
+                    "partition_key": "tenant-2026"
+                }),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::Assistant,
+                content: json!({
+                    "answer": "ready",
+                    "apiKey": "raw-assistant-secret",
+                    "idempotency_key": "operation-123"
+                }),
+                action_succeeded: None,
+            },
+            TranscriptEntry {
+                kind: TranscriptEntryKind::RepairFeedback,
+                content: json!({
+                    "message": "retry with valid output",
+                    "private_key": "raw-repair-secret",
+                    "signingKey": "raw-signing-secret",
+                    "sort_key": "created_at",
+                    "sortKey": "created_at_camel"
+                }),
+                action_succeeded: None,
+            },
+        ];
+
+        let turns = model_request_turns(&transcript);
+
+        let ModelRequestTurn::UserInput {
+            content: user_content,
+        } = &turns[0]
+        else {
+            panic!("expected user turn");
+        };
+        assert!(user_content.contains("\"api_secret\":\"[secret redacted]\""));
+        assert!(user_content.contains("\"partition_key\":\"tenant-2026\""));
+        assert!(!user_content.contains("raw-user-secret"));
+
+        let ModelRequestTurn::AssistantContent {
+            content: assistant_content,
+        } = &turns[1]
+        else {
+            panic!("expected assistant turn");
+        };
+        assert!(assistant_content.contains("\"apiKey\":\"[secret redacted]\""));
+        assert!(assistant_content.contains("\"idempotency_key\":\"operation-123\""));
+        assert!(!assistant_content.contains("raw-assistant-secret"));
+
+        let ModelRequestTurn::RepairFeedback {
+            content: repair_content,
+        } = &turns[2]
+        else {
+            panic!("expected repair turn");
+        };
+        assert!(repair_content.contains("\"private_key\":\"[secret redacted]\""));
+        assert!(repair_content.contains("\"signingKey\":\"[secret redacted]\""));
+        assert!(repair_content.contains("\"sort_key\":\"created_at\""));
+        assert!(repair_content.contains("\"sortKey\":\"created_at_camel\""));
+        assert!(!repair_content.contains("raw-repair-secret"));
+        assert!(!repair_content.contains("raw-signing-secret"));
     }
 
     #[test]

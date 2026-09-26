@@ -280,17 +280,20 @@ That interoperability flow keeps AgentPM as the source of truth for packaging an
 
 For Harness-managed MCP exports, `agentpm serve --mcp --machine --port 0` reserves stdout for JSONL lifecycle and Tool-call events. The first `ready` event includes the selected endpoint and normalized MCP Tool names, so hosts do not need to parse human stderr output. Harness config can tune managed export restart with `mcp.exports.restart.max_attempts` and `mcp.exports.restart.backoff_ms`; `max_attempts: 0` disables automatic restart. Restarted managed exports may bind a new ephemeral endpoint, so external clients should rediscover the surface after restart instead of reusing a cached URL. One-shot headless runs record final MCP export state in reports, but continuous in-run restart/rediscovery requires a machine-managed Harness Session or standalone `agentpm serve --mcp` hosting.
 
-### Harness preflight
+### Harness execution
 
-For an installed Agent that declares a Loop, AgentPM can bootstrap the Harness plan and report static readiness before execution support is enabled:
+For an installed Agent that declares a Loop, AgentPM can run the Agent through the Harness in the default interactive TUI, one-shot headless mode, or the machine protocol used by SDK hosts:
 
 ```bash
 agentpm harness
-agentpm harness --headless @zack/support-agent --scope user=user_123
+agentpm harness @zack/support-agent --headless --input "Summarize this incident." --scope user=user_123
+agentpm harness @zack/support-agent --machine
 agentpm harness @zack/support-agent --config agentpm.harness.json --state-dir .agentpm-state
 ```
 
-The command requires `agent.lock`, defaults to the interactive TUI surface, selects the only runnable Agent automatically, and asks for an explicit Agent selector when multiple runnable Agents are present.
+The command requires `agent.lock`, defaults to the interactive TUI surface, selects the only runnable Agent automatically, and asks for an explicit Agent selector when multiple runnable Agents are present. Use `--json` without `--headless`/`--machine` when you only need the preflight readiness report.
+
+Harness runtime records are written under `.agentpm-state/` by default, while `.agentpm/` remains installed dependency state. Full Harness CLI, config, protocol, provider, and SDK documentation lives in the versioned docs under `../agentpm-api/docs/v0.1/cli/harness.mdx`.
 
 ### Publishing
 

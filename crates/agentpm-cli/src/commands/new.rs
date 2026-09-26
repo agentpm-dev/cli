@@ -19,9 +19,12 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::task;
 use walkdir::WalkDir;
+
+static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(clap::Parser, Debug, Clone)]
 pub struct NewArgs {
@@ -1278,7 +1281,11 @@ fn temp_dir(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("agentpm-new-{label}-{nanos}"))
+    let unique = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "agentpm-new-{label}-{}-{nanos}-{unique}",
+        std::process::id()
+    ))
 }
 
 #[cfg(test)]

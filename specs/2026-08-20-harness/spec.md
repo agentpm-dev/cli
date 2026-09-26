@@ -1475,6 +1475,8 @@ Placing it in Section 5 or 6 silently excludes OpenAI and Anthropic.
    - relevant prior PhaseResults in deterministic chronological order
    - compact handoff semantics: prior outputs carry conclusions forward, and
      ledger entries show execution history without result payloads/resources
+   - prompt-bound structured values are always secret-redacted before being
+     rendered, even when trace content is `full`
    - no raw prior provider transcript unless it was intentionally captured
      into a PhaseResult/other authorized state
 
@@ -1492,6 +1494,9 @@ Placing it in Section 5 or 6 silently excludes OpenAI and Anthropic.
    - assistant turns already produced in this phase
    - structured Tool/MCP/Knowledge/Memory/Skill-resource results returned
      during this phase
+   - prompt-bound structured values are always secret-redacted before being
+     rendered or sent as native provider turns, even when trace content is
+     `full`
 ```
 
 Rendered prompt text for section 4 is budgeted independently from the canonical
@@ -1570,7 +1575,7 @@ Rules:
 - malformed/unauthorized action proposals are returned as structured repair/error feedback when repair is possible and never executed speculatively;
 - the Engine continues the inner loop until valid PhaseCompletion/implicit completion, phase failure, cancellation, approval/runtime terminal, or a safety limit is reached;
 - phase-local raw transcripts are discarded from automatic cross-phase context after PhaseResult creation, though they may remain in trace/report according to content policy;
-- prior-phase action ledgers are model-context state, independent of trace content policy, and are redacted for secrets before rendering.
+- prompt-bound structured values are model-context state, independent of trace content policy, and are redacted for secrets before rendering or provider egress. This includes prior phase outputs, prior-phase action ledgers, current phase-local transcript results, native provider action/result turns, and terminal output rendered to stdout.
 
 ### Agentic Turn Progression and Action-Result Feedback
 

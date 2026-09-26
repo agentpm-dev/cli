@@ -1,0 +1,2788 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BASE="$ROOT/harness-release-verify-test"
+WORK="$BASE/workspace"
+APPROVAL_WORK="$BASE/approval-workspace"
+REDACTION_WORK="$BASE/redaction-workspace"
+PROVIDER_WORK="$BASE/provider-workspace"
+SDK_WORK="$BASE/sdk-parity-workspace"
+RUNNERS="$BASE/runners"
+RUNS="$BASE/runs"
+APM_BIN="$ROOT/target/debug/agentpm"
+PYTHON_CMD="${AGENTPM_MANUAL_PYTHON:-python3}"
+SECRET_MARKER="HARNESS_VERIFY_SUPER_SECRET"
+CAMEL_SECRET_MARKER="HARNESS_VERIFY_CAMEL_SECRET"
+PRIVATE_KEY_SECRET_MARKER="HARNESS_VERIFY_PRIVATE_KEY_SECRET"
+
+write_json() {
+  local path="$1"
+  mkdir -p "$(dirname "$path")"
+  cat >"$path"
+}
+
+pkg_root() {
+  local kind="$1"
+  local owner="$2"
+  local name="$3"
+  local version="$4"
+  printf '%s/.agentpm/%s/%s/%s/%s' "$WORK" "$kind" "$owner" "$name" "$version"
+}
+
+rm -rf "$BASE"
+mkdir -p "$WORK" "$APPROVAL_WORK" "$REDACTION_WORK" "$PROVIDER_WORK" "$SDK_WORK" "$RUNNERS" "$RUNS"
+
+cat >"$BASE/env.sh" <<SH
+export HARNESS_VERIFY_ROOT="$BASE"
+export HARNESS_VERIFY_WORK="$WORK"
+export HARNESS_VERIFY_APPROVAL_WORK="$APPROVAL_WORK"
+export HARNESS_VERIFY_APPROVAL_CONFIG="$APPROVAL_WORK/agentpm.harness.json"
+export HARNESS_VERIFY_REDACTION_WORK="$REDACTION_WORK"
+export HARNESS_VERIFY_REDACTION_FULL_CONFIG="$REDACTION_WORK/agentpm.full.harness.json"
+export HARNESS_VERIFY_REDACTION_REDACTED_CONFIG="$REDACTION_WORK/agentpm.redacted.harness.json"
+export HARNESS_VERIFY_REDACTION_NONE_CONFIG="$REDACTION_WORK/agentpm.none.harness.json"
+export HARNESS_VERIFY_LIMIT_CONFIG="$REDACTION_WORK/agentpm.limit.harness.json"
+export HARNESS_VERIFY_FAILURE_CONFIG="$REDACTION_WORK/agentpm.failure.harness.json"
+export HARNESS_VERIFY_PROVIDER_WORK="$PROVIDER_WORK"
+export HARNESS_VERIFY_PROVIDER_OPENAI_CONFIG="$PROVIDER_WORK/agentpm.openai.harness.json"
+export HARNESS_VERIFY_PROVIDER_ANTHROPIC_CONFIG="$PROVIDER_WORK/agentpm.anthropic.harness.json"
+export HARNESS_VERIFY_PROVIDER_OLLAMA_CONFIG="$PROVIDER_WORK/agentpm.ollama.harness.json"
+export HARNESS_VERIFY_PROVIDER_PROCESS_CONFIG="$PROVIDER_WORK/agentpm.process.harness.json"
+export HARNESS_VERIFY_PROVIDER_PROCESS_FAILURE_CONFIG="$PROVIDER_WORK/agentpm.process-failure.harness.json"
+export HARNESS_VERIFY_PROVIDER_PROCESS_REQUEST_TIMEOUT_CONFIG="$PROVIDER_WORK/agentpm.process-request-timeout.harness.json"
+export HARNESS_VERIFY_PROVIDER_PROCESS_MALFORMED_CONFIG="$PROVIDER_WORK/agentpm.process-malformed.harness.json"
+export HARNESS_VERIFY_PROVIDER_PROCESS_BAD_COMMAND_CONFIG="$PROVIDER_WORK/agentpm.process-bad-command.harness.json"
+export HARNESS_VERIFY_PROVIDER_PROCESS_STARTUP_TIMEOUT_CONFIG="$PROVIDER_WORK/agentpm.process-startup-timeout.harness.json"
+export HARNESS_VERIFY_SDK_WORK="$SDK_WORK"
+export HARNESS_VERIFY_SDK_CONFIG="$SDK_WORK/agentpm.harness.json"
+export HARNESS_VERIFY_SDK_KNOWLEDGE_RUNTIME="kb"
+export HARNESS_VERIFY_SDK_KNOWLEDGE_PACKAGE="@zack/manual-context"
+export HARNESS_VERIFY_SDK_EMBEDDING_KNOWLEDGE_PACKAGE="@zack/manual-vector"
+export HARNESS_VERIFY_SDK_EMBEDDING_PROVIDER="embedder"
+export HARNESS_VERIFY_SDK_EMBEDDING_SPACE_PROVIDER="openai"
+export HARNESS_VERIFY_SDK_EMBEDDING_SPACE_MODEL="text-embedding-3-small"
+export HARNESS_VERIFY_SDK_EMBEDDING_DIMENSIONS="3"
+export HARNESS_VERIFY_SDK_EMBEDDING_NORMALIZED="true"
+export HARNESS_VERIFY_RUNNERS="$RUNNERS"
+export HARNESS_VERIFY_OUT="$RUNS"
+export HARNESS_VERIFY_AGENT=""
+export HARNESS_VERIFY_CONFIG="$WORK/agentpm.harness.json"
+export HARNESS_VERIFY_SCOPE_KEY="user"
+export HARNESS_VERIFY_SCOPE_VALUE="release-verify-user"
+export HARNESS_VERIFY_INPUT="Check release readiness and produce the final verification answer."
+export HARNESS_VERIFY_SECRET_MARKER="$SECRET_MARKER"
+export HARNESS_VERIFY_CAMEL_SECRET_MARKER="$CAMEL_SECRET_MARKER"
+export HARNESS_VERIFY_PRIVATE_KEY_SECRET_MARKER="$PRIVATE_KEY_SECRET_MARKER"
+export APM="$APM_BIN"
+export OPENAI_API_KEY="harness-release-verify-key"
+export OPENAI_BASE_URL="http://127.0.0.1:18130/v1/chat/completions"
+export ANTHROPIC_API_KEY="harness-release-verify-key"
+export ANTHROPIC_BASE_URL="http://127.0.0.1:18130/v1/messages"
+export OLLAMA_BASE_URL="http://127.0.0.1:18130"
+export AGENTPM_MANUAL_PYTHON="\${AGENTPM_MANUAL_PYTHON:-$PYTHON_CMD}"
+export AGENTPM_HARNESS_CLI="$APM_BIN"
+export AGENTPM_HARNESS_WORKSPACE="$SDK_WORK"
+export AGENTPM_HARNESS_EMBEDDING_PROVIDER="embedder"
+export AGENTPM_HARNESS_EMBEDDING_SPACE_PROVIDER="openai"
+export AGENTPM_HARNESS_EMBEDDING_SPACE_MODEL="text-embedding-3-small"
+export AGENTPM_HARNESS_EMBEDDING_DIMENSIONS="3"
+export AGENTPM_HARNESS_EMBEDDING_NORMALIZED="true"
+export AGENTPM_HARNESS_KNOWLEDGE_RUNTIME="kb"
+export AGENTPM_HARNESS_KNOWLEDGE_PACKAGE="@zack/manual-context"
+export AGENTPM_HARNESS_KNOWLEDGE_VERSION="0.1.0"
+export AGENTPM_HARNESS_EMBEDDING_KNOWLEDGE_PACKAGE="@zack/manual-vector"
+SH
+
+cat >"$BASE/README.md" <<'MD'
+# Harness Release Verification Fixture
+
+Generated by `scripts/setup-harness-release-verification.sh`.
+
+Use this fixture with `specs/2026-08-20-harness/manual-tests/HARNESS_RELEASE_VERIFICATION.md`.
+
+Start the deterministic OpenAI/Anthropic/Ollama-compatible server before
+running the verification sections that use built-in model providers:
+
+```bash
+source harness-release-verify-test/env.sh
+"$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_ROOT/fake_openai_server.py" \
+  --port 18130 \
+  --log "$HARNESS_VERIFY_OUT/provider-bodies.jsonl"
+```
+
+In another terminal, source the same `env.sh` and run the headless, Node SDK,
+Python SDK, and TUI steps from `specs/2026-08-20-harness/manual-tests/HARNESS_RELEASE_VERIFICATION.md`.
+MD
+
+cat >"$WORK/context.md" <<'MD'
+# Release Verification Context
+
+The Harness release verification scenario should inspect readiness once, carry
+the phase output forward, and finish with a concise terminal answer.
+MD
+
+write_json "$WORK/agentpm.harness.json" <<'JSON'
+{
+  "version": 1,
+  "model": {
+    "provider": "openai",
+    "model": "release-verifier"
+  },
+  "scopes": {
+    "user": "release-verify-user"
+  },
+  "runtime": {
+    "state_dir": ".agentpm-state-release-verify",
+    "limits": {
+      "max_steps": 4,
+      "max_model_calls_per_phase": 4,
+      "max_tool_calls_per_phase": 2,
+      "max_actions_per_phase": 8,
+      "max_structured_output_repairs": 1,
+      "max_tool_call_repairs": 1
+    }
+  },
+  "trace": {
+    "enabled": true,
+    "level": "verbose",
+    "content": "full"
+  }
+}
+JSON
+
+write_json "$WORK/agent.json" <<'JSON'
+{
+  "kind": "agent",
+  "name": "release-verify-agent",
+  "version": "0.1.0",
+  "description": "AgentPM Harness release verification fixture Agent.",
+  "tools": ["@zack/release-lookup@0.1.0"],
+  "loop": "@zack/release-verify-loop@0.1.0",
+  "bindings": {
+    "consumer_context": { "file": "context.md" },
+    "phases": {
+      "inspect": { "tools": ["@zack/release-lookup"] },
+      "respond": { "tools": [] }
+    }
+  }
+}
+JSON
+
+write_json "$(pkg_root loops zack release-verify-loop 0.1.0)/agent.json" <<'JSON'
+{
+  "kind": "loop",
+  "name": "@zack/release-verify-loop",
+  "version": "0.1.0",
+  "description": "Two-phase release verification loop.",
+  "loop": {
+    "entry_phase": "inspect",
+    "phases": [
+      {
+        "id": "inspect",
+        "objective": "Inspect release readiness once using the lookup Tool, then preserve the finding for the response phase.",
+        "access": {
+          "tools": true,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "respond",
+            "description": "Readiness was inspected and the response phase should answer from the preserved finding."
+          }
+        ]
+      },
+      {
+        "id": "respond",
+        "objective": "Answer from the inspect phase output without re-running investigation.",
+        "access": {
+          "tools": false,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "done",
+            "description": "The release verification answer is complete."
+          }
+        ]
+      }
+    ],
+    "transitions": [
+      { "from": "inspect", "on": "respond", "to": "respond" },
+      { "from": "respond", "on": "done", "to": "$end" }
+    ]
+  }
+}
+JSON
+
+write_json "$(pkg_root tools zack release-lookup 0.1.0)/agent.json" <<JSON
+{
+  "kind": "tool",
+  "name": "@zack/release-lookup",
+  "version": "0.1.0",
+  "description": "Deterministic release verification lookup Tool.",
+  "entrypoint": {
+    "command": "$PYTHON_CMD",
+    "args": ["tool.py"],
+    "cwd": ".",
+    "timeout_ms": 1000,
+    "env": {}
+  },
+  "inputs": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["query"],
+    "properties": {
+      "query": { "type": "string" }
+    }
+  },
+  "outputs": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["ready", "summary"],
+    "properties": {
+      "ready": { "type": "boolean" },
+      "summary": { "type": "string" }
+    }
+  }
+}
+JSON
+
+cat >"$(pkg_root tools zack release-lookup 0.1.0)/tool.py" <<'PY'
+#!/usr/bin/env python3
+import json
+import sys
+
+payload = json.load(sys.stdin)
+print(json.dumps({
+    "ready": True,
+    "summary": "Release verification fixture lookup completed for " + payload.get("query", "release readiness"),
+}))
+PY
+chmod +x "$(pkg_root tools zack release-lookup 0.1.0)/tool.py"
+
+write_json "$WORK/agent.lock" <<'JSON'
+{
+  "lockfile_version": 3,
+  "generated": "2026-09-26T00:00:00Z",
+  "packages": {
+    "tool:@zack/release-lookup@0.1.0": {
+      "kind": "tool",
+      "name": "@zack/release-lookup",
+      "version": "0.1.0",
+      "integrity": "sha256-release-verify"
+    },
+    "loop:@zack/release-verify-loop@0.1.0": {
+      "kind": "loop",
+      "name": "@zack/release-verify-loop",
+      "version": "0.1.0",
+      "integrity": "sha256-release-verify"
+    }
+  },
+  "roots": {
+    "local:agent": {
+      "name": "release-verify-agent",
+      "version": "0.1.0",
+      "tools": [
+        "tool:@zack/release-lookup@0.1.0"
+      ],
+      "loop": "loop:@zack/release-verify-loop@0.1.0"
+    }
+  }
+}
+JSON
+
+cat >"$APPROVAL_WORK/context.md" <<'MD'
+# Approval Verification Context
+
+The headless approval-required scenario should stop before the gated review
+phase because no interactive approval controller is available.
+MD
+
+write_json "$APPROVAL_WORK/agentpm.harness.json" <<'JSON'
+{
+  "version": 1,
+  "model": {
+    "provider": "openai",
+    "model": "release-verifier"
+  },
+  "scopes": {
+    "user": "release-verify-user"
+  },
+  "runtime": {
+    "state_dir": ".agentpm-state-release-verify-approval",
+    "limits": {
+      "max_steps": 4,
+      "max_model_calls_per_phase": 4,
+      "max_tool_calls_per_phase": 2,
+      "max_actions_per_phase": 8,
+      "max_structured_output_repairs": 1,
+      "max_tool_call_repairs": 1
+    }
+  },
+  "trace": {
+    "enabled": true,
+    "level": "verbose",
+    "content": "full"
+  }
+}
+JSON
+
+write_json "$APPROVAL_WORK/agent.json" <<'JSON'
+{
+  "kind": "agent",
+  "name": "release-verify-approval-agent",
+  "version": "0.1.0",
+  "description": "AgentPM Harness release verification approval fixture Agent.",
+  "tools": [],
+  "loop": "@zack/release-approval-loop@0.1.0",
+  "bindings": {
+    "consumer_context": { "file": "context.md" }
+  }
+}
+JSON
+
+write_json "$APPROVAL_WORK/.agentpm/loops/zack/release-approval-loop/0.1.0/agent.json" <<'JSON'
+{
+  "kind": "loop",
+  "name": "@zack/release-approval-loop",
+  "version": "0.1.0",
+  "description": "Two-phase release verification loop with an approval checkpoint.",
+  "loop": {
+    "entry_phase": "assess",
+    "checkpoints": [
+      {
+        "id": "approve-release-review",
+        "type": "approval",
+        "before_phase": "review",
+        "on_reject": "$handoff"
+      }
+    ],
+    "phases": [
+      {
+        "id": "assess",
+        "objective": "Assess whether the release readiness answer should enter review.",
+        "access": {
+          "tools": false,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "review",
+            "description": "The answer is ready for the gated review phase."
+          }
+        ]
+      },
+      {
+        "id": "review",
+        "objective": "Review the release readiness answer after approval.",
+        "access": {
+          "tools": false,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "done",
+            "description": "The approved review is complete."
+          }
+        ]
+      }
+    ],
+    "transitions": [
+      { "from": "assess", "on": "review", "to": "review" },
+      { "from": "review", "on": "done", "to": "$end" }
+    ]
+  }
+}
+JSON
+
+write_json "$APPROVAL_WORK/agent.lock" <<'JSON'
+{
+  "lockfile_version": 3,
+  "generated": "2026-09-26T00:00:00Z",
+  "packages": {
+    "loop:@zack/release-approval-loop@0.1.0": {
+      "kind": "loop",
+      "name": "@zack/release-approval-loop",
+      "version": "0.1.0",
+      "integrity": "sha256-release-verify-approval"
+    }
+  },
+  "roots": {
+    "local:agent": {
+      "name": "release-verify-approval-agent",
+      "version": "0.1.0",
+      "tools": [],
+      "loop": "loop:@zack/release-approval-loop@0.1.0"
+    }
+  }
+}
+JSON
+
+cat >"$REDACTION_WORK/context.md" <<'MD'
+# Terminal And Redaction Verification Context
+
+The terminal/redaction scenario should inspect once and finish from preserved
+phase output. Secret markers are supplied only under secret-named JSON keys so
+release verification can prove unconditional secret redaction.
+MD
+
+write_redaction_config() {
+  local path="$1"
+  local state_dir="$2"
+  local content="$3"
+  local max_steps="$4"
+  local model="$5"
+  write_json "$path" <<JSON
+{
+  "version": 1,
+  "model": {
+    "provider": "openai",
+    "model": "$model"
+  },
+  "scopes": {
+    "user": "release-verify-user"
+  },
+  "runtime": {
+    "state_dir": "$state_dir",
+    "limits": {
+      "max_steps": $max_steps,
+      "max_model_calls_per_phase": 4,
+      "max_tool_calls_per_phase": 2,
+      "max_actions_per_phase": 8,
+      "max_structured_output_repairs": 1,
+      "max_tool_call_repairs": 1
+    }
+  },
+  "trace": {
+    "enabled": true,
+    "level": "verbose",
+    "content": "$content"
+  }
+}
+JSON
+}
+
+write_redaction_config "$REDACTION_WORK/agentpm.full.harness.json" ".agentpm-state-release-verify-full" "full" 4 "release-verifier"
+write_redaction_config "$REDACTION_WORK/agentpm.redacted.harness.json" ".agentpm-state-release-verify-redacted" "redacted" 4 "release-verifier"
+write_redaction_config "$REDACTION_WORK/agentpm.none.harness.json" ".agentpm-state-release-verify-none" "none" 4 "release-verifier"
+write_redaction_config "$REDACTION_WORK/agentpm.limit.harness.json" ".agentpm-state-release-verify-limit" "full" 1 "release-verifier"
+write_redaction_config "$REDACTION_WORK/agentpm.failure.harness.json" ".agentpm-state-release-verify-failure" "full" 4 "release-verifier-fail"
+
+write_json "$REDACTION_WORK/agent.json" <<'JSON'
+{
+  "kind": "agent",
+  "name": "release-redaction-agent",
+  "version": "0.1.0",
+  "description": "AgentPM Harness terminal/redaction verification fixture Agent.",
+  "tools": ["@zack/release-redaction-lookup@0.1.0"],
+  "loop": "@zack/release-redaction-loop@0.1.0",
+  "bindings": {
+    "consumer_context": { "file": "context.md" },
+    "phases": {
+      "inspect": { "tools": ["@zack/release-redaction-lookup"] },
+      "respond": { "tools": [] }
+    }
+  }
+}
+JSON
+
+write_json "$REDACTION_WORK/.agentpm/loops/zack/release-redaction-loop/0.1.0/agent.json" <<'JSON'
+{
+  "kind": "loop",
+  "name": "@zack/release-redaction-loop",
+  "version": "0.1.0",
+  "description": "Two-phase terminal/redaction verification loop.",
+  "loop": {
+    "entry_phase": "inspect",
+    "phases": [
+      {
+        "id": "inspect",
+        "objective": "Inspect terminal verification once using the lookup Tool, then preserve the finding for the response phase.",
+        "access": {
+          "tools": true,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "respond",
+            "description": "Terminal verification was inspected and the response phase should answer from the preserved finding."
+          }
+        ]
+      },
+      {
+        "id": "respond",
+        "objective": "Answer from the inspect phase output without re-running investigation.",
+        "access": {
+          "tools": false,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "done",
+            "description": "The terminal/redaction verification answer is complete."
+          }
+        ]
+      }
+    ],
+    "transitions": [
+      { "from": "inspect", "on": "respond", "to": "respond" },
+      { "from": "respond", "on": "done", "to": "$end" }
+    ]
+  }
+}
+JSON
+
+write_json "$REDACTION_WORK/.agentpm/tools/zack/release-redaction-lookup/0.1.0/agent.json" <<JSON
+{
+  "kind": "tool",
+  "name": "@zack/release-redaction-lookup",
+  "version": "0.1.0",
+  "description": "Deterministic terminal/redaction verification lookup Tool.",
+  "entrypoint": {
+    "command": "$PYTHON_CMD",
+    "args": ["tool.py"],
+    "cwd": ".",
+    "timeout_ms": 1000,
+    "env": {}
+  },
+  "inputs": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["query"],
+    "properties": {
+      "query": { "type": "string" }
+    }
+  },
+  "outputs": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["ready", "summary"],
+    "properties": {
+      "ready": { "type": "boolean" },
+      "summary": { "type": "string" }
+    }
+  }
+}
+JSON
+
+cat >"$REDACTION_WORK/.agentpm/tools/zack/release-redaction-lookup/0.1.0/tool.py" <<'PY'
+#!/usr/bin/env python3
+import json
+import sys
+
+payload = json.load(sys.stdin)
+print(json.dumps({
+    "ready": True,
+    "summary": "Terminal/redaction lookup completed for " + payload.get("query", "release readiness"),
+}))
+PY
+chmod +x "$REDACTION_WORK/.agentpm/tools/zack/release-redaction-lookup/0.1.0/tool.py"
+
+write_json "$REDACTION_WORK/agent.lock" <<'JSON'
+{
+  "lockfile_version": 3,
+  "generated": "2026-09-26T00:00:00Z",
+  "packages": {
+    "tool:@zack/release-redaction-lookup@0.1.0": {
+      "kind": "tool",
+      "name": "@zack/release-redaction-lookup",
+      "version": "0.1.0",
+      "integrity": "sha256-release-verify-redaction"
+    },
+    "loop:@zack/release-redaction-loop@0.1.0": {
+      "kind": "loop",
+      "name": "@zack/release-redaction-loop",
+      "version": "0.1.0",
+      "integrity": "sha256-release-verify-redaction"
+    }
+  },
+  "roots": {
+    "local:agent": {
+      "name": "release-redaction-agent",
+      "version": "0.1.0",
+      "tools": [
+        "tool:@zack/release-redaction-lookup@0.1.0"
+      ],
+      "loop": "loop:@zack/release-redaction-loop@0.1.0"
+    }
+  }
+}
+JSON
+
+cp "$WORK/context.md" "$PROVIDER_WORK/context.md"
+cp "$WORK/agent.json" "$PROVIDER_WORK/agent.json"
+cp "$WORK/agent.lock" "$PROVIDER_WORK/agent.lock"
+cp -R "$WORK/.agentpm" "$PROVIDER_WORK/.agentpm"
+
+write_provider_config() {
+  local path="$1"
+  local provider="$2"
+  local model="$3"
+  local state_dir="$4"
+  write_json "$path" <<JSON
+{
+  "version": 1,
+  "model": {
+    "provider": "$provider",
+    "model": "$model"
+  },
+  "scopes": {
+    "user": "release-verify-user"
+  },
+  "runtime": {
+    "state_dir": "$state_dir",
+    "limits": {
+      "max_steps": 4,
+      "max_model_calls_per_phase": 4,
+      "max_tool_calls_per_phase": 2,
+      "max_actions_per_phase": 8,
+      "max_structured_output_repairs": 1,
+      "max_tool_call_repairs": 1
+    }
+  },
+  "trace": {
+    "enabled": true,
+    "level": "verbose",
+    "content": "full"
+  }
+}
+JSON
+}
+
+write_provider_config "$PROVIDER_WORK/agentpm.openai.harness.json" "openai" "release-provider-openai" ".agentpm-state-provider-openai"
+write_provider_config "$PROVIDER_WORK/agentpm.anthropic.harness.json" "anthropic" "release-provider-anthropic" ".agentpm-state-provider-anthropic"
+write_provider_config "$PROVIDER_WORK/agentpm.ollama.harness.json" "ollama" "release-provider-ollama" ".agentpm-state-provider-ollama"
+
+write_process_provider_config() {
+  local path="$1"
+  local provider="$2"
+  local state_dir="$3"
+  local startup_timeout_ms="$4"
+  local request_timeout_ms="$5"
+  local command="$6"
+  shift 6
+  local args_json="["
+  local first=1
+  local arg
+  for arg in "$@"; do
+    if [ "$first" -eq 0 ]; then
+      args_json+=", "
+    fi
+    args_json+="\"$arg\""
+    first=0
+  done
+  args_json+="]"
+
+  write_json "$path" <<JSON
+{
+  "version": 1,
+  "providers": {
+    "models": {
+      "$provider": {
+        "implementation": {
+          "type": "process",
+          "command": "$command",
+          "args": $args_json,
+          "startup_timeout_ms": $startup_timeout_ms,
+          "request_timeout_ms": $request_timeout_ms
+        }
+      }
+    }
+  },
+  "model": {
+    "provider": "$provider",
+    "model": "release-provider-process"
+  },
+  "scopes": {
+    "user": "release-verify-user"
+  },
+  "runtime": {
+    "state_dir": "$state_dir",
+    "limits": {
+      "max_steps": 4,
+      "max_model_calls_per_phase": 4,
+      "max_tool_calls_per_phase": 2,
+      "max_actions_per_phase": 8,
+      "max_structured_output_repairs": 1,
+      "max_tool_call_repairs": 1
+    }
+  },
+  "trace": {
+    "enabled": true,
+    "level": "verbose",
+    "content": "full"
+  }
+}
+JSON
+}
+
+write_process_provider_config "$PROVIDER_WORK/agentpm.process.harness.json" \
+  "release-process" ".agentpm-state-provider-process" 1000 1000 "$PYTHON_CMD" \
+  "$RUNNERS/process_model_service.py"
+write_process_provider_config "$PROVIDER_WORK/agentpm.process-failure.harness.json" \
+  "release-process-fail" ".agentpm-state-provider-process-fail" 1000 1000 "$PYTHON_CMD" \
+  "$RUNNERS/process_model_service.py" "--fail-generate"
+write_process_provider_config "$PROVIDER_WORK/agentpm.process-request-timeout.harness.json" \
+  "release-process-timeout" ".agentpm-state-provider-process-request-timeout" 1000 200 "$PYTHON_CMD" \
+  "$RUNNERS/process_model_service.py" "--hang-generate"
+write_process_provider_config "$PROVIDER_WORK/agentpm.process-malformed.harness.json" \
+  "release-process-malformed" ".agentpm-state-provider-process-malformed" 1000 1000 "$PYTHON_CMD" \
+  "$RUNNERS/process_model_service.py" "--malformed-generate"
+write_process_provider_config "$PROVIDER_WORK/agentpm.process-bad-command.harness.json" \
+  "release-process-bad-command" ".agentpm-state-provider-process-bad-command" 1000 1000 \
+  "$BASE/missing-process-model-service" "$RUNNERS/process_model_service.py"
+write_process_provider_config "$PROVIDER_WORK/agentpm.process-startup-timeout.harness.json" \
+  "release-process-startup-timeout" ".agentpm-state-provider-process-startup-timeout" 200 1000 "$PYTHON_CMD" \
+  "$RUNNERS/process_model_service.py" "--hang-startup"
+
+mkdir -p "$SDK_WORK/.agentpm/loops/zack/sdk-parity-loop/0.1.0"
+mkdir -p "$SDK_WORK/.agentpm/knowledge/zack/manual-context/0.1.0/knowledge/docs"
+mkdir -p "$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/knowledge/embeddings"
+
+cat >"$SDK_WORK/context.md" <<'MD'
+# SDK Parity Context
+
+This workspace verifies Node and Python SDK Harness host-service parity.
+MD
+
+write_json "$SDK_WORK/agent.json" <<'JSON'
+{
+  "kind": "agent",
+  "name": "sdk-parity-agent",
+  "version": "0.1.0",
+  "description": "AgentPM Harness SDK parity verification Agent.",
+  "knowledge": [
+    "@zack/manual-context@0.1.0",
+    "@zack/manual-vector@0.1.0"
+  ],
+  "loop": "@zack/sdk-parity-loop@0.1.0",
+  "bindings": {
+    "consumer_context": { "file": "context.md" },
+    "phases": {
+      "inspect": {
+        "knowledge": [
+          "@zack/manual-context",
+          "@zack/manual-vector"
+        ]
+      },
+      "respond": {
+        "knowledge": []
+      }
+    }
+  }
+}
+JSON
+
+write_json "$SDK_WORK/.agentpm/loops/zack/sdk-parity-loop/0.1.0/agent.json" <<'JSON'
+{
+  "kind": "loop",
+  "name": "@zack/sdk-parity-loop",
+  "version": "0.1.0",
+  "description": "Two-phase SDK parity loop with host services and an approval checkpoint.",
+  "loop": {
+    "entry_phase": "inspect",
+    "checkpoints": [
+      {
+        "id": "approve-sdk-parity-response",
+        "type": "approval",
+        "before_phase": "respond",
+        "on_reject": "$handoff"
+      }
+    ],
+    "phases": [
+      {
+        "id": "inspect",
+        "objective": "Use the available Knowledge capabilities to inspect SDK parity evidence, then preserve the result for the response phase.",
+        "access": {
+          "tools": false,
+          "knowledge": true,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "answer",
+            "description": "Knowledge evidence was gathered and the answer can be prepared."
+          }
+        ]
+      },
+      {
+        "id": "respond",
+        "objective": "Respond from the prior phase result after approval.",
+        "access": {
+          "tools": false,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "complete",
+            "description": "The SDK parity response is complete."
+          }
+        ]
+      }
+    ],
+    "transitions": [
+      { "from": "inspect", "on": "answer", "to": "respond" },
+      { "from": "respond", "on": "complete", "to": "$end" }
+    ]
+  }
+}
+JSON
+
+cat >"$SDK_WORK/.agentpm/knowledge/zack/manual-context/0.1.0/knowledge/docs/overview.md" <<'MD'
+# Manual Context
+
+The SDK parity context document is available through the host KnowledgeRuntime.
+MD
+
+write_json "$SDK_WORK/.agentpm/knowledge/zack/manual-context/0.1.0/agent.json" <<'JSON'
+{
+  "kind": "knowledge",
+  "name": "manual-context",
+  "version": "0.1.0",
+  "description": "Context Knowledge package for SDK parity verification.",
+  "knowledge": {
+    "mode": "context",
+    "content_type": "text/markdown",
+    "documents": [
+      { "path": "knowledge/docs/overview.md", "content_type": "text/markdown" }
+    ]
+  }
+}
+JSON
+
+cat >"$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/knowledge/chunks.jsonl" <<'JSONL'
+{"id":"sdk-parity-chunk","source_id":"sdk-parity-source","text":"SDK parity vector Knowledge result."}
+JSONL
+cat >"$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/knowledge/sources.jsonl" <<'JSONL'
+{"id":"sdk-parity-source","title":"SDK Parity Source","uri":"file://sdk-parity"}
+JSONL
+"$PYTHON_CMD" - <<PY
+from pathlib import Path
+import struct
+
+path = Path("$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/knowledge/embeddings/default.f32")
+with path.open("wb") as handle:
+    for value in (1.0, 0.0, 0.0):
+        handle.write(struct.pack("<f", value))
+PY
+
+write_json "$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/agent.json" <<'JSON'
+{
+  "kind": "knowledge",
+  "name": "manual-vector",
+  "version": "0.1.0",
+  "description": "Vector Knowledge package for SDK parity verification.",
+  "knowledge": {
+    "mode": "vector",
+    "corpus": {
+      "chunks_path": "knowledge/chunks.jsonl",
+      "sources_path": "knowledge/sources.jsonl"
+    },
+    "embedding": {
+      "id": "default",
+      "provider": "openai",
+      "model": "text-embedding-3-small",
+      "dimensions": 3,
+      "metric": "cosine",
+      "normalized": true,
+      "vectors_path": "knowledge/embeddings/default.f32"
+    },
+    "retrieval": {
+      "strategy": "exact",
+      "default_top_k": 1,
+      "return_citations": true
+    }
+  }
+}
+JSON
+
+"$APM_BIN" knowledge build --manifest "$SDK_WORK/.agentpm/knowledge/zack/manual-vector/0.1.0/agent.json" >/dev/null
+
+write_json "$SDK_WORK/agent.lock" <<'JSON'
+{
+  "lockfile_version": 3,
+  "generated": "2026-09-26T00:00:00Z",
+  "packages": {
+    "knowledge:@zack/manual-context@0.1.0": {
+      "kind": "knowledge",
+      "name": "@zack/manual-context",
+      "version": "0.1.0",
+      "integrity": "sha256-sdk-parity-context"
+    },
+    "knowledge:@zack/manual-vector@0.1.0": {
+      "kind": "knowledge",
+      "name": "@zack/manual-vector",
+      "version": "0.1.0",
+      "integrity": "sha256-sdk-parity-vector"
+    },
+    "loop:@zack/sdk-parity-loop@0.1.0": {
+      "kind": "loop",
+      "name": "@zack/sdk-parity-loop",
+      "version": "0.1.0",
+      "integrity": "sha256-sdk-parity-loop"
+    }
+  },
+  "roots": {
+    "local:agent": {
+      "name": "sdk-parity-agent",
+      "version": "0.1.0",
+      "knowledge": [
+        "knowledge:@zack/manual-context@0.1.0",
+        "knowledge:@zack/manual-vector@0.1.0"
+      ],
+      "loop": "loop:@zack/sdk-parity-loop@0.1.0"
+    }
+  }
+}
+JSON
+
+write_json "$SDK_WORK/agentpm.harness.json" <<'JSON'
+{
+  "version": 1,
+  "providers": {
+    "models": {
+      "company-model": {
+        "implementation": {
+          "type": "host",
+          "request_timeout_ms": 5000
+        }
+      }
+    },
+    "embeddings": {
+      "embedder": {
+        "implementation": {
+          "type": "host",
+          "request_timeout_ms": 5000
+        }
+      }
+    }
+  },
+  "model": {
+    "provider": "company-model",
+    "model": "sdk-parity-model"
+  },
+  "knowledge": {
+    "runtimes": {
+      "kb": {
+        "implementation": {
+          "type": "host",
+          "request_timeout_ms": 5000
+        }
+      }
+    },
+    "packages": {
+      "@zack/manual-context": { "runtime": "kb" }
+    },
+    "embedding_matches": [
+      {
+        "match": {
+          "provider": "openai",
+          "model": "text-embedding-3-small",
+          "dimensions": 3,
+          "normalized": true
+        },
+        "embedding_provider": "embedder"
+      }
+    ]
+  },
+  "approvals": {
+    "controller": {
+      "implementation": {
+        "type": "host",
+        "request_timeout_ms": 5000
+      }
+    },
+    "timeout_ms": 300000
+  },
+  "scopes": {
+    "user": "sdk-parity-user"
+  },
+  "runtime": {
+    "state_dir": ".agentpm-state-sdk-parity",
+    "limits": {
+      "max_steps": 5,
+      "max_model_calls_per_phase": 4,
+      "max_tool_calls_per_phase": 2,
+      "max_actions_per_phase": 8,
+      "max_structured_output_repairs": 1,
+      "max_tool_call_repairs": 1
+    }
+  },
+  "trace": {
+    "enabled": true,
+    "level": "verbose",
+    "content": "full"
+  }
+}
+JSON
+
+cat >"$BASE/fake_openai_server.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--host", default="127.0.0.1")
+parser.add_argument("--port", type=int, default=18130)
+parser.add_argument("--log", type=Path, required=True)
+args = parser.parse_args()
+
+args.log.parent.mkdir(parents=True, exist_ok=True)
+sequence = 0
+SECRET_MARKER = os.environ.get("HARNESS_VERIFY_SECRET_MARKER", "HARNESS_VERIFY_SUPER_SECRET")
+CAMEL_SECRET_MARKER = os.environ.get(
+    "HARNESS_VERIFY_CAMEL_SECRET_MARKER",
+    "HARNESS_VERIFY_CAMEL_SECRET",
+)
+PRIVATE_KEY_SECRET_MARKER = os.environ.get(
+    "HARNESS_VERIFY_PRIVATE_KEY_SECRET_MARKER",
+    "HARNESS_VERIFY_PRIVATE_KEY_SECRET",
+)
+
+
+def write_log(path, body):
+    global sequence
+    sequence += 1
+    with args.log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"sequence": sequence, "path": path, "body": body}, sort_keys=True) + "\n")
+
+
+def tool_names(body):
+    names = []
+    for tool in body.get("tools") or []:
+        function = tool.get("function") or {}
+        name = function.get("name") or tool.get("name")
+        if isinstance(name, str):
+            names.append(name)
+    return names
+
+
+def tool_parameters(tool):
+    function = tool.get("function") or {}
+    return function.get("parameters") or tool.get("input_schema") or {}
+
+
+def phase_outcomes(body):
+    for tool in body.get("tools") or []:
+        function = tool.get("function") or {}
+        name = function.get("name") or tool.get("name")
+        if name != "phase_complete":
+            continue
+        parameters = tool_parameters(tool)
+        outcome = ((parameters.get("properties") or {}).get("outcome") or {})
+        enum = outcome.get("enum") or []
+        return [str(value) for value in enum]
+    return []
+
+
+def has_tool_result(body):
+    for message in body.get("messages") or []:
+        if message.get("role") == "tool":
+            return True
+        content = message.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "tool_result":
+                    return True
+    return False
+
+
+def provider_kind(path, body):
+    if path.endswith("/api/chat"):
+        return "ollama"
+    if "anthropic-version" in body:
+        return "anthropic"
+    model = str(body.get("model") or "")
+    if "anthropic" in model:
+        return "anthropic"
+    if "ollama" in model:
+        return "ollama"
+    return "openai"
+
+
+def openai_response_with_tool(alias, call_id, arguments, text=None):
+    return {
+        "id": "chatcmpl-release-verify",
+        "object": "chat.completion",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": text,
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": alias,
+                        "arguments": json.dumps(arguments),
+                    },
+                }],
+            },
+            "finish_reason": "tool_calls",
+        }],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+
+
+def anthropic_response_with_tool(alias, call_id, arguments, text=None):
+    content = []
+    if text:
+        content.append({"type": "text", "text": text})
+    content.append({
+        "type": "tool_use",
+        "id": call_id,
+        "name": alias,
+        "input": arguments,
+    })
+    return {
+        "id": "msg_release_verify",
+        "type": "message",
+        "role": "assistant",
+        "content": content,
+        "stop_reason": "tool_use",
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+    }
+
+
+def ollama_response_with_tool(alias, call_id, arguments, text=None):
+    return {
+        "message": {
+            "role": "assistant",
+            "content": text or "",
+            "tool_calls": [{
+                "id": call_id,
+                "function": {
+                    "name": alias,
+                    "arguments": arguments,
+                },
+            }],
+        },
+        "done": True,
+        "done_reason": "stop",
+        "prompt_eval_count": 10,
+        "eval_count": 5,
+    }
+
+
+def response_with_tool(kind, alias, call_id, arguments, text=None):
+    if kind == "anthropic":
+        return anthropic_response_with_tool(alias, call_id, arguments, text)
+    if kind == "ollama":
+        return ollama_response_with_tool(alias, call_id, arguments, text)
+    return openai_response_with_tool(alias, call_id, arguments, text)
+
+
+def response_for(path, body):
+    if body.get("model") == "release-verifier-fail":
+        raise RuntimeError("deterministic provider failure for terminal-path verification")
+    kind = provider_kind(path, body)
+    names = tool_names(body)
+    outcomes = phase_outcomes(body)
+    action_tools = [name for name in names if name != "phase_complete"]
+    if "respond" in outcomes and action_tools and not has_tool_result(body):
+        return response_with_tool(
+            kind,
+            action_tools[0],
+            f"call_release_lookup_{sequence}",
+            {"arguments": {"query": "release readiness"}},
+            "I will inspect release readiness once.",
+        )
+    if "respond" in outcomes:
+        return response_with_tool(
+            kind,
+            "phase_complete",
+            f"call_release_respond_{sequence}",
+            {
+                "outcome": "respond",
+                "output": {
+                    "ready": True,
+                    "summary": "Release readiness was inspected once and is ready for response.",
+                    "api_secret": SECRET_MARKER,
+                    "apiKey": CAMEL_SECRET_MARKER,
+                    "private_key": PRIVATE_KEY_SECRET_MARKER,
+                    "privateKey": PRIVATE_KEY_SECRET_MARKER,
+                },
+            },
+        )
+    if "done" in outcomes:
+        return response_with_tool(
+            kind,
+            "phase_complete",
+            f"call_release_done_{sequence}",
+            {
+                "outcome": "done",
+                "output": {
+                    "answer": "Release verification completed successfully from the preserved inspect output.",
+                    "api_secret": SECRET_MARKER,
+                    "apiKey": CAMEL_SECRET_MARKER,
+                    "private_key": PRIVATE_KEY_SECRET_MARKER,
+                    "privateKey": PRIVATE_KEY_SECRET_MARKER,
+                },
+            },
+        )
+    return response_with_tool(
+        kind,
+        "phase_complete",
+        f"call_release_complete_{sequence}",
+        {
+            "outcome": outcomes[0] if outcomes else "complete",
+            "output": {
+                "answer": "complete",
+                "api_secret": SECRET_MARKER,
+                "apiKey": CAMEL_SECRET_MARKER,
+                "private_key": PRIVATE_KEY_SECRET_MARKER,
+                "privateKey": PRIVATE_KEY_SECRET_MARKER,
+            },
+        },
+    )
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length", "0"))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        write_log(self.path, body)
+        try:
+            payload = json.dumps(response_for(self.path, body)).encode()
+            self.send_response(200)
+        except Exception as exc:
+            payload = json.dumps({"error": str(exc)}).encode()
+            self.send_response(500)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, fmt, *values):
+        return
+
+
+ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
+PY
+chmod +x "$BASE/fake_openai_server.py"
+
+cat >"$RUNNERS/process_model_service.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+import time
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--fail-generate", action="store_true")
+parser.add_argument("--hang-startup", action="store_true")
+parser.add_argument("--hang-generate", action="store_true")
+parser.add_argument("--malformed-generate", action="store_true")
+args = parser.parse_args()
+
+
+def response(message, kind, result=None, error=None):
+    frame = {
+        "protocol": "agentpm-service",
+        "version": 1,
+        "kind": kind,
+        "id": message.get("id"),
+        "service": message.get("service", "model"),
+    }
+    if error is not None:
+        frame["error"] = error
+    else:
+        frame["result"] = result
+    print(json.dumps(frame), flush=True)
+
+
+def usage():
+    return {
+        "model_calls": 0,
+        "tokens": {"input_tokens": 3, "output_tokens": 4, "total_tokens": 7},
+        "accepted_semantic_actions": 0,
+        "tool_calls": 0,
+        "tool_retries": 0,
+        "knowledge_requests": 0,
+        "memory_requests": 0,
+        "embedding_requests": 0,
+        "duration_ms": None,
+        "cost": {"amount": None, "currency": None},
+    }
+
+
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("kind") == "initialize":
+        if args.hang_startup:
+            time.sleep(3600)
+        payload = message.get("payload") or {}
+        registry_id = payload.get("registry_id", "release-process")
+        model = payload.get("model", "release-provider-process")
+        response(
+            message,
+            "initialized",
+            {
+                "registry_id": registry_id,
+                "model": model,
+                "ready": True,
+                "capabilities": {
+                    "semantic_actions": True,
+                    "structured_output": True,
+                    "multimodal_input": False,
+                    "context_window_tokens": 32768,
+                    "usage_reporting": True,
+                },
+            },
+        )
+        continue
+
+    if args.hang_generate:
+        time.sleep(3600)
+
+    if args.fail_generate:
+        response(
+            message,
+            "response",
+            error={
+                "code": "deterministic_model_failure",
+                "message": "deterministic process model generate failure",
+            },
+        )
+        continue
+
+    if args.malformed_generate:
+        response(
+            message,
+            "response",
+            {
+                "assistant_content": 17,
+                "actions": "not a list",
+                "usage": "not usage",
+            },
+        )
+        continue
+
+    request = ((message.get("payload") or {}).get("request") or {})
+    phase_id = request.get("phase_id")
+    if phase_id == "inspect":
+        outcome = "respond"
+        output = {
+            "ready": True,
+            "summary": "Process model inspected release readiness and is ready for response.",
+            "provider": "release-process",
+        }
+    else:
+        outcome = "done"
+        output = {
+            "answer": "Process model completed release verification from preserved state.",
+            "provider": "release-process",
+        }
+    response(
+        message,
+        "response",
+        {
+            "assistant_content": "process model proposed phase completion",
+            "actions": [
+                {
+                    "id": f"process-complete-{phase_id or 'unknown'}",
+                    "action": {
+                        "type": "phase_completion",
+                        "outcome": outcome,
+                        "output": output,
+                    },
+                }
+            ],
+            "usage": usage(),
+            "finish_reason": "stop",
+            "provider_metadata": {"provider": "release-process"},
+        },
+    )
+PY
+chmod +x "$RUNNERS/process_model_service.py"
+
+cat >"$RUNNERS/check_provider_matrix.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+from pathlib import Path
+
+
+def load_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_jsonl(path: Path):
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def parse_case(raw: str):
+    parts = raw.split(":", 3)
+    if len(parts) != 4:
+        raise SystemExit(f"--case must be label:status:report:trace, got {raw!r}")
+    label, status, report, trace = parts
+    return label, status, Path(report), Path(trace)
+
+
+def parse_activation_failure(raw: str):
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        raise SystemExit(f"--activation-failure must be label:stderr, got {raw!r}")
+    label, stderr = parts
+    return label, Path(stderr)
+
+
+def tool_defs(body):
+    tools = body.get("tools") or []
+    names = []
+    schemas = []
+    for tool in tools:
+        function = tool.get("function") or {}
+        name = function.get("name") or tool.get("name")
+        schema = function.get("parameters") or tool.get("input_schema") or {}
+        if name:
+            names.append(name)
+        schemas.append(schema)
+    return names, schemas
+
+
+def has_any_of(value):
+    if isinstance(value, dict):
+        if "anyOf" in value:
+            return True
+        return any(has_any_of(child) for child in value.values())
+    if isinstance(value, list):
+        return any(has_any_of(child) for child in value)
+    return False
+
+
+def provider_kind(path, body):
+    if path.endswith("/api/chat"):
+        return "ollama"
+    model = str(body.get("model") or "")
+    if "anthropic" in model:
+        return "anthropic"
+    return "openai"
+
+
+def assert_report(label, expected_status, report_path, trace_path):
+    if not report_path.is_file():
+        raise AssertionError(f"{label}: missing report {report_path}")
+    if not trace_path.is_file():
+        raise AssertionError(f"{label}: missing trace {trace_path}")
+    report = load_json(report_path)
+    if report.get("terminal_status") != expected_status:
+        raise AssertionError(
+            f"{label}: expected terminal_status {expected_status}, got {report.get('terminal_status')}"
+        )
+    events = load_jsonl(trace_path)
+    if not events:
+        raise AssertionError(f"{label}: empty trace {trace_path}")
+    return report, events
+
+
+def assert_activation_failure(label, stderr_path):
+    if not stderr_path.is_file():
+        raise AssertionError(f"{label}: missing stderr {stderr_path}")
+    stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
+    if not stderr.strip():
+        raise AssertionError(f"{label}: empty stderr {stderr_path}")
+    lowered = stderr.lower()
+    if "failed to start" not in lowered:
+        raise AssertionError(f"{label}: stderr does not look like a provider activation failure")
+    if label == "process-startup-timeout" and "timeout" not in lowered and "timed out" not in lowered:
+        raise AssertionError(f"{label}: stderr does not show a startup timeout")
+    return {
+        "label": label,
+        "stderr_path": str(stderr_path),
+        "stderr_excerpt": stderr.strip().splitlines()[-1][-240:],
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--provider-log", type=Path, required=True)
+    parser.add_argument("--case", action="append", default=[])
+    parser.add_argument("--activation-failure", action="append", default=[])
+    args = parser.parse_args()
+
+    if not args.case:
+        raise SystemExit("at least one --case is required")
+
+    cases = []
+    for raw in args.case:
+        label, expected_status, report_path, trace_path = parse_case(raw)
+        report, events = assert_report(label, expected_status, report_path, trace_path)
+        runtime_kinds = []
+        for event in events:
+            if event.get("event_type") == "model_runtime_request_prepared":
+                fields = ((event.get("payload") or {}).get("fields") or {})
+                runtime_kinds.append(fields.get("runtime_kind"))
+        cases.append({
+            "label": label,
+            "terminal_status": report.get("terminal_status"),
+            "runtime_kinds": sorted(set(value for value in runtime_kinds if value)),
+            "trace_events": len(events),
+        })
+
+    activation_failures = [
+        assert_activation_failure(label, stderr_path)
+        for label, stderr_path in (parse_activation_failure(raw) for raw in args.activation_failure)
+    ]
+
+    rows = load_jsonl(args.provider_log)
+    provider_requests = {}
+    for row in rows:
+        body = row.get("body") or {}
+        model = body.get("model")
+        if not isinstance(model, str) or not model.startswith("release-provider-"):
+            continue
+        if model == "release-provider-process":
+            raise AssertionError(
+                "custom process provider unexpectedly produced a built-in provider HTTP request"
+            )
+        kind = provider_kind(row.get("path", ""), body)
+        names, schemas = tool_defs(body)
+        if not names:
+            continue
+        provider_requests.setdefault(kind, []).append({
+            "model": model,
+            "tool_names": names,
+            "has_any_of": any(has_any_of(schema) for schema in schemas),
+            "tool_choice": body.get("tool_choice"),
+        })
+
+    for provider in ["openai", "anthropic", "ollama"]:
+        requests = provider_requests.get(provider) or []
+        if not requests:
+            raise AssertionError(f"{provider}: no provider request with tools captured")
+        if not any("phase_complete" in request["tool_names"] for request in requests):
+            raise AssertionError(f"{provider}: phase_complete tool was not advertised")
+        if not any(
+            any(name != "phase_complete" for name in request["tool_names"])
+            for request in requests
+        ):
+            raise AssertionError(f"{provider}: no executable Tool was advertised")
+        if any(request["has_any_of"] for request in requests):
+            raise AssertionError(f"{provider}: provider schema still contains anyOf")
+
+    openai_required = [
+        request.get("tool_choice")
+        for request in provider_requests["openai"]
+        if "phase_complete" in request["tool_names"]
+    ]
+    if "required" not in openai_required:
+        raise AssertionError("openai: required tool_choice was not observed")
+    anthropic_required = [
+        request.get("tool_choice")
+        for request in provider_requests["anthropic"]
+        if "phase_complete" in request["tool_names"]
+    ]
+    if {"type": "any"} not in anthropic_required:
+        raise AssertionError("anthropic: required tool_choice was not observed")
+    if any(request["tool_choice"] is not None for request in provider_requests["ollama"]):
+        raise AssertionError("ollama: tool_choice should not be sent")
+
+    process_case = next((case for case in cases if case["label"] == "process"), None)
+    if not process_case or "process" not in process_case["runtime_kinds"]:
+        raise AssertionError("process: trace did not record process model runtime")
+    expected_case_labels = {
+        "openai",
+        "anthropic",
+        "ollama",
+        "process",
+        "process-failure",
+        "process-request-timeout",
+        "process-malformed",
+    }
+    observed_case_labels = {case["label"] for case in cases}
+    missing_case_labels = expected_case_labels - observed_case_labels
+    if missing_case_labels:
+        raise AssertionError(f"missing provider matrix cases: {sorted(missing_case_labels)}")
+    for case in cases:
+        label = case["label"]
+        if not label.startswith("process-"):
+            continue
+        if case["terminal_status"] == "failed" and "process" not in case["runtime_kinds"]:
+            raise AssertionError(f"{label}: failed process case did not record process model runtime")
+    expected_failed_cases = {
+        "process-failure",
+        "process-request-timeout",
+        "process-malformed",
+    }
+    observed_failed_cases = {
+        case["label"] for case in cases if case["terminal_status"] == "failed"
+    }
+    missing_failed_cases = expected_failed_cases - observed_failed_cases
+    if missing_failed_cases:
+        raise AssertionError(f"missing failed process cases: {sorted(missing_failed_cases)}")
+
+    expected_activation_failures = {
+        "process-bad-command",
+        "process-startup-timeout",
+    }
+    observed_activation_failures = {failure["label"] for failure in activation_failures}
+    missing_activation_failures = expected_activation_failures - observed_activation_failures
+    if missing_activation_failures:
+        raise AssertionError(
+            f"missing process activation failure cases: {sorted(missing_activation_failures)}"
+        )
+
+    print(json.dumps({
+        "status": "passed",
+        "cases": cases,
+        "activation_failures": activation_failures,
+        "provider_requests": provider_requests,
+    }, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+PY
+chmod +x "$RUNNERS/check_provider_matrix.py"
+
+cat >"$RUNNERS/node-runner.mjs" <<'JS'
+import { writeFileSync } from 'node:fs';
+import { HarnessClient } from '../../../agentpm-sdk-node/dist/index.js';
+
+const scopeKey = process.env.HARNESS_VERIFY_SCOPE_KEY;
+const scopeValue = process.env.HARNESS_VERIFY_SCOPE_VALUE;
+const harness = new HarnessClient({
+  agent: process.env.HARNESS_VERIFY_AGENT || undefined,
+  configPath: process.env.HARNESS_VERIFY_CONFIG || undefined,
+  scopes: scopeKey && scopeValue ? { [scopeKey]: scopeValue } : undefined,
+  cwd: process.env.HARNESS_VERIFY_WORK,
+  agentpmPath: process.env.APM,
+  env: {
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+  },
+});
+harness.onStderr((chunk) => process.stderr.write(chunk));
+
+try {
+  const result = await harness.run(process.env.HARNESS_VERIFY_INPUT);
+  writeFileSync(process.env.NODE_REPORT, JSON.stringify(result.report, null, 2) + '\n');
+} finally {
+  await harness.shutdown();
+}
+JS
+
+cat >"$RUNNERS/node-repeated-runner.mjs" <<'JS'
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { HarnessClient } from '../../../agentpm-sdk-node/dist/index.js';
+
+const scopeKey = process.env.HARNESS_VERIFY_SCOPE_KEY;
+const scopeValue = process.env.HARNESS_VERIFY_SCOPE_VALUE;
+const contextPath = join(process.env.HARNESS_VERIFY_WORK, 'context.md');
+const harness = new HarnessClient({
+  agent: process.env.HARNESS_VERIFY_AGENT || undefined,
+  configPath: process.env.HARNESS_VERIFY_CONFIG || undefined,
+  scopes: scopeKey && scopeValue ? { [scopeKey]: scopeValue } : undefined,
+  cwd: process.env.HARNESS_VERIFY_WORK,
+  agentpmPath: process.env.APM,
+  env: {
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+  },
+});
+harness.onStderr((chunk) => process.stderr.write(chunk));
+
+try {
+  writeFileSync(
+    contextPath,
+    '# Release Verification Context\n\nRepeated Run marker: first-run-context.\n',
+  );
+  const first = await harness.run(`${process.env.HARNESS_VERIFY_INPUT} First repeated Run.`);
+  writeFileSync(
+    process.env.NODE_REPEAT_REPORT_ONE,
+    JSON.stringify(first.report, null, 2) + '\n',
+  );
+
+  writeFileSync(
+    contextPath,
+    '# Release Verification Context\n\nRepeated Run marker: second-run-context.\n',
+  );
+  const second = await harness.run(`${process.env.HARNESS_VERIFY_INPUT} Second repeated Run.`);
+  writeFileSync(
+    process.env.NODE_REPEAT_REPORT_TWO,
+    JSON.stringify(second.report, null, 2) + '\n',
+  );
+
+  writeFileSync(
+    process.env.NODE_REPEAT_SUMMARY,
+    JSON.stringify(
+      {
+        first: {
+          status: first.report.terminal_status,
+          trace_path: first.report.trace_path,
+          phase_count: (first.report.phase_summaries || []).length,
+          action_count: (first.report.action_summaries || []).length,
+        },
+        second: {
+          status: second.report.terminal_status,
+          trace_path: second.report.trace_path,
+          phase_count: (second.report.phase_summaries || []).length,
+          action_count: (second.report.action_summaries || []).length,
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+} finally {
+  await harness.shutdown();
+}
+JS
+
+cat >"$RUNNERS/python_runner.py" <<PY
+#!/usr/bin/env python3
+import json
+import os
+import sys
+import importlib.util
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location(
+    "agentpm_harness_direct",
+    "$ROOT/../agentpm-sdk-python/src/agentpm/harness.py",
+)
+if spec is None or spec.loader is None:
+    raise RuntimeError("could not load Python SDK harness module")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+HarnessClient = module.HarnessClient
+
+scope_key = os.environ.get("HARNESS_VERIFY_SCOPE_KEY")
+scope_value = os.environ.get("HARNESS_VERIFY_SCOPE_VALUE")
+harness = HarnessClient(
+    agent=os.environ.get("HARNESS_VERIFY_AGENT") or None,
+    config_path=os.environ.get("HARNESS_VERIFY_CONFIG") or None,
+    scopes={scope_key: scope_value} if scope_key and scope_value else None,
+    cwd=os.environ["HARNESS_VERIFY_WORK"],
+    agentpm_path=os.environ["APM"],
+    env={
+        "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"],
+        "OPENAI_BASE_URL": os.environ["OPENAI_BASE_URL"],
+    },
+)
+
+try:
+    result = harness.run(os.environ["HARNESS_VERIFY_INPUT"])
+    Path(os.environ["PYTHON_REPORT"]).write_text(
+        json.dumps(result["report"], indent=2) + "\\n",
+        encoding="utf-8",
+    )
+finally:
+    harness.shutdown()
+PY
+chmod +x "$RUNNERS/python_runner.py"
+
+cat >"$RUNNERS/node-sdk-parity-runner.mjs" <<'JS'
+import { writeFileSync } from 'node:fs';
+import { HarnessClient } from '../../../agentpm-sdk-node/dist/index.js';
+
+const calls = [];
+let modelCalls = 0;
+const harness = new HarnessClient({
+  configPath: process.env.HARNESS_VERIFY_SDK_CONFIG,
+  cwd: process.env.HARNESS_VERIFY_SDK_WORK,
+  agentpmPath: process.env.APM,
+});
+harness.onStderr((chunk) => process.stderr.write(chunk));
+
+harness
+  .registerModelProvider('company-model', () => {
+    calls.push('model');
+    modelCalls += 1;
+    if (modelCalls === 1) {
+      return {
+        assistant_content: null,
+        actions: [
+          {
+            id: 'node-sdk-parity-context',
+            action: {
+              type: 'knowledge_request',
+              package: process.env.HARNESS_VERIFY_SDK_KNOWLEDGE_PACKAGE,
+              mode: 'context_document',
+              document: 'knowledge/docs/overview.md',
+              return_citations: true,
+            },
+          },
+          {
+            id: 'node-sdk-parity-vector',
+            action: {
+              type: 'knowledge_request',
+              package: process.env.HARNESS_VERIFY_SDK_EMBEDDING_KNOWLEDGE_PACKAGE,
+              mode: 'vector_query',
+              query: 'SDK parity vector query',
+              top_k: 1,
+              return_citations: true,
+            },
+          },
+        ],
+        usage: { model_calls: 1, input_tokens: 11, output_tokens: 7, total_tokens: 18 },
+        finish_reason: 'tool_calls',
+        provider_metadata: { surface: 'node-sdk' },
+      };
+    }
+    const outcome = modelCalls === 2 ? 'answer' : 'complete';
+    return {
+      assistant_content: null,
+      actions: [
+        {
+          id: `node-sdk-parity-complete-${modelCalls}`,
+          action: {
+            type: 'phase_completion',
+            outcome,
+            output: { message: `Node SDK parity ${outcome}` },
+          },
+        },
+      ],
+      usage: { model_calls: 1, input_tokens: 13, output_tokens: 5, total_tokens: 18 },
+      finish_reason: 'tool_calls',
+      provider_metadata: { surface: 'node-sdk' },
+    };
+  })
+  .onBeforeModelRequest(() => {
+    calls.push('before_model_request');
+    return { decision: 'continue' };
+  })
+  .onBeforeKnowledgeRequest((input) => {
+    calls.push(`before_knowledge_request:${input.request.package}:${input.request.mode}`);
+    return { decision: 'continue' };
+  })
+  .onAfterKnowledgeRetrieval((input) => {
+    calls.push(`after_knowledge_retrieval:${input.result.package}:${input.result.mode}`);
+    return { decision: 'continue' };
+  })
+  .onApproval(() => {
+    calls.push('approval');
+    return 'approve';
+  });
+
+harness.registerEmbeddingProvider(
+  process.env.HARNESS_VERIFY_SDK_EMBEDDING_PROVIDER,
+  (request) => {
+    calls.push(`embedding:${request.provider}:${request.model}:${request.text}`);
+    return {
+      vector: Array.from({ length: request.dimensions }, (_, index) => (index === 0 ? 1 : 0)),
+      provider: request.provider,
+      model: request.model,
+      dimensions: request.dimensions,
+      normalized: request.normalized,
+    };
+  },
+  {
+    embedding_spaces: [
+      {
+        provider: process.env.HARNESS_VERIFY_SDK_EMBEDDING_SPACE_PROVIDER,
+        model: process.env.HARNESS_VERIFY_SDK_EMBEDDING_SPACE_MODEL,
+        dimensions: Number(process.env.HARNESS_VERIFY_SDK_EMBEDDING_DIMENSIONS),
+        normalized: process.env.HARNESS_VERIFY_SDK_EMBEDDING_NORMALIZED !== 'false',
+      },
+    ],
+  },
+);
+
+harness.registerKnowledgeRuntime(
+  process.env.HARNESS_VERIFY_SDK_KNOWLEDGE_RUNTIME,
+  (request) => {
+    calls.push(`knowledge:${request.package}:${request.mode}:${request.query ?? ''}`);
+    return {
+      ok: true,
+      package: request.package,
+      version: request.version,
+      mode: request.mode,
+      document: request.document,
+      query: request.query,
+      content: request.document ? 'Node SDK parity host Knowledge document' : undefined,
+      results: request.query
+        ? [
+            {
+              rank: 1,
+              score: 1,
+              chunk_id: 'node-sdk-parity-chunk',
+              source_id: 'node-sdk-parity-source',
+              text: 'Node SDK parity host Knowledge result',
+            },
+          ]
+        : [],
+      citations: request.return_citations
+        ? [{ chunk_id: 'node-sdk-parity-chunk', source_id: 'node-sdk-parity-source' }]
+        : [],
+    };
+  },
+  {
+    modes: ['context_document', 'vector_query'],
+    features: ['citations'],
+    packages: [
+      {
+        package: process.env.HARNESS_VERIFY_SDK_KNOWLEDGE_PACKAGE,
+        version: '0.1.0',
+        ready: true,
+      },
+    ],
+  },
+);
+
+try {
+  const result = await harness.run('Run the SDK parity fixture.');
+  writeFileSync(process.env.NODE_SDK_PARITY_REPORT, JSON.stringify(result.report, null, 2) + '\n');
+  writeFileSync(
+    process.env.NODE_SDK_PARITY_SUMMARY,
+    JSON.stringify({ status: result.status, output: result.output, calls, report: result.report }, null, 2) +
+      '\n',
+  );
+} finally {
+  await harness.shutdown();
+}
+JS
+
+cat >"$RUNNERS/python_sdk_parity_runner.py" <<PY
+#!/usr/bin/env python3
+import json
+import os
+import sys
+import importlib.util
+from pathlib import Path
+from typing import Any
+
+spec = importlib.util.spec_from_file_location(
+    "agentpm_harness_direct",
+    "$ROOT/../agentpm-sdk-python/src/agentpm/harness.py",
+)
+if spec is None or spec.loader is None:
+    raise RuntimeError("could not load Python SDK harness module")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+HarnessClient = module.HarnessClient
+
+calls: list[str] = []
+model_calls = 0
+harness = HarnessClient(
+    config_path=os.environ["HARNESS_VERIFY_SDK_CONFIG"],
+    cwd=os.environ["HARNESS_VERIFY_SDK_WORK"],
+    agentpm_path=os.environ["APM"],
+)
+
+
+def model_provider(_: Any) -> dict[str, Any]:
+    global model_calls
+    calls.append("model")
+    model_calls += 1
+    if model_calls == 1:
+        return {
+            "assistant_content": None,
+            "actions": [
+                {
+                    "id": "python-sdk-parity-context",
+                    "action": {
+                        "type": "knowledge_request",
+                        "package": os.environ["HARNESS_VERIFY_SDK_KNOWLEDGE_PACKAGE"],
+                        "mode": "context_document",
+                        "document": "knowledge/docs/overview.md",
+                        "return_citations": True,
+                    },
+                },
+                {
+                    "id": "python-sdk-parity-vector",
+                    "action": {
+                        "type": "knowledge_request",
+                        "package": os.environ["HARNESS_VERIFY_SDK_EMBEDDING_KNOWLEDGE_PACKAGE"],
+                        "mode": "vector_query",
+                        "query": "SDK parity vector query",
+                        "top_k": 1,
+                        "return_citations": True,
+                    },
+                },
+            ],
+            "usage": {"model_calls": 1, "input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
+            "finish_reason": "tool_calls",
+            "provider_metadata": {"surface": "python-sdk"},
+        }
+    outcome = "answer" if model_calls == 2 else "complete"
+    return {
+        "assistant_content": None,
+        "actions": [
+            {
+                "id": f"python-sdk-parity-complete-{model_calls}",
+                "action": {
+                    "type": "phase_completion",
+                    "outcome": outcome,
+                    "output": {"message": f"Python SDK parity {outcome}"},
+                },
+            }
+        ],
+        "usage": {"model_calls": 1, "input_tokens": 13, "output_tokens": 5, "total_tokens": 18},
+        "finish_reason": "tool_calls",
+        "provider_metadata": {"surface": "python-sdk"},
+    }
+
+
+def before_model_request(_: Any) -> dict[str, str]:
+    calls.append("before_model_request")
+    return {"decision": "continue"}
+
+
+def before_knowledge_request(input: Any) -> dict[str, str]:
+    request = input["request"]
+    calls.append(f"before_knowledge_request:{request['package']}:{request['mode']}")
+    return {"decision": "continue"}
+
+
+def after_knowledge_retrieval(input: Any) -> dict[str, str]:
+    result = input["result"]
+    calls.append(f"after_knowledge_retrieval:{result['package']}:{result['mode']}")
+    return {"decision": "continue"}
+
+
+def approval(_: Any) -> str:
+    calls.append("approval")
+    return "approve"
+
+
+def embedding_provider(request: Any) -> dict[str, Any]:
+    calls.append(f"embedding:{request['provider']}:{request['model']}:{request['text']}")
+    return {
+        "vector": [1.0 if index == 0 else 0.0 for index in range(request["dimensions"])],
+        "provider": request["provider"],
+        "model": request["model"],
+        "dimensions": request["dimensions"],
+        "normalized": request["normalized"],
+    }
+
+
+def knowledge_runtime(request: Any) -> dict[str, Any]:
+    calls.append(f"knowledge:{request['package']}:{request['mode']}:{request.get('query', '')}")
+    result: dict[str, Any] = {
+        "ok": True,
+        "package": request["package"],
+        "version": request["version"],
+        "mode": request["mode"],
+        "content": "Python SDK parity host Knowledge document" if request.get("document") else "",
+        "results": [
+            {
+                "rank": 1,
+                "score": 1.0,
+                "chunk_id": "python-sdk-parity-chunk",
+                "source_id": "python-sdk-parity-source",
+                "text": "Python SDK parity host Knowledge result",
+            }
+        ]
+        if request.get("query")
+        else [],
+        "citations": [
+            {
+                "chunk_id": "python-sdk-parity-chunk",
+                "source_id": "python-sdk-parity-source",
+            }
+        ]
+        if request.get("return_citations")
+        else [],
+    }
+    if "document" in request:
+        result["document"] = request["document"]
+    if "query" in request:
+        result["query"] = request["query"]
+    return result
+
+
+harness.register_model_provider("company-model", model_provider).on_before_model_request(
+    before_model_request
+).on_before_knowledge_request(before_knowledge_request).on_after_knowledge_retrieval(
+    after_knowledge_retrieval
+).on_approval(approval)
+harness.register_embedding_provider(
+    os.environ["HARNESS_VERIFY_SDK_EMBEDDING_PROVIDER"],
+    embedding_provider,
+    {
+        "embedding_spaces": [
+            {
+                "provider": os.environ["HARNESS_VERIFY_SDK_EMBEDDING_SPACE_PROVIDER"],
+                "model": os.environ["HARNESS_VERIFY_SDK_EMBEDDING_SPACE_MODEL"],
+                "dimensions": int(os.environ["HARNESS_VERIFY_SDK_EMBEDDING_DIMENSIONS"]),
+                "normalized": os.environ["HARNESS_VERIFY_SDK_EMBEDDING_NORMALIZED"] != "false",
+            }
+        ]
+    },
+)
+harness.register_knowledge_runtime(
+    os.environ["HARNESS_VERIFY_SDK_KNOWLEDGE_RUNTIME"],
+    knowledge_runtime,
+    {
+        "modes": ["context_document", "vector_query"],
+        "features": ["citations"],
+        "packages": [
+            {
+                "package": os.environ["HARNESS_VERIFY_SDK_KNOWLEDGE_PACKAGE"],
+                "version": "0.1.0",
+                "ready": True,
+            }
+        ],
+    },
+)
+
+try:
+    result = harness.run("Run the SDK parity fixture.")
+    Path(os.environ["PYTHON_SDK_PARITY_REPORT"]).write_text(
+        json.dumps(result["report"], indent=2) + "\\n",
+        encoding="utf-8",
+    )
+    Path(os.environ["PYTHON_SDK_PARITY_SUMMARY"]).write_text(
+        json.dumps(
+            {
+                "status": result["status"],
+                "output": result.get("output"),
+                "calls": calls,
+                "report": result["report"],
+            },
+            indent=2,
+        )
+        + "\\n",
+        encoding="utf-8",
+    )
+finally:
+    harness.shutdown()
+PY
+chmod +x "$RUNNERS/python_sdk_parity_runner.py"
+
+cat >"$RUNNERS/check_sdk_parity.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+from collections import Counter
+from pathlib import Path
+
+
+REQUIRED_CALL_PREFIXES = [
+    "model",
+    "before_model_request",
+    "before_knowledge_request:",
+    "after_knowledge_retrieval:",
+    "knowledge:",
+    "embedding:",
+    "approval",
+]
+
+COMPARABLE_USAGE_KEYS = [
+    "accepted_semantic_actions",
+    "embedding_requests",
+    "knowledge_requests",
+    "memory_requests",
+    "model_calls",
+    "tool_calls",
+    "tool_retries",
+]
+
+
+def load_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def parse_case(raw: str):
+    parts = raw.split(":", 2)
+    if len(parts) != 3:
+        raise SystemExit(f"--case must be label:summary:report, got {raw!r}")
+    label, summary, report = parts
+    return label, Path(summary), Path(report)
+
+
+def normalized_phases(report):
+    return [
+        {
+            "phase_id": item.get("phase_id"),
+            "status": item.get("status"),
+            "outcome": item.get("outcome"),
+        }
+        for item in report.get("phase_summaries") or []
+    ]
+
+
+def action_counts(report):
+    return Counter(item.get("action_kind") for item in report.get("action_summaries") or [])
+
+
+def comparable_usage(report):
+    usage = report.get("usage") or {}
+    return {key: usage.get(key, 0) for key in COMPARABLE_USAGE_KEYS}
+
+
+def assert_case(label, summary_path, report_path):
+    summary = load_json(summary_path)
+    report = load_json(report_path)
+    if summary.get("status") != "ended":
+        raise AssertionError(f"{label}: expected ended status, got {summary.get('status')}")
+    if report.get("terminal_status") != "ended":
+        raise AssertionError(f"{label}: expected ended report, got {report.get('terminal_status')}")
+    calls = summary.get("calls") or []
+    for prefix in REQUIRED_CALL_PREFIXES:
+        if not any(call == prefix or str(call).startswith(prefix) for call in calls):
+            raise AssertionError(f"{label}: missing call prefix {prefix!r}")
+    phases = normalized_phases(report)
+    expected_phases = [
+        {"phase_id": "inspect", "status": "completed", "outcome": "answer"},
+        {"phase_id": "respond", "status": "completed", "outcome": "complete"},
+    ]
+    if phases != expected_phases:
+        raise AssertionError(f"{label}: unexpected phase summaries {phases!r}")
+    counts = action_counts(report)
+    if counts.get("knowledge_request", 0) < 2:
+        raise AssertionError(f"{label}: expected at least two Knowledge actions, got {dict(counts)}")
+    if not report.get("trace_path"):
+        raise AssertionError(f"{label}: missing trace_path")
+    usage = report.get("usage") or {}
+    if usage.get("model_calls", 0) < 3:
+        raise AssertionError(f"{label}: expected Run usage to include model calls, got {usage}")
+    if usage.get("embedding_requests", 0) < 1:
+        raise AssertionError(f"{label}: expected host embedding request, got {usage}")
+    call_counts = Counter(calls)
+    return {
+        "label": label,
+        "status": summary.get("status"),
+        "phases": phases,
+        "action_counts": dict(counts),
+        "call_counts": dict(call_counts),
+        "trace_path": report.get("trace_path"),
+        "usage": usage,
+        "comparable_usage": comparable_usage(report),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--case", action="append", default=[])
+    parser.add_argument("--node-log", type=Path, required=True)
+    parser.add_argument("--python-log", type=Path, required=True)
+    args = parser.parse_args()
+    if len(args.case) != 2:
+        raise SystemExit("expected exactly two --case entries: node and python")
+
+    cases = [assert_case(*parse_case(raw)) for raw in args.case]
+    labels = {case["label"] for case in cases}
+    if labels != {"node", "python"}:
+        raise AssertionError(f"expected node/python cases, got {sorted(labels)}")
+    for label, path in [("node", args.node_log), ("python", args.python_log)]:
+        if not path.is_file() or not path.read_text(encoding="utf-8", errors="replace").strip():
+            raise AssertionError(f"{label}: missing SDK focused test log {path}")
+
+    node = next(case for case in cases if case["label"] == "node")
+    python = next(case for case in cases if case["label"] == "python")
+    comparable_fields = ["phases", "action_counts", "call_counts", "comparable_usage"]
+    mismatches = [
+        field
+        for field in comparable_fields
+        if node.get(field) != python.get(field)
+    ]
+    if mismatches:
+        raise AssertionError(f"SDK parity mismatches: {mismatches}")
+    print(json.dumps({"status": "passed", "cases": cases}, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+PY
+chmod +x "$RUNNERS/check_sdk_parity.py"
+
+cat >"$RUNNERS/check_mcp_verification.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+
+EXPECTED_MARKERS = {
+    "harness-export": [
+        "mcp_export_activity_summaries_count_external_calls_without_run_actions",
+        "mcp_export_stop_terminates_children_and_clears_surfaces",
+        "machine_run_report_preserves_mcp_export_surface_and_activity_summaries",
+    ],
+    "import-runtime": [
+        "stdio_import_discovers_filtered_tool_and_dispatches_call",
+        "http_import_discovers_filtered_tool_with_env_header_and_dispatches_call",
+        "stdio_import_restart_does_not_replay_failed_in_flight_tool_call",
+    ],
+    "engine-integration": [
+        "imported_mcp_tools_enter_only_matching_tool_allowed_phases",
+        "external_mcp_tool_arguments_validate_against_discovered_schema",
+        "before_tool_call_hook_patches_imported_mcp_tool_arguments",
+        "imported_mcp_tool_retry_and_phase_local_result_use_shared_tool_pipeline",
+        "run_report_includes_mcp_runtime_summaries_and_import_details",
+    ],
+    "serve-mcp": [
+        "lists_locked_tools_over_http_mcp",
+        "selected_tools_filter_mcp_surface",
+        "rejects_normalized_mcp_tool_name_collisions",
+        "calls_locked_tool_over_http_mcp",
+    ],
+    "provider-schema": [
+        "external_mcp_provider_schema_strips_unsupported_composition_without_changing_runtime_schema",
+    ],
+}
+
+
+FAILURE_MARKERS = [
+    "test result: FAILED",
+    "failures:",
+    "panicked at",
+    "error: test failed",
+]
+
+
+def parse_log(raw: str) -> tuple[str, Path]:
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        raise SystemExit(f"--log must be label:path, got {raw!r}")
+    return parts[0], Path(parts[1])
+
+
+def assert_log(label: str, path: Path) -> dict:
+    if label not in EXPECTED_MARKERS:
+        raise AssertionError(f"unexpected log label {label!r}")
+    if not path.is_file():
+        raise AssertionError(f"{label}: missing log {path}")
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if not text.strip():
+        raise AssertionError(f"{label}: empty log {path}")
+    summary_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip().startswith("test result:")
+    ]
+    if not summary_lines:
+        raise AssertionError(f"{label}: missing cargo success line")
+    bad_summaries = [
+        line
+        for line in summary_lines
+        if not re.match(r"^test result: ok\. \d+ passed; 0 failed; 0 ignored;", line)
+    ]
+    if bad_summaries:
+        raise AssertionError(f"{label}: non-passing or ignored test summaries {bad_summaries}")
+    for marker in FAILURE_MARKERS:
+        if marker in text:
+            raise AssertionError(f"{label}: failure marker {marker!r} found")
+    missing = [
+        marker
+        for marker in EXPECTED_MARKERS[label]
+        if not re.search(rf"^test .*{re.escape(marker)} \.\.\. ok$", text, re.MULTILINE)
+    ]
+    if missing:
+        raise AssertionError(f"{label}: missing passing test markers {missing}")
+    return {
+        "label": label,
+        "path": str(path),
+        "markers": EXPECTED_MARKERS[label],
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--log", action="append", default=[])
+    args = parser.parse_args()
+    logs = [parse_log(raw) for raw in args.log]
+    labels = {label for label, _ in logs}
+    expected = set(EXPECTED_MARKERS)
+    if labels != expected:
+        raise AssertionError(
+            f"expected MCP log labels {sorted(expected)}, got {sorted(labels)}"
+        )
+    cases = [assert_log(label, path) for label, path in logs]
+    print(json.dumps({"status": "passed", "cases": cases}, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except AssertionError as exc:
+        print(f"MCP verification check failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+PY
+chmod +x "$RUNNERS/check_mcp_verification.py"
+
+cat >"$RUNNERS/check_reference_providers.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+
+MOCKED_MARKERS = {
+    "knowledge-node": [
+        "pinecone metadata maps to normalized Knowledge results and citations",
+        "pgvector query values map vector, attestation filters, and top_k",
+        "pgvector rows normalize to stable results and citations",
+        "pinecone metadata identity mismatch is rejected",
+    ],
+    "knowledge-python": [
+        "test_pinecone_metadata_maps_to_normalized_knowledge_results_and_citations",
+        "test_pgvector_query_values_map_vector_attestation_filters_and_top_k",
+        "test_pgvector_rows_normalize_to_stable_results_and_citations",
+        "test_pinecone_metadata_identity_mismatch_is_rejected",
+    ],
+    "memory-node": [
+        "pgvector capabilities omit semantic and reject the unfinished semantic flag",
+        "redis capabilities omit semantic and reject the unfinished Redis Stack flag",
+        "store handles direct write, filter read, count, and operation state",
+        "cross-backend conformance uses one scenario with advertised capability skips",
+    ],
+    "memory-python": [
+        "test_pgvector_capabilities_omit_semantic_and_reject_unfinished_flag",
+        "test_redis_capabilities_omit_semantic_and_reject_unfinished_flag",
+        "test_store_handles_direct_write_read_count_and_state",
+        "test_lifecycle_commit_writes_outputs_mutates_sources_and_rolls_back_stale",
+    ],
+}
+
+
+LIVE_LABELS = {
+    "pinecone-knowledge",
+    "pgvector-knowledge",
+    "pgvector-memory",
+    "redis-memory",
+}
+
+
+FAILURE_MARKERS = [
+    "not ok",
+    "ERR_ASSERTION",
+    "FAILED",
+    "failures:",
+    "Traceback",
+    "panicked at",
+]
+
+
+LOG_FORMAT = {
+    "knowledge-node": "tap",
+    "knowledge-python": "pytest",
+    "memory-node": "tap",
+    "memory-python": "pytest",
+}
+
+
+def parse_label_path(raw: str, flag: str) -> tuple[str, Path]:
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        raise SystemExit(f"{flag} must be label:path, got {raw!r}")
+    return parts[0], Path(parts[1])
+
+
+def parse_live_skip(raw: str) -> tuple[str, str]:
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        raise SystemExit(f"--live-skip must be label:reason, got {raw!r}")
+    label, reason = parts[0], parts[1].strip()
+    if not reason:
+        raise SystemExit(f"--live-skip reason must not be empty for {label!r}")
+    return label, reason
+
+
+def read_log(label: str, path: Path) -> str:
+    if not path.is_file():
+        raise AssertionError(f"{label}: missing log {path}")
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if not text.strip():
+        raise AssertionError(f"{label}: empty log {path}")
+    return text
+
+
+def assert_no_failures(label: str, text: str) -> None:
+    for marker in FAILURE_MARKERS:
+        if marker in text:
+            raise AssertionError(f"{label}: failure marker {marker!r} found")
+    if re.search(r"=+ FAILURES =+", text):
+        raise AssertionError(f"{label}: pytest failure section found")
+    if re.search(r"\b[1-9]\d* failed\b", text):
+        raise AssertionError(f"{label}: nonzero pytest failures found")
+    if re.search(r"# fail [1-9]\d*", text):
+        raise AssertionError(f"{label}: nonzero node test failures found")
+
+
+def assert_no_skips(label: str, text: str) -> None:
+    if LOG_FORMAT.get(label) == "tap":
+        if not re.search(r"^# skipped 0$", text, re.MULTILINE):
+            raise AssertionError(f"{label}: missing TAP skipped 0 summary")
+        if not re.search(r"^# todo 0$", text, re.MULTILINE):
+            raise AssertionError(f"{label}: missing TAP todo 0 summary")
+        if re.search(r"^ok \d+ - .*# SKIP", text, re.MULTILINE):
+            raise AssertionError(f"{label}: TAP skipped test found")
+    elif LOG_FORMAT.get(label) == "pytest":
+        if re.search(r"\b[1-9]\d* skipped\b", text):
+            raise AssertionError(f"{label}: nonzero pytest skipped tests found")
+        if re.search(r"\b[1-9]\d* xfailed\b|\b[1-9]\d* xpassed\b", text):
+            raise AssertionError(f"{label}: nonzero pytest expected-failure results found")
+
+
+def marker_passed(label: str, marker: str, text: str) -> bool:
+    if LOG_FORMAT.get(label) == "tap":
+        return re.search(rf"^ok \d+ - {re.escape(marker)}$", text, re.MULTILINE) is not None
+    if LOG_FORMAT.get(label) == "pytest":
+        return re.search(rf"{re.escape(marker)} PASSED", text) is not None
+    return False
+
+
+def assert_mocked(label: str, path: Path) -> dict:
+    if label not in MOCKED_MARKERS:
+        raise AssertionError(f"unexpected mocked label {label!r}")
+    text = read_log(label, path)
+    assert_no_failures(label, text)
+    assert_no_skips(label, text)
+    missing = [
+        marker for marker in MOCKED_MARKERS[label]
+        if not marker_passed(label, marker, text)
+    ]
+    if missing:
+        raise AssertionError(f"{label}: missing passing markers {missing}")
+    return {"label": label, "path": str(path), "markers": MOCKED_MARKERS[label]}
+
+
+def assert_live(label: str, path: Path) -> dict:
+    if label not in LIVE_LABELS:
+        raise AssertionError(f"unexpected live label {label!r}")
+    text = read_log(label, path)
+    assert_no_failures(label, text)
+    if "live" not in text.lower():
+        raise AssertionError(f"{label}: live log does not look like a live provider check")
+    return {"label": label, "path": str(path), "status": "passed"}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mocked-log", action="append", default=[])
+    parser.add_argument("--live-log", action="append", default=[])
+    parser.add_argument("--live-skip", action="append", default=[])
+    args = parser.parse_args()
+
+    mocked = [parse_label_path(raw, "--mocked-log") for raw in args.mocked_log]
+    mocked_labels = {label for label, _ in mocked}
+    expected_mocked = set(MOCKED_MARKERS)
+    if mocked_labels != expected_mocked:
+        raise AssertionError(
+            f"expected mocked labels {sorted(expected_mocked)}, got {sorted(mocked_labels)}"
+        )
+    mocked_results = [assert_mocked(label, path) for label, path in mocked]
+
+    live_logs = [parse_label_path(raw, "--live-log") for raw in args.live_log]
+    live_skips = [parse_live_skip(raw) for raw in args.live_skip]
+    live_seen = {label for label, _ in live_logs} | {label for label, _ in live_skips}
+    if live_seen != LIVE_LABELS:
+        raise AssertionError(
+            f"expected live result or skip for {sorted(LIVE_LABELS)}, got {sorted(live_seen)}"
+        )
+    duplicated = {label for label, _ in live_logs} & {label for label, _ in live_skips}
+    if duplicated:
+        raise AssertionError(f"live labels cannot be both run and skipped: {sorted(duplicated)}")
+    live_results = [assert_live(label, path) for label, path in live_logs]
+    live_skip_results = [
+        {"label": label, "status": "skipped", "reason": reason}
+        for label, reason in live_skips
+    ]
+
+    print(
+        json.dumps(
+            {
+                "status": "passed",
+                "mocked": mocked_results,
+                "live": sorted(live_results + live_skip_results, key=lambda row: row["label"]),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except AssertionError as exc:
+        print(f"reference provider verification failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+PY
+chmod +x "$RUNNERS/check_reference_providers.py"
+
+cat >"$RUNNERS/extract_trace.py" <<'PY'
+#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+print(json.loads(Path(sys.argv[1]).read_text())["trace_path"])
+PY
+chmod +x "$RUNNERS/extract_trace.py"
+
+cat >"$RUNNERS/check_terminal_artifacts.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+TERMINAL_EVENTS = {
+    "ended": "run_completed",
+    "handed_off": "run_completed",
+    "aborted": "run_failed",
+    "failed": "run_failed",
+    "cancelled": "run_cancelled",
+    "limit_reached": "run_limit_reached",
+    "approval_required": "run_approval_required",
+}
+
+
+def parse_case(raw: str) -> tuple[str, str, Path, Path]:
+    parts = raw.split(":", 3)
+    if len(parts) != 4:
+        raise SystemExit(f"--case must be label:status:report:trace, got {raw!r}")
+    label, status, report, trace = parts
+    return label, status, Path(report), Path(trace)
+
+
+def load_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise AssertionError(f"{path} is not valid JSON: {exc}") from exc
+
+
+def load_jsonl(path: Path) -> list[dict]:
+    events = []
+    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            events.append(json.loads(line))
+        except Exception as exc:
+            raise AssertionError(f"{path}:{line_no} is not valid JSONL: {exc}") from exc
+    return events
+
+
+def assert_secret_absent(label: str, secrets: list[str], path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    for secret in secrets:
+        if secret and secret in text:
+            raise AssertionError(f"{label}: secret marker leaked in {path}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--secret", action="append", default=[], required=True)
+    parser.add_argument("--provider-log", type=Path)
+    parser.add_argument("--stdout", action="append", default=[], type=Path)
+    parser.add_argument("--case", action="append", default=[], help="label:status:report:trace")
+    args = parser.parse_args()
+
+    if not args.case:
+        raise SystemExit("at least one --case is required")
+
+    results = []
+    for raw in args.case:
+        label, expected_status, report_path, trace_path = parse_case(raw)
+        if not report_path.is_file():
+            raise AssertionError(f"{label}: missing report {report_path}")
+        if not trace_path.is_file():
+            raise AssertionError(f"{label}: missing trace {trace_path}")
+
+        report = load_json(report_path)
+        events = load_jsonl(trace_path)
+        status = report.get("terminal_status")
+        if status != expected_status:
+            raise AssertionError(f"{label}: expected {expected_status}, got {status}")
+        if not report.get("trace_path"):
+            raise AssertionError(f"{label}: report does not record trace_path")
+        if not events:
+            raise AssertionError(f"{label}: trace has no events")
+
+        expected_event = TERMINAL_EVENTS.get(expected_status)
+        if expected_event and not any(event.get("event_type") == expected_event for event in events):
+            raise AssertionError(f"{label}: trace missing terminal event {expected_event}")
+
+        if expected_status in {"ended", "limit_reached"} and not report.get("phase_summaries"):
+            raise AssertionError(f"{label}: report has no phase summaries")
+
+        assert_secret_absent(label, args.secret, report_path)
+        assert_secret_absent(label, args.secret, trace_path)
+        results.append(
+            {
+                "label": label,
+                "terminal_status": status,
+                "events": len(events),
+                "report_path": str(report_path),
+                "trace_path": str(trace_path),
+            }
+        )
+
+    if args.provider_log is not None:
+        if not args.provider_log.is_file():
+            raise AssertionError(f"missing provider log {args.provider_log}")
+        assert_secret_absent("provider-log", args.secret, args.provider_log)
+
+    for stdout_path in args.stdout:
+        if not stdout_path.is_file():
+            raise AssertionError(f"missing stdout file {stdout_path}")
+        assert_secret_absent("stdout", args.secret, stdout_path)
+
+    print(
+        json.dumps(
+            {
+                "status": "passed",
+                "cases": results,
+                "provider_log": str(args.provider_log) if args.provider_log else None,
+                "stdout_files": [str(path) for path in args.stdout],
+            },
+            indent=2,
+        )
+    )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except AssertionError as exc:
+        print(f"terminal artifact check failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+PY
+chmod +x "$RUNNERS/check_terminal_artifacts.py"
+
+cat <<MSG
+Created Harness release verification fixture:
+  $BASE
+
+Next:
+  source "$BASE/env.sh"
+  "$PYTHON_CMD" "$BASE/fake_openai_server.py" --port 18130 --log "$RUNS/provider-bodies.jsonl"
+
+In another terminal:
+  source "$BASE/env.sh"
+  follow specs/2026-08-20-harness/manual-tests/HARNESS_RELEASE_VERIFICATION.md
+
+For Node SDK verification, build the Node SDK first if needed:
+  (cd "$ROOT/../agentpm-sdk-node" && pnpm build)
+MSG
