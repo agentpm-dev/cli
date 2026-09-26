@@ -914,6 +914,72 @@ Expected:
 - both summaries show model, Hook, Knowledge, embedding, and approval callbacks
 - focused SDK logs are non-empty and passing
 
+## 12. MCP Lifecycle And Scoping
+
+These checks cover inward runtime MCP imports, outward Agent-authored MCP
+exports, public `serve --mcp` compatibility, imported Tool scope/Hook/retry
+semantics, no active-Run export calls, and cleanup.
+
+If you regenerated the fixture in a new terminal, source it again before
+running this section:
+
+```bash
+source harness-release-verify-test/env.sh
+```
+
+If you have not already defined `run_compat` from Section 9, define it first.
+
+Run the focused MCP coverage:
+
+```bash
+run_compat "MCP Harness export lifecycle" "$HARNESS_VERIFY_OUT/mcp-harness-export.txt" \
+  bash -lc 'cargo test -p agentpm-cli commands::harness::tests::mcp_ && cargo test -p agentpm-cli commands::harness::tests::machine_run_report_preserves_mcp_export_surface_and_activity_summaries'
+
+run_compat "MCP import runtime" "$HARNESS_VERIFY_OUT/mcp-import-runtime.txt" \
+  cargo test -p agentpm-cli harness_runtime::mcp::tests
+
+run_compat "MCP engine integration" "$HARNESS_VERIFY_OUT/mcp-engine-integration.txt" \
+  bash -lc 'cargo test -p agentpm-cli imported_mcp && cargo test -p agentpm-cli external_mcp_tool_arguments_validate_against_discovered_schema && cargo test -p agentpm-cli run_report_includes_mcp_runtime_summaries_and_import_details'
+
+run_compat "MCP public serve surface" "$HARNESS_VERIFY_OUT/mcp-serve-surface.txt" \
+  bash -lc 'cargo test -p agentpm-cli commands::serve::tests::lists_locked_tools_over_http_mcp && cargo test -p agentpm-cli commands::serve::tests::selected_tools_filter_mcp_surface && cargo test -p agentpm-cli commands::serve::tests::rejects_normalized_mcp_tool_name_collisions && cargo test -p agentpm-cli commands::serve::tests::calls_locked_tool_over_http_mcp'
+
+run_compat "MCP provider schema" "$HARNESS_VERIFY_OUT/mcp-provider-schema.txt" \
+  cargo test -p agentpm-cli external_mcp_provider_schema_strips_unsupported_composition_without_changing_runtime_schema
+```
+
+Validate the MCP evidence:
+
+```bash
+"$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/check_mcp_verification.py" \
+  --log harness-export:"$HARNESS_VERIFY_OUT/mcp-harness-export.txt" \
+  --log import-runtime:"$HARNESS_VERIFY_OUT/mcp-import-runtime.txt" \
+  --log engine-integration:"$HARNESS_VERIFY_OUT/mcp-engine-integration.txt" \
+  --log serve-mcp:"$HARNESS_VERIFY_OUT/mcp-serve-surface.txt" \
+  --log provider-schema:"$HARNESS_VERIFY_OUT/mcp-provider-schema.txt" \
+  | tee "$HARNESS_VERIFY_OUT/mcp-lifecycle-check.json"
+```
+
+Expected:
+
+- exit code `0`
+- `"status": "passed"`
+- export lifecycle log covers disabled exports, one managed machine-mode
+  `serve --mcp` process per authored binding, top-level Tool filtering,
+  no active-Run action summaries for outward calls, restart/failure handling,
+  report refresh, and child cleanup
+- import runtime log covers stdio and HTTP activation, filtered `tools/list`,
+  scoped environment/header handling, dispatch, timeouts, malformed responses,
+  sanitized errors, and no replay of failed in-flight calls on restart
+- engine integration log covers phase-scoped imported Tools, canonical-schema
+  argument validation after provider-schema simplification, Hook argument
+  patching, shared retry/result handling, phase-local results, and report
+  summaries
+- public serve log covers human-compatible MCP list/filter/collision/call
+  behavior through the shared internal Tool runner
+- provider-schema log covers provider-facing imported MCP schema simplification
+  while Harness still enforces the canonical schema internally
+
 ## What To Keep
 
 Retain this directory with the release verification notes:
@@ -955,6 +1021,12 @@ harness-release-verify-test/runs/
   sdk-python-parity-summary.json
   sdk-python-harness-parity.txt
   sdk-parity-check.json
+  mcp-harness-export.txt
+  mcp-import-runtime.txt
+  mcp-engine-integration.txt
+  mcp-serve-surface.txt
+  mcp-provider-schema.txt
+  mcp-lifecycle-check.json
   compat-cli-*.txt
   compat-node-sdk.txt
   compat-python-sdk.txt

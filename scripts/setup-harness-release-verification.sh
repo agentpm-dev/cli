@@ -2308,6 +2308,123 @@ if __name__ == "__main__":
 PY
 chmod +x "$RUNNERS/check_sdk_parity.py"
 
+cat >"$RUNNERS/check_mcp_verification.py" <<'PY'
+#!/usr/bin/env python3
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+
+EXPECTED_MARKERS = {
+    "harness-export": [
+        "mcp_export_activity_summaries_count_external_calls_without_run_actions",
+        "mcp_export_stop_terminates_children_and_clears_surfaces",
+        "machine_run_report_preserves_mcp_export_surface_and_activity_summaries",
+    ],
+    "import-runtime": [
+        "stdio_import_discovers_filtered_tool_and_dispatches_call",
+        "http_import_discovers_filtered_tool_with_env_header_and_dispatches_call",
+        "stdio_import_restart_does_not_replay_failed_in_flight_tool_call",
+    ],
+    "engine-integration": [
+        "imported_mcp_tools_enter_only_matching_tool_allowed_phases",
+        "external_mcp_tool_arguments_validate_against_discovered_schema",
+        "before_tool_call_hook_patches_imported_mcp_tool_arguments",
+        "imported_mcp_tool_retry_and_phase_local_result_use_shared_tool_pipeline",
+        "run_report_includes_mcp_runtime_summaries_and_import_details",
+    ],
+    "serve-mcp": [
+        "lists_locked_tools_over_http_mcp",
+        "selected_tools_filter_mcp_surface",
+        "rejects_normalized_mcp_tool_name_collisions",
+        "calls_locked_tool_over_http_mcp",
+    ],
+    "provider-schema": [
+        "external_mcp_provider_schema_strips_unsupported_composition_without_changing_runtime_schema",
+    ],
+}
+
+
+FAILURE_MARKERS = [
+    "test result: FAILED",
+    "failures:",
+    "panicked at",
+    "error: test failed",
+]
+
+
+def parse_log(raw: str) -> tuple[str, Path]:
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        raise SystemExit(f"--log must be label:path, got {raw!r}")
+    return parts[0], Path(parts[1])
+
+
+def assert_log(label: str, path: Path) -> dict:
+    if label not in EXPECTED_MARKERS:
+        raise AssertionError(f"unexpected log label {label!r}")
+    if not path.is_file():
+        raise AssertionError(f"{label}: missing log {path}")
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if not text.strip():
+        raise AssertionError(f"{label}: empty log {path}")
+    summary_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip().startswith("test result:")
+    ]
+    if not summary_lines:
+        raise AssertionError(f"{label}: missing cargo success line")
+    bad_summaries = [
+        line
+        for line in summary_lines
+        if not re.match(r"^test result: ok\. \d+ passed; 0 failed; 0 ignored;", line)
+    ]
+    if bad_summaries:
+        raise AssertionError(f"{label}: non-passing or ignored test summaries {bad_summaries}")
+    for marker in FAILURE_MARKERS:
+        if marker in text:
+            raise AssertionError(f"{label}: failure marker {marker!r} found")
+    missing = [
+        marker
+        for marker in EXPECTED_MARKERS[label]
+        if not re.search(rf"^test .*{re.escape(marker)} \.\.\. ok$", text, re.MULTILINE)
+    ]
+    if missing:
+        raise AssertionError(f"{label}: missing passing test markers {missing}")
+    return {
+        "label": label,
+        "path": str(path),
+        "markers": EXPECTED_MARKERS[label],
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--log", action="append", default=[])
+    args = parser.parse_args()
+    logs = [parse_log(raw) for raw in args.log]
+    labels = {label for label, _ in logs}
+    expected = set(EXPECTED_MARKERS)
+    if labels != expected:
+        raise AssertionError(
+            f"expected MCP log labels {sorted(expected)}, got {sorted(labels)}"
+        )
+    cases = [assert_log(label, path) for label, path in logs]
+    print(json.dumps({"status": "passed", "cases": cases}, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except AssertionError as exc:
+        print(f"MCP verification check failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+PY
+chmod +x "$RUNNERS/check_mcp_verification.py"
+
 cat >"$RUNNERS/extract_trace.py" <<'PY'
 #!/usr/bin/env python3
 import json
