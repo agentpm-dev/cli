@@ -2670,7 +2670,14 @@ fn machine_memory_operation_control_runs_through_engine_yield_point() {
     let run_bridge = bridge.clone();
     let run = std::thread::spawn(move || {
         let mcp_exports = ManagedMcpExports::default();
-        let result = execute_machine_run(&plan, "run input".into(), &run_bridge, &mcp_exports);
+        let mut session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(&plan));
+        let result = execute_machine_run(
+            &plan,
+            "run input".into(),
+            &run_bridge,
+            &mcp_exports,
+            &mut session,
+        );
         run_bridge.set_active_run(false);
         result
     });
@@ -2800,7 +2807,14 @@ fn machine_run_report_preserves_mcp_export_surface_and_activity_summaries() {
     );
 
     let terminal = std::thread::spawn(move || {
-        execute_machine_run(&plan, "run input".into(), &bridge, &mcp_exports)
+        let mut session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(&plan));
+        execute_machine_run(
+            &plan,
+            "run input".into(),
+            &bridge,
+            &mcp_exports,
+            &mut session,
+        )
     });
     sender
         .send(Ok(machine_response(
@@ -2826,6 +2840,106 @@ fn machine_run_report_preserves_mcp_export_surface_and_activity_summaries() {
             && summary.status == "completed"
             && summary.count == 1
     }));
+}
+
+#[test]
+fn machine_repeated_runs_reuse_session_and_reset_run_state() {
+    let root = temp_dir("machine-repeated-runs");
+    let mut plan = minimal_plan(&root);
+    write_single_phase_loop_fixture(&root, &mut plan);
+    plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
+        provider: "host-model".into(),
+        model: "model-1".into(),
+        options: json!({}),
+    });
+    plan.config.config.providers.models.insert(
+        "host-model".into(),
+        HarnessImplementationEntry {
+            implementation: HarnessImplementation::Host {
+                request_timeout_ms: 1_000,
+            },
+        },
+    );
+
+    let (bridge, sender, output) = buffered_machine_bridge();
+    bridge.register_host_service(
+        &host_service("model", "host-model"),
+        host_model_capabilities(),
+    );
+    let run_bridge = bridge.clone();
+    let terminal = std::thread::spawn(move || {
+        let mcp_exports = ManagedMcpExports::default();
+        let mut session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(&plan));
+        let first = execute_machine_run(
+            &plan,
+            "first run".into(),
+            &run_bridge,
+            &mcp_exports,
+            &mut session,
+        )?;
+        let second = execute_machine_run(
+            &plan,
+            "second run".into(),
+            &run_bridge,
+            &mcp_exports,
+            &mut session,
+        )?;
+        Ok::<_, anyhow::Error>((
+            first,
+            second,
+            session.usage.clone(),
+            session.runtime_snapshot.session_id.clone(),
+        ))
+    });
+
+    let first_request = wait_for_machine_frame_count(
+        &output,
+        |frame| frame["kind"] == "request" && frame["method"] == "host_service",
+        1,
+    );
+    sender
+        .send(Ok(machine_response(
+            first_request["id"].as_str().unwrap(),
+            serde_json::to_value(phase_completion_turn(
+                Some("complete"),
+                Some(json!({ "summary": "first" })),
+            ))
+            .unwrap(),
+        )))
+        .unwrap();
+    let second_request = wait_for_machine_frame_count(
+        &output,
+        |frame| frame["kind"] == "request" && frame["method"] == "host_service",
+        2,
+    );
+    sender
+        .send(Ok(machine_response(
+            second_request["id"].as_str().unwrap(),
+            serde_json::to_value(phase_completion_turn(
+                Some("complete"),
+                Some(json!({ "summary": "second" })),
+            ))
+            .unwrap(),
+        )))
+        .unwrap();
+
+    let (first, second, session_usage, runtime_session_id) = terminal.join().unwrap().unwrap();
+    assert_eq!(first.status, HarnessTerminalStatus::Ended);
+    assert_eq!(second.status, HarnessTerminalStatus::Ended);
+    assert_eq!(first.report.session_id, second.report.session_id);
+    assert_eq!(runtime_session_id, first.report.session_id);
+    assert_ne!(first.report.run_id, second.report.run_id);
+    assert_eq!(first.report.phase_summaries.len(), 1);
+    assert_eq!(second.report.phase_summaries.len(), 1);
+    assert_eq!(first.report.usage.model_calls, 1);
+    assert_eq!(second.report.usage.model_calls, 1);
+    assert_eq!(session_usage.started_runs, 2);
+    assert_eq!(session_usage.completed_runs, 2);
+    assert_eq!(session_usage.model_calls, 2);
+    assert_trace_only_mentions_run(&first.report);
+    assert_trace_only_mentions_run(&second.report);
+    assert_trace_does_not_mention_run(&first.report, &second.report.run_id);
+    assert_trace_does_not_mention_run(&second.report, &first.report.run_id);
 }
 
 #[test]
@@ -2858,7 +2972,14 @@ fn machine_memory_operation_control_returns_engine_scope_mismatch_error() {
     let run_bridge = bridge.clone();
     let run = std::thread::spawn(move || {
         let mcp_exports = ManagedMcpExports::default();
-        let result = execute_machine_run(&plan, "run input".into(), &run_bridge, &mcp_exports);
+        let mut session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(&plan));
+        let result = execute_machine_run(
+            &plan,
+            "run input".into(),
+            &run_bridge,
+            &mcp_exports,
+            &mut session,
+        );
         run_bridge.set_active_run(false);
         result
     });
@@ -4208,6 +4329,55 @@ fn wait_for_machine_frame(
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn wait_for_machine_frame_count(
+    output: &Arc<Mutex<Vec<u8>>>,
+    predicate: impl Fn(&Value) -> bool,
+    count: usize,
+) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let matches = machine_frames_from_buffer(output)
+            .into_iter()
+            .filter(|frame| predicate(frame))
+            .collect::<Vec<_>>();
+        if matches.len() >= count {
+            return matches[count - 1].clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {count} machine protocol frame(s)"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn assert_trace_only_mentions_run(report: &RunReport) {
+    let trace_path = report
+        .trace_path
+        .as_ref()
+        .expect("report should include trace path");
+    let trace = fs::read_to_string(trace_path).expect("trace should be readable");
+    for line in trace.lines().filter(|line| !line.trim().is_empty()) {
+        let event: Value = serde_json::from_str(line).expect("trace event should be JSON");
+        if let Some(run_id) = event.get("run_id").and_then(Value::as_str) {
+            assert_eq!(run_id, report.run_id, "unexpected run id in trace event");
+        }
+    }
+}
+
+fn assert_trace_does_not_mention_run(report: &RunReport, other_run_id: &str) {
+    let trace_path = report
+        .trace_path
+        .as_ref()
+        .expect("report should include trace path");
+    let trace = fs::read_to_string(trace_path).expect("trace should be readable");
+    assert!(
+        !trace.contains(other_run_id),
+        "trace for `{}` should not contain events for `{other_run_id}`",
+        report.run_id
+    );
 }
 
 fn empty_model_request(selection: ModelProviderSelection) -> ModelRequest {

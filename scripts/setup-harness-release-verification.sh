@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="$ROOT/harness-release-verify-test"
 WORK="$BASE/workspace"
+APPROVAL_WORK="$BASE/approval-workspace"
 RUNNERS="$BASE/runners"
 RUNS="$BASE/runs"
 APM_BIN="$ROOT/target/debug/agentpm"
@@ -24,11 +25,13 @@ pkg_root() {
 }
 
 rm -rf "$BASE"
-mkdir -p "$WORK" "$RUNNERS" "$RUNS"
+mkdir -p "$WORK" "$APPROVAL_WORK" "$RUNNERS" "$RUNS"
 
 cat >"$BASE/env.sh" <<SH
 export HARNESS_VERIFY_ROOT="$BASE"
 export HARNESS_VERIFY_WORK="$WORK"
+export HARNESS_VERIFY_APPROVAL_WORK="$APPROVAL_WORK"
+export HARNESS_VERIFY_APPROVAL_CONFIG="$APPROVAL_WORK/agentpm.harness.json"
 export HARNESS_VERIFY_RUNNERS="$RUNNERS"
 export HARNESS_VERIFY_OUT="$RUNS"
 export HARNESS_VERIFY_AGENT=""
@@ -241,6 +244,135 @@ write_json "$WORK/agent.lock" <<'JSON'
 }
 JSON
 
+cat >"$APPROVAL_WORK/context.md" <<'MD'
+# Approval Verification Context
+
+The headless approval-required scenario should stop before the gated review
+phase because no interactive approval controller is available.
+MD
+
+write_json "$APPROVAL_WORK/agentpm.harness.json" <<'JSON'
+{
+  "version": 1,
+  "model": {
+    "provider": "openai",
+    "model": "release-verifier"
+  },
+  "scopes": {
+    "user": "release-verify-user"
+  },
+  "runtime": {
+    "state_dir": ".agentpm-state-release-verify-approval",
+    "limits": {
+      "max_steps": 4,
+      "max_model_calls_per_phase": 4,
+      "max_tool_calls_per_phase": 2,
+      "max_actions_per_phase": 8,
+      "max_structured_output_repairs": 1,
+      "max_tool_call_repairs": 1
+    }
+  },
+  "trace": {
+    "enabled": true,
+    "level": "verbose",
+    "content": "full"
+  }
+}
+JSON
+
+write_json "$APPROVAL_WORK/agent.json" <<'JSON'
+{
+  "kind": "agent",
+  "name": "release-verify-approval-agent",
+  "version": "0.1.0",
+  "description": "AgentPM Harness release verification approval fixture Agent.",
+  "tools": [],
+  "loop": "@zack/release-approval-loop@0.1.0",
+  "bindings": {
+    "consumer_context": { "file": "context.md" }
+  }
+}
+JSON
+
+write_json "$APPROVAL_WORK/.agentpm/loops/zack/release-approval-loop/0.1.0/agent.json" <<'JSON'
+{
+  "kind": "loop",
+  "name": "@zack/release-approval-loop",
+  "version": "0.1.0",
+  "description": "Two-phase release verification loop with an approval checkpoint.",
+  "loop": {
+    "entry_phase": "assess",
+    "checkpoints": [
+      {
+        "id": "approve-release-review",
+        "type": "approval",
+        "before_phase": "review",
+        "on_reject": "$handoff"
+      }
+    ],
+    "phases": [
+      {
+        "id": "assess",
+        "objective": "Assess whether the release readiness answer should enter review.",
+        "access": {
+          "tools": false,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "review",
+            "description": "The answer is ready for the gated review phase."
+          }
+        ]
+      },
+      {
+        "id": "review",
+        "objective": "Review the release readiness answer after approval.",
+        "access": {
+          "tools": false,
+          "knowledge": false,
+          "memory": { "read": false, "write": false }
+        },
+        "outcomes": [
+          {
+            "id": "done",
+            "description": "The approved review is complete."
+          }
+        ]
+      }
+    ],
+    "transitions": [
+      { "from": "assess", "on": "review", "to": "review" },
+      { "from": "review", "on": "done", "to": "$end" }
+    ]
+  }
+}
+JSON
+
+write_json "$APPROVAL_WORK/agent.lock" <<'JSON'
+{
+  "lockfile_version": 3,
+  "generated": "2026-09-26T00:00:00Z",
+  "packages": {
+    "loop:@zack/release-approval-loop@0.1.0": {
+      "kind": "loop",
+      "name": "@zack/release-approval-loop",
+      "version": "0.1.0",
+      "integrity": "sha256-release-verify-approval"
+    }
+  },
+  "roots": {
+    "local:agent": {
+      "name": "release-verify-approval-agent",
+      "version": "0.1.0",
+      "tools": [],
+      "loop": "loop:@zack/release-approval-loop@0.1.0"
+    }
+  }
+}
+JSON
+
 cat >"$BASE/fake_openai_server.py" <<'PY'
 #!/usr/bin/env python3
 import argparse
@@ -415,6 +547,74 @@ harness.onStderr((chunk) => process.stderr.write(chunk));
 try {
   const result = await harness.run(process.env.HARNESS_VERIFY_INPUT);
   writeFileSync(process.env.NODE_REPORT, JSON.stringify(result.report, null, 2) + '\n');
+} finally {
+  await harness.shutdown();
+}
+JS
+
+cat >"$RUNNERS/node-repeated-runner.mjs" <<'JS'
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { HarnessClient } from '../../../agentpm-sdk-node/dist/index.js';
+
+const scopeKey = process.env.HARNESS_VERIFY_SCOPE_KEY;
+const scopeValue = process.env.HARNESS_VERIFY_SCOPE_VALUE;
+const contextPath = join(process.env.HARNESS_VERIFY_WORK, 'context.md');
+const harness = new HarnessClient({
+  agent: process.env.HARNESS_VERIFY_AGENT || undefined,
+  configPath: process.env.HARNESS_VERIFY_CONFIG || undefined,
+  scopes: scopeKey && scopeValue ? { [scopeKey]: scopeValue } : undefined,
+  cwd: process.env.HARNESS_VERIFY_WORK,
+  agentpmPath: process.env.APM,
+  env: {
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+  },
+});
+harness.onStderr((chunk) => process.stderr.write(chunk));
+
+try {
+  writeFileSync(
+    contextPath,
+    '# Release Verification Context\n\nRepeated Run marker: first-run-context.\n',
+  );
+  const first = await harness.run(`${process.env.HARNESS_VERIFY_INPUT} First repeated Run.`);
+  writeFileSync(
+    process.env.NODE_REPEAT_REPORT_ONE,
+    JSON.stringify(first.report, null, 2) + '\n',
+  );
+
+  writeFileSync(
+    contextPath,
+    '# Release Verification Context\n\nRepeated Run marker: second-run-context.\n',
+  );
+  const second = await harness.run(`${process.env.HARNESS_VERIFY_INPUT} Second repeated Run.`);
+  writeFileSync(
+    process.env.NODE_REPEAT_REPORT_TWO,
+    JSON.stringify(second.report, null, 2) + '\n',
+  );
+
+  writeFileSync(
+    process.env.NODE_REPEAT_SUMMARY,
+    JSON.stringify(
+      {
+        first: {
+          status: first.report.terminal_status,
+          trace_path: first.report.trace_path,
+          phase_count: (first.report.phase_summaries || []).length,
+          action_count: (first.report.action_summaries || []).length,
+        },
+        second: {
+          status: second.report.terminal_status,
+          trace_path: second.report.trace_path,
+          phase_count: (second.report.phase_summaries || []).length,
+          action_count: (second.report.action_summaries || []).length,
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+  );
 } finally {
   await harness.shutdown();
 }

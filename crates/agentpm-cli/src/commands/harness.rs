@@ -995,6 +995,10 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
     mcp_export_session
         .emitter
         .add_sink(Box::new(MachineEventSink::new(writer.clone())));
+    let mut run_session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(plan));
+    run_session
+        .emitter
+        .add_sink(Box::new(MachineEventSink::new(writer.clone())));
     let mut mcp_exports = if matches!(
         plan.report.status,
         PreflightStatus::Ready | PreflightStatus::ReadyWithWarnings
@@ -1112,14 +1116,16 @@ fn run_machine_surface(plan: &ResolvedHarnessPlan, args: &HarnessArgs) -> Result
                     .or_else(|| args.input.clone())
                     .ok_or_else(|| anyhow!("machine start_run requires payload.input"))?;
                 bridge.set_active_run(true);
-                let terminal = match execute_machine_run(plan, input, &bridge, &mcp_exports) {
-                    Ok(terminal) => terminal,
-                    Err(err) => {
-                        bridge.set_active_run(false);
-                        bridge.write_error(id.as_deref(), "run_failed", err.to_string())?;
-                        continue;
-                    }
-                };
+                let terminal =
+                    match execute_machine_run(plan, input, &bridge, &mcp_exports, &mut run_session)
+                    {
+                        Ok(terminal) => terminal,
+                        Err(err) => {
+                            bridge.set_active_run(false);
+                            bridge.write_error(id.as_deref(), "run_failed", err.to_string())?;
+                            continue;
+                        }
+                    };
                 bridge.set_active_run(false);
                 bridge.write_response(
                     id.as_deref(),
@@ -1171,6 +1177,7 @@ fn execute_machine_run(
     input: String,
     bridge: &MachineHostBridgeHandle,
     mcp_exports: &ManagedMcpExports,
+    session: &mut HarnessSession,
 ) -> Result<RuntimeTerminalResult> {
     let selection = model_selection(plan)?;
     let mut service_events = ServiceLifecycleEvents::new();
@@ -1218,69 +1225,79 @@ fn execute_machine_run(
     )?
     .with_host_invoker(Box::new(bridge.clone()));
     hooks.add_sdk_host_registrations(bridge.sdk_host_hooks());
-    let loop_manifest = load_plan_loop(plan)?;
-    let mut session = HarnessSession::with_runtime_snapshot(runtime);
-    session
-        .emitter
-        .add_sink(Box::new(MachineEventSink::new(bridge.writer())));
     let run_id = allocate_harness_run_id();
     let output_paths = RunOutputPaths::resolve(&plan.state_dir, &run_id, None)?;
-    if plan.config.config.trace.enabled {
-        session.emitter.add_sink(Box::new(JsonlTraceSink::create(
+    let trace_sink_id = if plan.config.config.trace.enabled {
+        Some(session.emitter.add_sink(Box::new(JsonlTraceSink::create(
             &output_paths.events_path,
             plan.config.config.trace.clone(),
-        )?));
-    }
-    let mcp_import_snapshots = session.runtime_snapshot.mcp_imports.clone();
-    emit_mcp_import_activation_events(&mut session, &mcp_import_snapshots)?;
-    session.runtime_snapshot.mcp_exports = mcp_exports.snapshots();
-    let mut approvals = if bridge.has_sdk_approval_controller() {
-        Box::new(SdkHostApprovalController {
-            invoker: Box::new(bridge.clone()),
-            request_timeout_ms: plan
-                .config
-                .config
-                .approvals
-                .timeout_ms
-                .unwrap_or(SDK_HOST_REQUEST_TIMEOUT_MS),
-        }) as Box<dyn ApprovalController>
+        )?)))
     } else {
-        approval_controller_from_plan(plan, Some(Box::new(bridge.clone())), Some(&service_events))?
+        None
     };
-    let engine_options = harness_engine_options_from_plan(plan);
-    let mut engine = HarnessEngine::new(loop_manifest, engine_options);
-    engine.set_control_ingress(Box::new(bridge.clone()));
-    let memory_embedding_provider =
-        embedding_provider_for_plan(plan, Some(bridge.clone()), Some(&service_events));
-    let mut services = HarnessRuntimeServices {
-        model: model.as_mut(),
-        dispatcher: &mut dispatcher,
-        knowledge: knowledge.as_mut(),
-        memory: custom_memory.runtime,
-        embedding_provider: memory_embedding_provider,
-        approvals: approvals.as_mut(),
-        hooks: &mut hooks,
-        service_events: Some(&mut service_events),
-    };
-    let result = engine.execute_run_with_id(&mut session, run_id, input, &mut services)?;
-    let HarnessRunResult::Terminal(result) = result else {
-        bail!(
-            "machine surface cannot retain pending approval without an interactive host controller"
+    let result = (|| -> Result<RuntimeTerminalResult> {
+        runtime.session_id = session.session_id.clone();
+        session.runtime_snapshot = runtime;
+        let mcp_import_snapshots = session.runtime_snapshot.mcp_imports.clone();
+        emit_mcp_import_activation_events(session, &mcp_import_snapshots)?;
+        session.runtime_snapshot.mcp_exports = mcp_exports.snapshots();
+        let mut approvals = if bridge.has_sdk_approval_controller() {
+            Box::new(SdkHostApprovalController {
+                invoker: Box::new(bridge.clone()),
+                request_timeout_ms: plan
+                    .config
+                    .config
+                    .approvals
+                    .timeout_ms
+                    .unwrap_or(SDK_HOST_REQUEST_TIMEOUT_MS),
+            }) as Box<dyn ApprovalController>
+        } else {
+            approval_controller_from_plan(
+                plan,
+                Some(Box::new(bridge.clone())),
+                Some(&service_events),
+            )?
+        };
+        let loop_manifest = load_plan_loop(plan)?;
+        let engine_options = harness_engine_options_from_plan(plan);
+        let mut engine = HarnessEngine::new(loop_manifest, engine_options);
+        engine.set_control_ingress(Box::new(bridge.clone()));
+        let memory_embedding_provider =
+            embedding_provider_for_plan(plan, Some(bridge.clone()), Some(&service_events));
+        let mut services = HarnessRuntimeServices {
+            model: model.as_mut(),
+            dispatcher: &mut dispatcher,
+            knowledge: knowledge.as_mut(),
+            memory: custom_memory.runtime,
+            embedding_provider: memory_embedding_provider,
+            approvals: approvals.as_mut(),
+            hooks: &mut hooks,
+            service_events: Some(&mut service_events),
+        };
+        let result = engine.execute_run_with_id(session, run_id, input, &mut services)?;
+        let HarnessRunResult::Terminal(result) = result else {
+            bail!(
+                "machine surface cannot retain pending approval without an interactive host controller"
+            );
+        };
+        let mut terminal = *result;
+        merge_mcp_report_summaries(
+            &mut terminal.report.mcp_summaries,
+            mcp_exports.report_summaries(),
         );
-    };
-    let mut terminal = *result;
-    merge_mcp_report_summaries(
-        &mut terminal.report.mcp_summaries,
-        mcp_exports.report_summaries(),
-    );
-    if plan.config.config.trace.enabled {
-        terminal.report.trace_path = Some(output_paths.events_path.display().to_string());
+        if plan.config.config.trace.enabled {
+            terminal.report.trace_path = Some(output_paths.events_path.display().to_string());
+        }
+        terminal
+            .report
+            .write_pretty(&output_paths.report_path, &plan.config.config.trace.content)?;
+        session.emitter.flush()?;
+        Ok(terminal)
+    })();
+    if let Some(trace_sink_id) = trace_sink_id {
+        session.emitter.remove_sink(trace_sink_id)?;
     }
-    terminal
-        .report
-        .write_pretty(&output_paths.report_path, &plan.config.config.trace.content)?;
-    session.emitter.flush()?;
-    Ok(terminal)
+    result
 }
 
 const AGENTPM_HARNESS_MACHINE_PROTOCOL: &str = "agentpm-harness-machine";
@@ -1505,14 +1522,6 @@ impl MachineHostBridgeHandle {
             .expect("machine bridge poisoned")
             .writer
             .write_error(id, code, message)
-    }
-
-    fn writer(&self) -> MachineProtocolWriter {
-        self.inner
-            .lock()
-            .expect("machine bridge poisoned")
-            .writer
-            .clone()
     }
 
     fn take_memory_operation_control(&self) -> Result<Option<MachineEnvelope>> {
