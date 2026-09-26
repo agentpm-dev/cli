@@ -596,6 +596,248 @@ commands pass, except for explicitly recorded environment skips. The only
 intentional compatibility exceptions for this release band remain the Loop
 checkpoint relaxation and Memory transform `output_mode` addition.
 
+## 10. Provider Runtime And Schema Matrix
+
+These checks cover representative built-in provider request shapes, custom
+process-provider dispatch, custom-provider failure without silent fallback, and
+the focused schema/host-provider contract tests that stand in for unavailable
+live providers.
+
+The deterministic capture server from Setup must be running. It accepts the
+OpenAI, Anthropic, and Ollama request shapes on the same port configured by
+`env.sh`.
+
+Run the built-in provider matrix:
+
+```bash
+OPENAI_PROVIDER_REPORT="$HARNESS_VERIFY_OUT/provider-openai-report.json"
+(
+  cd "$HARNESS_VERIFY_PROVIDER_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_PROVIDER_OPENAI_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$OPENAI_PROVIDER_REPORT" \
+    >"$HARNESS_VERIFY_OUT/provider-openai-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/provider-openai-stderr.txt"
+)
+OPENAI_PROVIDER_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$OPENAI_PROVIDER_REPORT")"
+
+ANTHROPIC_PROVIDER_REPORT="$HARNESS_VERIFY_OUT/provider-anthropic-report.json"
+(
+  cd "$HARNESS_VERIFY_PROVIDER_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_PROVIDER_ANTHROPIC_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$ANTHROPIC_PROVIDER_REPORT" \
+    >"$HARNESS_VERIFY_OUT/provider-anthropic-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/provider-anthropic-stderr.txt"
+)
+ANTHROPIC_PROVIDER_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$ANTHROPIC_PROVIDER_REPORT")"
+
+OLLAMA_PROVIDER_REPORT="$HARNESS_VERIFY_OUT/provider-ollama-report.json"
+(
+  cd "$HARNESS_VERIFY_PROVIDER_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_PROVIDER_OLLAMA_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$OLLAMA_PROVIDER_REPORT" \
+    >"$HARNESS_VERIFY_OUT/provider-ollama-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/provider-ollama-stderr.txt"
+)
+OLLAMA_PROVIDER_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$OLLAMA_PROVIDER_REPORT")"
+```
+
+Run the custom process-provider success and failure cases:
+
+```bash
+PROCESS_PROVIDER_REPORT="$HARNESS_VERIFY_OUT/provider-process-report.json"
+(
+  cd "$HARNESS_VERIFY_PROVIDER_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_PROVIDER_PROCESS_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$PROCESS_PROVIDER_REPORT" \
+    >"$HARNESS_VERIFY_OUT/provider-process-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/provider-process-stderr.txt"
+)
+PROCESS_PROVIDER_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$PROCESS_PROVIDER_REPORT")"
+
+PROCESS_FAILURE_REPORT="$HARNESS_VERIFY_OUT/provider-process-failure-report.json"
+set +e
+(
+  cd "$HARNESS_VERIFY_PROVIDER_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_PROVIDER_PROCESS_FAILURE_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$PROCESS_FAILURE_REPORT" \
+    >"$HARNESS_VERIFY_OUT/provider-process-failure-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/provider-process-failure-stderr.txt"
+)
+PROCESS_FAILURE_EXIT=$?
+if [ "$PROCESS_FAILURE_EXIT" -eq 0 ]; then
+  echo "expected process provider failure, got exit 0" >&2
+fi
+if [ ! -s "$PROCESS_FAILURE_REPORT" ]; then
+  echo "missing process failure report: $PROCESS_FAILURE_REPORT" >&2
+else
+  PROCESS_FAILURE_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$PROCESS_FAILURE_REPORT")"
+fi
+
+PROCESS_REQUEST_TIMEOUT_REPORT="$HARNESS_VERIFY_OUT/provider-process-request-timeout-report.json"
+set +e
+(
+  cd "$HARNESS_VERIFY_PROVIDER_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_PROVIDER_PROCESS_REQUEST_TIMEOUT_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$PROCESS_REQUEST_TIMEOUT_REPORT" \
+    >"$HARNESS_VERIFY_OUT/provider-process-request-timeout-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/provider-process-request-timeout-stderr.txt"
+)
+PROCESS_REQUEST_TIMEOUT_EXIT=$?
+if [ "$PROCESS_REQUEST_TIMEOUT_EXIT" -eq 0 ]; then
+  echo "expected process provider request timeout, got exit 0" >&2
+fi
+if [ ! -s "$PROCESS_REQUEST_TIMEOUT_REPORT" ]; then
+  echo "missing process request-timeout report: $PROCESS_REQUEST_TIMEOUT_REPORT" >&2
+else
+  PROCESS_REQUEST_TIMEOUT_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$PROCESS_REQUEST_TIMEOUT_REPORT")"
+fi
+
+PROCESS_MALFORMED_REPORT="$HARNESS_VERIFY_OUT/provider-process-malformed-report.json"
+set +e
+(
+  cd "$HARNESS_VERIFY_PROVIDER_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_PROVIDER_PROCESS_MALFORMED_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$PROCESS_MALFORMED_REPORT" \
+    >"$HARNESS_VERIFY_OUT/provider-process-malformed-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/provider-process-malformed-stderr.txt"
+)
+PROCESS_MALFORMED_EXIT=$?
+if [ "$PROCESS_MALFORMED_EXIT" -eq 0 ]; then
+  echo "expected malformed process provider response failure, got exit 0" >&2
+fi
+if [ ! -s "$PROCESS_MALFORMED_REPORT" ]; then
+  echo "missing malformed process report: $PROCESS_MALFORMED_REPORT" >&2
+else
+  PROCESS_MALFORMED_TRACE="$("$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/extract_trace.py" "$PROCESS_MALFORMED_REPORT")"
+fi
+
+set +e
+(
+  cd "$HARNESS_VERIFY_PROVIDER_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_PROVIDER_PROCESS_BAD_COMMAND_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$HARNESS_VERIFY_OUT/provider-process-bad-command-report.json" \
+    >"$HARNESS_VERIFY_OUT/provider-process-bad-command-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/provider-process-bad-command-stderr.txt"
+)
+PROCESS_BAD_COMMAND_EXIT=$?
+if [ "$PROCESS_BAD_COMMAND_EXIT" -eq 0 ]; then
+  echo "expected bad process command failure, got exit 0" >&2
+fi
+
+set +e
+(
+  cd "$HARNESS_VERIFY_PROVIDER_WORK"
+  "$APM" harness \
+    --config "$HARNESS_VERIFY_PROVIDER_PROCESS_STARTUP_TIMEOUT_CONFIG" \
+    --headless \
+    --scope "$HARNESS_VERIFY_SCOPE_KEY=$HARNESS_VERIFY_SCOPE_VALUE" \
+    --input "$HARNESS_VERIFY_INPUT" \
+    --report "$HARNESS_VERIFY_OUT/provider-process-startup-timeout-report.json" \
+    >"$HARNESS_VERIFY_OUT/provider-process-startup-timeout-stdout.txt" \
+    2>"$HARNESS_VERIFY_OUT/provider-process-startup-timeout-stderr.txt"
+)
+PROCESS_STARTUP_TIMEOUT_EXIT=$?
+if [ "$PROCESS_STARTUP_TIMEOUT_EXIT" -eq 0 ]; then
+  echo "expected process provider startup timeout, got exit 0" >&2
+fi
+set -e
+```
+
+Validate the generated artifacts and captured provider request shapes:
+
+```bash
+"$AGENTPM_MANUAL_PYTHON" "$HARNESS_VERIFY_RUNNERS/check_provider_matrix.py" \
+  --provider-log "$HARNESS_VERIFY_OUT/provider-bodies.jsonl" \
+  --case openai:ended:"$OPENAI_PROVIDER_REPORT":"$OPENAI_PROVIDER_TRACE" \
+  --case anthropic:ended:"$ANTHROPIC_PROVIDER_REPORT":"$ANTHROPIC_PROVIDER_TRACE" \
+  --case ollama:ended:"$OLLAMA_PROVIDER_REPORT":"$OLLAMA_PROVIDER_TRACE" \
+  --case process:ended:"$PROCESS_PROVIDER_REPORT":"$PROCESS_PROVIDER_TRACE" \
+  --case process-failure:failed:"$PROCESS_FAILURE_REPORT":"$PROCESS_FAILURE_TRACE" \
+  --case process-request-timeout:failed:"$PROCESS_REQUEST_TIMEOUT_REPORT":"$PROCESS_REQUEST_TIMEOUT_TRACE" \
+  --case process-malformed:failed:"$PROCESS_MALFORMED_REPORT":"$PROCESS_MALFORMED_TRACE" \
+  --activation-failure process-bad-command:"$HARNESS_VERIFY_OUT/provider-process-bad-command-stderr.txt" \
+  --activation-failure process-startup-timeout:"$HARNESS_VERIFY_OUT/provider-process-startup-timeout-stderr.txt" \
+  | tee "$HARNESS_VERIFY_OUT/provider-runtime-schema-check.json"
+```
+
+Expected:
+
+- exit code `0`
+- `"status": "passed"`
+- OpenAI, Anthropic, and Ollama provider request bodies all advertise
+  `phase_complete` plus one executable Tool
+- provider-facing schemas contain no unsupported top-level composition in the
+  advertised Tool definitions
+- OpenAI and Anthropic show required tool choice for explicit-completion
+  phases, while Ollama records the intentional auto/fallback behavior
+- the custom process provider reaches `ended`
+- custom process-provider generate failure, request timeout, and malformed
+  response failures reach `failed` through the process runtime without producing
+  a built-in-provider request body
+- custom process-provider bad command and startup-timeout activation failures
+  fail before a Run can start, with stderr evidence and without built-in-provider
+  fallback
+
+Run the focused schema and host-provider contract tests and keep the logs:
+If you have not already defined `run_compat` from Section 9, define it first.
+
+```bash
+run_compat "Provider Tool/Skill schemas" "$HARNESS_VERIFY_OUT/provider-schema-tool-skill.txt" \
+  cargo test -p agentpm-cli action_parameter_schemas_use_resolved_tool_and_skill_metadata
+run_compat "Provider MCP schema simplification" "$HARNESS_VERIFY_OUT/provider-schema-mcp.txt" \
+  cargo test -p agentpm-cli external_mcp_provider_schema_strips_unsupported_composition_without_changing_runtime_schema
+run_compat "Provider Knowledge schemas" "$HARNESS_VERIFY_OUT/provider-schema-knowledge.txt" \
+  cargo test -p agentpm-cli knowledge_request_provider_schema_omits_top_level_any_of_for_openai_tools
+run_compat "Provider Memory write schemas" "$HARNESS_VERIFY_OUT/provider-schema-memory-write.txt" \
+  cargo test -p agentpm-cli memory_write_provider_actions_advertise_flat_shape_schemas
+run_compat "Provider Memory read schemas" "$HARNESS_VERIFY_OUT/provider-schema-memory-read.txt" \
+  cargo test -p agentpm-cli memory_read_provider_actions_advertise_flat_shape_schemas
+run_compat "Process model semantic contract" "$HARNESS_VERIFY_OUT/provider-process-contract.txt" \
+  cargo test -p agentpm-cli process_model_runtime_uses_agentpm_service_semantic_contract
+run_compat "Host model semantic contract" "$HARNESS_VERIFY_OUT/provider-host-contract.txt" \
+  cargo test -p agentpm-cli host_model_runtime_uses_machine_host_service_contract
+run_compat "Host model capability advertisement" "$HARNESS_VERIFY_OUT/provider-host-capabilities.txt" \
+  cargo test -p agentpm-cli host_model_runtime_uses_registered_capability_advertisement
+```
+
+Record live-provider skips explicitly if OpenAI, Anthropic, or Ollama cannot be
+run against real credentials/runtime in the release environment. The generated
+fixture is deterministic mocked coverage; it does not replace optional live
+provider smoke evidence where credentials and a local Ollama runtime are
+available.
+
 ## What To Keep
 
 Retain this directory with the release verification notes:
@@ -616,6 +858,19 @@ harness-release-verify-test/runs/
   terminal-limit-report.json
   terminal-failure-report.json
   terminal-artifacts-redaction-check.json
+  provider-openai-report.json
+  provider-anthropic-report.json
+  provider-ollama-report.json
+  provider-process-report.json
+  provider-process-failure-report.json
+  provider-process-request-timeout-report.json
+  provider-process-malformed-report.json
+  provider-process-bad-command-stderr.txt
+  provider-process-startup-timeout-stderr.txt
+  provider-runtime-schema-check.json
+  provider-schema-*.txt
+  provider-process-contract.txt
+  provider-host-*.txt
   compat-cli-*.txt
   compat-node-sdk.txt
   compat-python-sdk.txt
