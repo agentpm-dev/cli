@@ -1369,6 +1369,7 @@ This gives us reliable canonical phase/final output for explicit-completion phas
 - [ ] Create `template-packages/harness-minimal-agent`.
 - [ ] Check in generated `app-harness-minimal-agent`.
 - [ ] Use the published `@zack/devwork-copilot` Agent because it is the published Agent that exercises every first-class package kind in one installable root: Agent, Loop, Tool, Skill, Knowledge, Memory, and Profile.
+- [ ] Before using `@zack/devwork-copilot` as the minimal Agent, remove its dependency on the architecture-specific `summarize-text` Tool. That Tool was built on an Intel chip, does not work reliably on Apple Silicon/M4 Pro, and is unnecessary for this template's first-run story. Do not show or document an architecture-dependent Tool in the minimal Harness path.
 - [ ] Keep runtime config little/no-config by default and demonstrate the shortest credible `agentpm install -> agentpm harness -> message -> result` path.
 - [ ] Show default TUI and one-shot `--headless` commands, `--report` capture, report/trace inspection, and `.agentpm-state/` as runtime-owned state.
 - [ ] Include a local/free Ollama-oriented setup path so the minimal Harness story can be demonstrated without requiring paid hosted-model credentials when a suitable local model is installed. This should be a documented generated `agentpm.harness.json` variant or README path, not a separate runtime implementation.
