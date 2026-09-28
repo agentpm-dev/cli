@@ -134,6 +134,8 @@ pub struct HarnessConfigOverrides {
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct HarnessConfig {
+    #[serde(rename = "$schema", skip_serializing, default)]
+    pub schema: Option<String>,
     pub version: u8,
     pub model: Option<HarnessModelConfig>,
     pub providers: HarnessProvidersConfig,
@@ -1155,6 +1157,27 @@ mod tests {
                 }
             }
         })
+    }
+
+    #[test]
+    fn harness_config_accepts_schema_uri_metadata() {
+        let mut value = complete_config();
+        value["$schema"] = json!(
+            "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.harness.schema.json"
+        );
+        assert_config_valid(value.clone());
+
+        let workspace = temp_workspace("schema-uri");
+        write_config(&workspace, value);
+        let resolved = load_harness_config(&workspace, None).unwrap();
+        assert_eq!(resolved.config.version, 1);
+        assert_eq!(
+            resolved.config.schema.as_deref(),
+            Some(
+                "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.harness.schema.json"
+            )
+        );
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]

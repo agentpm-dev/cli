@@ -274,6 +274,15 @@ impl ManagedMcpExports {
         session: &mut HarnessSession,
         machine_writer: Option<MachineProtocolWriter>,
     ) -> Result<Self> {
+        Self::start_with_progress(plan, session, machine_writer, |_| {})
+    }
+
+    fn start_with_progress(
+        plan: &ResolvedHarnessPlan,
+        session: &mut HarnessSession,
+        machine_writer: Option<MachineProtocolWriter>,
+        mut on_surface_progress: impl FnMut(&str),
+    ) -> Result<Self> {
         if !plan.config.config.mcp.exports.enabled {
             return Ok(Self::default());
         }
@@ -283,6 +292,7 @@ impl ManagedMcpExports {
         }
         let mut exports = Self::default();
         for binding in bindings {
+            on_surface_progress(&binding.id);
             let selection = mcp_export_surface_selection(plan, &binding)?;
             if selection.binding.tools.is_empty() {
                 session.emitter.emit(

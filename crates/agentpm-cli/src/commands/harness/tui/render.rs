@@ -1,4 +1,8 @@
 use super::*;
+#[cfg(test)]
+use crate::commands::harness::runtime_snapshot_from_plan;
+#[cfg(test)]
+use crate::harness_engine::HarnessSession;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -4287,7 +4291,8 @@ mod tests {
         });
         plan.config.model_source =
             crate::harness_config::HarnessConfigSource::interactive_override();
-        let readiness = workspace_readiness_from_plan(&plan);
+        let session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(&plan));
+        let readiness = workspace_readiness_from_plan(&plan, &session);
 
         let profiles = readiness
             .categories

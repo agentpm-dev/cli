@@ -1,4 +1,6 @@
 use super::HarnessArgs;
+#[cfg(test)]
+use super::ManagedMcpExports;
 use crate::harness_config::{
     HarnessModelConfig, HarnessTraceContent, HarnessTraceLevel, is_built_in_model_provider,
 };
@@ -406,25 +408,12 @@ fn poll_bootstrap_result(app: &mut TuiApp, bootstrap: &mut Option<Receiver<Boots
         match receiver.try_recv() {
             Ok(BootstrapMessage::Progress(progress)) => app.push_bootstrap_progress(progress),
             Ok(BootstrapMessage::Ready(result)) => match *result {
-                Ok(plan) => {
-                    app.push_bootstrap_progress(TuiBootstrapProgress::new(
-                        TuiBootstrapStage::Runtime,
-                        "Preparing TUI runtime controller.",
-                    ));
-                    match TuiSessionController::new(plan) {
-                        Ok(controller) => {
-                            let args = app.bootstrap_args.clone();
-                            let model = app.model_override.clone();
-                            *app = TuiApp::ready_with_runtime_inputs(controller, args, model);
-                            *bootstrap = None;
-                            return;
-                        }
-                        Err(err) => {
-                            *app = TuiApp::failed(format!("{err:#}"));
-                            *bootstrap = None;
-                            return;
-                        }
-                    }
+                Ok(controller) => {
+                    let args = app.bootstrap_args.clone();
+                    let model = app.model_override.clone();
+                    *app = TuiApp::ready_with_runtime_inputs(controller, args, model);
+                    *bootstrap = None;
+                    return;
                 }
                 Err(err) => {
                     *app = TuiApp::failed(format!("{err:#}"));
@@ -1451,6 +1440,7 @@ pub(super) mod test_support {
             events,
             cancellation_requested: Arc::new(AtomicBool::new(false)),
             snapshot,
+            mcp_exports: ManagedMcpExports::default(),
         }
     }
 
@@ -1972,6 +1962,26 @@ mod tests {
         assert_eq!(progress.len(), 1);
         assert_eq!(progress[0].stage, TuiBootstrapStage::Preflight);
         assert!(bootstrap.is_some());
+    }
+
+    #[test]
+    fn bootstrap_ready_uses_worker_built_controller_without_main_thread_construction() {
+        let (sender, receiver) = mpsc::channel();
+        let controller = test_controller();
+        let session_id = controller.snapshot().session_id.clone();
+        sender
+            .send(BootstrapMessage::Ready(Box::new(Ok(controller))))
+            .unwrap();
+        let mut bootstrap = Some(receiver);
+        let mut app = TuiApp::loading(test_harness_args());
+
+        poll_bootstrap_result(&mut app, &mut bootstrap);
+
+        let TuiState::Ready { controller } = &app.state else {
+            panic!("expected ready state");
+        };
+        assert_eq!(controller.snapshot().session_id, session_id);
+        assert!(bootstrap.is_none());
     }
 
     #[test]
