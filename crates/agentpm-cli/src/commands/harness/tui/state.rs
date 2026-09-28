@@ -1,12 +1,13 @@
 use super::super::{
-    HarnessArgs, activate_custom_knowledge_runtime_for_plan,
+    HarnessArgs, ManagedMcpExports, activate_custom_knowledge_runtime_for_plan,
     activate_custom_memory_runtime_for_plan, activate_mcp_import_runtime_for_plan,
     apply_custom_knowledge_activation_to_runtime, apply_custom_memory_activation_to_runtime,
     apply_mcp_import_activation_to_runtime, approval_controller_from_plan,
     embedding_provider_for_plan, emit_mcp_import_activation_events,
     harness_engine_options_from_plan, knowledge_runtime_for_headless_plan, load_plan_loop,
-    model_runtime_from_plan, model_selection, runtime_snapshot_from_plan,
-    validate_model_capabilities,
+    merge_mcp_report_summaries, model_runtime_from_plan, model_selection,
+    refresh_mcp_exports_for_session, refresh_mcp_exports_for_session_without_restart,
+    runtime_snapshot_from_plan, validate_model_capabilities,
 };
 use crate::harness_config::{
     HarnessConfigSource, HarnessConfigSourceKind, HarnessModelConfig, HarnessTraceContent,
@@ -23,7 +24,7 @@ use crate::harness_observability::{
 };
 use crate::harness_plan::{
     CapabilityState, HarnessBootstrapOptions, HarnessExecutionSurface, HarnessPlanProgress,
-    HarnessPlanProgressStage, PreflightDiagnosticSeverity, ResolvedHarnessPlan,
+    HarnessPlanProgressStage, PreflightDiagnosticSeverity, PreflightStatus, ResolvedHarnessPlan,
     resolve_harness_plan_with_progress,
 };
 use crate::harness_runtime::{
@@ -51,7 +52,7 @@ use std::{
     time::Duration,
 };
 
-type BootstrapResult = Result<ResolvedHarnessPlan>;
+type BootstrapResult = Result<TuiSessionController>;
 
 pub(super) const TUI_APPROVAL_STATUS_APPROVED: &str = "approved";
 pub(super) const TUI_APPROVAL_STATUS_DENIED: &str = "denied";
@@ -648,7 +649,7 @@ pub(super) fn spawn_bootstrap_worker(
             "Resolving Harness workspace.",
         )));
         let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            resolve_harness_plan_with_progress(
+            let plan = resolve_harness_plan_with_progress(
                 &workspace_root,
                 &HarnessBootstrapOptions {
                     agent_selector: args.agent.clone(),
@@ -666,7 +667,14 @@ pub(super) fn spawn_bootstrap_worker(
                         TuiBootstrapProgress::from_plan_progress(progress),
                     ));
                 },
-            )
+            )?;
+            let _ = sender.send(BootstrapMessage::Progress(TuiBootstrapProgress::new(
+                TuiBootstrapStage::Runtime,
+                "Preparing TUI runtime controller.",
+            )));
+            TuiSessionController::new_with_progress(plan, |progress| {
+                let _ = sender.send(BootstrapMessage::Progress(progress));
+            })
         }))
         .unwrap_or_else(|payload| {
             Err(anyhow!(
@@ -809,6 +817,7 @@ fn execute_tui_run_worker_inner(
         None
     };
     let result = (|| -> Result<()> {
+        runtime.mcp_exports = controller.session.runtime_snapshot.mcp_exports.clone();
         controller.session.runtime_snapshot = runtime;
         memory_controls.set_operations_from_session(&controller.session);
         if let Some(engine) = controller.engine.as_mut() {
@@ -816,6 +825,8 @@ fn execute_tui_run_worker_inner(
         }
         let mcp_import_snapshots = controller.session.runtime_snapshot.mcp_imports.clone();
         emit_mcp_import_activation_events(&mut controller.session, &mcp_import_snapshots)?;
+        send_run_progress(sender, "Refreshing MCP export surfaces.");
+        controller.refresh_mcp_exports()?;
         controller.refresh_snapshot();
 
         send_run_progress(sender, "Executing Run.");
@@ -833,6 +844,11 @@ fn execute_tui_run_worker_inner(
             controller.start_run_with_services(run_id, input, &output_paths, &mut services)?;
         if let HarnessRunResult::Terminal(terminal) = result {
             let mut terminal = *terminal;
+            controller.refresh_mcp_exports_without_restart()?;
+            merge_mcp_report_summaries(
+                &mut terminal.report.mcp_summaries,
+                controller.mcp_report_summaries(),
+            );
             if plan.config.config.trace.enabled {
                 terminal.report.trace_path = Some(output_paths.events_path.display().to_string());
             }
@@ -880,15 +896,37 @@ pub(super) struct TuiSessionController {
     pub(super) events: TuiEventBuffer,
     pub(super) cancellation_requested: Arc<AtomicBool>,
     pub(super) snapshot: TuiSessionSnapshot,
+    pub(super) mcp_exports: ManagedMcpExports,
 }
 
 #[allow(dead_code)]
 impl TuiSessionController {
     pub(super) fn new(plan: ResolvedHarnessPlan) -> Result<Self> {
+        Self::new_with_progress(plan, |_| {})
+    }
+
+    fn new_with_progress(
+        plan: ResolvedHarnessPlan,
+        mut on_progress: impl FnMut(TuiBootstrapProgress),
+    ) -> Result<Self> {
         let runtime = runtime_snapshot_from_plan(&plan);
         let mut session = HarnessSession::with_runtime_snapshot(runtime);
         let events = TuiEventBuffer::new(plan.config.config.trace.content.clone(), 256);
         session.emitter.add_sink(Box::new(events.sink()));
+        let mut mcp_exports = if matches!(
+            plan.report.status,
+            PreflightStatus::Ready | PreflightStatus::ReadyWithWarnings
+        ) {
+            ManagedMcpExports::start_with_progress(&plan, &mut session, None, |surface| {
+                on_progress(TuiBootstrapProgress::new(
+                    TuiBootstrapStage::Runtime,
+                    format!("Preparing MCP export surface `{surface}`."),
+                ));
+            })?
+        } else {
+            ManagedMcpExports::default()
+        };
+        refresh_mcp_exports_for_session(&plan, &mut session, &mut mcp_exports, None)?;
         let engine = if plan.loop_package.is_some() {
             let loop_manifest = load_plan_loop(&plan)?;
             Some(HarnessEngine::new(
@@ -945,6 +983,7 @@ impl TuiSessionController {
             events,
             cancellation_requested: Arc::new(AtomicBool::new(false)),
             snapshot,
+            mcp_exports,
         })
     }
 
@@ -1023,6 +1062,23 @@ impl TuiSessionController {
             reports.current_trace_path.clone(),
         );
         self.snapshot.reports = reports;
+    }
+
+    fn refresh_mcp_exports(&mut self) -> Result<()> {
+        refresh_mcp_exports_for_session(&self.plan, &mut self.session, &mut self.mcp_exports, None)
+    }
+
+    fn refresh_mcp_exports_without_restart(&mut self) -> Result<()> {
+        refresh_mcp_exports_for_session_without_restart(
+            &self.plan,
+            &mut self.session,
+            &mut self.mcp_exports,
+            None,
+        )
+    }
+
+    fn mcp_report_summaries(&self) -> Vec<crate::harness_observability::OperationReportSummary> {
+        self.mcp_exports.report_summaries()
     }
 
     pub(super) fn start_run_with_services(
@@ -1170,6 +1226,12 @@ impl TuiSessionController {
         }
         self.snapshot.usage = self.session.usage.clone();
         self.snapshot.trace.events = self.events.events();
+    }
+}
+
+impl Drop for TuiSessionController {
+    fn drop(&mut self) {
+        let _ = self.mcp_exports.stop(&mut self.session);
     }
 }
 
@@ -1483,7 +1545,7 @@ pub(super) fn build_session_snapshot(
 ) -> TuiSessionSnapshot {
     let mut snapshot = TuiSessionSnapshot {
         session_id: session.session_id.clone(),
-        workspace: workspace_readiness_from_plan(plan),
+        workspace: workspace_readiness_from_plan(plan, session),
         run: run_snapshot_from_session(session),
         usage: session.usage.clone(),
         trace: TuiTraceSnapshot {
@@ -1663,6 +1725,9 @@ fn memory_operations_from_session(session: &HarnessSession) -> Vec<TuiMemoryOper
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::harness::{ManagedMcpExportSurface, McpExportActivity};
+    use crate::harness_plan::PreflightMcpExportSurface;
+    use crate::harness_runtime::McpExportRuntimeSnapshot;
 
     #[test]
     fn interactive_approval_returns_failure_when_cancelled() {
@@ -1716,6 +1781,202 @@ mod tests {
         assert_eq!(artifact.events[0].value["event_id"].as_str(), Some("evt-2"));
     }
 
+    #[test]
+    fn mcp_exports_readiness_uses_live_runtime_snapshots() {
+        let plan = test_plan_with_mcp_exports(true, vec!["research"]);
+        let session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(&plan));
+
+        let readiness = workspace_readiness_from_plan(&plan, &session);
+        let exports = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "MCP Exports")
+            .expect("mcp exports category");
+        assert_eq!(exports.state, CapabilityState::Unavailable);
+        assert_eq!(exports.summary, "1 surfaces");
+
+        let mut session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(&plan));
+        session
+            .runtime_snapshot
+            .mcp_exports
+            .push(McpExportRuntimeSnapshot {
+                id: "research".into(),
+                host: "127.0.0.1".into(),
+                port: 18080,
+                endpoint: "http://127.0.0.1:18080/mcp".into(),
+                tools: vec!["@zack/search".into()],
+                state: "ready".into(),
+            });
+
+        let readiness = workspace_readiness_from_plan(&plan, &session);
+        let exports = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "MCP Exports")
+            .expect("mcp exports category");
+        assert_eq!(exports.state, CapabilityState::Available);
+        assert!(exports.summary.contains("research"));
+        assert!(exports.summary.contains("http://127.0.0.1:18080/mcp"));
+    }
+
+    #[test]
+    fn mcp_exports_readiness_disabled_is_not_configured() {
+        let plan = test_plan_with_mcp_exports(false, vec!["research"]);
+        let session = HarnessSession::with_runtime_snapshot(runtime_snapshot_from_plan(&plan));
+
+        let readiness = workspace_readiness_from_plan(&plan, &session);
+        let exports = readiness
+            .categories
+            .iter()
+            .find(|category| category.label == "MCP Exports")
+            .expect("mcp exports category");
+        assert_eq!(exports.state, CapabilityState::NotConfigured);
+    }
+
+    #[test]
+    fn tui_controller_starts_mcp_exports_during_session_bootstrap() {
+        let root = std::env::temp_dir().join(format!(
+            "agentpm-tui-mcp-export-bootstrap-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&root).expect("temp workspace");
+        let agent_path = root.join("agent.json");
+        std::fs::write(
+            &agent_path,
+            serde_json::to_vec(&serde_json::json!({
+                "kind": "agent",
+                "name": "@zack/test-agent",
+                "version": "0.1.0",
+                "tools": ["@zack/search@0.1.0"],
+                "bindings": {
+                    "mcp": [
+                        { "id": "research", "tools": ["@zack/search"] }
+                    ]
+                }
+            }))
+            .expect("agent manifest json"),
+        )
+        .expect("write agent manifest");
+        let mut plan = test_plan_with_mcp_exports(true, vec!["research"]);
+        plan.workspace_root = root.clone();
+        plan.selected_agent = Some(crate::harness_plan::ResolvedAgentRoot {
+            root_key: "agent:@zack/test-agent@0.1.0".into(),
+            name: "@zack/test-agent".into(),
+            version: "0.1.0".into(),
+            manifest_path: agent_path,
+            package_key: None,
+            tools: vec!["tool:@zack/search@0.1.0".into()],
+            skills: Vec::new(),
+            knowledge: Vec::new(),
+            memory: Vec::new(),
+            profiles: Vec::new(),
+            loop_key: "loop:@zack/test-loop@0.1.0".into(),
+        });
+
+        let mut progress_messages = Vec::new();
+        let controller = TuiSessionController::new_with_progress(plan, |progress| {
+            progress_messages.push(progress.message);
+        })
+        .expect("controller should build");
+
+        assert!(
+            controller
+                .events
+                .events()
+                .iter()
+                .any(|event| event.event_type == HarnessEventType::McpSurfaceFailed)
+        );
+        let exports = controller
+            .snapshot
+            .workspace
+            .categories
+            .iter()
+            .find(|category| category.label == "MCP Exports")
+            .expect("mcp exports category");
+        assert_eq!(exports.state, CapabilityState::Unavailable);
+        assert!(
+            progress_messages
+                .iter()
+                .any(|message| message.contains("Preparing MCP export surface `research`."))
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tui_controller_drop_stops_mcp_export_children() {
+        let plan = test_plan_with_mcp_exports(false, vec![]);
+        let mut controller = TuiSessionController::new(plan).expect("controller should build");
+        let child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("sleep child should start");
+        let child_id = child.id();
+        let events = controller.events.clone();
+        controller.mcp_exports = ManagedMcpExports {
+            surfaces: vec![ManagedMcpExportSurface {
+                snapshot: McpExportRuntimeSnapshot {
+                    id: "research".into(),
+                    host: "127.0.0.1".into(),
+                    port: 18080,
+                    endpoint: "http://127.0.0.1:18080/mcp".into(),
+                    tools: vec!["@zack/search".into()],
+                    state: "ready".into(),
+                },
+                child,
+                binding: crate::manifest::AgentMcpBinding {
+                    id: "research".into(),
+                    tools: vec!["@zack/search".into()],
+                },
+                restart_attempts: 0,
+            }],
+            activity: McpExportActivity::default(),
+        };
+
+        drop(controller);
+
+        assert!(!process_is_alive(child_id));
+        assert!(
+            events
+                .events()
+                .iter()
+                .any(|event| event.event_type == HarnessEventType::McpSurfaceStopped)
+        );
+    }
+
+    #[test]
+    fn tui_mcp_export_activity_summaries_do_not_mutate_idle_run_state() {
+        let plan = test_plan_with_mcp_exports(false, vec![]);
+        let controller = TuiSessionController::new(plan).expect("controller should build");
+        controller.mcp_exports.activity.record_child_event(
+            "research",
+            &serde_json::json!({
+                "event": "tool_call_completed",
+                "fields": {
+                    "identity": "@zack/search",
+                    "mcp_name": "zack__search"
+                }
+            }),
+        );
+
+        let summaries = controller.mcp_report_summaries();
+
+        assert_eq!(controller.snapshot().run.status, TuiRunStatus::Idle);
+        assert!(controller.session.active_run().is_none());
+        assert_eq!(controller.session.usage.started_runs, 0);
+        assert_eq!(controller.session.usage.tool_calls, 0);
+        assert_eq!(controller.snapshot().run.usage.tool_calls, 0);
+        assert_eq!(
+            summaries,
+            vec![crate::harness_observability::OperationReportSummary {
+                operation_kind: "mcp_tool_call".into(),
+                identity: "@zack/search".into(),
+                status: "completed".into(),
+                count: 1,
+            }]
+        );
+    }
+
     fn test_trace_event(event_id: &str) -> HarnessEventEnvelope {
         HarnessEventEnvelope {
             schema_version: 1,
@@ -1734,6 +1995,67 @@ mod tests {
                 fields: BTreeMap::new(),
             },
         }
+    }
+
+    fn test_plan_with_mcp_exports(enabled: bool, surfaces: Vec<&str>) -> ResolvedHarnessPlan {
+        ResolvedHarnessPlan {
+            workspace_root: PathBuf::new(),
+            lock_path: PathBuf::new(),
+            state_dir: PathBuf::new(),
+            config: crate::harness_config::ResolvedHarnessConfig {
+                workspace_root: PathBuf::new(),
+                config_path: None,
+                config: crate::harness_config::HarnessConfig::default(),
+                state_dir: PathBuf::new(),
+                state_dir_source: HarnessConfigSource {
+                    kind: HarnessConfigSourceKind::HarnessDefault,
+                    path: None,
+                },
+                model_source: HarnessConfigSource {
+                    kind: HarnessConfigSourceKind::HarnessDefault,
+                    path: None,
+                },
+            },
+            selected_agent: None,
+            loop_package: None,
+            package_graph: BTreeMap::new(),
+            runtime_scopes: BTreeMap::new(),
+            consumer_context: crate::harness_plan::ConsumerContextReadiness {
+                state: CapabilityState::NotConfigured,
+                file: None,
+                path: None,
+                byte_size: None,
+                approximate_tokens: None,
+                sha256: None,
+            },
+            profile_bindings: Default::default(),
+            profiles: BTreeMap::new(),
+            capabilities: Vec::new(),
+            report: crate::harness_plan::PreflightReport {
+                status: PreflightStatus::Ready,
+                diagnostics: Vec::new(),
+                mcp_exports: crate::harness_plan::PreflightMcpExports {
+                    enabled,
+                    host: "127.0.0.1".into(),
+                    restart: crate::harness_config::HarnessRestartPolicy::default(),
+                    surfaces: surfaces
+                        .into_iter()
+                        .map(|id| PreflightMcpExportSurface {
+                            id: id.into(),
+                            tools: vec!["@zack/search".into()],
+                        })
+                        .collect(),
+                },
+                mcp_imports: crate::harness_plan::PreflightMcpImports {
+                    enabled: false,
+                    servers: Vec::new(),
+                },
+            },
+        }
+    }
+
+    fn process_is_alive(pid: u32) -> bool {
+        unsafe { libc::kill(pid as i32, 0) == 0 }
     }
 }
 
@@ -1784,7 +2106,10 @@ fn service_snapshot_from_session(session: &HarnessSession) -> TuiServiceSnapshot
     }
 }
 
-pub(super) fn workspace_readiness_from_plan(plan: &ResolvedHarnessPlan) -> TuiWorkspaceReadiness {
+pub(super) fn workspace_readiness_from_plan(
+    plan: &ResolvedHarnessPlan,
+    session: &HarnessSession,
+) -> TuiWorkspaceReadiness {
     let mut categories = vec![
         TuiReadinessCategory {
             label: "Agent".into(),
@@ -1847,12 +2172,7 @@ pub(super) fn workspace_readiness_from_plan(plan: &ResolvedHarnessPlan) -> TuiWo
         memory_readiness_category(plan),
         capability_readiness_category(plan, "Profiles", "profile", "profile"),
         capability_readiness_category(plan, "Hooks", "hook", "bound"),
-        TuiReadinessCategory {
-            label: "MCP Exports".into(),
-            state: bool_readiness_state(plan.report.mcp_exports.enabled),
-            summary: format!("{} surfaces", plan.report.mcp_exports.surfaces.len()),
-            source: Some("harness_config".into()),
-        },
+        mcp_exports_readiness_category(plan, session),
         TuiReadinessCategory {
             label: "MCP Imports".into(),
             state: bool_readiness_state(plan.report.mcp_imports.enabled),
@@ -1873,6 +2193,40 @@ pub(super) fn workspace_readiness_from_plan(plan: &ResolvedHarnessPlan) -> TuiWo
     TuiWorkspaceReadiness {
         categories,
         diagnostics,
+    }
+}
+
+fn mcp_exports_readiness_category(
+    plan: &ResolvedHarnessPlan,
+    session: &HarnessSession,
+) -> TuiReadinessCategory {
+    let snapshots = &session.runtime_snapshot.mcp_exports;
+    let state = if !plan.report.mcp_exports.enabled {
+        CapabilityState::NotConfigured
+    } else if snapshots.iter().any(|surface| surface.state == "ready") {
+        CapabilityState::Available
+    } else if !plan.report.mcp_exports.surfaces.is_empty() {
+        CapabilityState::Unavailable
+    } else {
+        CapabilityState::NotConfigured
+    };
+    let summary = if snapshots.is_empty() {
+        format!("{} surfaces", plan.report.mcp_exports.surfaces.len())
+    } else if snapshots.len() == 1 {
+        let surface = &snapshots[0];
+        format!("{} · {} · {}", surface.id, surface.state, surface.endpoint)
+    } else {
+        let ready = snapshots
+            .iter()
+            .filter(|surface| surface.state == "ready")
+            .count();
+        format!("{} surfaces · {} ready", snapshots.len(), ready)
+    };
+    TuiReadinessCategory {
+        label: "MCP Exports".into(),
+        state,
+        summary,
+        source: Some("harness_config".into()),
     }
 }
 
