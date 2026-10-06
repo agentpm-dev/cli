@@ -1,7 +1,7 @@
 # Tasks
 
 ## Milestone 1: Registry Discovery Correctness
-
+> Scope note: establish a correct, predictable Explore/search navigation baseline before adding new discovery capabilities. This milestone fixes page-size/cursor/history/state defects, visibility inconsistencies, and basic loading/empty/error behavior. It does not add new filters, expand indexed search fields, change ranking semantics, add stars/trending logic, redesign namespace discovery, or perform Stage 2 category/terminology work.
 - [ ] Fix Explore page-size mismatch:
   - [ ] establish one authoritative page size;
   - [ ] send the effective limit to the backend;
@@ -33,7 +33,7 @@
 - [ ] Verify browser Back/Forward restores Explore state.
 
 ## Milestone 2: Faceted Filters and Search Foundations
-
+> Scope note: replace the unfinished filter surface with a reusable server-side faceted-search foundation and add the first objective universal and kind-specific filters. This milestone also adds `agentpm-harness` as a Template execution surface because it is needed by the new Template filter model. It does not expand full-text relevance fields, add AI/semantic search, implement stars/trending, redesign package cards, or introduce Stage 2 Package Health filters.
 - [ ] Move Kind into the Filters area and remove the disconnected kind-tab treatment if the final UX confirms this direction.
 - [ ] Replace `Filters: Coming soon` with working filters.
 - [ ] Implement URL-addressable filter state.
@@ -68,7 +68,7 @@
 - [ ] Update relevant example Templates/manifests to declare `agentpm-harness`.
 
 ## Milestone 3: Search Relevance Expansion
-
+> Scope note: increase deterministic search recall by indexing selected user-meaningful semantic metadata at deliberately lower weights while preserving direct identity matches as the strongest signals. This milestone includes a fixed relevance fixture set to guard against noisy regressions. It does not index full READMEs/arbitrary manifest text, add embeddings or LLM reranking, change the faceted-filter contract, or build recommendations.
 - [ ] Extend the search materialized/indexed document with selected lower-weight semantic fields.
 - [ ] Preserve strongest weighting for:
   - [ ] name;
@@ -117,7 +117,7 @@
 - [ ] Document weighting rationale in code/tests.
 
 ## Milestone 4: Stars, Trending, and Popularity Signals
-
+> Scope note: add lightweight ecosystem popularity/engagement primitives and make Trending useful in a low-activity registry. This milestone introduces identity-level stars, replaces weak weekly-change presentation, and separates full-result-set trend computation from top-N presentation. It does not add ratings, reviews, comments, social feeds, universal quality scoring, or Stage 2 Package Health semantics.
 - [ ] Add star persistence model:
   - [ ] user;
   - [ ] artifact identity;
@@ -149,7 +149,7 @@
 - [ ] Verify private stars never affect public discovery/trending.
 
 ## Milestone 5: Namespace Curation and Scoped Discovery
-
+> Scope note: turn namespace pages into curated and scalable discovery surfaces by adding owner/admin pins and reusing the shared Explore search/filter/sort/pagination foundation under a hard namespace constraint. This milestone does not create a separate namespace search implementation, redesign namespace taxonomy, add Stage 2 category hierarchy, or broaden namespace permissions beyond what pin management requires.
 - [ ] Implement namespace pinned artifacts.
 - [ ] Allow Owner/Admin management only.
 - [ ] Limit pins to namespace-owned visible artifacts.
@@ -167,7 +167,7 @@
 - [ ] Verify namespace discovery and global Explore produce consistent result behavior for equivalent constraints.
 
 ## Milestone 6: Package Detail Shared-Shell Hardening
-
+> Scope note: apply shared package/component detail-page hardening consistently across all kinds while preserving the useful specialized inspection tabs already present. This milestone adds the shared star treatment, removes unfinished placeholder UI, and improves popularity signals. It does not redesign the detail-page information architecture, migrate Agent/Agent Package terminology, change authored README content, or implement Stage 2 Package Health presentation.
 - [ ] Implement shared star rail across all artifact kinds.
 - [ ] Replace weak weekly change signal in shared sidebar/shell.
 - [ ] Preserve identity-level stars while version selector changes.
@@ -187,7 +187,7 @@
 - [ ] Verify no shared-shell change conflates identity-level and version-level data.
 
 ## Milestone 7: Registry Technical SEO
-
+> Scope note: establish the technical SEO/indexing baseline required before intentionally generating traffic: metadata uniqueness, canonical behavior, social previews, sitemap/robots boundaries, and crawl control. This milestone does not rewrite category-facing copy, perform keyword/content marketing strategy, add broad structured-data/schema.org work, or make Stage 2 information-architecture decisions.
 - [ ] Audit and implement unique `<title>` and meta description for:
   - [ ] landing;
   - [ ] pricing;
@@ -210,7 +210,7 @@
 - [ ] Leave category-facing metadata copy refinement to Stage 2.
 
 ## Milestone 8: CLI Scaffolding and Lint Quality
-
+> Scope note: fix the highest-impact CLI creation and linting rough edges so a newly scaffolded artifact is valid and lint output prioritizes actionable domain errors over schema noise. This milestone preserves machine-readable lint contracts and focuses on validation/rendering quality. It does not redesign all CLI output, add new runtime behavior, change AgentPM package semantics, or perform Stage 2 terminology migration.
 - [ ] Make `agentpm init --kind tool` scaffold lint-valid output.
 - [ ] Prefer a minimal runnable Tool stub rather than an intentionally invalid placeholder.
 - [ ] Verify all eight `init` kinds lint clean immediately.
@@ -234,7 +234,7 @@
 - [ ] Add ordering tests ensuring actionable semantic messages appear before generic schema fallback.
 
 ## Milestone 9: CLI Error and Success Consistency
-
+> Scope note: make non-Harness CLI success/failure behavior feel like one coherent product by centralizing transport errors, correcting exit codes, normalizing sibling inspect output, and cleaning up low-level path/filesystem leaks. This milestone does not alter Harness output, introduce new package/runtime capabilities, change machine-readable contracts beyond explicitly specified fixes, or absorb the Python portability work from later milestones.
 - [ ] Centralize network/transport error formatting.
 - [ ] Apply friendly connection errors to:
   - [ ] install;
@@ -256,7 +256,7 @@
 - [ ] Add regression tests for all corrected exit codes/messages.
 
 ## Milestone 10: Analytics, Billing Funnel, Privacy, and Feedback
-
+> Scope note: stop flying blind before early traffic by adding a deliberately small analytics/funnel vocabulary, authoritative server-side events where possible, privacy-conscious local CLI telemetry, billing conversion events, and a lightweight feedback path. This milestone does not enable session replay, experimentation, NPS, sophisticated attribution, broad behavioral profiling, or replace Lemon Squeezy as billing source of truth.
 - [ ] Create PostHog project/config integration.
 - [ ] Disable/avoid broad autocapture if it would violate the explicit event/property contract.
 - [ ] Implement initial web/registry events.
@@ -303,7 +303,7 @@
 - [ ] Do not enable session replay in Stage 1.
 
 ## Milestone 11: Python Tool Dependency Contract
-
+> Scope note: introduce the new-format Python Tool dependency contract: author intent in `agent.json`, exact AgentPM-resolved state in `agent.lock`, and target-side dependency installation managed by AgentPM. This milestone preserves legacy vendored Tools and does not yet define multi-target release storage, target artifact selection, CI matrices, release-level signing, or Stage 2 compatibility UI.
 - [ ] Extend Tool runtime schema with optional Python `dependencies` when `runtime.type == "python"`.
 - [ ] Reject `dependencies` for Node Tools.
 - [ ] Add Python requirement syntax validation.
@@ -322,7 +322,7 @@
 - [ ] Ensure published Tool artifact carries Tool-specific resolved dependency metadata independently of publisher workspace state.
 
 ## Milestone 12: Python Tool Artifact Compatibility
-
+> Scope note: establish a conservative compatibility model for the Tool payload itself, distinct from Python dependency portability, so AgentPM can distinguish portable `any` artifacts from platform/architecture-specific native payloads. This milestone does not yet implement multi-artifact releases, S3 layout changes, target-aware installation, CI publishing, or retroactively classify legacy releases.
 - [ ] Define platform/architecture target tuple representation.
 - [ ] Define portable `any` representation.
 - [ ] Implement conservative payload classification.
@@ -339,7 +339,7 @@
 - [ ] Add tests for pure Python vs native payload classification.
 
 ## Milestone 13: Multi-Artifact Release and S3 Model
-
+> Scope note: evolve the publish/storage model from one version = one tarball to one immutable Tool release = one or more target artifacts, with explicit release metadata, staging, atomic finalize, and backwards-compatible legacy storage reads. This milestone defines storage and release assembly; it does not yet complete release-level cryptographic signing, target-aware installation, or GitHub Actions orchestration.
 - [ ] Define release manifest schema/version.
 - [ ] Define per-artifact metadata:
   - [ ] target;
@@ -367,7 +367,7 @@
 - [ ] Enforce new version requirement for adding targets.
 
 ## Milestone 14: Release Integrity and Provenance Upgrade
-
+> Scope note: upgrade integrity and provenance for the new multi-artifact release model by defining canonical release integrity, versioned signing/attestation statements, cross-language canonicalization, and real client-side provenance verification while preserving legacy formats. This milestone does not change package compatibility selection logic, build CI matrices, redesign namespace signing policy, or introduce a universal trust/quality score.
 - [ ] Define canonical release manifest content.
 - [ ] Define release-level SHA-256 digest.
 - [ ] Define canonical serialization contract.
@@ -398,7 +398,7 @@
   - [ ] signature statement changed.
 
 ## Milestone 15: Target-Aware Installation
-
+> Scope note: make installation target-aware for new-format Python Tool releases: select compatible artifacts deterministically, verify release/artifact integrity, install locked dependencies for the consumer environment, and fail or recover safely when no compatible artifact exists. This milestone preserves the legacy install path and does not add Rosetta/emulation, silently change locked versions, or implement CI publishing.
 - [ ] Detect current OS/architecture.
 - [ ] Read new release artifact inventory.
 - [ ] Select exact compatible artifact first.
@@ -418,7 +418,7 @@
 - [ ] Do not add Rosetta/emulation handling in this milestone.
 
 ## Milestone 16: Headless Signing and GitHub Actions Publishing
-
+> Scope note: make the new multi-target release model practical for maintainers by adding secure headless signing and a first official GitHub Actions workflow that builds target artifacts in parallel and performs one final atomic publish. The core CLI/protocol must remain CI-provider-neutral. This milestone does not build a generalized CI platform, require GitHub Actions for local publishing, or implement additional CI providers.
 - [ ] Add secure noninteractive signing mechanism.
 - [ ] Preserve encrypted-at-rest local-key model where possible.
 - [ ] Document CI secret handling.
@@ -439,7 +439,7 @@
 - [ ] Add end-to-end CI test/example package if feasible.
 
 ## Milestone 17: Documentation and Migration Hardening
-
+> Scope note: finish Stage 1 by documenting the new Python Tool dependency/portability/release/integrity model, migration expectations, telemetry contract, and newly introduced CLI behavior so authors can use the hardened system without founder guidance. This milestone updates Stage 1-facing docs and examples only; it does not perform the Stage 2 category-language/IA rewrite or expand the feature set beyond what earlier milestones implemented.
 - [ ] Update Python Tool authoring docs:
   - [ ] declare dependencies in `agent.json`;
   - [ ] AgentPM-managed resolution;
