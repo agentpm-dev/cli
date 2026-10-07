@@ -52,6 +52,7 @@ Add automated cases for:
 - trending full-result-set ranking.
 - top-N presentation not truncating Explore sort.
 - stable result keys/rendering where testable.
+- package Security/detail DTO renders both legacy single-artifact versions and new-format release/artifact versions correctly once portability milestones land.
 
 ### Search relevance fixtures
 
@@ -114,91 +115,169 @@ Verify:
 - anonymous install ID behavior is stable;
 - private package identity does not enter telemetry payloads.
 
-### Python dependency schema/locking
+### Python dependency schema / lock / runtime environment
 
 Add tests for:
 
-- Python Tool with dependencies accepted;
-- Node Tool with dependencies rejected;
-- invalid requirement syntax rejected;
-- duplicate/conflicting dependency handling;
-- lockfile v3 read;
-- lockfile v4 read/write;
-- Python resolved dependency state deterministic;
-- publish rejects stale/mismatched dependency lock;
-- published artifact includes Tool-specific lock snapshot.
+- Python Tool with dependencies accepted.
+- Node Tool with dependencies rejected.
+- Invalid Python requirement syntax rejected.
+- Duplicate/conflicting dependency handling.
+- Portable Python resolution is deterministic.
+- Resolution can represent conditional/environment-marker dependencies without publisher-target leakage.
+- Current v2/v3 lock reads remain valid.
+- New capability state writes minimum lockfile version 4.
+- Future unsupported lockfile version is rejected before lossy deserialization/rewrite.
+- Plain `agentpm install` lock regeneration preserves Python resolution state from the resolve plan.
+- Package key remains logical `kind:name@version`, not target-qualified.
+- New lock records release integrity but no local selected-artifact target/digest.
+- Stale manifest/Python resolution mismatch blocks publish.
+- Published release/artifact contains Tool-specific Python resolution metadata.
+- Managed Python environment:
+  - created under `.agentpm/` separate from payload;
+  - keyed by Tool/version/target/interpreter identity;
+  - exact applicable locked versions installed;
+  - new-format Tool executes through managed interpreter;
+  - changed `AGENTPM_PYTHON`/interpreter identity cannot silently reuse incompatible env.
+- Legacy `_vendor` Tool still uses legacy run behavior.
 
 ### Payload compatibility
 
 Fixtures:
 
-- pure Python payload → `any`;
-- `.so` payload → target-specific;
-- `.dylib` payload → target-specific;
-- `.pyd` payload → target-specific;
-- vendored platform wheel contents → target-specific;
-- unknown binary → conservative target-specific.
+- pure Python/data payload → `any`;
+- `.so` payload → concrete target;
+- `.dylib` payload → concrete target;
+- `.pyd`/`.dll`/`.exe` payload → concrete target;
+- known unpacked native dependency content → concrete target;
+- unknown executable/binary → conservative concrete target;
+- declared dependencies alone do not make payload target-specific;
+- legacy package remains compatibility unknown/legacy;
+- missing declared `files` path fails packaging rather than warning + omission.
 
-### Multi-artifact release
+Verify canonical target mapping for at least:
+
+- `aarch64-apple-darwin`;
+- `x86_64-apple-darwin`;
+- `x86_64-unknown-linux-gnu`;
+- `x86_64-pc-windows-msvc` where test host/mocking permits.
+
+### Multi-artifact release / publish storage
 
 Automated cases:
 
-- one artifact release finalizes;
-- multiple target release finalizes;
-- duplicate target rejected;
-- mismatched manifest digest rejected;
-- mismatched dependency lock rejected;
-- one failed upload leaves release unpublished;
-- finalized release artifact list immutable;
-- adding artifact to finalized version rejected;
-- failed staging objects can be cleaned up.
+- legacy single-artifact publish still finalizes.
+- one-artifact new-format release finalizes.
+- multiple-target new-format release finalizes.
+- one release reservation owns multiple child artifact uploads.
+- concurrent child artifact reservations for one version do not collide with legacy one-pending-upload rule.
+- duplicate target rejected.
+- mismatched identity/version rejected.
+- mismatched manifest digest rejected.
+- mismatched Python resolution digest rejected.
+- one failed/missing upload leaves release unpublished.
+- finalization creates one logical version + N artifact rows atomically.
+- finalized artifact inventory is immutable.
+- adding artifact to finalized version rejected.
+- expired/failed staged objects can be cleaned up safely.
+- legacy S3/read path remains valid.
+- new S3 target object keys include canonical target + full digest.
+- upload implementation streams rather than buffers complete artifact in memory (unit/integration evidence as appropriate).
+- server-authoritative upload-size limit is honored.
+- old client/new release produces clear unsupported-release-format error.
+- malware scanning:
+  - one scan scheduled per target artifact;
+  - all-clean state requires appropriate artifact results;
+  - infection of any artifact yanks/disables logical version.
 
-### Canonicalization / integrity
+### Canonicalization / stored-byte integrity / provenance
 
 Create shared canonicalization fixtures consumed by Rust and Python.
 
 Required cases:
 
-- key order differences produce same canonical bytes;
-- Unicode text serializes identically;
-- artifact ordering is normalized;
-- whitespace differences do not matter;
-- timestamp normalization behavior is deterministic.
+- typed legacy author v1 statement serializes byte-for-byte like current implementation;
+- new canonical key order is deterministic;
+- non-ASCII Unicode serializes identically cross-language;
+- artifact inventory order is normalized by target;
+- whitespace/input map order does not alter canonical bytes;
+- release digest matches in Rust/Python.
+
+Stored-byte verification cases:
+
+- client-declared metadata hash that does not match stored bytes cannot finalize a new release;
+- stored object size mismatch cannot finalize;
+- declared digest == trusted stored digest == release manifest digest on success.
 
 Tamper tests:
 
 - modified target artifact bytes fail artifact integrity;
 - modified release manifest fails release integrity;
-- changed target label fails signed release verification;
-- changed artifact digest fails signed release verification;
+- changed target/artifact list fails signed release verification;
 - changed manifest digest fails;
-- changed dependency-lock digest fails;
+- changed Python resolution digest fails;
 - invalid author signature fails;
-- invalid registry attestation fails.
+- wrong/unregistered author key fails;
+- invalid registry attestation fails;
+- attestation signed by untrusted registry key fails.
 
-### Install resolution
+Provenance-policy cases:
 
-Test target matrix behavior:
+- namespace `required` enforces one valid signature.
+- `--require-signature` requires one valid signature even under optional/off mode.
+- `--require-attestation` requires cryptographic registry attestation, not a boolean.
+- explicit `--sign` with a rejected signature fails publish with actionable diagnostic.
+- new-format publish fails if registry attestation cannot be created.
+- historical signature remains cryptographically valid after normal signer revocation while current revoked state is surfaced separately.
+- legacy signature/attestation formats still verify as before.
+- normalized key-ID display does not affect verification by full public key.
+- historical registry key can verify an old attestation after rotation.
+
+### Install resolution / cache / extraction
+
+Test target behavior:
 
 - exact target selected when available;
 - `any` used when no exact target and portable artifact exists;
-- exact target preferred over `any` if policy says so;
-- no compatible artifact returns actionable failure;
+- exact target preferred over `any`;
+- only selected artifact gets downloaded/presigned;
+- no compatible artifact returns actionable failure with available targets;
 - headless no-compatible path is deterministic;
-- pinned exact version never silently upgrades;
-- unversioned request recovery path only occurs with explicit interactive consent;
-- legacy package still follows legacy install path.
+- pinned/exact version never silently upgrades;
+- unversioned recovery only with explicit interactive consent;
+- portable lock remains unchanged across different local target selections;
+- local `.agentpm/` state may differ by target/interpreter without touching `agent.lock`;
+- cache entries cannot collide across kind/package/version/target/digest;
+- cache hit re-verifies digest;
+- downloaded size mismatch fails;
+- symlink/hardlink archive entry fails explicitly if unsupported;
+- traversal protection remains intact;
+- decompressed-size cap enforced;
+- extraction entry-count cap enforced;
+- failed extraction/provisioning does not finalize install session;
+- dependency provisioning failure leaves clear recoverable state;
+- legacy package follows legacy install path.
 
-### CI/headless signing
+### CI / headless signing
 
 Automated or integration cases:
 
-- signing works without TTY;
-- missing CI signing secret fails cleanly;
-- required namespace signing policy enforced;
-- matrix artifacts collected;
-- final atomic publish succeeds;
-- mismatched matrix artifact state rejected.
+- encrypted AgentPM signing key works without TTY.
+- missing key file/passphrase fails cleanly without secret leakage.
+- wrong passphrase fails cleanly.
+- namespace required-signing policy is satisfied by headless flow.
+- package-build command emits machine-readable descriptor with:
+  - target;
+  - artifact SHA/size;
+  - manifest digest;
+  - Python resolution digest.
+- tag/version mismatch fails workflow before publish.
+- matrix artifacts are uploaded/downloaded through CI fan-in.
+- final job rejects mismatched manifest/resolution descriptors.
+- final job rejects duplicate targets.
+- final atomic publish succeeds.
+- missing/failed matrix target prevents publish.
+- local single-target publish continues to work.
 
 ## Manual checks
 
@@ -223,6 +302,8 @@ Automated or integration cases:
 - Verify namespace-scoped search looks/behaves like Explore, not a separate system.
 - Verify Tool Evaluations/Score & Rating placeholder is gone.
 - Verify detail pages retain all specialized tabs.
+- Verify a legacy Tool Security tab still renders correctly.
+- Verify a new-format Tool Security tab shows release-level integrity/provenance and target-artifact inventory without presenting stars/popularity as trust signals.
 
 ### SEO
 
@@ -274,47 +355,78 @@ Confirm errors answer:
 
 On at least:
 
-- macOS arm64;
-- macOS x86_64;
-- Linux x86_64;
+- Apple Silicon macOS (`aarch64-apple-darwin`);
+- Intel macOS (`x86_64-apple-darwin`);
+- Linux x86_64 (`x86_64-unknown-linux-gnu`);
 
-verify a pure-Python Tool with a dependency that has native wheels can:
+verify a new-format Python Tool whose dependency graph includes at least one package with native wheels can:
 
-- publish under the new model;
-- install on a different target;
-- resolve the correct target-compatible dependency artifacts;
-- run successfully.
-
-Use an example such as a dependency chain containing a package with native components where practical.
+- resolve portable exact dependency state;
+- package/publish under the new model;
+- install on each target;
+- select the correct target artifact or `any`;
+- create an AgentPM-managed Python environment for that target/interpreter;
+- install the correct target-compatible dependency distributions;
+- run successfully through `agentpm run`.
 
 Also verify:
 
+- the same source-controlled `agent.lock` is usable across at least two target platforms without target-specific edits;
+- changing the local selected artifact does not rewrite target information into the lock;
+- changing `AGENTPM_PYTHON` to another compatible minor version does not silently reuse an incompatible native dependency environment;
 - a legacy vendored Python Tool still installs/runs under legacy semantics;
-- a local native publish only claims the publisher target;
-- a multi-target CI publish produces one version with multiple artifacts;
-- adding a target requires a new version.
+- a local pure-source publish can claim `any`;
+- a local native publish claims only the concrete current target;
+- a multi-target CI publish produces one immutable logical version with multiple artifacts;
+- adding a target requires a new Tool version.
 
 ### Integrity / provenance
 
 Manually inspect a new release:
 
-- release manifest;
-- artifact list;
+- canonical release manifest;
+- artifact inventory;
 - per-artifact digests;
 - release digest;
-- author signature;
-- registry attestation;
-- selected artifact recorded locally.
+- Python resolution digest;
+- author signature v2;
+- registry attestation v3;
+- registry key ID/trust material;
+- local selected artifact/runtime state under `.agentpm/`;
+- `agent.lock` confirming no local target/artifact selection is persisted.
 
 Attempt install with:
 
-- valid signatures;
+- valid author signature/attestation;
 - author signature absent under optional policy;
+- namespace required signature;
 - `--require-signature`;
-- registry attestation requirement;
-- intentionally corrupted local cache/artifact.
+- cryptographic `--require-attestation`;
+- signer that has since been normally revoked;
+- intentionally corrupted local cache/artifact;
+- tampered release manifest in a test fixture;
+- no compatible target.
 
-Confirm failure messages are precise.
+Confirm failure messages distinguish:
+
+- artifact integrity failure;
+- release-integrity failure;
+- author-signature failure;
+- registry-attestation trust/signature failure;
+- compatibility failure.
+
+### CI publish
+
+Run or inspect a real GitHub Actions release workflow showing:
+
+- tag matches `agent.json.version`;
+- each matrix job runs package/build only;
+- `actions/upload-artifact` produces per-target build outputs;
+- final job uses `actions/download-artifact`;
+- final job performs one AgentPM publish;
+- encrypted key + noninteractive passphrase path works when signing;
+- `AGENTPM_TOKEN` is not exposed in logs;
+- no partial release is visible if one matrix target fails.
 
 ## Expected evidence
 
@@ -334,10 +446,15 @@ Codex should report back:
   - feedback UI;
 - representative SEO metadata output;
 - representative PostHog event payload with sensitive/excluded fields absent;
-- example new `agent.lock` v4 entry;
+- example new `agent.lock` v4 entry showing portable Python resolution + logical release integrity and **no** local target selection;
+- example machine-local runtime/install state showing selected target/artifact/interpreter fingerprint;
 - example release manifest;
-- example S3/object inventory;
-- example new release-level signature/attestation statement;
+- example release reservation + child artifact DB/object inventory;
+- example S3/object inventory including canonical target IDs and `release.json`;
+- byte-compatibility evidence for typed legacy v1 author statement;
+- example new release-level author-signature v2 and registry-attestation v3 statements;
+- example trusted stored-byte checksum verification evidence;
+- example registry public-key history/trust material;
 - cross-platform publish/install matrix results;
 - legacy Python Tool compatibility result;
 - GitHub Actions run link or captured job output if available;

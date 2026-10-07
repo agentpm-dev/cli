@@ -51,6 +51,8 @@ Stage 1 does **not** attempt to:
 - Redesign every package-detail page or remove useful kind-specific inspection surfaces.
 - Replace authored README content or treat README wording as product-controlled taxonomy.
 - Build a generalized CI platform.
+- Build AgentPM OIDC/trusted-publisher authentication in Stage 1; CI v1 may use `AGENTPM_TOKEN`, while OIDC remains a future hardening path.
+- Implement dynamic N-of-M namespace signature thresholds; Stage 1 preserves the current effective policy that `required` means at least one valid trusted author signature.
 - Require GitHub Actions for normal local publishing.
 - Require users to adopt `uv` as their project package manager.
 - Invalidate or republish legacy Python Tools.
@@ -364,6 +366,8 @@ Preserve useful kind-specific surfaces:
 
 README content is author-owned and should not be treated as AgentPM-controlled category copy.
 
+New-format multi-artifact Tool versions must remain inspectable in the existing detail/Security experience. Stage 1 should expose release-level integrity/provenance and the artifact target inventory without turning this into the broader Stage 2 Package Health redesign.
+
 ### 14. Technical SEO
 
 Stage 1 owns technical SEO/indexing correctness, not category-facing copy strategy.
@@ -523,19 +527,18 @@ Do not require GitHub Issues as the only feedback path.
 
 This affects Python Tools only.
 
-Legacy Python Tools remain valid and continue using legacy install semantics.
+Legacy Python Tools remain valid and continue using legacy install/runtime semantics.
 
 For new-format Python Tools:
 
 - authors declare dependency intent in `agent.json`;
-- AgentPM resolves exact dependency versions;
-- AgentPM records resolved dependency state in `agent.lock`;
-- dependency artifacts are resolved for the consumer target at install time;
-- do not vendor the publisher's local resolved environment into the Tool package by default.
+- AgentPM resolves and records exact Python distribution versions in a portable resolution model;
+- AgentPM records that resolution in `agent.lock`;
+- the published Tool release carries the Tool-specific resolution independently of the publisher's broader workspace;
+- the consumer installs the locked dependency set for its own target/interpreter;
+- the published Tool payload does not contain the publisher's local Python environment.
 
-Add an optional Python dependency array only when `runtime.type == "python"`.
-
-Recommended shape:
+Add an optional dependency array only when `runtime.type == "python"`:
 
 ```json
 "runtime": {
@@ -550,136 +553,258 @@ Recommended shape:
 
 Lint must enforce:
 
-- dependencies only allowed for Python runtime;
-- requirement syntax is valid;
-- duplicate/conflicting declarations are rejected or normalized deterministically.
+- `dependencies` is allowed only for Python runtime;
+- each entry is valid Python requirement syntax;
+- duplicates/conflicts are rejected or normalized deterministically;
+- Node Tools cannot declare Python dependencies.
 
-AgentPM owns dependency resolution.
+`runtime.version` remains a minimum interpreter version, consistent with current runner behavior.
 
-`uv` may be the implementation mechanism but should not be a requirement on the user's project tooling.
+AgentPM owns Python dependency resolution.
 
-Preferred UX:
+`uv` is the preferred implementation mechanism, but is an AgentPM implementation dependency rather than a user-project requirement. Users do not need to use `uv`, maintain a `uv.lock`, or convert their repository into a uv project.
 
-- AgentPM manages/bundles/acquires a known compatible `uv`;
-- users do not need to maintain a `uv` project or `uv.lock`.
+Do not make `requirements.txt`, `pyproject.toml`, Poetry lockfiles, uv lockfiles, or similar project files alternate authoritative dependency sources in Stage 1. A future import command may populate the AgentPM manifest from those sources.
 
-Do not make `requirements.txt`, `pyproject.toml`, Poetry lock, uv lock, etc. alternate authoritative dependency sources in Stage 1.
+The resolved state must be portable across supported platforms. Do not lock the publisher's selected wheel filename or publisher architecture. The resolution may contain environment markers/conditional dependency branches where a transitive dependency differs by platform or Python version, but every selected package version must be exact.
 
 `agent.json` is author intent.
 
-`agent.lock` is AgentPM-resolved state.
+`agent.lock` is AgentPM-resolved workspace state.
 
-### 20. Lockfile evolution
+### 20. AgentPM-managed Python runtime environment
+
+Current AgentPM execution has no venv, no dependency installation, and no `PYTHONPATH` integration. New-format Python Tools therefore require an AgentPM-owned runtime environment.
+
+Use an AgentPM-managed per-Tool environment under `.agentpm/`, separate from the immutable extracted Tool payload. The exact directory naming may follow existing path helpers, but the environment identity must include:
+
+- Tool identity;
+- Tool version;
+- consumer target;
+- resolved Python interpreter major/minor or equivalent ABI-relevant interpreter identity.
+
+A conceptual shape is:
+
+```text
+.agentpm/
+  tools/<namespace>/<name>/<version>/...
+  runtimes/python/<namespace>/<name>/<version>/<target>/py3.11/...
+```
+
+For new-format Python Tools with declared dependencies:
+
+1. resolve the Python interpreter using the same family/version rules as `agentpm run`, honoring `AGENTPM_PYTHON`;
+2. create/reuse an AgentPM-managed Python environment with that interpreter;
+3. use AgentPM-managed `uv` to install the exact applicable locked dependency versions into that environment;
+4. execute the Tool with the managed environment's Python interpreter.
+
+A venv-style managed environment is preferred over modifying the Tool payload or installing into the user's global interpreter.
+
+Legacy Tools continue using today's PATH/`AGENTPM_PYTHON` execution behavior and author-managed `_vendor` code.
+
+Existing `_vendor` imports must continue to work even when a new-format Tool also has an AgentPM-managed environment. A new-format Tool that both declares dependencies and vendors dependency content should receive a portability warning.
+
+Dependency provisioning should happen during `agentpm install` so a completed install is runnable. `agentpm run` must validate that the managed environment still matches the selected interpreter/target; if the operator changes `AGENTPM_PYTHON` or the environment becomes stale, AgentPM must either rebuild deterministically or fail with an actionable reinstall/refresh instruction rather than running against an incompatible environment.
+
+### 21. Lockfile evolution
 
 Reuse `agent.lock`; do not create a user-managed `agent.python.lock`.
 
-Introduce an additive lockfile evolution, likely `lockfile_version: 4`.
+The current lock implementation has an important forward-compatibility hazard: on-disk `lockfile_version` is not used to dispatch deserialization, unknown fields are silently ignored, and an older CLI can therefore read a future lock and later rewrite it without newer fields.
+
+Stage 1 must add an explicit lockfile compatibility guard before normal deserialization/mutation.
 
 Requirements:
 
-- v3 remains readable with legacy semantics;
-- v4 supports optional Python dependency resolution metadata;
-- new CLI supports both;
-- older CLI encountering an unsupported newer lockfile must fail clearly rather than silently misread it.
+- existing V1/V2-shape locks and current on-disk versions 2/3 remain readable;
+- new Python resolution/release-integrity state requires a minimum lockfile version of 4;
+- the existing V2-shaped Rust struct may remain the structural representation if the change is additive; a new enum arm is not required solely because the number becomes 4;
+- replace the current `requires_v3_lock` concept with a `minimum_lock_version(...)`-style calculation capable of returning 2, 3, or 4 from content;
+- a CLI must reject a lock whose `lockfile_version` is newer than the maximum version it understands before it can rewrite the file;
+- unknown future fields must never be silently discarded through a read-modify-write cycle;
+- `Lock::empty_v2()` and Harness/preflight version checks must be audited so they do not accidentally accept unsupported future locks merely because the version is `>= 2`.
 
-The workspace lock may contain Tool-specific resolved Python dependency state.
+Keep one logical lock entry per AgentPM package key:
 
-Published Tool releases must carry the relevant Tool-specific resolved dependency snapshot independently of the publisher's broader workspace.
+```text
+tool:@namespace/name@1.2.3
+```
 
-### 21. Python payload portability
+Do not add target to the package key and do not create one locked package entry per architecture.
+
+For new-format releases, `LockedPackage.integrity` represents the logical release integrity. The selected local target artifact is machine-local state and must **not** be written into the portable/source-controlled `agent.lock`.
+
+Add optional typed Python resolution state to the locked Tool package entry (or a referenced typed subsection keyed by the same logical Tool identity).
+
+Plain `agentpm install` currently regenerates the lock from the resolve plan. Therefore the registry resolve/install contract must carry the new Python resolution state so regeneration cannot silently erase it.
+
+Published Tool releases must carry the relevant Tool-specific resolution independently of the publisher workspace lock.
+
+### 22. Python payload portability and target identity
 
 Dependency portability and Tool payload portability are distinct.
 
-Declared Python dependencies are installed for the target and therefore do not make the Tool payload architecture-specific.
+Declared Python dependencies are installed for the consumer target and therefore do not make the published Tool payload architecture-specific.
 
-Tool payload itself may be:
+The Tool payload itself may be:
 
 - portable `any`;
-- platform/architecture-specific.
+- target-specific.
 
-Local publish should classify conservatively.
+Use a canonical AgentPM target identifier that includes OS, CPU architecture, and relevant ABI/libc distinction. Prefer Rust-compatible target-triple vocabulary where it matches AgentPM's existing release conventions, for example:
+
+- `aarch64-apple-darwin`;
+- `x86_64-apple-darwin`;
+- `x86_64-unknown-linux-gnu`;
+- `x86_64-pc-windows-msvc`;
+- special value `any`.
+
+The initial official CI matrix does not need to cover every supported target, but the release schema must not hardcode only the initial three.
+
+Local packaging must classify conservatively.
 
 Examples:
 
-- pure `.py`, JSON, text, etc. may be classified `any`;
-- `.so`, `.dylib`, `.pyd`, native executables, or platform-specific vendored binary contents imply target-specific payload;
-- unknown binary payload should default to conservative target-specific classification.
+- pure `.py`, JSON, text, and similar source/data payloads may be `any`;
+- `.so`, `.dylib`, `.pyd`, `.dll`, native executables, native libraries, or known platform-specific vendored binary contents imply target-specific payload;
+- unknown executable/binary payload defaults to the current detected target rather than `any`.
 
-Do not forbid `_vendor`, but new-format Python Tools that both declare dependencies and vendor dependency trees should at least warn because they may reintroduce architecture coupling.
+Declared dependencies do not affect payload classification.
 
-### 22. Published version / artifact model
+Do not unblock `.whl` as a normal embedded Tool payload merely to support dependency resolution. Wheels should be acquired by AgentPM/uv at consumer install time rather than bundled into the release payload.
 
-One logical Python Tool version may contain multiple immutable runtime artifacts.
+Current Tool packaging treats `manifest.files` entries as literal paths and only warns if a declared path does not exist. Stage 1 should harden this: a declared `files` path that is missing at package/publish time is a fatal packaging error rather than a silently omitted artifact input.
+
+### 23. Published version / artifact model
+
+One logical new-format Python Tool version may contain one or more immutable runtime artifacts.
 
 Example:
 
 ```text
 @foo/tool@1.2.0
-  ├── macos-arm64
-  ├── macos-x86_64
-  └── linux-x86_64
+  ├── any
+  ├── aarch64-apple-darwin
+  ├── x86_64-apple-darwin
+  └── x86_64-unknown-linux-gnu
 ```
 
 All artifacts in one version must share:
 
 - Tool identity;
 - Tool version;
-- manifest contract;
-- resolved Python dependency state.
+- logical manifest digest;
+- resolved Python dependency-resolution digest.
 
 Only target-specific payload/build metadata may differ.
 
 Adding support for another target requires a new semantic version.
 
-Published version artifact/compatibility set is immutable after finalize.
+Published version artifact/compatibility inventory is immutable after finalize.
 
-### 23. S3 / release layout
+The registry data model should make the release/artifact relationship explicit:
 
-A multi-target Tool version is one logical release containing multiple S3 objects, not one giant tarball.
+- `PackageVersion` remains the logical immutable release/version;
+- new child `PackageVersionArtifact` records own target-specific object metadata;
+- legacy scalar `sha_256`, `size_bytes`, and `s3_key` semantics remain supported for legacy single-artifact rows;
+- new release-format rows must be distinguishable from legacy rows through an explicit release/artifact format/version field rather than by guessing from nullable data.
 
-Conceptual storage:
+Old CLI versions must not be allowed to misinterpret a new release manifest as a legacy tarball. When a client cannot consume the release format, fail clearly with a "requires newer AgentPM" style error.
+
+### 24. Release sessions, S3 layout, and atomic publishing
+
+The existing `Upload` row is a one-object reservation and cannot represent concurrent target artifacts for the same package version. Preserve it for legacy publishing.
+
+Introduce a release-level publish reservation with child artifact uploads for the new format.
+
+Conceptually:
 
 ```text
-tools/<tool-id>/<version>/
-  release.json
-  artifacts/
-    any/tool.tar.gz
-    macos-arm64/tool.tar.gz
-    macos-x86_64/tool.tar.gz
-    linux-x86_64/tool.tar.gz
+PublishRelease
+  release_id
+  package_id
+  version
+  manifest
+  python_resolution
+  status
+  publisher
+  expires_at
+
+PublishArtifactUpload
+  artifact_id
+  release_id
+  target
+  expected_sha256
+  expected_size
+  tmp_key
+  final_key
+  status
 ```
 
-Exact key names may follow current storage conventions, but the data model must preserve:
+A new-format publish should use one release init/finalize transaction:
 
-- release-level metadata;
-- per-artifact object identity;
-- per-artifact target;
-- per-artifact SHA-256;
-- per-artifact size;
-- immutable artifact inventory.
+1. create or resume the release reservation;
+2. register the complete intended target inventory;
+3. obtain one presigned PUT per artifact;
+4. upload each artifact independently;
+5. validate all child uploads;
+6. verify manifest/resolution equivalence and target uniqueness;
+7. construct/persist the canonical release manifest;
+8. complete author-signature and registry-attestation requirements;
+9. atomically finalize the logical `PackageVersion` and all `PackageVersionArtifact` rows;
+10. only then expose the version to install resolution.
 
-Artifacts should remain independently inspectable/self-describing.
+A partial artifact upload must never create a partially installable release.
 
-Each artifact should contain the logical manifest and resolved Python dependency metadata required to install/inspect that artifact.
+Retries/resume should operate at the release + artifact level, not collide because one `(package_id, version)` pending `Upload` already exists.
 
-### 24. Atomic publishing
+Failed/expired release sessions need server-side cleanup of staged S3 objects.
 
-Multi-target publish is atomic at the release level.
+Use separate immutable S3 objects per target, not one giant archive.
 
-Recommended flow:
+Conceptual new-format storage:
 
-1. each build runner produces a target artifact;
-2. final CI/local publish job collects all target artifacts;
-3. AgentPM uploads all artifacts into staging/unpublished state;
-4. validate manifest/dependency-state equivalence;
-5. verify target uniqueness and hashes;
-6. complete signing/scanning/attestation requirements;
-7. finalize once;
-8. only then does the Tool version become visible/installable.
+```text
+packages/<namespace>/<name>/<version>/
+  release.json
+  artifacts/
+    any/<full-sha256>.tar.gz
+    aarch64-apple-darwin/<full-sha256>.tar.gz
+    x86_64-apple-darwin/<full-sha256>.tar.gz
+    x86_64-unknown-linux-gnu/<full-sha256>.tar.gz
+```
 
-If any artifact upload or validation fails, the version must not become partially published.
+Staging may use:
 
-### 25. GitHub Actions v1
+```text
+uploads/<release-id>/<artifact-id>.tar.gz
+```
+
+Use full digests in immutable keys when the digest is part of object identity; do not make the current 12-character prefix the load-bearing multi-artifact identifier.
+
+Keep legacy S3 keys readable.
+
+Store release metadata both as normalized registry state and as an immutable, self-describing `release.json` object.
+
+Each target artifact remains independently inspectable and contains at least the logical `agent.json` plus the Tool-specific dependency-resolution metadata required to inspect/reconstruct its contract.
+
+New publish uploads should be streamed rather than reading the complete artifact into RAM. Reconcile the current client 3 GB cap and server 1 GB default into one server-authoritative effective upload policy.
+
+### 25. Malware scanning for multi-artifact releases
+
+Preserve the existing asynchronous GuardDuty malware-scan model rather than blocking release finalization until scanning completes.
+
+For new-format releases:
+
+- enqueue one scan per concrete target artifact;
+- associate scan results with the target artifact (direct artifact FK preferred over relying only on raw S3 key);
+- the version may retain queued/running scan state after publish, consistent with current behavior;
+- if any artifact is found infected, the logical Tool version must be yanked/disabled consistently, because one version represents one immutable artifact set;
+- unscanned/failed/unknown artifacts must never be displayed as clean.
+
+Do not treat SBOM/Grype columns that happen to exist in the current schema as implemented Stage 1 vulnerability scanning unless this work explicitly wires them into the flow.
+
+### 26. GitHub Actions v1 and package-build CLI
 
 The first official CI integration only needs to solve:
 
@@ -687,180 +812,273 @@ The first official CI integration only needs to solve:
 
 The underlying CLI/protocol must remain CI-provider-neutral.
 
-Typical initial target matrix:
+Introduce or extract a reusable package-build CLI surface suitable for CI. An explicit `agentpm package` command is preferred if no existing command can provide a stable machine-readable artifact + descriptor output. `publish --dry-run` is not sufficient by itself because it skips signing/network stages and currently only prints a human artifact path.
 
-- macOS arm64;
-- macOS x86_64;
-- Linux x86_64.
+The build command should produce:
 
-Linux arm64 may be added if practical, but it is not required to prove the architecture.
+- target artifact;
+- canonical target identifier;
+- artifact SHA-256 and size;
+- manifest digest;
+- Python resolution digest;
+- machine-readable descriptor used by the final publish job.
 
-Matrix jobs build package artifacts.
+The initial official GitHub Actions workflow should follow existing AgentPM repo conventions:
 
-A final job downloads the artifacts and performs one atomic publish.
+- tag-triggered `v*`;
+- fail if Git tag does not match `agent.json.version`;
+- pinned toolchain/setup actions;
+- `astral-sh/setup-uv@v6` for Python work where appropriate;
+- minimal job permissions;
+- matrix jobs build/package only;
+- `actions/upload-artifact` transports build outputs;
+- one final fan-in job uses `actions/download-artifact`, validates all descriptors, and performs one atomic AgentPM publish.
 
-GitHub Actions must be a thin composition of normal AgentPM CLI capabilities, not a separate proprietary publishing path.
+Initial required matrix:
 
-Local publish remains supported.
+- `aarch64-apple-darwin`;
+- `x86_64-apple-darwin`;
+- `x86_64-unknown-linux-gnu`.
 
-### 26. Install-time artifact resolution
+Linux arm64 and Windows may be added later or opportunistically, but must not block proving the model.
+
+CI v1 may authenticate to AgentPM with `AGENTPM_TOKEN`.
+
+OIDC/trusted publishing for the AgentPM registry is explicitly deferred, although existing SDK release workflows establish it as a desirable future direction.
+
+Local `agentpm publish` remains supported and may internally package the current target or `any` as appropriate.
+
+### 27. Install-time artifact resolution and local state
 
 For new-format Tool versions:
 
-1. determine consumer OS;
-2. determine CPU architecture;
-3. determine Python/runtime compatibility;
-4. load published artifact inventory;
-5. select exact compatible target artifact where available;
-6. otherwise use `any` if compatible;
-7. install locked Python dependency versions using target-compatible distributions;
-8. verify selected artifact integrity before use.
+1. resolve the logical AgentPM package version and release integrity;
+2. detect the consumer target;
+3. resolve the applicable Python interpreter for Python Tools;
+4. send target/runtime context to install initialization;
+5. obtain the canonical release manifest plus only the selected artifact's presigned URL (and available-target metadata for diagnostics);
+6. select/validate exact target first, otherwise compatible `any`;
+7. verify the release manifest/release digest;
+8. verify the selected artifact belongs to that signed release;
+9. stream-download and recompute the selected artifact SHA-256;
+10. extract safely;
+11. create/reuse the AgentPM-managed Python environment and install the applicable locked dependency versions;
+12. finalize the install session.
+
+Do not presign/download every target artifact for a consumer that needs only one.
+
+The portable `agent.lock` records the logical release integrity and Python resolution, not the machine-selected artifact.
+
+If AgentPM persists the selected artifact target/digest or runtime environment fingerprint, store it in machine-local `.agentpm/` state.
+
+Cache identity must include enough information to prevent collisions across kind, package, version, target, and artifact digest. The current `<owner>-<name>-<version>.tgz` naming is insufficient.
+
+The extracted Tool path may remain version-terminal because one consumer installs one selected payload for that version; target/interpreter-specific dependency environments belong in separate machine-local runtime state.
 
 If no compatible artifact exists:
 
-- fail before extraction/runtime execution;
+- fail before runtime execution;
 - report current target;
-- report available targets.
+- report available targets;
+- never silently install an incompatible artifact.
 
-Interactive installs may offer **supported** recovery paths such as:
+Interactive installs may offer a compatible newer version only when the request is not exact/lockfile-pinned and the user explicitly accepts it.
 
-- build/install from a supported source/portable fallback;
-- choose a compatible newer version when the user is not pinned;
-- explain how to upgrade when the exact locked version is incompatible.
+A locked exact version is never silently changed.
 
-Never silently substitute:
-
-- an incompatible artifact;
-- a different locked version.
-
-Headless/non-interactive installs fail deterministically.
+Headless/non-interactive install fails deterministically.
 
 Rosetta/emulation fallback is out of scope.
 
-### 27. Legacy Python Tool compatibility
+While modifying extraction, harden archive behavior:
+
+- symlinks/hardlinks that cannot be safely supported should fail explicitly rather than being silently skipped;
+- enforce decompressed-size and entry-count limits;
+- validate downloaded byte count against expected size where practical;
+- keep atomic `.part` download behavior and cache digest re-verification.
+
+### 28. Legacy Python Tool compatibility
 
 Legacy Python Tool versions:
 
 - remain valid;
-- may contain vendored dependencies;
-- retain old artifact/install semantics;
-- do not gain false portability claims;
-- may display compatibility as unknown/unspecified later;
+- may contain unpacked vendored dependencies;
+- retain existing single-artifact install semantics;
+- retain current PATH/`AGENTPM_PYTHON` runtime behavior;
+- do not receive invented portability claims;
+- may display compatibility as unknown/legacy later;
 - do not require republishing.
 
-Do not mutate old release metadata to pretend legacy compatibility is known.
+Do not mutate historical release metadata to pretend legacy compatibility is known.
 
-### 28. Release integrity model
+### 29. Release integrity model
 
-Current single-artifact integrity and signing remain valid for legacy packages.
+Current single-artifact integrity/signing remains valid for legacy releases.
 
-New-format multi-artifact Tool releases introduce a canonical release manifest that binds:
+New-format releases introduce an immutable canonical release manifest binding:
 
-- identity;
+- kind;
+- namespace/name;
 - version;
 - manifest digest;
-- resolved Python dependency-lock digest;
+- Python resolution digest when present;
+- release format version;
 - complete artifact inventory;
 - every artifact target;
-- every artifact SHA-256.
+- every artifact SHA-256;
+- every artifact size/content type needed by the install contract.
 
-Compute a release digest over canonical serialization of this release manifest.
+Compute the release digest as SHA-256 over the canonical release-manifest bytes.
 
-For new releases:
+For new releases, `LockedPackage.integrity` stores the 64-character lowercase release SHA-256. Preserve the current lockfile hex convention rather than mixing `sha256:<hex>` into the existing field.
 
-- `agent.lock` top-level package `integrity` becomes release-level integrity;
-- lock state may additionally record the selected target artifact and artifact-level integrity.
+Do **not** record the locally selected target/artifact digest in `agent.lock`.
 
-Example:
+Artifact integrity is read from the verified release manifest and may be stored in local AgentPM install/cache state.
 
-```json
-"tool:@foo/native-tool@1.2.0": {
-  "kind": "tool",
-  "name": "@foo/native-tool",
-  "version": "1.2.0",
-  "integrity": "sha256:<release-digest>",
-  "artifact": {
-    "target": "macos-arm64",
-    "integrity": "sha256:<artifact-digest>"
-  }
-}
-```
+### 30. Canonical signing format
 
-### 29. Canonical signing format
+Do not carry forward today's implicit agreement between Rust `serde_json::to_vec(Value)` and Python `json.dumps(sort_keys=True)` as the new signing contract.
 
-Do not carry forward today's implicit Rust/Python JSON serialization agreement.
-
-Define a formal canonical serialization contract for new release-level signed statements.
+For new release-level statement formats, adopt a named canonical JSON contract, preferably RFC 8785 JSON Canonicalization Scheme (JCS), or an equivalently precise documented subset if implementation constraints require it.
 
 At minimum:
 
 - UTF-8;
 - deterministic object-key ordering;
+- deterministic Unicode handling;
 - no insignificant whitespace;
-- defined Unicode behavior;
-- deterministic artifact ordering by target tuple;
-- normalized timestamp representation if timestamps participate;
-- no floating-point ambiguity.
+- deterministic array ordering where the schema treats arrays as sets (artifact inventory sorted by target identifier);
+- normalized timestamps if timestamps participate;
+- no implementation-dependent numeric rendering.
 
-Create cross-language Rust/Python test vectors.
+Create shared Rust/Python test vectors including non-ASCII values.
 
-### 30. Author signatures and registry attestations
+Legacy v1 author-signature and v2 registry-attestation verification must retain their historical serialization behavior exactly.
 
-Legacy statement versions remain valid.
+Before adding new statement versions, introduce typed Rust representations for the existing v1 author statement and assert byte-for-byte compatibility with today's JSON output. New statements should be typed/versioned rather than inline `json!` dictionaries.
 
-New multi-artifact releases should use new release-level author-signature and registry-attestation statement versions.
+### 31. Author signatures and registry attestations
 
-The author signature should cryptographically bind the complete release manifest/release digest rather than one target tarball.
+Statement version numbers are independent by type.
 
-The registry attestation should attest to the complete immutable release.
+Preserve:
 
-Per-artifact SHA-256 values remain separately verified.
+- `agentpm.package.signature.v1` for legacy single-artifact author signatures;
+- `agentpm.registry.attestation.v2` for legacy registry attestations.
 
-Avoid requiring one independent author signature per target unless there is a strong technical need.
+Introduce distinct new release-level versions, expected to be:
 
-### 31. Client-side provenance verification
+- `agentpm.package.signature.v2`;
+- `agentpm.registry.attestation.v3`.
 
-Install must continue cryptographically verifying downloaded artifact digests.
+The new author statement binds the logical release digest, not one target artifact.
 
-Stage 1 should also add actual client-side verification for release provenance rather than trusting only registry booleans.
+The new registry attestation binds the same immutable release identity/digest plus registry provenance facts.
 
-Requirements:
+Per-artifact integrity remains bound indirectly through the release manifest.
 
-- verify release-level author signature when present;
-- verify registry attestation cryptographically when required/requested;
-- add a `--require-signature`-style enforcement path alongside attestation requirements;
-- preserve namespace signing policy semantics;
-- do not claim signature verification merely because the registry reported a boolean.
+Signatures/attestations should continue attaching to `PackageVersion`, which naturally represents the logical release; do not create one signature per target artifact.
 
-### 32. Server-side finalize integrity
+If the user explicitly requested `--sign` and the submitted signature is rejected, publishing must fail with an actionable signature-validation error rather than silently succeeding unsigned merely because namespace mode is optional.
 
-Preferably strengthen finalize so the registry independently verifies uploaded artifact bytes against declared artifact digests before finalizing the release.
+For new-format releases, registry-attestation creation is part of successful finalize. A registry signing/configuration failure should leave the release unpublished rather than silently producing an unattested new-format release.
 
-Do not rely only on client-declared expected digest plus client-supplied S3 metadata.
+Stage 1 preserves current effective namespace threshold semantics:
 
-Finalized release should bind:
+- `off`;
+- `optional`;
+- `required` = at least one valid trusted author signature.
 
-- declared artifact digest;
-- actual stored-byte digest;
-- release-manifest artifact digest reference.
+Dynamic N-of-M thresholds are deferred.
 
-### 33. Headless signing
+Normalize the Rust/Python display key-ID inconsistency, but do not use truncated key IDs as cryptographic identity. Verification matches full `public_key_b64`.
+
+### 32. Client-side provenance verification and trust material
+
+Install must continue recomputing downloaded artifact digests.
+
+For new-format releases, install must also cryptographically verify provenance rather than trusting counts/booleans from the registry.
+
+Extend the install/init contract so the client receives, in one coherent verification payload:
+
+- canonical release manifest or equivalent bytes/data;
+- expected release digest;
+- author signature material:
+  - signature;
+  - statement;
+  - full public key;
+  - signer metadata/status;
+- namespace signing mode/effective threshold;
+- registry attestation statement/signature;
+- registry key ID and trustworthy public-key lookup/reference information.
+
+Do not make install depend on the current UI-oriented Security DTO whose displayed SHA-256 is truncated.
+
+Add `--require-signature`:
+
+- if specified, require at least one cryptographically valid trusted author signature even when namespace policy is optional/off;
+- when namespace signing mode is `required`, client verification must enforce the effective current threshold (one) as part of verification.
+
+Change `--require-attestation` to mean cryptographically verified registry attestation, not `registry_attested: true`.
+
+Registry attestation verification requires a trust anchor.
+
+Provide a versioned registry public-key history/read surface and a client trust strategy that does not simply accept any public key delivered adjacent to the signature. For the official AgentPM registry this may be a built-in/pinned trusted key ring or another explicit trust configuration; historical attestation keys must remain obtainable/verifiable after rotation.
+
+Treat truncated registry/author key IDs as display values only.
+
+Historical author signer revocation semantics:
+
+- cryptographic validity of a historical signature is independent from current signer activation state;
+- a release signature accepted while the signer was authorized at publish remains historically valid after ordinary signer revocation/rotation;
+- the client/UI may additionally report that the signer is now revoked;
+- retroactive compromise invalidation policy is out of scope for Stage 1.
+
+### 33. Server-side stored-byte integrity
+
+Strengthen new-format release finalization so the registry obtains a trustworthy checksum of the bytes actually stored in S3 before finalizing the release.
+
+Do not rely only on:
+
+- publisher-declared `expected_sha`;
+- publisher-set `x-amz-meta-sha256`.
+
+Use an S3/storage-layer checksum mechanism where practical or independently stream/hash the staged object server-side/background-side.
+
+For every finalized new artifact:
+
+```text
+declared artifact digest
+=
+trusted stored-byte digest
+=
+release-manifest artifact digest
+```
+
+Size must likewise match the S3 object `ContentLength`/trusted stored size.
+
+A mismatch leaves the release unpublished.
+
+### 34. Headless signing
 
 Headless signing is required for CI publishing.
 
-Provide at least one supported secure noninteractive path.
+Preserve the existing encrypted `StoredKeyV1` key-envelope model.
 
-The exact mechanism may be:
+Provide a secure noninteractive path centered on:
 
-- encrypted local key plus passphrase supplied via secret/env/file;
-- CI-specific key material;
-- another documented noninteractive credential path.
+- encrypted AgentPM key file/key record;
+- explicit key selection (`--key-file` and/or existing `--key-id`);
+- passphrase from a secret source such as `AGENTPM_KEY_PASSPHRASE`.
 
-Do not make interactive passphrase entry mandatory in GitHub Actions.
+The preferred CI path should not require storing raw Ed25519 private-key bytes as a GitHub secret.
 
-OIDC/keyless signing may be explored later but is not required for Stage 1.
+CI documentation may instruct users to store the encrypted key JSON as a secret or secure file, materialize it on the ephemeral runner, and provide its passphrase separately.
 
----
+Never print passphrases, decrypted private key material, or full secret paths in normal output.
+
+OIDC/keyless AgentPM registry publishing is deferred.
 
 ## Acceptance criteria
 
@@ -917,6 +1135,7 @@ OIDC/keyless signing may be explored later but is not required for Stage 1.
 - `agentpm-harness` is a valid Template execution surface.
 - Relevant Templates can publish with that surface.
 - Existing specialized detail tabs remain functional.
+- New-format Tool Security/detail data can represent release-level digest/signature/attestation state plus the immutable target-artifact inventory without breaking legacy single-artifact versions.
 
 ### Technical SEO
 
@@ -969,42 +1188,84 @@ OIDC/keyless signing may be explored later but is not required for Stage 1.
 
 - New Python Tool manifests may declare dependencies.
 - Non-Python Tools cannot use Python dependency declarations.
-- `agent.lock` v4 can store resolved Python dependency state.
-- Legacy v3 lockfiles continue to work.
-- Legacy Python Tools continue to install with legacy semantics.
-- New Python Tool publish resolves exact dependency versions reproducibly.
-- New Python Tool install resolves target-compatible Python distributions rather than consuming publisher-vendored dependencies.
-- AgentPM controls the dependency resolver implementation and does not require the user's project to use `uv`.
+- AgentPM produces portable exact Python resolution state rather than locking publisher-specific wheels.
+- New dependency-bearing Tool locks use minimum lockfile version 4.
+- Current v2/v3 lockfiles remain readable.
+- Unsupported future lockfile versions fail before lossy read/rewrite.
+- Plain `agentpm install` regeneration preserves Python resolution state because the resolve contract carries it.
+- `agent.lock` remains target-independent:
+  - logical release integrity is locked;
+  - selected local target/artifact is not written into the portable lock.
+- AgentPM creates/reuses an isolated per-Tool Python runtime environment keyed by target and interpreter identity.
+- New Python Tool install provisions the exact applicable locked dependency versions into the AgentPM-managed environment.
+- `agentpm run` executes new-format dependency-bearing Tools through the managed Python environment.
+- Legacy Python Tools continue to install/run with legacy vendored/PATH semantics.
+- AgentPM controls the resolver implementation and does not require the user's project to use `uv`.
 
 ### Multi-artifact release
 
-- One Tool version can contain multiple target artifacts.
-- Local publish can still publish one compatible artifact.
+- One Tool version can contain multiple immutable target artifacts.
+- Canonical target IDs use the AgentPM target model, including `any`.
+- Local publish can still publish one `any` or current-target artifact.
+- New-format publish uses a release reservation with child artifact uploads rather than one legacy `Upload` row per target.
 - Multi-target CI can publish one atomic release.
-- All target artifacts must agree on identity, version, manifest, and dependency lock.
-- Release does not become visible until all required artifacts validate and finalize.
-- S3 stores per-target artifact objects plus release metadata.
+- All target artifacts agree on identity, version, manifest digest, and Python resolution digest.
+- Release does not become visible until all required artifact uploads validate and one release-level finalize succeeds.
+- Registry persists one logical `PackageVersion` plus per-target artifact records.
+- S3 stores a canonical `release.json` plus separate immutable target objects.
+- New-format uploads stream rather than buffering the full artifact in RAM.
+- Client/server upload-size policy is consistent and server-authoritative.
+- Missing declared Tool `files` paths fail packaging rather than silently omitting content.
 - Adding a target requires a new Tool version.
-- Install deterministically selects exact target or `any`.
-- No compatible artifact produces actionable error before runtime.
-- Interactive recovery never silently changes a locked version or selects an incompatible artifact.
+- Legacy single-artifact release/storage behavior remains supported.
+- Each new target artifact receives malware scanning; infection of any target yanks/disables the logical version.
 
 ### Integrity / signing
 
-- New release manifest canonically binds all target artifact hashes.
-- Release-level integrity is computed deterministically.
-- Lockfile can record release integrity plus selected artifact integrity.
-- New author-signature statement binds the release.
-- New registry attestation binds the release.
-- Legacy signature/attestation formats remain supported.
-- Rust and Python canonicalization pass shared test vectors.
-- Installer verifies selected artifact digest.
-- Installer can cryptographically verify release-level author signature.
-- Installer can cryptographically verify registry attestation when requested/required.
-- Headless CI signing path exists.
-- Preferably server finalization independently verifies uploaded artifact bytes before release finalization.
+- New release manifest canonically binds all target artifact hashes and Python resolution digest.
+- Release-level integrity is deterministic.
+- New lock entries store release integrity only, not local selected-artifact state.
+- Existing author-signature v1 serialization/verification remains byte-compatible.
+- New author-signature v2 binds the release.
+- Existing registry-attestation v2 remains valid.
+- New registry-attestation v3 binds the release.
+- Rust and Python canonicalization pass shared vectors including Unicode.
+- New-format finalize obtains a trustworthy stored-byte digest before release publication.
+- Installer recomputes selected artifact digest and checks it against the verified release manifest.
+- Installer cryptographically verifies author signatures when present/required.
+- `--require-signature` enforces at least one valid trusted signature.
+- `--require-attestation` verifies registry attestation cryptographically rather than trusting a boolean.
+- Registry public-key history/trust material supports verification of current and historical attestations.
+- Historical signatures remain cryptographically valid after normal signer revocation when they were accepted while authorized; current revoked status may still be surfaced.
+- Stage 1 retains the effective one-signature namespace threshold; dynamic N-of-M policy is deferred.
+- Explicit `--sign` cannot silently degrade to an unsigned successful publish if signature validation fails.
+- New-format publish fails closed if registry attestation cannot be created.
+- Headless CI signing works with encrypted AgentPM key material and a noninteractive secret passphrase source.
 
----
+### Target-aware installation
+
+- Install selects exact target when available, otherwise compatible `any`.
+- Only the selected artifact receives a presigned URL/download.
+- No compatible artifact produces an actionable error before runtime.
+- Selected target/artifact state remains machine-local.
+- Cache identity cannot collide across kind/package/version/target/artifact digest.
+- Exact lockfile-pinned versions are never silently changed.
+- Interactive recovery requires explicit consent.
+- Headless install fails deterministically.
+- Download size is validated where practical.
+- Unsafe symlink/hardlink archive entries do not silently disappear; extraction fails explicitly if unsupported.
+- Decompressed-size and entry-count limits protect extraction.
+- Legacy install behavior remains intact.
+
+### CI publishing
+
+- Provider-neutral CLI package-build output contains target, artifact digest/size, manifest digest, and Python resolution digest.
+- Official GitHub Actions workflow checks tag version against `agent.json.version`.
+- Matrix jobs build/package and upload CI artifacts only.
+- A final fan-in job downloads every target artifact and performs one atomic publish.
+- CI v1 supports required macOS arm64, macOS x86_64, and Linux x86_64 targets.
+- CI v1 can authenticate with `AGENTPM_TOKEN`.
+- OIDC/trusted AgentPM publishing is not required in Stage 1.
 
 ## Risks / edge cases
 
@@ -1044,78 +1305,82 @@ OIDC/keyless signing may be explored later but is not required for Stage 1.
 
 ### Python packaging
 
-- Python requirement resolution must remain reproducible while selecting platform-compatible artifacts.
-- Exact version locking can still fail later if upstream distributions disappear; define/install-error behavior clearly.
-- Pure-Python detection is not perfect; conservative classification is safer than false portability claims.
-- Vendored binary payloads can be difficult to classify reliably.
+- A portable dependency lock must represent conditional/transitive differences across targets without collapsing to the publisher environment.
+- Exact version locking can still fail later if upstream distributions disappear; install errors must distinguish unavailable distribution from AgentPM compatibility failure.
+- AgentPM-managed Python environments must be keyed strongly enough that Python ABI/interpreter changes cannot reuse incompatible native packages.
+- Changing `AGENTPM_PYTHON` after install may invalidate the local managed environment and must trigger deterministic rebuild/error behavior.
+- Pure-Python payload detection is not perfect; conservative classification is safer than false portability claims.
 - Tool code may shell out to native system dependencies that are not visible from Python dependency metadata.
-- `any` classification must not be used when runtime behavior is actually OS-specific.
-- User-authored native files need target-specific builds even if Python dependencies are portable.
-- Lockfile v4 migration must not break older workspaces.
+- `any` must not be used when runtime behavior is genuinely OS/ABI-specific.
+- Missing declared files becoming fatal may expose currently tolerated broken manifests and should produce actionable errors.
+- AgentPM-managed uv acquisition/versioning must not accidentally make users manage uv themselves.
+
+### Lockfile evolution
+
+- Current lock parsing silently accepts unknown future fields and can rewrite them away; the forward-version guard is security/reproducibility sensitive.
+- Content-derived lockfile versions can move backward today. The new `minimum_lock_version` logic must define whether this behavior remains acceptable.
+- New Python resolution state must flow through resolve plans or plain install will erase it.
+- Keep one logical package entry per Tool version; target-qualified lock keys would break current uniqueness/accessor assumptions.
+- Older CLI behavior against new-format registry releases must fail clearly rather than downloading release metadata as if it were a tarball.
 
 ### Multi-artifact release
 
 - Partial uploads must never become visible as finalized releases.
-- Final publish job must detect matrix jobs that built from different commits/manifests/locks.
-- Duplicate target artifacts must fail clearly.
-- One target may produce an artifact while another fails; release stays unpublished.
-- S3 orphan/staging cleanup is needed for failed publishes.
-- Artifact inventory and DB/S3 records must not diverge.
-- Release manifest must have deterministic artifact ordering.
+- Release/session and artifact-upload state can diverge from S3 unless finalize/cleanup is carefully transactional.
+- Final publish must detect matrix jobs built from different commits/manifests/resolution states.
+- One target may build/upload while another fails; the logical release remains unpublished.
+- Staged object cleanup must tolerate retries and expired release sessions.
+- Release manifest ordering must be deterministic.
+- New `PackageVersionArtifact`/release fields must coexist with legacy scalar version columns without ambiguous read semantics.
+- Per-artifact malware scanning must not accidentally mark the logical release clean when only one target was scanned.
+- Streaming uploads need robust retry/error behavior and must preserve required presigned headers/checksums.
 
 ### Integrity/signing
 
 - New canonical serialization is security-sensitive.
-- Cross-language canonicalization drift would invalidate signatures.
-- Release-level signing must bind all artifact hashes and relevant metadata.
-- Registry-attestation migration must not confuse legacy and new statement versions.
-- Client-side signature verification needs a trustworthy way to obtain signer/registry public keys and active-policy context.
-- Signer revocation semantics for historical releases must be defined:
-  - whether a signature remains historically valid but signer is now revoked;
-  - whether current-policy checks differ from cryptographic validity.
-- Registry independent hashing may add finalize latency/cost.
-- CI secret handling for signing keys must be documented carefully.
+- Typed v1 migration must remain byte-for-byte compatible or existing signatures will stop verifying.
+- Cross-language canonicalization drift would invalidate new signatures.
+- Registry-attestation verification is meaningless without a client trust anchor; a key delivered next to its own signature cannot be blindly trusted.
+- Registry-key rotation must preserve historical verification.
+- Current 12-vs-16-character key-ID mismatch must not become part of cryptographic identity.
+- New-format publish failing closed on registry-attestation infrastructure errors may expose operational misconfiguration; that is intentional but requires monitoring.
+- Historical signer revocation has separate cryptographic-validity and current-trust-state meanings.
+- Server-side stored-byte hashing/checksum verification may add finalize latency/cost.
+- CI secret handling for encrypted signing keys/passphrases must be documented carefully.
 
----
+### Installation/runtime
+
+- Current cache names collide more easily than the logical package model allows; migration must not accidentally reuse stale cache entries.
+- Current extraction silently skips symlink/hardlink entries and lacks decompressed-size caps; hardening may cause previously malformed packages to fail, which is preferable to incomplete installs.
+- Managed dependency environments consume disk and need safe refresh/reuse semantics.
+- Install currently completes after download/extraction; dependency provisioning introduces a new failure point that must not leave a falsely successful session.
+- A dependency environment created with one interpreter must not be reused with another incompatible interpreter.
 
 ## Open questions
 
-These questions should be resolved during implementation planning if not already answerable from existing repo patterns:
+These questions may be resolved during implementation when existing repo patterns make the answer clearer. Items already answered by the current-code handoff are intentionally removed from this list.
 
 1. What exact internal representation should the faceted filter query use so new Stage 2 filters can be added without branching explosion?
-2. Should the namespace pin maximum be exactly 6 or configurable later?
-3. What exact updated-recency filter buckets should v1 expose?
-4. Should star counts appear beside total installs everywhere or vary by surface?
+2. Should the namespace pin maximum be exactly 6 or remain a small configurable constant?
+3. Should updated-recency v1 remain 30/90/365 days after implementation UX review?
+4. Should star counts appear beside total installs on every surface or vary slightly by density?
 5. What exact PostHog SDK/server integration pattern best matches the existing frontend/backend architecture?
-6. What persistent CLI config mechanism already exists, if any, for telemetry opt-out?
-7. Should `cli_first_used` be emitted only once per anonymous install ID or once per CLI version?
-8. Which Lemon Squeezy webhook event names currently map cleanly to subscription started/updated/cancelled/payment failed?
-9. Does the CLI already bundle/download external binaries in a pattern that can be reused for AgentPM-managed `uv`?
-10. What exact Python requirements parser/resolver API should AgentPM use?
-11. Should resolved Python dependency metadata be stored directly in `agent.lock` entries or in a referenced lock subsection keyed by Tool identity?
-12. What exact release-manifest JSON schema/version name should be used?
-13. What exact S3 key convention should be adopted while preserving existing legacy object layout?
-14. How should staging/orphaned multi-artifact uploads be garbage-collected?
-15. Should release metadata be stored as a physical `release.json` S3 object, normalized DB rows, or both? Current recommendation: both logical registry state and self-describing release metadata.
-16. What exact canonical JSON format/spec should be adopted for signed release statements?
-17. What exact new statement version names should replace/augment `agentpm.package.signature.v1` and `agentpm.registry.attestation.v2`?
-18. What exact historical signer-revocation semantics should install-time verification use?
-19. What secure headless signing input should be supported first:
-    - env passphrase for encrypted local key;
-    - key file + secret;
-    - direct private key secret;
-    - another existing repo-compatible mechanism?
-20. Can server-side hashing be implemented efficiently at finalize without downloading large objects through the web process?
-21. Which target set should the initial official GitHub Actions example guarantee:
-    - macOS arm64;
-    - macOS x86_64;
-    - Linux x86_64;
-    - optionally Linux arm64?
-22. Should `agentpm package` become a new explicit CLI command, or is there an existing build/publish artifact-creation path that should be made reusable by CI?
-23. How should interactive install offer a compatible newer version when the requested spec is unversioned versus explicitly versioned versus lockfile-pinned?
-24. What exact compatibility metadata should Stage 2 Package Health read from the new release model?
-
----
+6. What persistent CLI config mechanism should store telemetry opt-out if the current config object does not already provide one?
+7. Which Lemon Squeezy webhook event names map cleanly to subscription started/updated/cancelled/payment failed?
+8. What exact typed `PythonResolution` JSON schema should AgentPM persist in `agent.lock` and published release metadata, especially for environment markers/conditional transitive dependencies?
+9. Should AgentPM bundle `uv`, download/cache a pinned standalone `uv`, or use another managed acquisition strategy? The invariant is that the user's project must not be required to manage uv.
+10. What exact on-disk local runtime-state metadata should record target/interpreter/environment fingerprint and selected artifact digest under `.agentpm/`?
+11. What exact new release-manifest schema/type string should be used?
+12. What exact SQLAlchemy model/table names should represent release reservations and child artifact uploads while keeping the existing legacy `uploads` flow readable?
+13. What retention interval/background job should clean expired staged release artifacts?
+14. Should `PackageVersion` legacy scalar artifact columns become nullable for new-format releases or remain populated with summary values? The read contract must be explicit either way.
+15. Should canonical JSON use RFC 8785 directly via libraries or an AgentPM-defined constrained profile with shared vectors?
+16. What exact official-registry trust-anchor implementation should v1 use for registry attestation keys: built-in key ring, root-signed key set, or explicit registry trust configuration?
+17. Can S3 checksum headers provide the required trusted stored-byte SHA-256 in the current presigned flow, or should AgentPM independently stream/hash staged objects before finalize?
+18. Should dependency environments be rebuilt automatically by `agentpm run` when the resolved interpreter changes, or should run fail with an explicit `agentpm install --refresh` instruction?
+19. Should the new reusable packaging surface be named `agentpm package`, or should an existing command be refactored into an equivalent machine-readable build mode? The CI contract matters more than the exact command name.
+20. Should Windows be added to the first official Tool matrix immediately given the existing CLI Windows release support, or follow after the required macOS/Linux proof?
+21. What exact compatibility/trust fields should Stage 2 Package Health read from the new release/artifact model?
 
 ## Related Specs
 
