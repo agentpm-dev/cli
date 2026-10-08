@@ -640,6 +640,10 @@ Plain `agentpm install` currently regenerates the lock from the resolve plan. Th
 
 Published Tool releases must carry the relevant Tool-specific resolution independently of the publisher workspace lock.
 
+Reconcile the duplicated package-kind enumerations while this work touches both. `PackageKind` exists twice today — seven variants in the CLI's lockfile/semver types and eight variants in the SDK install DTOs, where only the latter has `Template`. They are kept in agreement by hand, and this stage modifies both the lock entry types and the resolve/install DTOs, which is exactly when a silent divergence becomes expensive.
+
+Either share one definition across both crates, or keep two definitions with an explicit total-coverage conversion and a test that fails when one side gains a variant the other lacks. Do not leave the drift to manual review.
+
 ### 22. Python payload portability and target identity
 
 Dependency portability and Tool payload portability are distinct.
@@ -790,6 +794,25 @@ Each target artifact remains independently inspectable and contains at least the
 
 New publish uploads should be streamed rather than reading the complete artifact into RAM. Reconcile the current client 3 GB cap and server 1 GB default into one server-authoritative effective upload policy.
 
+Define an explicit expiry and retry policy for release reservations. Current single-artifact publishing presigns a PUT for 900 seconds and assumes one client uploads one object immediately. A multi-artifact release inverts both assumptions: artifacts may be produced by separate CI matrix jobs that finish minutes apart, and a slow or retried job must not invalidate the release.
+
+Requirements:
+
+- the release reservation lifetime must be independent of, and longer than, any individual artifact's presigned PUT window;
+- a client must be able to request a fresh presigned PUT for a still-pending child artifact without invalidating the release or sibling artifacts already uploaded;
+- expiry must be reported to the client in a form it can act on, so a CI job can fail with "release reservation expired, re-run the workflow" rather than an opaque S3 or 409 error;
+- resuming must remain possible for the whole window, keyed at release + artifact level rather than colliding on one pending `(package_id, version)` row;
+- choose concrete values deliberately rather than inheriting 900 seconds, and state them in the spec once chosen.
+
+Reconcile publish rate limits with CI usage. `publish_init` and `publish_finalize` currently carry `10/minute; 100/hour` at `cost=3` per call. A multi-artifact release performs more registry calls than a single-artifact publish, and a matrix workflow may retry individual jobs. Audit the effective call count for a worst-case supported release, including presign re-issues and retries, and ensure a legitimate CI publish cannot exhaust the limit. If the new flow needs different limits or a distinct cost for release-scoped calls, set them here rather than discovering the ceiling in CI.
+
+Audit client HTTP timeouts against streaming uploads. The publish client currently applies a single 600-second total timeout that also covers the S3 PUT, because the same `reqwest` client is reused. Streaming large artifacts under one release makes that ceiling load-bearing. Separate registry-API timeouts from object-transfer timeouts, and prefer per-transfer progress/idle timeouts over one total-duration cap for artifact bytes.
+
+Two pre-existing defects in the current publish path should be corrected while this code is being restructured, and must not be carried into the new release flow:
+
+- finalize currently resolves whether the destination object already exists with a conditional whose branches are both `False`, so any S3 error on that HEAD — including `AccessDenied` — is treated as "object absent" and triggers a copy. Genuine not-found must be distinguished from an error that should fail finalize.
+- `publish_init` returns a `resumed` flag that the client's typed response has no field for, so resume state is silently discarded and a caller cannot distinguish a fresh reservation from a resumed one. Either surface it or remove it; the release-level flow must make resume state explicitly visible to the client rather than leaving an ignored wire field.
+
 ### 25. Malware scanning for multi-artifact releases
 
 Preserve the existing asynchronous GuardDuty malware-scan model rather than blocking release finalization until scanning completes.
@@ -848,6 +871,14 @@ OIDC/trusted publishing for the AgentPM registry is explicitly deferred, althoug
 
 Local `agentpm publish` remains supported and may internally package the current target or `any` as appropriate.
 
+Extend AgentPM's own CI to cover the platforms this stage reasons about. `agentpm/.github/workflows/ci.yml` currently runs on `ubuntu-latest` only, while `release.yml` builds and ships macOS and Windows binaries — so platform-specific breakage is first observed at tag time. This stage introduces current-target detection, payload classification by native-binary signature, and per-target artifact handling: code whose whole purpose is behaving differently per platform, and which Linux-only CI cannot meaningfully exercise.
+
+Requirements:
+
+- add macOS and Windows jobs to the AgentPM CLI CI matrix, at minimum running the test suites that cover target detection, payload classification, archive extraction, and local runtime-environment provisioning;
+- the existing `#[cfg(unix)]`-gated tests must not be the only coverage for behavior that also has a Windows path;
+- if full cross-platform CI is too slow for every pull request, run the platform matrix on merge to main and on release tags rather than omitting it.
+
 ### 27. Install-time artifact resolution and local state
 
 For new-format Tool versions:
@@ -896,6 +927,15 @@ While modifying extraction, harden archive behavior:
 - enforce decompressed-size and entry-count limits;
 - validate downloaded byte count against expected size where practical;
 - keep atomic `.part` download behavior and cache digest re-verification.
+
+Audit install-side expiry and timeouts alongside the download changes. The presigned GET is currently 10 minutes and the `InstallSession` TTL matches it, which was sized for one modest tarball. Dependency provisioning now extends the install beyond download, and selected artifacts may be larger.
+
+Requirements:
+
+- the install session must remain valid through dependency provisioning, not only through artifact download;
+- a presigned GET that expires mid-install must produce an actionable error, and ideally be re-obtainable without restarting the whole install;
+- the download client currently uses `reqwest` defaults with no explicit timeout; set deliberate connect and idle/progress timeouts rather than leaving transfers unbounded;
+- state the chosen session and URL lifetimes explicitly rather than inheriting 10 minutes.
 
 ### 28. Legacy Python Tool compatibility
 

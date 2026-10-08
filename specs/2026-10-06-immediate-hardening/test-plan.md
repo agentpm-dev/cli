@@ -26,6 +26,15 @@ Where the repo already has canonical test commands, use those commands rather th
 
 ## Automated checks
 
+### Platform coverage for this stage
+
+AgentPM CLI CI currently runs on `ubuntu-latest` only, while releases ship macOS and Windows binaries. This stage adds current-target detection, native-payload classification, archive extraction changes, and local runtime-environment provisioning — all of which behave differently per platform and cannot be meaningfully verified on Linux alone.
+
+- The suites covering target detection, payload classification, extraction, and runtime-environment provisioning must execute on macOS and Windows as well as Linux.
+- `#[cfg(unix)]`-gated tests must not be the sole coverage for behavior that also has a Windows path.
+- If a full matrix per pull request is too slow, the platform matrix must run on merge to main and on release tags; it must not be omitted.
+- Evidence for the payload-classification and target-detection cases below is incomplete if produced only from a Linux runner.
+
 ### Registry / frontend / API
 
 Run the existing frontend and backend unit/integration suites.
@@ -130,6 +139,7 @@ Add tests for:
 - Future unsupported lockfile version is rejected before lossy deserialization/rewrite.
 - Plain `agentpm install` lock regeneration preserves Python resolution state from the resolve plan.
 - Package key remains logical `kind:name@version`, not target-qualified.
+- `PackageKind` variants stay in agreement across the CLI lockfile/semver types and the SDK install DTOs; a variant added to one side without the other fails a test rather than passing review.
 - New lock records release integrity but no local selected-artifact target/digest.
 - Stale manifest/Python resolution mismatch blocks publish.
 - Published release/artifact contains Tool-specific Python resolution metadata.
@@ -189,6 +199,12 @@ Automated cases:
   - one scan scheduled per target artifact;
   - all-clean state requires appropriate artifact results;
   - infection of any artifact yanks/disables logical version.
+- release reservation outlives an individual presigned PUT window.
+- a presigned PUT can be re-issued for a still-pending child artifact without invalidating the release or already-uploaded siblings.
+- an expired release reservation produces an actionable, identifiable error rather than an opaque S3 or `409` failure.
+- worst-case registry call count for a supported multi-target release stays within the effective publish rate-limit budget, including presign re-issues and one retried matrix job.
+- an S3 error other than not-found on the finalize destination-exists check fails finalize instead of being treated as "object absent" and triggering a copy; `AccessDenied` specifically is covered.
+- resume state is observable by the client — a resumed reservation is distinguishable from a fresh one, or the flag is absent from the response entirely.
 
 ### Canonicalization / stored-byte integrity / provenance
 
@@ -256,6 +272,9 @@ Test target behavior:
 - extraction entry-count cap enforced;
 - failed extraction/provisioning does not finalize install session;
 - dependency provisioning failure leaves clear recoverable state;
+- install session remains valid through dependency provisioning, not only through artifact download;
+- a presigned GET expiring mid-install produces an actionable error rather than a bare transport failure;
+- download client enforces explicit connect and idle/progress timeouts instead of `reqwest` defaults;
 - legacy package follows legacy install path.
 
 ### CI / headless signing

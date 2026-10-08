@@ -630,6 +630,10 @@
 ## Milestone 11: Python Tool Dependency Contract
 > Scope note: introduce the new-format Python Tool dependency contract and AgentPM-owned local Python environment: author intent in `agent.json`, portable exact resolution state in `agent.lock`, eager dependency provisioning during install, and deterministic execution through an AgentPM-managed environment. This milestone preserves legacy vendored Tools and does not yet define multi-target release storage, target artifact selection, release-level cryptographic signing, or GitHub Actions orchestration.
 >
+> This milestone **owns the canonical AgentPM target identifier and current-target detection**, because the managed Python environment must be keyed by consumer target from the start. Milestone 12 consumes that vocabulary for payload classification; Milestones 13, 15, and 16 consume it for artifact storage, selection, and the CI matrix.
+>
+> This milestone also **owns the implementation of Python environment provisioning** for the single artifact a consumer installs today. Milestone 15 does not reimplement provisioning; it generalizes the same code path to the target-selected artifact and adds the no-compatible-artifact failure modes. Build the provisioning surface here so Milestone 15 extends it rather than duplicating it.
+>
 > Implementation notes:
 > - Current AgentPM has no venv, no pip/uv integration, and no Python dependency location. `agentpm run` resolves `python`/`python3` from PATH (or `AGENTPM_PYTHON`) and invokes it directly.
 > - Existing `_vendor` support is entirely author code (`sys.path.insert`) and must keep working for legacy Tools.
@@ -638,7 +642,16 @@
 > - Plain `agentpm install` fully regenerates `agent.lock` from the server resolve plan. New Python resolution state must therefore flow through the resolve DTO/plan or it will be erased.
 > - Current lock parsing is forward-unsafe: `lockfile_version` is not consulted before untagged deserialization, unknown fields are ignored, and a future lock can be rewritten lossily. Fix this before writing v4 data.
 > - Keep one logical locked package entry per `kind:name@version`; target selection is local machine state, not source-controlled lock state.
+> - Target IDs should follow the Rust target-triple vocabulary already used by `agentpm/.github/workflows/release.yml`, and must distinguish relevant ABI/libc rather than only OS + CPU. Do not reuse `client.os`/`client.arch` from the publish descriptor — those describe the publishing machine and are telemetry only.
 
+- [ ] Define canonical AgentPM target identifier representation, including:
+  - [ ] `any`;
+  - [ ] `aarch64-apple-darwin`;
+  - [ ] `x86_64-apple-darwin`;
+  - [ ] `x86_64-unknown-linux-gnu`;
+  - [ ] `x86_64-pc-windows-msvc`;
+  - [ ] room for future supported targets/ABI variants.
+- [ ] Add deterministic current-target detection/mapping rather than treating raw `std::env::consts::{OS,ARCH}` as the compatibility ID.
 - [ ] Extend Tool runtime schema with optional Python `dependencies` when `runtime.type == "python"`.
 - [ ] Extend all relevant typed runtime representations, including runner-side `RuntimeDecl`, so the new field is understood consistently.
 - [ ] Reject `dependencies` for Node Tools.
@@ -658,7 +671,12 @@
 - [ ] Resolve declared dependencies to exact portable state before publishing:
   - [ ] update/write AgentPM lock state;
   - [ ] fail publish if manifest declarations and resolved state disagree/stale.
-- [ ] Extend `LockedPackage` with optional Python resolution state.
+- [ ] Extend `LockedPackage` with optional Python resolution state. Settle the **final** field layout here so Milestone 14 extends it rather than reshaping it:
+  - [ ] keep the four existing fields unchanged — `kind`, `name`, `version`, `integrity`;
+  - [ ] add one optional typed field for Python resolution (for example `python_resolution: Option<PythonResolution>`), `#[serde(default, skip_serializing_if = "Option::is_none")]` so v2/v3 locks round-trip byte-identically;
+  - [ ] do **not** add any target, selected-artifact, interpreter, or environment-fingerprint field — those are machine-local `.agentpm/` state, not portable lock state;
+  - [ ] note explicitly in code comments that `integrity` is the single logical package digest, and that Milestone 14 redefines what it *contains* for new-format releases (the 64-char lowercase release digest) **without changing its type or adding sibling digest fields**.
+- [ ] Confirm the `LockedPackage` layout chosen here satisfies Milestone 14's integrity requirements before implementing, so the struct is touched once across the two milestones.
 - [ ] Evolve lockfile-version selection:
   - [ ] replace `requires_v3_lock(...)` with a `minimum_lock_version(...)`-style helper;
   - [ ] return minimum version 4 when Python resolution/new release fields are present;
@@ -670,6 +688,10 @@
 - [ ] Preserve current V1/V2-shape and on-disk v2/v3 reads.
 - [ ] Keep package keys target-independent (`kind:name@version`).
 - [ ] Update registry resolve/install DTOs and `ResolvePlan` so Python resolution state reaches `lock_from_plan` and survives a plain full-regeneration install.
+- [ ] Reconcile the duplicated `PackageKind` enumerations while both sides are being modified:
+  - [ ] the CLI lockfile/semver types define seven variants; the SDK install DTOs define eight, and only the SDK has `Template`;
+  - [ ] either share one definition across the crates, or keep two with an explicit total-coverage conversion;
+  - [ ] add a test that fails when one side gains a variant the other lacks, so the drift cannot be reintroduced silently.
 - [ ] Ensure published Tool release metadata/artifact contains the Tool-specific Python resolution independently of the publisher's broader workspace lock.
 - [ ] Add an AgentPM-managed per-Tool Python environment under `.agentpm/`, keyed by:
   - [ ] Tool identity/version;
@@ -691,24 +713,17 @@
   - [ ] plain install lock regeneration retaining Python resolution.
 
 ## Milestone 12: Python Tool Artifact Compatibility
-> Scope note: establish a conservative compatibility model for the Tool payload itself, distinct from Python dependency portability, so AgentPM can distinguish portable `any` artifacts from target-specific native payloads. This milestone defines the canonical target vocabulary and package-time classification metadata. It does not yet implement multi-artifact registry storage, target-aware install selection, CI fan-in publishing, or retroactively classify legacy releases.
+> Scope note: establish a conservative compatibility model for the Tool payload itself, distinct from Python dependency portability, so AgentPM can distinguish portable `any` artifacts from target-specific native payloads. This milestone defines package-time classification metadata on top of the canonical target vocabulary. It does not yet implement multi-artifact registry storage, target-aware install selection, CI fan-in publishing, or retroactively classify legacy releases.
 >
 > Implementation notes:
+> - The canonical target identifier and current-target detection are **defined in Milestone 11**, because the managed Python environment is keyed by consumer target. Consume that representation here; do not introduce a second target vocabulary.
 > - `client.os` / `client.arch` in today's publish descriptor describe the publishing machine only; they are not compatibility metadata and must not be reinterpreted as such.
-> - Prefer AgentPM target IDs compatible with the Rust target-triple vocabulary already used by AgentPM's release workflows. The target must distinguish relevant ABI/libc, not only OS + CPU.
 > - `any` is reserved for payloads AgentPM can safely treat as portable; when uncertain, choose the current concrete target.
 > - Declared Python dependencies are installed separately for the consumer and do not make the Tool payload target-specific.
 > - `.whl` is currently blocked as an embedded archive. Keep it blocked for normal Tool payloads; target-side dependency installation removes the need to ship wheels inside the Tool tarball.
 
-- [ ] Define canonical AgentPM target identifier representation, including:
-  - [ ] `any`;
-  - [ ] `aarch64-apple-darwin`;
-  - [ ] `x86_64-apple-darwin`;
-  - [ ] `x86_64-unknown-linux-gnu`;
-  - [ ] `x86_64-pc-windows-msvc`;
-  - [ ] room for future supported targets/ABI variants.
-- [ ] Add deterministic current-target detection/mapping rather than treating raw `std::env::consts::{OS,ARCH}` as the compatibility ID.
-- [ ] Define portable `any` semantics explicitly.
+- [ ] Consume the canonical target identifier and current-target detection defined in Milestone 11; do not redefine either here.
+- [ ] Define portable `any` **payload** semantics explicitly — what makes a payload safely target-independent, as distinct from `any` merely being a valid target value.
 - [ ] Implement conservative payload classification after final file collection:
   - [ ] `.so`;
   - [ ] `.dylib`;
@@ -724,11 +739,10 @@
 - [ ] Preserve legacy Tool behavior with compatibility unknown/legacy rather than inventing `any`.
 - [ ] Ensure local publish of a pure source Tool can produce `any`.
 - [ ] Ensure local publish of a native payload claims only the detected current target.
-- [ ] Add tests for pure Python/data payload versus native payload classification on supported host families.
+- [ ] Add tests for pure Python/data payload versus native payload classification on supported host families. These must actually execute on macOS and Windows, not only Linux — see the AgentPM CI matrix task in Milestone 16, and schedule it before relying on this coverage.
 
 ## Milestone 13: Multi-Artifact Release, Upload, S3, and Scanning Model
 > Scope note: evolve publishing/storage from one version = one tarball into one immutable Tool release = one or more target artifacts. Introduce release reservations with child uploads, separate per-target S3 objects, normalized artifact rows, atomic release finalization, streaming uploads, and per-artifact malware scanning while preserving the legacy one-object publish path. This milestone defines release assembly/storage; Milestone 14 adds the release cryptographic contract and Milestone 15 consumes it during installation.
->
 > Implementation notes:
 > - The existing `Upload` row has one `tmp_key`, one `final_key`, one digest and one pending row per `(package_id, version)`. A second target upload currently collides with `409 publish already in progress`; do not stretch this row into pretending it is a multi-artifact release.
 > - Keep the existing `/v1/tools/publish/init|finalize` legacy behavior readable. New-format requests may reuse/version these endpoints, but need a release-level reservation plus child artifact-upload representation.
@@ -787,6 +801,22 @@
   - [ ] client enforces the server policy;
   - [ ] remove contradictory independent 3 GB vs 1 GB expectations.
 - [ ] Implement server-side cleanup/expiration for orphaned staged release artifacts.
+- [ ] Define and implement the release expiry/retry policy:
+  - [ ] choose a release-reservation lifetime deliberately, independent of and longer than any single presigned PUT window (today's presign is 900s, sized for one immediate upload);
+  - [ ] allow re-issuing a presigned PUT for a still-pending child artifact without invalidating the release or already-uploaded siblings;
+  - [ ] return expiry information the client can act on, so a CI job reports "release reservation expired, re-run the workflow" rather than an opaque S3 or `409` error;
+  - [ ] keep resume keyed at release + artifact level for the whole window;
+  - [ ] record the chosen lifetimes in the spec rather than leaving them implicit.
+- [ ] Audit publish rate limits against multi-artifact CI usage:
+  - [ ] count worst-case registry calls for a supported release, including presign re-issues and per-job retries;
+  - [ ] confirm a legitimate matrix publish cannot exhaust the current `10/minute; 100/hour` at `cost=3` budget;
+  - [ ] set distinct limits/costs for release-scoped endpoints if the audit shows the current budget is insufficient.
+- [ ] Separate registry-API timeouts from object-transfer timeouts in the publish client:
+  - [ ] today one 600s total timeout covers the S3 PUT because the same `reqwest` client is reused;
+  - [ ] prefer per-transfer connect/idle/progress timeouts over a single total-duration cap for artifact bytes.
+- [ ] Fix two pre-existing publish-path defects while this code is open, and carry the corrected behavior into the new release flow:
+  - [ ] `app/tools/application/cli.py:2099` resolves `final_exists_and_matches` as `False if code in ("404", "NotFound", "NoSuchKey") else False` — both arms are `False`, so `AccessDenied` or any other S3 error on the final HEAD is treated as "object absent" and triggers a copy. Distinguish genuine not-found from an error that should fail finalize.
+  - [ ] `publish_init` returns `"resumed": true` on the resume path, but the Rust `InitPublish` struct has no such field, so the client silently discards it and cannot tell a fresh reservation from a resumed one. Either add the field to the client type and surface it, or drop it from the response — do not leave a documented-but-ignored wire field, and make the equivalent release-level resume state explicitly visible to the client.
 - [ ] Implement one atomic release finalize:
   - [ ] all intended artifacts present;
   - [ ] all metadata consistent;
@@ -910,7 +940,10 @@
 ## Milestone 15: Target-Aware Installation and Runtime Provisioning
 > Scope note: consume the new release model safely on the client: choose one compatible target artifact, verify the release and payload, cache/extract it without collisions, provision the AgentPM-managed Python environment, and fail deterministically when compatibility or archive safety checks fail. Preserve the legacy install path and do not add Rosetta/emulation or silently change locked versions.
 >
+> **Milestone 11 implements Python environment provisioning; this milestone does not reimplement it.** Here the same provisioning code path is generalized to the target-selected artifact and gains the compatibility failure modes — no compatible artifact, changed target, stale environment. If provisioning needs reworking rather than extending, that is a signal Milestone 11's surface was built too narrowly and should be fixed there.
+>
 > Implementation notes:
+> - The canonical target identifier and current-target detection come from Milestone 11.
 > - Current install `PackageArtifact` contains one URL/digest and no target. Extend the contract for new release metadata without requiring clients to download/presign every target.
 > - Detect consumer target before install init and send it to the server; server may return the selected artifact URL plus the full signed release inventory for client verification.
 > - Keep `agent.lock` platform-neutral. Selected target/artifact and runtime-environment fingerprint belong in `.agentpm/` local state.
@@ -918,7 +951,7 @@
 > - Current extraction silently skips symlink/hardlink entries and has no decompressed-size cap. Harden this while changing the install path.
 > - Dependency provisioning adds a new install failure stage; do not finalize the install session as successful until the local runtime environment is ready.
 
-- [ ] Detect canonical current target using Milestone 12 target mapping.
+- [ ] Detect canonical current target using the Milestone 11 target identifier/detection mapping.
 - [ ] Resolve the Tool's Python interpreter using existing family/minimum-version/`AGENTPM_PYTHON` rules before provisioning dependencies.
 - [ ] Extend install-init request with target/runtime context needed for selection.
 - [ ] Read/verify new release metadata:
@@ -941,6 +974,11 @@
   - [ ] target;
   - [ ] artifact digest.
 - [ ] Preserve cache re-verification before reuse.
+- [ ] Define install-side expiry and timeout behavior:
+  - [ ] keep the install session valid through dependency provisioning, not only through artifact download (today the session TTL and presigned GET are both 10 minutes, sized for one small tarball);
+  - [ ] make a mid-install presigned-GET expiry produce an actionable error, and re-obtainable without restarting the whole install where practical;
+  - [ ] set deliberate connect and idle/progress timeouts on the download client, which currently uses `reqwest` defaults with no explicit timeout;
+  - [ ] record the chosen session and URL lifetimes in the spec rather than inheriting 10 minutes.
 - [ ] Keep extracted Tool directory version-terminal if no correctness issue requires a target segment; only one target payload is active per local install.
 - [ ] Store selected target/artifact digest/runtime-environment fingerprint in machine-local `.agentpm/` state if persistence is needed.
 - [ ] Harden archive extraction:
@@ -976,7 +1014,7 @@
 > - Existing AgentPM workflows establish tag/version guards, pinned actions/toolchains, `uv`, target matrices, and artifact upload. They do **not** establish atomic fan-in publishing; this milestone must add that.
 > - `publish --dry-run` is not a sufficient matrix build contract because it produces human output and skips signing/network behavior. Extract or add a provider-neutral package-build CLI surface.
 > - Initial registry authentication can use the existing `AGENTPM_TOKEN`/PAT mechanism.
-> - Matrix target vocabulary should match the canonical AgentPM targets from Milestone 12.
+> - Matrix target vocabulary should match the canonical AgentPM targets from Milestone 11.
 
 - [ ] Add secure noninteractive key loading:
   - [ ] preserve encrypted `StoredKeyV1`;
@@ -1028,6 +1066,11 @@
 - [ ] Keep workflow/provider concepts out of core release schema; GitLab/other CI should be able to call the same CLI commands.
 - [ ] Verify local single-target publish remains supported.
 - [ ] Add end-to-end CI example package/run if feasible.
+- [ ] Extend **AgentPM's own** CI matrix beyond Linux, separately from the Tool-publishing workflow:
+  - [ ] `agentpm/.github/workflows/ci.yml` currently runs `ubuntu-latest` only while `release.yml` ships macOS and Windows, so platform breakage is first seen at tag time;
+  - [ ] add macOS and Windows jobs covering at least target detection, payload classification, archive extraction, and local runtime-environment provisioning;
+  - [ ] do not let `#[cfg(unix)]`-gated tests be the only coverage for behavior that also has a Windows path;
+  - [ ] if a full matrix per pull request is too slow, run it on merge to main and on release tags rather than omitting it.
 - [ ] Explicitly document AgentPM OIDC trusted publishing as future work, not Stage 1.
 
 ## Milestone 17: Documentation and Migration Hardening
