@@ -228,7 +228,7 @@ This gives us a correct, predictable Explore surface: sane page-size/cursor beha
 
 ## Release Band 2: Faceted Filters and Search Relevance
 Covered milestones: 2-3.
-This gives us a reusable server-side faceted-search foundation, the first objective universal and kind-specific filters, `agentpm-harness` as a Template execution surface, and expanded full-text relevance fields with defensible ranking. Users can both narrow and find. Filters and relevance ship together because a filter set over a thin index produces confidently wrong empty states; neither half is convincing without the other.
+This gives us a reusable server-side faceted-search foundation, the first objective universal and kind-specific filters, `agentpm-harness` as a Template execution surface, and deliberately low-weighted indexing of selected user-meaningful semantic metadata with direct identity matches preserved as the strongest signal, guarded by a fixed relevance fixture set. Indexing full READMEs or arbitrary manifest text, embeddings, and LLM reranking all stay out of scope. Filters and recall ship together because a filter set over a thin index produces confidently wrong empty states; neither half is convincing without the other.
 
 ## Milestone 4: Stars, Trending, and Popularity Signals
 > Scope note: add lightweight ecosystem popularity/engagement primitives and make Trending useful in a low-activity registry. This milestone introduces identity-level stars, replaces weak weekly-change presentation, and separates full-result-set trend computation from top-N presentation. It does not add ratings, reviews, comments, social feeds, universal quality scoring, or Stage 2 Package Health semantics.
@@ -332,7 +332,7 @@ This gives us a reusable server-side faceted-search foundation, the first object
 
 ## Release Band 3: Popularity Signals and Namespace Discovery
 Covered milestones: 4-5.
-This gives us stars, trending, and popularity signals feeding ranking, plus curated namespace and scoped discovery surfaces. Stars are grouped with namespace discovery rather than with search because the ranking integration lands in the search code touched in the previous band, and namespace pages are the first surface where popularity signals have somewhere meaningful to appear.
+This gives us identity-level stars with visibility-safe aggregates, a Trending signal computed over the full eligible result set with deterministic ordering in place of the current installs-only score, and curated namespace pages with owner/admin pins. Stars are grouped with namespace discovery because both land in the shared Explore search/filter/sort/pagination foundation — star counts become a Trending ranking input and appear on namespace result cards. Stars are explicitly not quality, trust, or Package Health, and no weighted quality score is introduced here. The shared star UI primitive defined in this band is applied across every detail-page kind in the next one.
 
 ## Milestone 6: Package Detail Shared-Shell Hardening
 > Scope note: apply shared package/component detail-page hardening consistently across all kinds while preserving the useful specialized inspection tabs already present. This milestone adds the shared star treatment, removes unfinished placeholder UI, and improves popularity signals. It does not redesign the detail-page information architecture, migrate Agent/Agent Package terminology, change authored README content, or implement Stage 2 Package Health presentation.
@@ -437,7 +437,7 @@ This gives us stars, trending, and popularity signals feeding ranking, plus cura
 
 ## Release Band 4: Package Detail and Technical SEO
 Covered milestones: 6-7.
-This gives us a hardened shared package-detail shell across kinds and full registry technical SEO: canonical URLs, sitemaps, structured data, and crawlable discovery paths. SEO is deliberately last in the web sequence — canonicals and sitemaps are only worth emitting once the detail routes and discovery URLs underneath them have stopped moving. At the end of this band the public registry is ready for real inbound traffic.
+This gives us a hardened shared package-detail shell across kinds plus the registry technical SEO/indexing baseline: unique server-rendered metadata, canonical behavior, OpenGraph/social previews, sitemap and robots boundaries, and crawl control over arbitrary Explore query/filter URLs. Broad structured-data/schema.org work stays out of scope here and waits on Stage 2 category semantics. SEO is deliberately last in the web sequence — canonicals and sitemaps are only worth emitting once the detail routes and discovery URLs underneath them have stopped moving. At the end of this band the public registry is technically ready for inbound traffic; Band 6 adds measurement before traffic is intentionally increased.
 
 ## Milestone 8: CLI Scaffolding and Lint Quality
 > Scope note: fix the highest-impact CLI creation and linting rough edges so a newly scaffolded artifact is valid and lint output prioritizes actionable domain errors over schema noise. This milestone preserves machine-readable lint contracts and focuses on validation/rendering quality. It does not redesign all CLI output, add new runtime behavior, change AgentPM package semantics, or perform Stage 2 terminology migration.
@@ -609,11 +609,10 @@ This gives us trustworthy scaffolding, lint output that explains what is actuall
 
 ## Release Band 6: Product Analytics, Billing Funnel, and Feedback
 Covered milestones: 10A.
-This gives us the small deliberate analytics vocabulary, authoritative server-side events, billing conversion events, one Early Product Funnel dashboard, and a lightweight feedback path. It ships on the web/API vehicle only. Sequencing it immediately after the registry is traffic-ready is the point: instrumentation has to be live before the traffic it is meant to measure arrives.
+This gives us the small deliberate analytics vocabulary, authoritative server-side events, billing conversion events, one Early Product Funnel dashboard, and a lightweight feedback path. The user-visible instrumentation in this band ships on the web/API surfaces; shared PostHog configuration and event conventions may prepare the CLI integration, but no CLI telemetry is emitted until Band 7. Sequencing it immediately after the registry is technically ready for inbound traffic is the point: instrumentation has to be live before that traffic is intentionally increased.
 
 ## Milestone 10B: CLI Telemetry and Privacy Contract
 > Scope note: add minimal, anonymous, default-on-with-disclosure CLI telemetry and the privacy contract that governs it, including the opt-out mechanisms and the Privacy Policy update. Split from Milestone 10A because this is the only analytics work that ships inside the Rust binary, is the only part with a legal/disclosure surface, and must not go out half-finished — a partially implemented allowlist or a missing opt-out is a privacy problem, whereas incomplete web analytics is merely incomplete data.
->
 > Implementation notes:
 > - Depends on Milestone 10A for the PostHog project/config integration and the shared event naming/property convention; do not invent a second convention here.
 > - Telemetry is minimal, anonymous, default-on with clear disclosure, and easy to disable.
@@ -807,7 +806,7 @@ This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a st
 
 ## Release Band 8: Python Tool Dependency Contract
 Covered milestones: 11A-12.
-This gives us the complete first-party Python dependency story end to end: declaration in `agent.json` with real lint validation, AgentPM-managed `uv` resolution to exact portable state, the fixed `PythonResolution` v1 contract, lockfile persistence with a forward-version guard, an AgentPM-managed per-Tool environment under `.agentpm/`, dependency-bearing execution through `agentpm run`, and honest payload-compatibility classification. These four milestones are one band because any smaller cut ships a Tool that can declare dependencies it cannot install, or install dependencies it cannot verify are compatible with the consumer's target. Legacy vendored Tools keep working unchanged throughout. If schedule pressure demands an earlier partial release, the Milestone 11B lockfile forward-version guard is the only piece with standalone value — it is a correctness fix for a hazard that exists today.
+This gives us the first-party Python dependency story working end to end for a single published artifact: declaration in `agent.json` with real lint validation, AgentPM-managed `uv` resolution to exact portable state, the fixed `PythonResolution` v1 contract, lockfile persistence with a forward-version guard, an AgentPM-managed per-Tool environment under `.agentpm/`, dependency-bearing execution through `agentpm run`, and honest payload-compatibility classification. These four milestones are one band because any smaller cut ships a Tool that can declare dependencies it cannot install, or install dependencies it cannot verify are compatible with the consumer's target. Legacy vendored Tools keep working unchanged throughout. If schedule pressure demands an earlier partial release, the Milestone 11B lockfile forward-version guard is the only piece with standalone value — it is a correctness fix for a hazard that exists today.
 
 ## Milestone 13A: Release and Artifact Data Model
 > Scope note: redefine what a published Tool release **is** — one immutable release composed of one or more target artifacts — and where its bytes live. Owns the canonical release-manifest contract, the three new publish/version artifact tables, the `PackageVersion` release-format discriminator, the legacy-column migration, the new immutable S3 layout, per-artifact self-description, and cross-artifact consistency validation. Does not change how uploads are performed (13B).
@@ -879,7 +878,6 @@ This gives us the complete first-party Python dependency story end to end: decla
 
 ## Milestone 13B: Multi-Artifact Upload, Finalize, and Scanning
 > Scope note: make the publish transaction work for N artifacts — per-artifact reservations and presigned PUTs under one logical release, streaming uploads, reconciled size limits, reservation expiry/cleanup, rate-limit and timeout fitness for CI, one atomic finalize, post-finalize immutability, and per-artifact malware scanning. Consumes the data model from 13A.
->
 > Implementation notes:
 > - The existing `Upload` row has one `tmp_key`, one `final_key`, one digest and one pending row per `(package_id, version)`. A second concurrent artifact for the same version collides today; this is the central constraint to break.
 > - Keep the existing `/v1/tools/publish/init|finalize` legacy behavior readable. New-format requests may reuse/version these endpoints but must not silently change legacy semantics.
@@ -982,7 +980,6 @@ This gives us a typed Rust representation of the existing `agentpm.package.signa
 
 ## Milestone 14B: Release-Level Signatures and Stored-Byte Integrity
 > Scope note: introduce the new release-level statements built on the 14A foundation — `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` bound to the release digest — plus trustworthy stored-byte verification before finalize, fail-closed attestation, cross-language key-ID normalization, and explicit historical-signer semantics. Server-side only; client verification material is Milestone 14C.
->
 > Implementation notes:
 > - New-format signatures attach naturally to `PackageVersion` (the logical release), not to each target artifact.
 > - Current server finalize compares publisher-declared SHA against publisher-set S3 metadata, which is publisher-controlled. New release finalize needs a trustworthy stored-byte source.
@@ -1132,7 +1129,7 @@ This gives us a typed Rust representation of the existing `agentpm.package.signa
   - [ ] enforce entry-count cap on extraction;
   - [ ] ensure failed extraction cannot leave a seemingly complete install directory.
 - [ ] Provision dependencies after payload extraction:
-  - [ ] create/reuse Milestone-11 managed Python environment;
+  - [ ] create/reuse Milestone-11C managed Python environment;
   - [ ] install exact applicable locked dependencies with AgentPM-managed uv;
   - [ ] verify environment fingerprint.
 - [ ] Only finalize the install session as successful after payload + dependency environment are ready.
@@ -1150,7 +1147,7 @@ This gives us a typed Rust representation of the existing `agentpm.package.signa
 - [ ] Do not add Rosetta/emulation handling in this milestone.
 
 ## Release Band 11: Release Integrity and Verifiable Target-Aware Installs
-Covered milestones: 14B-15.
+Covered milestones: 14B–14C, 15.
 This is the band where the new release format becomes real for users. It gives us release-level `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` statements, trustworthy stored-byte verification before finalize, fail-closed attestation, the root-signed registry key set with its backfill and root-key prerequisite, client-side verification of release digest, author signature, and registry attestation, stricter `--require-signature`/`--require-attestation` semantics, and target-aware installation with runtime provisioning for the selected artifact. The gate from Band 9 lifts here and not before: publishers publish multi-artifact signed releases, and consumers select their target, verify the release cryptographically, and provision the right environment. This is the largest band in the stage and the one that cannot be subdivided — a cut that shipped target selection without verification would mean knowingly installing unverified releases, and a cut that shipped verification without target selection would mean a verifier with nothing installable to verify.
 
 ## Milestone 16: Headless Signing and GitHub Actions Publishing
@@ -1222,7 +1219,7 @@ This is the band where the new release format becomes real for users. It gives u
 
 ## Release Band 12: Headless Signing and CI Publishing
 Covered milestones: 16.
-This gives us headless signing with key material supplied by the environment and reusable GitHub Actions patterns for building and publishing multi-target releases, including AgentPM's own cross-platform CI coverage. It follows Band 11 because there is no point automating the publication of signed multi-artifact releases until that format is consumer-installable and verifiable.
+This gives us headless signing with encrypted AgentPM key material plus a noninteractive secret/passphrase source and reusable GitHub Actions patterns for building and publishing multi-target releases, including AgentPM's own cross-platform CI coverage. It follows Band 11 because there is no point automating the publication of signed multi-artifact releases until that format is consumer-installable and verifiable.
 
 ## Milestone 17: Documentation and Migration Hardening
 > Scope note: finish Stage 1 by documenting the hardened discovery/CLI/analytics surfaces and the new Python Tool dependency, runtime-environment, portability, release, integrity, and CI models so authors can use the system without founder guidance. This milestone updates Stage 1-facing docs/examples only; it does not perform the Stage 2 category-language/IA rewrite or expand the feature set beyond earlier milestones.
@@ -1306,4 +1303,4 @@ This gives us headless signing with key material supplied by the environment and
 
 ## Release Band 13: Documentation and Migration Hardening
 Covered milestones: 17.
-This gives us full documentation for the new dependency, release, signing, telemetry, and install surfaces, the migration guidance for authors and consumers moving from single-artifact to multi-artifact releases, updated CLI help text, and refreshed registry/docs examples. It is last because documentation written against surfaces that are still moving has to be rewritten; Stage 2 terminology work stays out of scope.
+This gives us Stage 1-facing documentation for the new dependency, release, signing, telemetry, and install surfaces, the migration guidance for authors and consumers moving from single-artifact to multi-artifact releases, updated CLI help text, and refreshed registry/docs examples. It is last because documentation written against surfaces that are still moving has to be rewritten; Stage 2 terminology work stays out of scope.
