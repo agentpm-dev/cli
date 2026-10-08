@@ -568,6 +568,56 @@ Do not make `requirements.txt`, `pyproject.toml`, Poetry lockfiles, uv lockfiles
 
 The resolved state must be portable across supported platforms. Do not lock the publisher's selected wheel filename or publisher architecture. The resolution may contain environment markers/conditional dependency branches where a transitive dependency differs by platform or Python version, but every selected package version must be exact.
 
+#### Canonical `PythonResolution` v1 contract
+
+Stage 1 uses one explicit portable resolution object everywhere the resolved Python dependency state crosses a contract boundary: `agent.lock`, resolve/install DTOs, publish descriptors, artifact metadata, and release-manifest digesting.
+
+```json
+{
+  "type": "agentpm.python-resolution.v1",
+  "python": {
+    "requires": ">=3.11"
+  },
+  "requirements": [
+    "openai>=1.51.0",
+    "pydantic>=2.8,<3"
+  ],
+  "packages": [
+    {
+      "name": "annotated-types",
+      "version": "0.7.0"
+    },
+    {
+      "name": "colorama",
+      "version": "0.4.6",
+      "marker": "sys_platform == 'win32'"
+    },
+    {
+      "name": "openai",
+      "version": "1.51.2"
+    },
+    {
+      "name": "pydantic",
+      "version": "2.9.2"
+    }
+  ]
+}
+```
+
+Contract rules:
+
+- `type` is exactly `agentpm.python-resolution.v1`.
+- `python.requires` records the normalized minimum/constraint implied by the Tool runtime contract; it is not a publisher interpreter path or machine fingerprint.
+- `requirements` records the normalized authored root requirement strings that were resolved.
+- `packages` is the complete exact resolved distribution set needed by those roots.
+- Each package entry contains normalized distribution `name`, exact `version`, and optional normalized PEP 508 `marker`.
+- The same normalized distribution name may appear more than once only when entries are distinguished by mutually exclusive marker conditions needed for portable resolution.
+- Distribution names use one deterministic normalization (PEP 503-style lowercase/hyphen normalization is preferred).
+- `requirements` and `packages` must be emitted in deterministic order; package ordering is by normalized `(name, marker-or-empty, version)`.
+- Do not record wheel filenames, wheel tags, local paths, publisher architecture, selected target, interpreter path, or a local environment identifier.
+- Stage 1 does not require preserving a full parent/child dependency graph in this object; the exact resolved set plus markers is the portable lock contract.
+- The serialized/digested form is deterministic. When `PythonResolution` participates in the release manifest, its digest is SHA-256 over its RFC 8785/JCS canonical JSON bytes.
+
 `agent.json` is author intent.
 
 `agent.lock` is AgentPM-resolved workspace state.
@@ -711,7 +761,18 @@ The registry data model should make the release/artifact relationship explicit:
 - `PackageVersion` remains the logical immutable release/version;
 - new child `PackageVersionArtifact` records own target-specific object metadata;
 - legacy scalar `sha_256`, `size_bytes`, and `s3_key` semantics remain supported for legacy single-artifact rows;
-- new release-format rows must be distinguishable from legacy rows through an explicit release/artifact format/version field rather than by guessing from nullable data.
+- new release-format rows are distinguished explicitly rather than inferred from nullable data.
+
+The Stage 1 persistence decision is:
+
+- add an explicit release-format field on `PackageVersion`; legacy rows remain legacy/null and new rows use `agentpm.package.release.v1`;
+- add a nullable release-level SHA-256 field (for example `release_sha_256`) on `PackageVersion`;
+- migrate legacy scalar artifact columns `sha_256`, `size_bytes`, and `s3_key` to nullable at the database/schema level;
+- existing legacy rows keep those three scalar values populated and they remain authoritative for the legacy single-artifact read path;
+- new `agentpm.package.release.v1` rows set the legacy scalar artifact columns to `NULL`;
+- new-format artifact bytes/size/object identity are authoritative only through `PackageVersionArtifact`;
+- new-format logical release integrity is authoritative through the release-level digest field;
+- no read path may choose legacy-vs-new behavior merely because a scalar happens to be null; branch on the explicit release format.
 
 Old CLI versions must not be allowed to misinterpret a new release manifest as a legacy tarball. When a client cannot consume the release format, fail clearly with a "requires newer AgentPM" style error.
 
@@ -721,10 +782,18 @@ The existing `Upload` row is a one-object reservation and cannot represent concu
 
 Introduce a release-level publish reservation with child artifact uploads for the new format.
 
+The Stage 1 model/table names are fixed as:
+
+- SQLAlchemy model `PackagePublishRelease` → table `package_publish_releases`;
+- SQLAlchemy model `PackagePublishArtifact` → table `package_publish_artifacts`;
+- SQLAlchemy model `PackageVersionArtifact` → table `package_version_artifacts`.
+
+Do not reuse the legacy `uploads` table as the primary multi-artifact abstraction. It remains the compatibility path for legacy single-artifact publishing.
+
 Conceptually:
 
 ```text
-PublishRelease
+PackagePublishRelease
   release_id
   package_id
   version
@@ -734,7 +803,7 @@ PublishRelease
   publisher
   expires_at
 
-PublishArtifactUpload
+PackagePublishArtifact
   artifact_id
   release_id
   target
@@ -744,6 +813,37 @@ PublishArtifactUpload
   final_key
   status
 ```
+
+The canonical immutable release document has type **`agentpm.package.release.v1`** and this logical shape:
+
+```json
+{
+  "type": "agentpm.package.release.v1",
+  "kind": "tool",
+  "name": "@namespace/tool",
+  "version": "1.2.0",
+  "manifestDigest": "sha256:<64-lowercase-hex>",
+  "pythonResolutionDigest": "sha256:<64-lowercase-hex>",
+  "artifacts": [
+    {
+      "target": "aarch64-apple-darwin",
+      "digest": "sha256:<64-lowercase-hex>",
+      "size": 12345,
+      "contentType": "application/gzip",
+      "format": "tar.gz"
+    }
+  ]
+}
+```
+
+Release-manifest contract rules:
+
+- `pythonResolutionDigest` is omitted when the release has no Python resolution.
+- `artifacts` is the complete immutable installable artifact inventory and is sorted lexicographically by canonical `target` before canonicalization/digesting.
+- Targets are unique within one release.
+- `digest` values bind concrete target bytes; `manifestDigest` binds the logical `agent.json`; `pythonResolutionDigest` binds the canonical `PythonResolution` object.
+- The release manifest contains no upload-session IDs, S3 temporary keys, local file paths, publisher machine identity, or mutable scan state.
+- The release manifest is canonicalized with RFC 8785/JCS and the release integrity is SHA-256 of those canonical bytes.
 
 A new-format publish should use one release init/finalize transaction:
 
@@ -980,19 +1080,20 @@ Artifact integrity is read from the verified release manifest and may be stored 
 
 Do not carry forward today's implicit agreement between Rust `serde_json::to_vec(Value)` and Python `json.dumps(sort_keys=True)` as the new signing contract.
 
-For new release-level statement formats, adopt a named canonical JSON contract, preferably RFC 8785 JSON Canonicalization Scheme (JCS), or an equivalently precise documented subset if implementation constraints require it.
+For all new release-level cryptographic objects, Stage 1 adopts **RFC 8785 JSON Canonicalization Scheme (JCS)** directly. Do not define a second AgentPM-specific canonical JSON profile.
 
-At minimum:
+Contract rules:
 
-- UTF-8;
-- deterministic object-key ordering;
-- deterministic Unicode handling;
-- no insignificant whitespace;
-- deterministic array ordering where the schema treats arrays as sets (artifact inventory sorted by target identifier);
-- normalized timestamps if timestamps participate;
-- no implementation-dependent numeric rendering.
+- canonicalize JSON with RFC 8785/JCS in both Rust and Python;
+- UTF-8/Unicode, object-key ordering, whitespace elimination, and number serialization follow RFC 8785;
+- JCS does not reorder arrays, so the schema must normalize set-like arrays before canonicalization:
+  - release `artifacts` sorted lexicographically by canonical target;
+  - `PythonResolution.requirements` and `.packages` sorted by their contract rules;
+- new signature/attestation timestamps, when present, are normalized to UTC RFC3339 with `Z` before canonicalization;
+- avoid floating-point values in signed/release contracts;
+- canonicalization libraries must be covered by shared cross-language vectors rather than assumed equivalent.
 
-Create shared Rust/Python test vectors including non-ASCII values.
+Create shared Rust/Python RFC 8785 vectors including non-ASCII values and at least one published AgentPM release/signature fixture.
 
 Legacy v1 author-signature and v2 registry-attestation verification must retain their historical serialization behavior exactly.
 
@@ -1064,7 +1165,44 @@ Change `--require-attestation` to mean cryptographically verified registry attes
 
 Registry attestation verification requires a trust anchor.
 
-Provide a versioned registry public-key history/read surface and a client trust strategy that does not simply accept any public key delivered adjacent to the signature. For the official AgentPM registry this may be a built-in/pinned trusted key ring or another explicit trust configuration; historical attestation keys must remain obtainable/verifiable after rotation.
+For the official AgentPM registry, Stage 1 uses a **root-signed registry key-set**:
+
+- persist attestation signing keys in a `registry_signing_keys` table/model containing at least:
+  - `key_id`;
+  - `algo`;
+  - `public_key_b64`;
+  - activation/creation timestamp;
+  - retirement timestamp/status;
+- expose `GET /v1/registry/signing-keys`;
+- the response is a versioned key-set document (type `agentpm.registry.keyset.v1`) containing active and historical attestation-verification keys needed for existing releases;
+- canonicalize the key-set payload with RFC 8785/JCS and sign it with a separate AgentPM registry **root** Ed25519 key;
+- ship/pin the official registry root public key (or small versioned root key ring) with the CLI as the bootstrap trust anchor;
+- the CLI verifies the root signature on the key set before trusting any attestation signing key from it;
+- cache a successfully verified key set locally with normal refresh/expiry behavior, but never use an unverified cached or network key set;
+- attestation `registryKeyId` selects a key from the verified key set;
+- retired signing keys remain in the signed key set so historical attestations remain verifiable;
+- an unknown key ID or invalid/untrusted key-set signature fails attestation verification;
+- rotation of the routine attestation signing key must not require pinning that signing key directly in the CLI;
+- root-key rotation is a separate rare bootstrap event and may require shipping an updated CLI/root-key ring; dynamic root rotation is out of Stage 1.
+
+This avoids trusting a public key merely because it arrived next to the signature while still allowing routine registry signing-key rotation and historical verification.
+
+**Existing attestation keys must be migrated into the key set before verification is enforced.** Every version published to date carries a registry attestation recording the current `REGISTRY_KEY_ID` (default `apm-prod-1`). Because `--require-attestation` now means cryptographically verified, and verification selects a key from the root-verified key set by `registryKeyId`, an attestation whose key ID is absent from that key set becomes unverifiable.
+
+Requirements:
+
+- seed the public half of the currently configured attestation signing key into `registry_signing_keys` as an active key, so historical `agentpm.registry.attestation.v2` rows remain verifiable;
+- include it in the signed key set from the first published key set onward;
+- the scope of `--require-attestation` must be stated explicitly: it applies to legacy single-artifact releases as well as new-format releases, which is why the backfill is mandatory rather than optional. If a future decision narrows it to new-format releases only, that must be written here rather than inferred;
+- treat "an existing published version fails `--require-attestation` after this work lands" as a regression, not expected behavior — the flag passes for those versions today.
+
+**The registry root key is a new operational dependency, not only a code change.** Requirements:
+
+- generate the root Ed25519 keypair as a deliberate, documented act before the key-set endpoint is enabled;
+- the root private key must have a stated custody posture — where it lives, who or what can use it, and how key-set signing is performed. It must not simply inherit the current attestation key's pattern of a plain environment variable read behind a failure path that logs and continues;
+- bootstrap order is load-bearing and must be respected: generate the root keypair → seed existing attestation keys into `registry_signing_keys` → produce a root-signed key set → ship a CLI with the root public key pinned → only then may `--require-attestation` enforce cryptographic verification;
+- the key-set endpoint fails closed. If a valid root signature cannot be produced, the endpoint must return an error rather than an unsigned or partially signed key set. The current attestation path's fail-open behavior must not be carried over to the trust anchor;
+- the root public key shipped in the CLI is release-engineering state: changing it requires a CLI release, and the pinned value must be auditable in the repository rather than injected at build time from an opaque source.
 
 Treat truncated registry/author key IDs as display values only.
 
@@ -1396,9 +1534,9 @@ OIDC/keyless AgentPM registry publishing is deferred.
 - Install currently completes after download/extraction; dependency provisioning introduces a new failure point that must not leave a falsely successful session.
 - A dependency environment created with one interpreter must not be reused with another incompatible interpreter.
 
-## Open questions
+## Implementation choices Codex may resolve within invariants
 
-These questions may be resolved during implementation when existing repo patterns make the answer clearer. Items already answered by the current-code handoff are intentionally removed from this list.
+The following are **not** pre-milestone contract blockers. Codex may choose the implementation that best matches existing repo patterns, provided the surrounding invariant in this spec is preserved. The Stage 1 contract decisions for `PythonResolution`, release-manifest type/schema, release-reservation table names, legacy scalar-column semantics, RFC 8785 canonicalization, and official-registry trust anchors are already fixed above and must not be reopened implicitly during implementation.
 
 1. What exact internal representation should the faceted filter query use so new Stage 2 filters can be added without branching explosion?
 2. Should the namespace pin maximum be exactly 6 or remain a small configurable constant?
@@ -1407,20 +1545,14 @@ These questions may be resolved during implementation when existing repo pattern
 5. What exact PostHog SDK/server integration pattern best matches the existing frontend/backend architecture?
 6. What persistent CLI config mechanism should store telemetry opt-out if the current config object does not already provide one?
 7. Which Lemon Squeezy webhook event names map cleanly to subscription started/updated/cancelled/payment failed?
-8. What exact typed `PythonResolution` JSON schema should AgentPM persist in `agent.lock` and published release metadata, especially for environment markers/conditional transitive dependencies?
-9. Should AgentPM bundle `uv`, download/cache a pinned standalone `uv`, or use another managed acquisition strategy? The invariant is that the user's project must not be required to manage uv.
-10. What exact on-disk local runtime-state metadata should record target/interpreter/environment fingerprint and selected artifact digest under `.agentpm/`?
-11. What exact new release-manifest schema/type string should be used?
-12. What exact SQLAlchemy model/table names should represent release reservations and child artifact uploads while keeping the existing legacy `uploads` flow readable?
-13. What retention interval/background job should clean expired staged release artifacts?
-14. Should `PackageVersion` legacy scalar artifact columns become nullable for new-format releases or remain populated with summary values? The read contract must be explicit either way.
-15. Should canonical JSON use RFC 8785 directly via libraries or an AgentPM-defined constrained profile with shared vectors?
-16. What exact official-registry trust-anchor implementation should v1 use for registry attestation keys: built-in key ring, root-signed key set, or explicit registry trust configuration?
-17. Can S3 checksum headers provide the required trusted stored-byte SHA-256 in the current presigned flow, or should AgentPM independently stream/hash staged objects before finalize?
-18. Should dependency environments be rebuilt automatically by `agentpm run` when the resolved interpreter changes, or should run fail with an explicit `agentpm install --refresh` instruction?
-19. Should the new reusable packaging surface be named `agentpm package`, or should an existing command be refactored into an equivalent machine-readable build mode? The CI contract matters more than the exact command name.
-20. Should Windows be added to the first official Tool matrix immediately given the existing CLI Windows release support, or follow after the required macOS/Linux proof?
-21. What exact compatibility/trust fields should Stage 2 Package Health read from the new release/artifact model?
+8. Should AgentPM bundle `uv`, download/cache a pinned standalone `uv`, or use another managed acquisition strategy? **Invariant:** the user's project must not be required to manage uv and AgentPM must pin/version-check the resolver it uses.
+9. What exact on-disk local runtime-state metadata/file layout should record target/interpreter/environment fingerprint and selected artifact digest under `.agentpm/`? **Invariant:** this state is machine-local and never enters portable `agent.lock`.
+10. What retention interval/background job should clean expired staged release artifacts? **Invariant:** cleanup must be retry-safe and must never delete finalized release objects.
+11. Can S3 checksum headers provide the required trusted stored-byte SHA-256 in the current presigned flow, or should AgentPM independently stream/hash staged objects before finalize? **Invariant:** new release finalization cannot trust only publisher-declared metadata.
+12. Should dependency environments be rebuilt automatically by `agentpm run` when the resolved interpreter changes, or should run fail with an explicit `agentpm install --refresh` instruction? **Invariant:** an incompatible existing environment is never silently reused.
+13. Should the new reusable packaging surface be named `agentpm package`, or should an existing command be refactored into an equivalent machine-readable build mode? **Invariant:** the CI-facing build contract is provider-neutral and emits the required artifact descriptor.
+14. Should Windows be added to the first official Tool publish matrix immediately given the existing CLI Windows release support, or follow after the required macOS/Linux proof? **Invariant:** AgentPM's own CLI CI still gains Windows coverage for target/runtime/extraction behavior in this stage.
+15. What exact compatibility/trust fields should Stage 2 Package Health read from the new release/artifact model?
 
 ## Related Specs
 

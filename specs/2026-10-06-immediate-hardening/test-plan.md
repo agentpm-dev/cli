@@ -132,8 +132,13 @@ Add tests for:
 - Node Tool with dependencies rejected.
 - Invalid Python requirement syntax rejected.
 - Duplicate/conflicting dependency handling.
-- Portable Python resolution is deterministic.
+- Canonical `PythonResolution` object uses type `agentpm.python-resolution.v1`.
+- `PythonResolution` contains `python.requires`, normalized authored `requirements`, and exact `packages`.
+- Package entries contain normalized name + exact version + optional normalized PEP 508 marker.
+- Resolution ordering is deterministic (`requirements` and `(name, marker-or-empty, version)` package ordering).
 - Resolution can represent conditional/environment-marker dependencies without publisher-target leakage.
+- Resolution rejects/never records wheel filenames, wheel tags, local paths, publisher target/architecture, interpreter paths, or local environment IDs.
+- Equivalent `PythonResolution` values produce identical RFC 8785/JCS bytes/digests in Rust and Python.
 - Current v2/v3 lock reads remain valid.
 - New capability state writes minimum lockfile version 4.
 - Future unsupported lockfile version is rejected before lossy deserialization/rewrite.
@@ -179,6 +184,12 @@ Automated cases:
 - legacy single-artifact publish still finalizes.
 - one-artifact new-format release finalizes.
 - multiple-target new-format release finalizes.
+- release manifest type is exactly `agentpm.package.release.v1` and validates the fixed field contract.
+- `pythonResolutionDigest` is omitted when no Python resolution exists and present/bound when one exists.
+- release artifact inventory is target-unique and canonically sorted before digesting.
+- `PackagePublishRelease` persists in `package_publish_releases`.
+- `PackagePublishArtifact` persists in `package_publish_artifacts`.
+- `PackageVersionArtifact` persists in `package_version_artifacts`.
 - one release reservation owns multiple child artifact uploads.
 - concurrent child artifact reservations for one version do not collide with legacy one-pending-upload rule.
 - duplicate target rejected.
@@ -187,6 +198,9 @@ Automated cases:
 - mismatched Python resolution digest rejected.
 - one failed/missing upload leaves release unpublished.
 - finalization creates one logical version + N artifact rows atomically.
+- legacy `PackageVersion.sha_256/size_bytes/s3_key` rows remain populated/readable.
+- new `agentpm.package.release.v1` rows have legacy scalar artifact columns `NULL`, populate the release-level digest field, and use child artifact rows as the only authoritative target-artifact source.
+- read paths branch on explicit release format, not on nullable-column heuristics.
 - finalized artifact inventory is immutable.
 - adding artifact to finalized version rejected.
 - expired/failed staged objects can be cleaned up safely.
@@ -213,10 +227,13 @@ Create shared canonicalization fixtures consumed by Rust and Python.
 Required cases:
 
 - typed legacy author v1 statement serializes byte-for-byte like current implementation;
+- RFC 8785/JCS implementation matches published/known JCS vectors in Rust and Python;
 - new canonical key order is deterministic;
 - non-ASCII Unicode serializes identically cross-language;
-- artifact inventory order is normalized by target;
+- artifact inventory order is normalized by target before JCS;
+- `PythonResolution` array ordering is normalized before JCS;
 - whitespace/input map order does not alter canonical bytes;
+- new timestamps are normalized to UTC RFC3339 `Z` form before canonicalization;
 - release digest matches in Rust/Python.
 
 Stored-byte verification cases:
@@ -247,7 +264,19 @@ Provenance-policy cases:
 - historical signature remains cryptographically valid after normal signer revocation while current revoked state is surfaced separately.
 - legacy signature/attestation formats still verify as before.
 - normalized key-ID display does not affect verification by full public key.
-- historical registry key can verify an old attestation after rotation.
+- `GET /v1/registry/signing-keys` returns type `agentpm.registry.keyset.v1`.
+- registry key set is RFC 8785/JCS-canonicalized and root-signed.
+- CLI rejects a key set with an invalid root signature.
+- CLI rejects an arbitrary attestation signing key delivered outside the verified key set.
+- CLI can cache and reuse only a previously root-verified key set.
+- unknown `registryKeyId` fails verification.
+- retired signing key remains present in the verified key set and can verify an old attestation after rotation.
+- root signing key itself is not confused with routine attestation signing keys.
+- the currently configured attestation key ID (`apm-prod-1` by default) is present in the published key set.
+- an **existing, already-published** version's `agentpm.registry.attestation.v2` row verifies end-to-end through the new client verification path — this is a regression test, since `--require-attestation` passes for those versions today.
+- `--require-attestation` succeeds on a legacy single-artifact release whose attestation key was backfilled, and fails on one whose key ID is absent from the key set.
+- `GET /v1/registry/signing-keys` fails closed when a valid root signature cannot be produced, rather than returning an unsigned or partial key set.
+- the root public key pinned in the CLI matches the key the registry actually signs key sets with (bootstrap-order check, not only unit-level verification).
 
 ### Install resolution / cache / extraction
 
@@ -465,15 +494,17 @@ Codex should report back:
   - feedback UI;
 - representative SEO metadata output;
 - representative PostHog event payload with sensitive/excluded fields absent;
-- example new `agent.lock` v4 entry showing portable Python resolution + logical release integrity and **no** local target selection;
+- example new `agent.lock` v4 entry showing the exact `agentpm.python-resolution.v1` shape + logical release integrity and **no** local target selection;
+- example canonical `PythonResolution` JSON + JCS digest;
 - example machine-local runtime/install state showing selected target/artifact/interpreter fingerprint;
-- example release manifest;
-- example release reservation + child artifact DB/object inventory;
+- example `agentpm.package.release.v1` release manifest + JCS bytes/digest;
+- example release reservation + child artifact DB/object inventory showing `package_publish_releases`, `package_publish_artifacts`, and `package_version_artifacts`;
+- evidence that new-format `PackageVersion` legacy scalar artifact columns are null while legacy rows remain populated;
 - example S3/object inventory including canonical target IDs and `release.json`;
 - byte-compatibility evidence for typed legacy v1 author statement;
 - example new release-level author-signature v2 and registry-attestation v3 statements;
 - example trusted stored-byte checksum verification evidence;
-- example registry public-key history/trust material;
+- example `agentpm.registry.keyset.v1` response, root signature verification, and registry signing-key history/retirement evidence;
 - cross-platform publish/install matrix results;
 - legacy Python Tool compatibility result;
 - GitHub Actions run link or captured job output if available;
