@@ -408,9 +408,11 @@ Machine-readable output formats should remain stable and should not be forced in
 Known priorities:
 
 - every `agentpm init --kind ...` scaffold should lint successfully immediately;
+- the manifest schema's root `properties` should gain a permissive `standard` field that is **accepted and ignored**, shipped with this stage's CLI release. The root is `additionalProperties: false`, so without this every CLI released before it hard-fails `agentpm lint` on any package declaring `standard`, and fails `agentpm new` inside its blocking generated-manifest validation. Stage 2 owns emitting, validating and enforcing the field; this stage only makes older clients tolerant of it, and relaxes the root by that **single** field so misspelled top-level keys are still caught. The released version number becomes Stage 2's minimum-CLI floor;
 - Tool scaffold must stop generating invalid `files`, `entrypoint.command`, and `entrypoint.args`;
 - semantic/domain lint messages should appear before generic schema failures;
 - suppress parent `oneOf`/`anyOf` noise when a more specific semantic error already covers the same subtree;
+- resolve the **root kind union** to the branch named by the declared `kind`. Kind selection is an eight-branch top-level `oneOf`, so any kind-specific violation currently reports as the whole manifest being `not valid under any of the schemas listed in the 'oneOf' keyword` at path `/oneOf`, naming neither the branch nor the field. `kind` is always present and is the discriminator, so either restructure root dispatch to `if`/`then` per kind or map the failure to the matching branch before rendering. **Stage 2 depends on this:** its APDS diagnostics must carry a stable rule ID plus a manifest JSON path, which a verdict anchored at `/oneOf` cannot provide. The diagnostic shape chosen here must be able to carry an external rule identifier alongside the path, without implementing APDS rules in this stage;
 - deduplicate equivalent `/properties/<kind>` and `/dependentSchemas/<kind>` failures;
 - never inline huge containing objects in human lint output;
 - for closed unions, prefer actionable expected-values messaging;

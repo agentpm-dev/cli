@@ -12,26 +12,28 @@ For each milestone/release band, Claude should return:
 
 1. **Verdict:** approve / approve with nonblocking follow-ups / changes required / blocked by prerequisite.
 2. **Blocking findings first**, each with severity, impacted `S2-AC-xx`, milestone, reproducible file/line/path and failing test or manual reproduction. Explicitly separate spec violation from optional recommendation.
-3. **Implementation discretion review:** which D01–D20 decision records were due, whether preferences were considered, and why the chosen alternatives are better or worse.
+3. **Implementation discretion review:** which D01–D21 decision records were due, whether preferences were considered, and why the chosen alternatives are better or worse.
 4. **Regression/Stage 1 impacts:** all affected interfaces, migrations, feature-flag/cutover and rollout safety.
 5. **Evidence:** executed tests/CI status; fixtures/sample payloads; screenshots/URLs; provenance claims and unavailable checks.
 6. **Final status:** accepted contracts, residual risk, follow-up tasks and whether any issue needs Zack's decision.
+
+**Milestone ID convention:** Stage 1 and Stage 2 share an `M<n><A/B/C>` namespace. A bare `M…` here means **Stage 2**; Stage 1 is always explicitly prefixed, and split Stage 1 milestones are cited by exact sub-milestone. Flag any reference that breaks this, since a misread dependency silently changes what was gated.
 
 Do not mark a checklist item passed solely because Codex asserted it. Cite code/test evidence or document *not verified*. If the current repo differs from the spec's historical baseline, inspect the diff and adjust recommendations without weakening AGREED outcomes.
 
 ---
 
-### Reviewer navigation: six numbered release bands, 37 scoped milestones
+### Reviewer navigation: six numbered release bands, 40 scoped milestones
 
-The implementation is split into **M1A–M17C** (37 independently reviewable units), grouped into release bands 1–6. Review the **scope note**, original required edge cases, verification evidence and dependencies of each milestone rather than treating the old broad M1–M17 labels as single PRs.
+The implementation is split into **M1A–M17C**, including **M1A.1**, **M8B.1** and **M15A.1** (40 independently reviewable units), grouped into release bands 1–6. For each milestone review its **scope note**, its **implementation checklist** (the work), its **binding requirements** (the authoritative constraints from `spec.md` that the work must satisfy — reference, not a second task list), its evidence against the shared per-milestone evidence requirements, and its dependencies. Do not treat the broad M1–M17 groupings as single PRs.
 
 | Band | Milestone focus | Claude must challenge |
 |---|---|---|
-| **1** | M1A contract inventory; M1B canonical schema; M1C semantics; M2A fixtures; M2B Rust; M2C Python; M3A init; M3B lint; M4A publish gate; M4B legacy rollout | Is APDS faithful to actual schema/Phases 6–7? Can an independent custom Registry client bypass the gate? Does immutable legacy data survive? |
+| **1** | M1A contract inventory; M1A.1 old-client tolerance release; M1B canonical schema; M1C semantics; M2A fixtures; M2B Rust; M2C Python; M3A init; M3B lint; M4A publish gate; M4B legacy rollout | Did the tolerance release ship before anything emitted `standard`? Is APDS faithful to actual schema/Phases 6–7? Can an independent custom Registry client bypass the gate? Does immutable legacy data survive? |
 | **2** | M5A lock metadata; M5B frozen closure; M6A support/readiness; M6B exact-version SDK/Runner | Does a clean replay preserve exact kind/version/digest? Is a valid no-Loop Agent still conformant? Do both SDKs and headless see truthful readiness? |
-| **3** | M7A universal evidence; M7B kind-specific Health; M8A standard reference; M8B cards; M9A composition; M9B phases/actions; M10A specialized detail; M10B Health UI | Does every UI assertion have authoritative evidence? Does Overview show exact direct/transitive graph and keep specialized tabs? |
+| **3** | M7A universal evidence; M7B kind-specific Health; M8A standard reference; M8B cards; M8B.1 global layout/shell; M9A composition; M9B phases/actions; M10A specialized detail; M10B Health UI | Does every UI assertion have authoritative evidence? Was the global shell built once and adopted, not forked per page? Does Overview show exact direct/transitive graph and keep specialized tabs? |
 | **4** | M11A featured data; M11B Card/embed investigation; M12A/B homepage; M13A/B Explore/namespace; M14A/B category/pricing/SEO | Does existing brand survive? Is Featured data-driven/private-safe? Are Stage 1 ranking, pins, search URLs and pricing intact? |
-| **5** | M15A category CLI help; M15B starter Agent; M16A journeys; M16B comprehension/Developer handoff | Can a new developer really run a low-cost package? Are all three journeys complete? Is future Developer work documented but not incorrectly shipped? |
+| **5** | M15A category CLI help; M15A.1 example/Template republication; M15B starter Agent; M16A journeys; M16B comprehension/Developer handoff | Can a new developer really run a low-cost package? Are all three journeys complete? Is future Developer work documented but not incorrectly shipped? |
 | **6** | M17A docs gate; M17B rewrite; M17C final verification | Was Stage 1 entirely finished before docs? Do working examples and all contracts agree across repos? |
 
 ## Contract surfaces
@@ -47,12 +49,17 @@ The implementation is split into **M1A–M17C** (37 independently reviewable uni
 
 ### 2. APDS source of truth and versioning — strongest review priority (M1A–M2C)
 
+- [ ] **Old-client tolerance release (M1A.1) shipped before any emission.** The root schema is `additionalProperties: false`, so a `standard`-bearing manifest hard-fails `agentpm lint` (exit 1) on every pre-tolerance CLI and fails `agentpm new` inside `validate_generated_manifests_blocking`. Verify the tolerance release was published **before** M3A emits `standard`; that it relaxed the root by that **one field only** (a misspelled top-level key must still be rejected); that `install` write-back and `knowledge build --write` preserve the field with a regression test; that `agentpm export`'s generated scaffold also emits `standard` once M3A lands; and that `serde_json` is still pinned without `preserve_order`. Emitting `standard` ahead of the tolerance release is a **blocking** finding against S2-AC-02.
+- [ ] **Minimum CLI version named.** The outdated-client rejection and the detail page's install guidance cite the concrete tolerance-release version, not a generic upgrade prompt.
+- [ ] **Freeze gate honored:** Stage 1 M2 (`agentpm-harness` execution surface) and M11A (Tool `runtime.dependencies`) were **merged before** M1B/M1C froze v1.0.0, and their fields are conformant under the frozen contract with fixtures proving it. A v1.0.0 that rejects a legitimate Stage 1 manifest, or a Stage 2 plan that answers this with a v1.1.0, is a **blocking** finding.
 - [ ] APDS 1.0.0 is anchored in the **existing `agentpm.manifest.schema.json`**, not a second invented format. Review schema diff field-by-field: eight kinds, `oneOf`, `$defs`, refs, common fields, per-kind required fields.
-- [ ] Exactly one authoritative v1.0.0 schema contract exists. Existing path is compatibility/generated/alias as designed; CI prevents drift. Versioned `$id` stable, editor `$schema` distinct from manifest `standard` declaration. No live mutable `main` GitHub schema fetch in normal authoring/publishing.
+- [ ] Exactly one authoritative v1.0.0 schema contract exists at **runtime as well as in the repo**: the shipped `resolve_schema_source()` CWD-relative lookup and the `lint`/`publish` `--schema` override can no longer substitute the pinned contract or yield a `conformant` APDS verdict, and a regression test proves it. Existing path is compatibility/generated/alias as designed; CI prevents drift. Versioned `$id` stable, editor `$schema` distinct from manifest `standard` declaration. No live mutable `main` GitHub schema fetch in normal authoring/publishing.
 - [ ] `standard: {"id":"agentpm","version":"1.0.0"}` has correct strict schema and matches server/CLI/Runner interpretation. Artifact `version`, lockfile version, APDS version, Harness protocol/Runner version not conflated.
 - [ ] Manifest filename `agent.json` still common to all kinds; only `kind:agent` means Agent Package. Local `name` is unscoped as in the actual schema; namespaced package identities are references/Registry identifiers. Mockup pseudo-JSON (`"apds"` or `"type"`) hasn't leaked into actual code.
+- [ ] Blank/whitespace-only `description` is a **hard conformance error** enforced by the pinned schema in both implementations with identical trimming, and the pre-existing CLI-side `description should not be empty` **warning** was removed or promoted so the defect is reported once at one severity.
 - [ ] New Agent with **no Tools**, **no Loop**, **no Profiles** is intrinsically valid, with meaningful non-whitespace description; Tool/Knowledge/Memory/Profile/Loop/Skill/Template shapes remain valid. No unjustified breaking change to established manifests.
 - [ ] Normative APDS `README.md` states scope, release immutability, version policy, implementation roles, glossary, Registry independence and bounded portability.
+- [ ] Rule-ID diagnostics are attached to **Stage 1 M8's** restructured diagnostic shape, not a parallel Stage 2 renderer, and a kind-specific APDS violation reports a real field/path rather than a bare `/oneOf` verdict.
 - [ ] `semantics.md` is actually **normative**: consistent MUST/SHOULD/MAY language, stable semantic rule IDs, applicability, examples, rationale, check level, failure or advisory level and fixture mapping. Not a marketing document or code mirror without normative meaning.
 - [ ] Semantic chapter/rules cover **all** agreed domains:
   - [ ] identity/reference/version semantics; direct/transitive dependency graph and kind correctness;
@@ -72,7 +79,7 @@ The implementation is split into **M1A–M17C** (37 independently reviewable uni
 
 - [ ] Rust CLI and Python Registry validate **independently** against same pinned contract and shared fixture suite; one doesn't call or blindly trust the other for conformance. CI parity failures actionable.
 - [ ] Fixtures cover all kinds and actual semantic edge cases, both positive and negative, with stable expected rule/status/path outcomes; incomplete unresolved context distinct from false passing and false failures.
-- [ ] Strict new authoring missing/unknown standard fails clearly. If legacy authored compatibility mode exists, it is explicit and cannot bypass new publishing enforcement.
+- [ ] Strict new authoring missing/unknown standard fails clearly. If legacy authored compatibility mode exists, it is explicit and cannot bypass new publishing enforcement. The pre-existing CWD-relative schema and `--schema` overrides are also accounted for — they were the real bypass and are not a substitute for the pinned contract.
 - [ ] CLI `init` defaults to Agent Package with truthful default name, generated APDS declaration, safe JSON serialization, valid optional empty dependency structure; all explicit kinds continue to lint, especially Stage 1 Tool scaffold.
 - [ ] Registry independently inspects **staged embedded manifest bytes** and matches init/finalize metadata including kind/name/version/standard before making release visible. A raw/custom API client cannot bypass validation.
 - [ ] Every new finalized version—even new version of a legacy identity—must be compliant. Already published old versions stay unchanged/installable; no digest/signature rewrite or fake retroactive conformance.
@@ -97,7 +104,7 @@ The implementation is split into **M1A–M17C** (37 independently reviewable uni
 - [ ] Universal + kind-specific evidence model supports all eight kinds, including *not applicable* for irrelevant checks. Tool OS/architecture does not become generic Loop/Profile “health.”
 - [ ] Every pass/fail/unknown/advisory state backed by correct authoritative source, provenance, verification or absence; status labels differentiate `verified`, `failed`, `incomplete`, `unknown`, `not applicable` and advisory where relevant.
 - [ ] No universal quality score, stars-as-trust, invented suitability/certification, “signed means safe”, “malware scan clean means safe”, “APDS conformant means runnable”, “compatibility declaration means runtime-enforced” claim.
-- [ ] Legacy inferred standard never shown as independently verified; signed artifact not shown as cryptographically verified unless actually checked.
+- [ ] Legacy inferred standard never shown as independently verified; signed artifact not shown as cryptographically verified unless actually checked. A `verified` registry-attestation state requires Stage 1 **M14C** (root-signed key set + client verification) to be deployed; if it is not, the signal reads unknown/not evaluated rather than verified.
 - [ ] Existing Security detail evidence retained, now discoverable through appropriately scoped Package Health; no loss of target-specific artifact evidence from Stage 1.
 
 ### 6. Public API/routes/UI and compatibility
@@ -139,6 +146,14 @@ The implementation is split into **M1A–M17C** (37 independently reviewable uni
 - [ ] Explore navigation/facets/cards visibly group **Agent Packages, Components, Templates, Namespaces** without changing backend kinds; meaningful kind-specific card facts and no-query Explore experience work. Text queries never arbitrarily pin Agents above relevant Components.
 - [ ] Namespace page balances curated publisher content with search/filter/sort and category hierarchy; recent activity, signing text, filters and member/settings behavior remain valid.
 - [ ] Reusable Agent Package Card supports purpose/version/composition/standard and evidence appropriately; cards not confused with A2A Agent Card. README embed feasibility investigation D16 includes pinned/latest/auth/caching/OG and explicit implement/defer decision.
+- [ ] **One global shell, built once (M8B.1).** Header (anonymous + authenticated), page canvas, section-card primitive, kind tokens, grid primitives and footer each exist as a **single** implementation that every route consumes. A second competing shell — or a page milestone that hand-rolled its own header/canvas/section card — is a **blocking** finding even if each looks right in isolation. Progressive route-by-route adoption is fine; undeclared forking is not. Any route still on the old shell must be explicitly named with a migration owner.
+- [ ] **Shipped visual systems preserved, not re-litigated.** Per-kind color keeps the shipped assignment (Agent amber, Tool indigo, Skill rose, Knowledge fuchsia, Memory teal, Profile cyan, Loop lime, Template emerald; `sky` reserved for `Signed`), and the generated per-package identity gradient (`ToolBox.tsx`) survives. Adopting the mockups' conflicting kind hues, or replacing generated avatars with stock per-kind glyphs **in an identity context**, is a **blocking** finding — it breaks recognition for existing users and discards free per-package identity. The kind token work must be **centralization of existing values**, not new choices.
+- [ ] **Identity marks vs category marks are used correctly.** Surfaces naming a specific package — Agent Package Card, Explore result cards, detail identity, composition-chart nodes — use the generated identity gradient, with kind conveyed by tone and label *alongside* it. Surfaces representing a kind as a category, filter or legend (the Explore facet rail, kind filters) may use a compact per-kind glyph. A glyph standing in for a specific package's identity is the mockups' mistake and is a finding; so is a category list forced to render full identity avatars where a glyph reads better. Any new glyph set is scoped to category contexts only and has not become a second avatar system.
+- [ ] **D21 adoption review exists, is signed off, and the build matches it.** The mockups are a guide weighted toward layout, not a design to reproduce 1:1 — so the test is **not** "no styling was adopted". It is that every adopted element appears on the signed adopt/adapt/reject list with a reason, and nothing was adopted that the list does not name. Confirm via a token-by-token diff annotated against the list, not by eye. A build that quietly tracks the images rather than the signed list is a finding, and so is one that ignored a styling improvement the list said to adopt.
+- [ ] Copy and every displayed number, name, date, count and badge come from real data and settled copy (§12–§15, M14A/M14B) — never from the mockups, regardless of what D21 decided about styling.
+- [ ] Structural decisions the mockups make are implemented deliberately and consistently: global search in the header on every route, the detail route's asymmetric two-column grid, and Explore's persistent left facet rail — all from the shared layout system.
+- [ ] The shell did not regress Stage 1: search behavior, query URL/cursor state, facets, private-result visibility, SSR metadata, canonical/robots handling and the shared detail shell all still work.
+- [ ] Shell-level accessibility and responsive behavior were verified in M8B.1 rather than deferred: nav collapse, facet rail, card reflow, keyboard focus order, visible focus, ARIA on icon-only controls, reduced motion.
 - [ ] Current site palette, typography, elevation, floating cards, icon language and overall style are the visual source of truth. Mockup hierarchy useful, but **do not copy old-flat blue/white design, invented numbers or inaccurate JSON/other-runner badges**. Review desktop and responsive/mobile screenshots against actual production site.
 - [ ] Category explainer supports AgentPM, APDS versioned technical route distinct; H1/SEO/canonical/OG/robots/sitemap driven by Stage 1 infrastructure. Pricing messaging accurate without billing changes.
 
@@ -147,6 +162,7 @@ The implementation is split into **M1A–M17C** (37 independently reviewable uni
 - [ ] CLI top-level help explicitly identifies AgentPM as **Agent Package Manager**, names **Agent Package Management** and shows working first-use commands.
 - [ ] `agentpm init` default Agent Package and explicit Tool/other kinds; `agentpm new` Template scaffolding; `agentpm run` Tool; `agentpm harness` built-in Agent Package Runner; `install`, `lint`, `publish` aligned without renaming public flags or destabilizing script consumers.
 - [ ] **Three usable journeys:** Try/install/configure/Harness run; Build/init/compose/lint/test/publish; Template/new/customize/run. Each has a real start and reasonable next action, not merely decorative flow badges.
+- [ ] **Example/Template republication (M15A.1):** every Template shipping manifests in `files_root` has a new version whose scaffolded files declare `standard`, and `agentpm new` → strict `agentpm lint` passes from a clean directory. Prior published versions are byte-identical and installable; nothing legacy was marked APDS-verified; republished versions passed independent Registry validation. The non-republished remainder is an explicit, reasoned fixture set — not an oversight. A scaffolded workspace that fails the new lint is a **blocking** finding against S2-AC-19.
 - [ ] Simple starter Agent Package selected/built/pinned/tested, with low credential/cost burden, real provider/model setup, expected result and no hidden dependency; not flagship AgentPM Developer.
 - [ ] `publish` still supplies Registry detail URL on success; no unnecessary success dashboard scope expansion.
 - [ ] AgentPM Developer prompt/CTA conditional on real published/accessible functionality; nonmandatory alternative always available, scoped to AgentPM artifact building rather than general coding.
@@ -198,12 +214,13 @@ The implementation is split into **M1A–M17C** (37 independently reviewable uni
 
 | Requirement | Expected reviewer evidence |
 |---|---|
-| **S2-AC-01–04** | APDS bundle/version/schema diff/semantics, shared fixture matrix, Rust+Python conformance results, all-kind init/lint |
+| **S2-AC-02** | Tolerance-release version and ship date vs first `standard` emission; round-trip preservation test; one-field-only relaxation proof; `export` scaffold emission |
+| **S2-AC-01–04** | APDS bundle/version/schema diff/semantics, shared fixture matrix, Rust+Python conformance results, all-kind init/lint, freeze-gate commit evidence |
 | **S2-AC-05** | Registry independent staged-bytes verification, rollout/backward-compat, negative raw-client test |
 | **S2-AC-06–07** | APDS lock v4 and provenance, frozen transitive replay, empty deps, digest/semver guard |
 | **S2-AC-08–09** | Harness capability/readiness/SDK parity, no Loop+non-TTY model negative test, description experiment report |
 | **S2-AC-10–12** | Eight-kind Health applicability/source matrix, Agent composition, standard vs manifest link, legacy-status screenshot |
-| **S2-AC-13–17** | Real-data homepage, detail/card UI, Explore/namespace regression/curation change, category reference, SEO/pricing consistency |
+| **S2-AC-13–17** (incl. **13a**) | Single-shell audit and route adoption order; token diff vs production; real-data homepage, detail/card UI, Explore/namespace regression/curation change, category reference, SEO/pricing consistency |
 | **S2-AC-18–21** | CLI help literals + correct commands, starter try/build/template flows, Developer future-stage brief, lightweight comprehension outcomes |
 | **S2-AC-22** | Proof all Stage 1 milestones complete before final docs pass; links/snippets and README/Introduction/Quickstart alignment |
 
@@ -221,26 +238,26 @@ The implementation is split into **M1A–M17C** (37 independently reviewable uni
 - [ ] Health architecture avoids duplicating Stage 1 release integrity computation and avoids requiring Tool metadata on unrelated kinds.
 - [ ] Site design extends established visual system, not a detached rebrand; mobile diagrams and source availability make sense.
 - [ ] No claim “one command and runnable” for valid no-Loop Agent or a starter without configured provider. Documentation teaches distinctions plainly.
-- [ ] Every **D01–D20** preferred approach considered; if diverged, Codex's rationale and tradeoffs are specific and reviewer-approved. Preferences do not become unreviewed product-scope changes.
+- [ ] Every **D01–D21** preferred approach considered; if diverged, Codex's rationale and tradeoffs are specific and reviewer-approved. Preferences do not become unreviewed product-scope changes.
 
 ---
 
 ## Notes for reviewer
 
-### 16. D01–D20 design-decision review register
+### 16. D01–D21 design-decision review register
 
 Claude should explicitly mark each decision as *documented / evidence adequate / needs changes*. These are design outcomes, not questions to send back to Zack reflexively.
 
 | ID | Preferred starting point | Claude should specifically challenge |
 |---|---|---|
 | **D01** | One normative `semantics.md` with stable rule IDs and examples | Is the meaning testable, not duplicative, and accurate for Skill/Memory/Loop semantics? |
-| **D02** | `cli/standards/agentpm/1.0.0` authoritative existing-schema version; old schema path compatibility | Can old and new diverge; moving schema ID; packaging/no-network path? |
+| **D02** | `cli/standards/agentpm/1.0.0` authoritative existing-schema version; old schema path compatibility | Can old and new diverge; moving schema ID; packaging/no-network path; is the CWD-relative/`--schema` runtime override closed for APDS verdicts? |
 | **D03** | Fixture dirs valid/invalid/resolved + machine expected outcomes | Do Rust/Python validate independently and cover incomplete/unsupported? |
-| **D04** | Strict new-authoring standard selection, optional explicit legacy migration | Is there a hidden permissive lint/publish bypass or hostile old-local workflow? |
+| **D04** | Strict new-authoring standard selection, optional explicit legacy migration; tolerance release before emission | Is there a hidden permissive lint/publish bypass or hostile old-local workflow? Did the root relax by one field only, and is the minimum CLI version concrete? |
 | **D05** | Server staged-archive validation at finalize, carefully staged enforcement | Can custom client publish invalid bytes; queued sessions/rollback safe? |
 | **D06** | Retain Stage 1 lock v4 | Forward guards, compatible serializer and release provenance correctness? |
 | **D07** | `/standards/agentpm/1.0.0` pinned catalog | Any arbitrary author URL, moving normative content or bad canonical? |
-| **D08** | Problem-first, real Agent Package hero, existing layered visual design | Is the main product actually explained and existing brand preserved? |
+| **D08** | Problem-first, real Agent Package hero, existing layered visual design | Is the main product actually explained and existing brand preserved? Is the homepage on the shared M8B.1 shell rather than a bespoke layout? |
 | **D09** | Shared Card identity/composition primitives and variants | Are components reusable without hiding domain differences or fictional metadata? |
 | **D10** | Config or Registry-backed featured selection | Does selection/order change without JSX changes; privacy/trending separation? |
 | **D11** | Curated no-query Explore, normal query relevance unchanged | Are relevance/pagination/private visibility all protected? |
@@ -253,23 +270,25 @@ Claude should explicitly mark each decision as *documented / evidence adequate /
 | **D18** | Product-centered homepage, deeper category explainer | Accurate category and SEO claims, no rebranding as standards body? |
 | **D19** | Explicit/inferred provenance and certainty distinct across contracts | API/lock/UI/Runner statuses coherent and backward-compatible? |
 | **D20** | Existing Harness capability/preflight/machine surfaces | No new unnecessary protocol and SDK/TUI/headless parity proven? |
+| **D21** | Explicit adopt/adapt/reject pass over open mockup elements/styling, signed off before the shell is built; per-kind color, generated package identity, copy and displayed values excluded as already settled | Does a signed list exist and predate implementation? Is each call reasoned? Does what shipped match the list rather than the images? Were clearly-better mockup treatments surfaced as conscious choices instead of quietly dropped? |
 
 ### 17. Additional reviewer questions
 
 1. **APDS as a standard:** Can a third party inspect authored manifests, validate them against the documented contract and know precisely which semantics they must honor *without reading AgentPM source or using its hosted Registry*? Conversely, can a third-party Runner decline support without making a valid package “invalid”?
+1a. **Backward and forward compatibility:** Could a user on an already-released CLI hit a hard failure because of a change made here — not only when publishing, but when linting, scaffolding or building a package someone else published? Was the tolerance step shipped before the emitting step?
 2. **Correctness in absence of context:** If only `agent.json` is available, can the evaluator honestly say what it verified and what remains unresolved? Does the Registry overclaim graph conformance based on incomplete dependency access?
 3. **Source of truth:** If schema, semantics, registry representation and Harness behavior disagree, is there a clear version-pinned specification and defect process rather than silent app-specific reinterpretation?
 4. **Release validity:** Can a hand-crafted tar/finalize request publish a malformed APDS artifact? Can a race, second artifact target or old pending session bypass the standard gate?
 5. **Portability:** Is the Agent Package independent of Harness but still sufficiently specified? Are memory backend, model, hooks, approvals and prompt composition correctly left as runtime responsibilities?
 6. **Trust:** Does a green badge mean something specific and verifiable for the *selected version*, or does it accidentally synthesize “safe/production-ready” from unrelated inputs?
 7. **Discovery:** Can a first-time visitor differentiate Agent Packages and Components in seconds, find a real package, run it with honestly stated prerequisites, and understand a Template is not an Agent Package?
-8. **Design fidelity:** Have changes strengthened the existing site's floating/layered aesthetic and kind iconography, rather than imitating the AI mockups' alternate blue palette?
+8. **Design fidelity:** Was adoption from the mockups *deliberate* — a signed D21 list of adopt/adapt/reject calls — rather than either copying the images wholesale or reflexively rejecting every styling idea in them? Have changes strengthened the existing site's floating/layered aesthetic and kind iconography? And is the site converging on **one** shell, or accumulating per-page layouts that will have to be reconciled later?
 9. **Example data:** Can every featured package/metric/Loop phase/conformance status be traced to actual package data, and can editorial selection change safely without editing UI source?
 10. **Real developer value:** Does the experience distinguish AgentPM from sharing a GitHub repo or installing individually packaged npm/PyPI Tools, without claiming a guaranteed future market or ecosystem dominance?
 
 ### 18. What must be escalated to Zack
 
-Escalate an explicit product decision if implementation would: change the definition of Agent Package/Component/Template; make Loop/Tools/Profile mandatory for APDS validity; change Skill inheritance/Memory operation participation/Loop access priority; replace existing schema with incompatible artifact format; drop or rewrite historical versions; enforce Registry/Harness use for conformance; add universal quality score; materially alter pricing; require a new v5 lock despite compatibility alternatives; change current brand identity; broaden to advanced semantic search/eval/general-purpose Developer; or move comprehensive docs ahead of Stage 1 completion.
+Escalate an explicit product decision if implementation would: change the definition of Agent Package/Component/Template; make Loop/Tools/Profile mandatory for APDS validity; change Skill inheritance/Memory operation participation/Loop access priority; replace existing schema with incompatible artifact format; drop or rewrite historical versions; enforce Registry/Harness use for conformance; add universal quality score; materially alter pricing; require a new v5 lock despite compatibility alternatives; change current brand identity; ship a second competing global shell instead of adopting M8B.1's; broaden to advanced semantic search/eval/general-purpose Developer; move comprehensive docs ahead of Stage 1 completion; or emit `standard` before the old-client tolerance release has shipped, or relax the root schema beyond that single field.
 
 Do **not** escalate ordinary choices like exact standard directory, internal data DTOs, component arrangement, tab organization, selected low-cost starter task, lightweight featured-config storage or the exact wording of a legitimate CLI help example if it satisfies required behavior. Those are explicitly delegated to Codex with Claude review.
 
@@ -277,7 +296,7 @@ Do **not** escalate ordinary choices like exact standard directory, internal dat
 
 - [ ] Does the v1.0.0 schema **evolve** the existing `cli/schemas/agentpm.manifest.schema.json` instead of inventing a second independently maintained definition?
 - [ ] Did Codex preserve local authored `name` versus `@namespace/name` references and machine `kind` instead of copying mistaken mockup `type`/`apds` fields?
-- [ ] Is the versioned `$id` stable and unrelated to the arbitrary user-supplied `$schema` editor value?
+- [ ] Is the versioned `$id` stable and unrelated to the arbitrary user-supplied `$schema` editor value, and do **scaffolds now emit the pinned versioned `$schema`** rather than the moving `main` branch URL they emit today?
 - [ ] Does `semantics.md` include **actual normative rules** for every supported kind, with IDs, level, source path and expected fixtures—not generic marketing explanations?
 - [ ] Are the important binding semantics demonstrated with valid **positive and negative** examples, including Skill-inherited Tools and Loop-denied phases?
 - [ ] Are Memory operation targets allowed beyond directly bound spaces, with global/phase participation and `external`, `interval`, `record_count`, `capacity` triggers interpreted correctly?
@@ -319,7 +338,7 @@ Approve | Approve with follow-ups | Changes required | Blocked
 ## Blocking findings (ordered by severity)
 1. [severity] [AC ID / M ID] path:line — evidence, expected behavior, reproduction, required fix
 
-## D01–D20 decision records
+## D01–D21 decision records
 - Complete/accepted:
 - Incomplete or unjustified:
 

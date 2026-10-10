@@ -183,6 +183,12 @@ signing and client verification, and CI publishing. Source:
 `agentpm-dev/cli/specs/2026-10-06-immediate-hardening/{spec.md,tasks.md}`; its exact milestone IDs include
 M1–M17 with submilestones 10A/B, 11A/B/C, 13A/B, 14A/B/C.
 
+**Milestone ID convention:** the two stages share an `M<n><A/B/C>` namespace — `M11A`, `M13A`, `M14A/B`,
+`M15A/B`, `M16A/B` and `M17` exist in both. Throughout this spec and its companions a bare `M…` reference
+means **Stage 2**, and every Stage 1 reference carries an explicit `Stage 1` prefix. Cite split Stage 1
+milestones by exact sub-milestone (`Stage 1 M14A`, not `Stage 1 M14`), since the sub-milestones own
+materially different contracts.
+
 Stage 2 **consumes those foundations**, does not duplicate them. Integration gates belong in `tasks.md`.
 Particular handoffs: Stage 1 M2–M7 (discovery, detail shell, SEO), M8–M9 (CLI), M11B (lock v4), M12–M16
 (portability, provenance, artifacts), M10A/B (analytics). Stage 1 M17 focuses its own
@@ -194,7 +200,33 @@ Deploy in coherent bands. Schema-aware publishing enforcement cannot become a su
 older clients before a compatible CLI and Registry migration path exist. Prefer add/read → validate/observe
 → enforce cutover, test rollback and cutover boundaries. Stage 2 bands can progress while unrelated Stage 1
 bands finish. Gate only actual dependencies; do not invent a global Stage 1 blocker except for final
-documentation.
+documentation and the APDS freeze gate below.
+
+**REQUIRED — APDS freeze gate on Stage 1 manifest-schema additions.** Stage 1 adds fields to the *same*
+`schemas/agentpm.manifest.schema.json` that Stage 2 freezes as immutable v1.0.0, and the affected
+definitions are **closed** (`additionalProperties: false`), so each addition changes what is conformant:
+
+| Stage 1 work | Schema location | Current state | Effect on a prematurely frozen v1.0.0 |
+|---|---|---|---|
+| Stage 1 M2 — `agentpm-harness` Template execution surface | `$defs/templateMetadata.properties.execution_surfaces` | closed `enum` of five values | A Template declaring `agentpm-harness` is **nonconformant** |
+| Stage 1 M11A — optional Python `dependencies` on Tool runtime | `$defs/runtime` | `additionalProperties: false`, `required: [type, version]` | A Tool declaring `runtime.dependencies` is **nonconformant** |
+
+Stage 1 M12's payload classification metadata is **not** in this table: it lives in the package-build
+descriptor and release manifest, and all target artifacts of one release share a single logical `agent.json`
+and manifest digest, so it does not affect APDS conformance. Verify that still holds when M12 lands.
+
+57 of 78 current `$defs` are closed, so effectively any Stage 1 manifest addition is conformance-breaking
+for an already-frozen version. Because v1.0.0's normative meaning and fixture outcomes are immutable once
+published, **the structural freeze (Milestone 1B) and the normative-semantics freeze (Milestone 1C) MUST NOT
+begin until Stage 1's manifest-schema-affecting work has landed** — concretely Stage 1 M2 (Release
+Band 2) and Stage 1 M11A (Release Band 8). Those additions are part of v1.0.0's structural contract, not a
+later version.
+
+Everything upstream of the freeze proceeds in parallel: Milestone 1A inventory, the Band 4–5 website and
+CLI-copy work, and all Stage 2 analysis are unblocked. Only 1B/1C and their downstream conformance and
+enforcement milestones (2A–4B) carry this gate. Do **not** resolve the collision by publishing v1.0.0 early
+and following it with v1.1.0 inside Stage 2: that doubles the fixture corpus and forces multi-version Runner
+advertisement for no product benefit.
 
 ### 2. APDS v1.0.0 — authoritative contract bundle (strong preferred design)
 
@@ -223,13 +255,42 @@ cli/
           expected-results.json           # rule IDs/severity/status, paths where useful
 ```
 
+**REQUIRED — close the existing runtime schema-source override.** Two authoritative schemas and a silent
+validation bypass already exist in shipped code, and the "exactly one authoritative contract" requirement is
+not met until they are fixed:
+
+- `crates/agentpm-cli/src/manifest.rs` `resolve_schema_source()` prefers a **working-directory-relative**
+  `schemas/agentpm.manifest.schema.json` over the compiled-in copy whenever that path exists. Dropping a
+  permissive copy into a workspace makes `agentpm lint` pass manifests the bundled contract rejects
+  (verified against CLI 0.1.33).
+- The `--schema` override is honored by `lint` (`commands/lint.rs`) **and `publish`**
+  (`commands/publish.rs`), so client-side publish preflight can be pointed at an arbitrary schema, including
+  an `http(s)` URL that `load_schema_value()` will fetch at validation time.
+
+For APDS validation the bundled pinned contract MUST win. Options Codex may choose between: remove the
+CWD-relative lookup entirely; keep it only for explicitly-opted-in local schema development behind a
+distinct flag; or keep the flag but make it refuse to satisfy APDS conformance and clearly mark results as
+unverified-against-standard. In all cases an overridden schema MUST NOT be able to produce a `conformant`
+APDS result, MUST be reported in output as a non-authoritative validation, and MUST NOT be reachable by
+`publish` preflight in a way that implies conformance. This is a client-side integrity fix; it does not
+replace §5's requirement that the Registry independently validate every new release.
+
 This is a **suggested organization**, not a request to create an independent new schema or separate repo.
 The uploaded `agentpm.manifest.schema(2).json` and repo `schemas/agentpm.manifest.schema.json` define the
 existing eight-kind format; evolve and **version that same contract**. Codex decides how to keep the old
 path valid (compatibility alias, generated copy, import/reference, build validation), but **two
 independently drifting authoritative schemas are prohibited**. Existing `$id` presently references GitHub
 `main`; the normative release requires an immutable/version-stable `$id`, and an editor `$schema` reference
-must not double as the semantic standard selector. Bundle/cache supported contracts in CLI and Registry; no
+must not double as the semantic standard selector.
+
+**REQUIRED — scaffolds must emit a pinned `$schema`.** `agentpm init` currently writes `$schema` pointing at
+the moving `main` branch URL, and `agentpm lint` actively warns when `$schema` is absent, so the field is
+both emitted and encouraged. Once `$id` is version-stable, scaffolded manifests MUST emit the **pinned
+versioned** URL rather than `main`; otherwise every newly authored package is edited against whatever is at
+HEAD while being validated against the frozen contract, which is exactly the split-brain the version-stable
+`$id` exists to prevent. `$schema` remains an optional editor/tooling affordance and still MUST NOT be
+treated as the standard selector — `standard` is the only declaration. Existing manifests pointing at `main`
+keep working; this is a change to what new scaffolds write. Bundle/cache supported contracts in CLI and Registry; no
 arbitrary network fetch for routine lint/publish/run.
 
 **Version dimensions MUST stay distinct:** artifact `version`; `standard.id` + `standard.version`;
@@ -240,6 +301,55 @@ All eight newly authored kinds continue to use **`agent.json`** as manifest file
 "agent"` is an **Agent Package**. Kinds: `agent`, `tool`, `skill`, `knowledge`, `memory`, `profile`,
 `loop`, `template`. Templates remain scaffolds; the six Component kinds remain independently
 publishable/installable.
+
+#### Old-client forward compatibility — tolerance release before any `standard` emission
+
+**REQUIRED, and sequenced before M3A.** The root schema is `additionalProperties: false`, so every CLI
+already in users' hands hard-rejects a manifest carrying `standard`: verified on 0.1.33, `agentpm lint`
+returns `[ERROR] Additional properties are not allowed ('standard' was unexpected)` and exits 1. The
+affected commands are the schema-validating ones — `lint`, `publish` preflight, `new`, `export`,
+`knowledge build`, `memory build`. `install`, `harness`, `run` and `serve` perform no schema validation and
+no manifest struct uses `deny_unknown_fields`, so installing and running new packages on an old CLI is
+unaffected.
+
+`agentpm new` is the sharpest edge in **both** directions, because it validates generated manifests through
+a blocking check (`commands/new.rs::validate_generated_manifests_blocking`). An old CLI scaffolding a
+Template whose files carry `standard` fails *during `new`*, not at a later lint; and once lint is strict, a
+Template whose files lack `standard` fails the same blocking check. See §15.1.
+
+**Required sequence — this is §1's add/read → validate → enforce applied in the client direction:**
+
+1. **A pre-APDS tolerance release.** One narrow change: add `standard` to the root `properties` with a
+   permissive shape so the CLI accepts and round-trips it without validating it. No emission, no
+   enforcement, no other behavior change. This does **not** depend on APDS being designed and SHOULD ship
+   during Stage 1, well before the freeze gate lifts.
+2. **Only then** M3A emits `standard` and M4A/M4B enforce it.
+
+Relax the root by that **one known field** — do not open it to `additionalProperties: true`. An open root
+permanently stops catching misspelled top-level keys in the version about to be frozen as immutable, which
+is what §2's "do not silently loosen current `additionalProperties` contracts" is protecting. Later
+extensions use the extension-point policy in §3 ch.2, not a second relaxation.
+
+**Round-trip preservation must be confirmed, not assumed.** `write_manifest_pretty_atomic` takes a
+`serde_json::Value`, so preservation depends on each caller. Current behavior, to be re-verified against the
+branch at implementation time:
+
+| Path | Behavior | Preserves unknown fields |
+|---|---|---|
+| `agentpm install <pkg>` (`commands/install.rs`) | writes back the loaded `manifest_value` after mutating dependency entries | **Yes** |
+| `knowledge build --write` (`commands/knowledge.rs`) | loads the Value, mutates only the `knowledge` object, writes the whole Value | **Yes** |
+| `memory build` (`commands/memory.rs`) | reads the manifest; writes only `.agentpm/memory/build.json` | n/a — never rewrites `agent.json` |
+| `agentpm export` (`commands/export.rs`) | builds a **fresh** `json!` Skill scaffold | n/a — but **must be updated to emit `standard`**, since it generates an `agent.json` and the init-focused scaffold tasks do not name it |
+| `workspace.rs` metadata writers | typed structs → `to_value` | **No** — unknown fields dropped. These are workspace/template metadata files, not manifests; keep `standard` out of them |
+
+`serde_json` is pinned **without** `preserve_order` deliberately (`crates/agentpm-cli/Cargo.toml`: publish
+author signatures depend on it), so a rewrite alphabetizes keys while losing nothing. The tolerance release
+MUST NOT change that, and it is consistent with the RFC 8785/JCS canonicalization in §3, which also sorts
+keys.
+
+**Minimum CLI version.** Once the tolerance release is out, the Registry's outdated-client rejection and the
+package detail page MUST name a concrete minimum version. An "upgrade your CLI" error without a version
+floor is not actionable.
 
 **New authored manifest selector:**
 
@@ -261,7 +371,18 @@ local field. Conformance fixtures must use real existing shapes and naming const
 
 **Required schema changes:** `standard` with strict supported structure (and future extensibility handled
 by selector), nonblank/trimmed `description`, and removal of `tools` from the Agent kind's unconditional
-`required` list. Do not require optional Loop or Profiles; leave the existing valid kind-specific
+`required` list.
+
+**REQUIRED — `description` becomes a hard failure, owned by one layer.** The rule already exists, but in the
+wrong place and at the wrong severity: the schema types `description` as a bare `{"type": "string"}`, while
+the Rust CLI emits a separate semantic `[WARN] description should not be empty` (verified on CLI 0.1.33 — a
+whitespace-only description lints with a warning, not an error). In v1.0.0 a blank or whitespace-only
+`description` MUST be a **conformance error**, not a warning. The **schema is the owning layer**: express it
+structurally (for example `minLength` plus a non-whitespace `pattern`) so the Rust CLI and the Python
+Registry both enforce it from the pinned contract instead of from separately maintained code. The existing
+CLI-side warning MUST then be removed or replaced by the schema-backed error — the same defect reported
+twice at two severities is itself a defect. Trimming semantics MUST be identical in both implementations and
+covered by a shared fixture. Do not require optional Loop or Profiles; leave the existing valid kind-specific
 requirements intact. Support explicit selector in init/lint/publish for **new authored releases**. Avoid
 unplanned breaking changes to field names, dependency refs, Loop outcome forms, Memory contracts, Profile
 structure, Template semantics, or Tool runtime metadata. Validate namespace-qualified dependencies using
@@ -370,6 +491,16 @@ mismatch exists, pause/review rather than codifying accidental implementation be
 Rules need applicability, rationale, validation level, severity, path(s), and fixture mappings.
 Human-friendly CLI/Registry messages may show rule IDs unobtrusively; conformance engines must preserve
 them programmatically.
+
+**Diagnostic substrate — owned by Stage 1 M8, consumed here.** Rule IDs are only useful next to a real
+manifest path, and today kind selection is an eight-branch top-level `oneOf`: any kind-specific violation
+reports as the entire manifest being `not valid under any of the schemas listed in the 'oneOf' keyword` at
+path `/oneOf`, naming neither the branch nor the field (verified on CLI 0.1.33). **Stage 1 M8 owns
+restructuring root kind dispatch** — `if`/`then` per kind, or mapping the `oneOf` failure to the branch
+matching the declared `kind` — and owns making the diagnostic shape able to carry an external rule
+identifier alongside the path. Stage 2 attaches APDS rule IDs to that substrate and MUST NOT re-cut the
+renderer. If Stage 1 M8 has not landed when Stage 2 Band 1 begins, treat it as a prerequisite and
+coordinate, rather than forking a parallel diagnostic path.
 
 **Conformance model (recommended):**
 
@@ -1011,7 +1142,11 @@ benefit, keep current prompt behavior. No change to APDS normative requirements.
 - Stage 1 M11B's lock v4 and future-lock guard are authoritative, including that source-controlled lock
   entries hold logical identities, not host-target selections.
 - Stage 1 M13A/B multi-artifact release storage/upload/finalization and M14A–C
-  integrity/signature/attestation define the release evidence surface used by Stage 2.
+  integrity/signature/attestation define the release evidence surface used by Stage 2. Note the split:
+  **M14A** defines the release-level digest and canonicalization (what install/lock integrity depends on),
+  **M14B** the release-level signature statements and stored-byte verification, and **M14C** the root-signed
+  registry key set plus client-side verification. A *verified* registry-attestation Health signal is only
+  possible once M14C is deployed; before that the signal reads unknown/not evaluated.
 - Stage 1 M15 target-aware installer/runtime provisioning must be reused, not reimplemented in an APDS installer.
 - If Stage 1 is in flight, add a compatibility plan and stage branch/PR coordination before touching shared
   DTOs, migrations or CLI snapshots.
@@ -1046,9 +1181,11 @@ universal score, ungrounded badges or broad quality claims.
 
 ### 9. Design system and mockup interpretation
 
-**Current production website is the authoritative visual-design reference** for existing colors,
-typography, brand marks, elevation and established patterns. Refine for coherence, but do not replace it
-with a flat, edge-to-edge, blue-only dashboard simply because AI mockups did so. Preserve floating/layered
+**Current production website is the default visual-design reference** for existing colors, typography,
+brand marks, elevation and established patterns, and the mockups do not override it by merely depicting
+something. Refine for coherence, and adopt a mockup styling treatment only where the D21 adoption review
+deliberately chooses it — never wholesale, and never by replacing the site with a flat, edge-to-edge,
+blue-only dashboard simply because AI mockups did so. Preserve floating/layered
 surfaces, generous whitespace, subtle gradient/depth, rounded cards, kind icons and compact
 developer-centric code areas where useful.
 
@@ -1058,16 +1195,128 @@ developer-centric code areas where useful.
   card density, **not authoritative style/copy/metrics**.
 - [`assets/detail-structure.png`](assets/detail-structure.png): composition and execution-architecture
   organization, **not authoritative data**.
-- [`assets/landing-layered.png`](assets/landing-layered.png): stronger layered/floating treatment; still
-  drifted from actual brand palette.
-- [`assets/detail-layered.png`](assets/detail-layered.png): stronger depth and whitespace; still not
-  pixel-perfect or contract-accurate.
+The three `-layered` images below are **one site-wide redesign sharing a global shell** — read them
+together, not as three page comps — and they are a **guide weighted toward layout**, not a design to
+reproduce 1:1. Some of their styling is worth taking; **D21** decides which, element by element, before the
+shell is built (§9.1). Copy and every displayed value are excluded from adoption in all cases.
+
+- [`assets/landing-layered.png`](assets/landing-layered.png): homepage structure — hero with a featured
+  Agent Package card and tabbed command block, the category explainer row, the Components row, and the
+  three starter paths. Also carries a stronger layered/floating treatment whose adoption is a D21 call.
+- [`assets/detail-layered.png`](assets/detail-layered.png): the detail route — identity card with a trust
+  badge strip, a three-action get-started panel (Install / Run with Harness / Load via SDK), the tab bar,
+  and the Composition + Execution architecture two-column body. Depth and whitespace treatment is a D21
+  call; the data shown is not contract-accurate.
+- [`assets/explore-layered.png`](assets/explore-layered.png): Explore — persistent faceted rail carrying
+  the Agent Package / Components / Templates / Namespaces hierarchy, a curated Featured row explicitly
+  labeled separate from Trending, and per-kind result cards.
 
 **Do not copy mockup inventions** (fictional stats, dates, usage counts, version values, model
 integrations, false APDS verification, `"apds"` field instead of `"standard"`, fictional backend
 categories, false “production ready” claims). Implement with real manifests/Registry data;
 conditional/empty/legacy states. Responsive and keyboard/mobile behavior matter at least as much as the
 desktop snapshot.
+
+### 9.1 Global layout system — decide once, apply progressively
+
+**REQUIRED.** The three `-layered` mockups are a **site-wide redesign**, not three independent page
+comps. They share a global shell, and several of those elements appear on every route. Once the first page
+adopts them the rest are effectively committed, so the shell must be **designed and built once, before**
+any page-level milestone consumes it — not re-derived per page and reconciled later.
+
+**The mockups are a guide, weighted heavily toward layout — not a design to reproduce 1:1.** Nothing in
+them is adopted automatically, and that cuts both ways: their strongest contribution is **structure,
+layout, hierarchy, component inventory and interaction model**, but they also contain **styling ideas worth
+taking selectively**. Selective styling adoption is explicitly allowed; what is not allowed is adopting
+anything *by default* because it appeared in an image.
+
+Every element is therefore a deliberate call — **adopt / adapt / reject** — recorded with a one-line reason
+before the shell is built (see **D21** and M8B.1). Three things are never read off the images regardless:
+**copy**, which §12–§15 and M14A/M14B settle, and **every number, name, date, count and badge**, which must
+come from real data. The production site remains the default for brand identity, and a styling element is
+adopted only where the review deliberately chooses it over the current treatment.
+
+**Global elements shared across all three mockups** — these are the locked-in surface:
+
+| Element | What the mockups establish | Appears on |
+|---|---|---|
+| **App shell / header** | Floating rounded header inset from the viewport edge, not full-bleed. Logo + primary nav (Explore, Docs, Pricing, Blog) + global search with ⌘K affordance. Anonymous variant ends in Sign in / Sign up; authenticated variant ends in notifications + avatar menu | Every route |
+| **Page canvas** | Soft tinted/gradient background with white rounded card surfaces floating on top; centered max-width column with generous outer margin | Every route |
+| **Section card** | White rounded card with an icon chip top-left, title, one-line subtitle, optional right-aligned action link. The single most repeated primitive in the set | Every route |
+| **Kicker + headline** | Small uppercase letter-spaced kicker above an outsized headline with a supporting paragraph | Landing, Explore |
+| **Kind token system** | One icon + tint + label per kind, used identically in nav filters, cards, composition nodes and capability chips | Every route |
+| **Package card variants** | Hero/featured, 3-up featured, 2-up search result, and composition node — one data model, several densities | Every route |
+| **Command block** | Monospace block with a copy affordance; tabbed on the landing hero, stacked rows on detail | Landing, detail |
+| **Trust/evidence row** | Badge strip on the identity card plus a labeled status list with per-row evidence links | Detail |
+| **Footer** | Logo + tagline + link row + social icons, with a compact variant | Every route |
+
+Two layout decisions worth naming because they are structural, not cosmetic: **global search moves into the
+header** on every route, and the detail page uses an **asymmetric two-column grid** (identity left /
+get-started panel right, then Composition left / Execution architecture right). Explore uses a persistent
+left facet rail. These grids should come from one shared layout system.
+
+**Already settled — not open to D21.** Two visual systems are shipped, deliberate, and **preserved as-is**;
+the mockups depict different ones, and those depictions are rejected by default rather than being an open
+question:
+
+- **Per-kind color.** `agentpm-web/src/components/ui/Badge.tsx` defines the tone system, and the shipped
+  kind assignment is **Agent → amber, Tool → indigo, Skill → rose, Knowledge → fuchsia, Memory → teal,
+  Profile → cyan, Loop → lime, Template → emerald** (with `sky` reserved for the cross-cutting `Signed`
+  badge). The mockups assign different hues to the same kinds; adopting them would break recognition for
+  existing users for no gain. Keep the shipped assignment. The tone styling is already dark-native
+  (`bg-{c}-500/15 text-{c}-300 border-{c}-700/50`), so it carries into a dark theme without rework.
+- **Per-package generated identity.** `components/ui/ToolBox.tsx` derives a deterministic two-stop gradient
+  from a hash of the package identity (FNV-1a seed → mulberry32 PRNG → two HSL stops), giving every package
+  a unique, stable avatar with no authored artwork. It is used in 17 places. The mockups replace it with
+  generic per-kind glyph chips and a stock avatar, which is a **downgrade** — it discards free per-package
+  recognition. Keep the generated system.
+
+**The two systems are complementary, not alternatives — which is what the mockups get wrong.** The
+generated gradient answers *which package is this*; the kind tone and label answer *what kind is it*. The
+mockups collapse both into a single per-kind glyph used as the avatar, which conveys the kind twice and the
+identity not at all. In any identity context, kind is carried by the tone and label **alongside** the
+generated avatar, never by replacing it.
+
+That gives a simple test for which mark to use:
+
+> **Does this stand for a specific package, or for a category of packages?**
+> A specific package → **generated identity gradient**. A kind as a category, filter or legend → a
+> **per-kind glyph** is reasonable, and is often the better choice at small sizes.
+
+Indicative, not yet locked: identity contexts include the Agent Package Card, Explore result cards, the
+detail-page identity block, and the nodes of the detail-page composition chart — all of which name a
+specific package and keep the generated avatar. Category contexts include the Explore facet rail, kind
+filters and legends, where no specific package is being named and a compact glyph reads better. Settle the
+edge cases during M8B.1 by applying the test above rather than by listing surfaces exhaustively here.
+
+If a per-kind glyph set is introduced for those category contexts, it is a **small, deliberate addition**
+scoped to them — not a replacement for the generated system and not a license to restyle identity surfaces.
+The mockups' glyphs may inform it, subject to D21.
+
+The remaining work here is **consolidation, not invention**: the kind→tone mapping is currently hardcoded in
+eight separate card components. M8B.1 centralizes the existing values into one token source; it does not
+choose new ones.
+
+**Design adoption review (D21), before the shell is built.** M8B.1 opens with an explicit pass over the
+three `-layered` mockups, element by element — the global ones in the table above plus the notable styling
+treatments that are genuinely open (surface elevation and shadow depth, corner radii, the background
+gradient/tint, card border and divider weight, spacing rhythm and density, badge and pill *shape*, the
+monospace command-block look, type scale and weight contrast). Per-kind color and the generated
+per-package identity are **excluded from the review** — they are settled above. Each gets **adopt**, **adapt** (take the idea, express
+it in current tokens) or **reject** (keep today's treatment), each with a one-line reason. Zack reviews and
+signs off on that list before implementation starts. The signed list, not the images, is what the build
+follows and what review checks against.
+
+**Sequencing requirement.** Milestone 8B.1 owns the shell and the shared layout system. Every page-level
+milestone — M8A, M9A, M9B, M10A, M10B, M12A, M12B, M13A, M13B, M14A, M14B — **consumes** it and MUST NOT
+fork its own header, footer, page canvas, section-card or kind-token implementation. Adopting the layout
+progressively, route by route, is expected and fine; shipping two competing shells is not. If a route must
+ship before 8B.1, say so explicitly in its milestone evidence and schedule its migration.
+
+**One observation, not an instruction:** `detail-layered.png` merges Health and Security into a single
+`Health & Security` tab. That is useful evidence for **D12**, which asks whether Health is a dedicated tab
+or an expanded Security tab — but the mockup is not the decision. Decide it against the Stage 1 shared
+shell and record it.
 
 ### 10. Agent Package and Component detail pages
 
@@ -1155,6 +1404,14 @@ desktop snapshot.
 - Establish a reusable **Agent Package Card** visual language (purpose, publisher, identity, version,
   composition, authored standard identifier, appropriate trust metadata and install/run or detail action);
   smaller UI variants may share data/presentation primitives across homepage/Explore/detail/OG.
+- **The homepage hero card is this Card, shown at full fidelity** — not a decorative hero graphic. Treat the
+  landing placement as the showcase for the shareable artifact: the same component and data model that
+  Explore, detail, OG previews and the D16 README-embed investigation reuse. That is why it carries more
+  content than a typical hero element — a shareable card has to stand alone when it appears somewhere with
+  no surrounding page. The density tradeoff is therefore a deliberate Card-design question to settle in
+  M8B/M11B, not a hero-layout accident: decide what the Card must say unaccompanied, then let the homepage
+  show that. Distribution is the point — this is a primary channel for explaining Agent Package Management
+  to people who have never visited the site.
 - Cards must not claim current Runner readiness without local preflight. Distinguish identity-level
   engagement from version metadata; show only verified evidence.
 - **INVESTIGATE and document** embeddable GitHub README image/badge/card: Markdown copy snippet, generated
@@ -1200,7 +1457,7 @@ claims.
 | Legacy inferred APDS meaning | Explicit Registry/Manager compatibility adapter | Historical release | That original author declared a standard |
 | Digest/integrity | Stage 1 release/artifact digest verifier | Release or specific target artifact | Absence of malicious behavior |
 | Author signature | Stage 1 trusted-key verification | Release | Package behavior is safe |
-| Registry attestation | Stage 1 attestation verification | Release | End-user approval of content |
+| Registry attestation | Stage 1 **M14C** attestation verification against the root-signed registry key set | Release | End-user approval of content |
 | Malware status | Scanner result, version/time/method where available | Release artifact | Comprehensive malware-free guarantee |
 | Tool platform target | Stage 1 target classifier and actual available artifact | Release artifact/target | Other machines are runnable |
 | Dependency state | Resolved graph with pinned selected versions | Contextual composition | Runtime credentials/backend readiness |
@@ -1407,6 +1664,32 @@ alternatives while focusing on AgentPM as the product.
   If all candidate examples require credentials/network, explain requirements honestly.
 - For onboarding, an APDS-valid but nonrunnable blank Agent from `init` needs accurate next steps to add a
   Loop and execution setup rather than falsely promising immediate Harness compatibility.
+
+### 15.1 Example and Template corpus republication
+
+**REQUIRED:** `agentpm-examples` holds roughly 150 published manifests across all eight kinds (59 tool, 23
+agent, 16 loop, 13 skill, 11 template, 10 memory, 10 knowledge, 7 profile), none of which declare
+`standard`. Templates are the blocking case: a Template ships scaffolded manifests **inside** its
+`files_root`, and `agentpm new` validates generated manifests through a blocking check
+(`commands/new.rs::validate_generated_manifests_blocking`). So once strict lint lands, `agentpm new
+<template>` **fails during scaffolding itself** — not at a later `agentpm lint` — and Journey C breaks end to
+end. Published versions are immutable, so the remedy is **new
+Template versions**, never edits in place.
+
+Scope the republication deliberately rather than sweeping the corpus:
+
+| Set | Action | Why |
+|---|---|---|
+| Templates whose `files_root` ships manifests | **Required** new version with `standard` in scaffolded files | `agentpm new` → `lint` must pass; otherwise Journey C and S2-AC-19 fail |
+| The M15B starter Agent Package | **Required** new version | The Try journey should show a declared, verified standard, not legacy inference |
+| One package per kind | **Recommended** new version | Health/standard/detail surfaces need non-legacy states to render, or all eight kinds display "inferred" |
+| Everything else | **Leave published as-is** | Still installable; the most realistic corpus for legacy-inference fixtures and the M1A inventory |
+
+Prior published versions MUST remain byte-identical and installable, and republication MUST NOT mark legacy
+versions as APDS-verified. Template `dependencies` pin exact versions at publish time, so a republished
+Template must also reference any republished Component versions it should scaffold against, and the
+generated workspace must resolve and install. An older CLI must still be able to use the older Template
+version; see §4's old-client compatibility requirement.
 
 ### 16. AgentPM Developer future-stage handoff
 
@@ -1618,10 +1901,14 @@ IDs are stable requirement references for `tasks.md`, `test-plan.md`, and review
 - **S2-AC-01** — A deterministic, versioned APDS v1.0.0 contract exists with immutable authoritative schema
   derived from `agentpm.manifest.schema.json`, documented normative semantics, stable rule IDs, linked
   fixtures, version policy and canonical docs/source paths. Existing generic schema path cannot drift from
-  it.
+  it, and no runtime schema-source override can silently replace it. The freeze occurred **after** Stage 1's
+  manifest-schema additions (M2, M11A) merged, and those fields are conformant under v1.0.0.
 - **S2-AC-02** — All eight new kind scaffolds emit `standard: {id:"agentpm",version:"1.0.0"}`; plain
   `agentpm init` defaults to an APDS-valid minimal Agent Package, and `--kind tool` plus every explicit
-  other kind remains valid. Names/descriptions serialize safely.
+  other kind remains valid. Names/descriptions serialize safely. `agentpm export`'s generated Skill
+  scaffold also emits `standard`. A **tolerance release** that accepts and round-trips `standard` shipped
+  **before** any command emits it, manifest-rewriting paths preserve the field, and the outdated-client
+  rejection names a concrete minimum CLI version.
 - **S2-AC-03** — Agent no longer requires nonempty/declared Tools, Loop or Profiles for APDS validity;
   common required fields including nonblank description and supported standard are validated. Semantics
   preserve Phase 6/7 binding, Loop, Profile, Skill, Memory and Template contracts.
@@ -1667,7 +1954,15 @@ IDs are stable requirement references for `tasks.md`, `test-plan.md`, and review
 
 - **S2-AC-13** — Homepage teaches developer problem/complete Agent Package first, AgentPM as
   Manager/Registry plus Harness reference Runner, with one real data-driven package visual and clear
-  try/build/template paths. Existing visual identity is preserved/evolved, not replaced by mockup colors.
+  try/build/template paths. Existing visual identity is preserved/evolved rather than replaced wholesale by
+  mockup styling, with any adoption traceable to the signed D21 list,
+  and the page renders on the shared global shell rather than a bespoke layout.
+- **S2-AC-13a** — A single global layout system exists — header (anonymous and authenticated), page canvas,
+  section-card primitive, kind tokens, grid primitives and footer — built once and adopted by every route.
+  A signed **D21** adoption review records adopt/adapt/reject for every mockup element before build, and
+  what shipped matches it; styling adopted from the mockups is deliberate and listed rather than wholesale;
+  Stage 1 search, SSR metadata and canonical behavior are intact; shell-level responsive and accessibility
+  behavior is verified.
 - **S2-AC-14** — Explore and namespace surfaces visually group Agent Packages, six Component kinds,
   Templates, Namespaces; cards for all kinds show helpful actual metadata; no-query Explore offers useful
   data-driven discovery; Stage 1 search, filters, relevance, visibility, trending, stars, pins and
@@ -1689,6 +1984,8 @@ IDs are stable requirement references for `tasks.md`, `test-plan.md`, and review
 - **S2-AC-19** — Three end-to-end first-use journeys have contextual entry points and accurate commands; a
   real simple low-cost Agent Package is installable and runnable through Harness with stated
   provider/config requirements; `publish` continues to link to the Registry; no dead AgentPM Developer CTA.
+  Templates whose `files_root` ships manifests are republished so `agentpm new` output passes strict lint,
+  the starter declares a standard, and every prior published version remains byte-identical and installable.
 - **S2-AC-20** — Future AgentPM Developer-stage guided creation/publishing/optional sharing brief exists,
   including user-owned ideas, reuse-driven cold-start loop and Card handoff, without implementing the
   wizard.
@@ -1774,6 +2071,7 @@ altering an AGREED requirement. The complete list is retained so none are silent
 | **D17** | Component/Template Health UX | Consistent shared evidence semantics with kind-specific content, preserve specialized detail views. | Shared API/component extension model vs per-kind adapters; no uniform meaningless checklist. |
 | **D18** | Category explainer and SEO copy | Product-centered homepage + deeper `/agent-package-management` page; no inflated category claims. | Final page structure/copy/metadata; verify current SEO contracts and user comprehension. |
 | **D19** | APDS declaration/status schema in Registry/lock/UI | Distinct `declared` vs `legacy_inferred`, conformance level/status, source evidence; avoid conflation. | Field names and serializer shape coordinated across API, CLI, Harness, Health and UI; backward-compatible rollout. |
+| **D21** | Mockup adoption scope — what to take from the `-layered` images and what to leave | An explicit **adopt / adapt / reject** pass over every global element and notable styling treatment, decided and signed off **before** the shell is built. Layout and structure are the mockups' strongest contribution; styling is adopted selectively, never by default. Copy, all displayed values, the shipped per-kind color assignment and the generated per-package identity gradient are **excluded from the review** and preserved as-is. | Codex proposes the classification with a one-line reason per element and flags anything where the mockup clearly beats the current treatment; **Zack signs off before implementation**. Claude checks that what shipped matches the signed list, not the images. |
 | **D20** | Runner APDS capability advertisement | Reuse existing Harness machine initialization/preflight and SDK wrappers; don't invent a separate protocol. | Exact surface/serialization; parity tests across TUI/headless/machine SDK and standard-version errors. |
 
 ### Decisions already settled: do not reopen by default
@@ -1819,6 +2117,8 @@ altering an AGREED requirement. The complete list is retained so none are silent
 - **Visual references:** [`assets/landing-structure.png`](assets/landing-structure.png),
   [`assets/detail-structure.png`](assets/detail-structure.png),
   [`assets/landing-layered.png`](assets/landing-layered.png),
-  [`assets/detail-layered.png`](assets/detail-layered.png). **Existing live website wins on brand styling
-  and real facts.**
+  [`assets/detail-layered.png`](assets/detail-layered.png),
+  [`assets/explore-layered.png`](assets/explore-layered.png). The three `-layered` images are the
+  **authoritative target for structure and layout** across the whole site (see §9.1); the existing live
+  website wins on brand styling, design tokens and real facts.
 
