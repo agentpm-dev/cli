@@ -96,6 +96,10 @@ Add fixture/command tests for:
 - all eight `agentpm init --kind` scaffolds lint clean;
 - Tool scaffold contains valid minimal files/entrypoint;
 - oneOf/anyOf suppression;
+- a manifest carrying a permissive `standard` field lints clean for all eight kinds, while a misspelled top-level key (`standrad`, `tool`) is still rejected — proving the root relaxed by one field, not opened;
+- `standard` plus one extra unknown top-level key survives `agentpm install <pkg>` write-back and `knowledge build --write` with no field loss;
+- root kind-union dispatch: a kind-specific violation (e.g. `kind: "agent"` missing a kind-required field) reports the offending branch/field and path, not `/oneOf` with the manifest echoed;
+- the diagnostic shape can carry an external rule identifier next to the path, so Stage 2's APDS rule IDs attach without re-cutting the renderer;
 - duplicate schema error removal;
 - bounded instance echoes;
 - semantic errors ordered first;

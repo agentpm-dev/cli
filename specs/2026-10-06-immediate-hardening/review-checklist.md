@@ -107,6 +107,8 @@
 
 - Confirm semantic/domain errors are shown before generic schema noise.
 - Confirm parent oneOf/anyOf suppression does not hide the only useful error.
+- Confirm the permissive root `standard` field was added and shipped, relaxing the root by **that one field only** (misspelled top-level keys still rejected), that it is accepted-and-ignored rather than emitted or validated here, and that it survives `install` write-back and `knowledge build --write`. This unblocks Stage 2 without breaking already-released CLIs; the shipped version becomes Stage 2's minimum-CLI floor.
+- Confirm the root kind union now resolves to the branch named by `kind`, so kind-specific violations carry a real path/field instead of `/oneOf`. This is a Stage 2 prerequisite: APDS diagnostics need a rule ID plus a JSON path, and the diagnostic shape must have room for an external rule identifier.
 - Confirm duplicate `/properties` / `/dependentSchemas` errors are gone where equivalent.
 - Confirm huge object echoes are bounded.
 - Confirm closed-union errors identify useful expected alternatives.

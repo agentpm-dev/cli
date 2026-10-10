@@ -135,7 +135,7 @@ This gives us a correct, predictable Explore surface: sane page-size/cursor beha
 - [ ] Ensure strict and relaxed relevance passes use the same hard filter predicate and never broaden outside the user-selected filter set.
 - [ ] Ensure authorized-private visibility is applied before filters/sort and remains consistent across all sorts.
 - [ ] Build the faceted-query layer so new Stage 2 objective filters can be added without ad hoc branching.
-- [ ] Add `agentpm-harness` to Template execution-surface schema.
+- [ ] Add `agentpm-harness` to Template execution-surface schema. **Cross-stage note:** `$defs/templateMetadata.execution_surfaces` is a closed enum and Stage 2's APDS v1.0.0 structural freeze (Stage 2 M1B) is gated on this landing. Flag the merge to the Stage 2 track.
 - [ ] Update lint/schema tests for:
   - [ ] accepting `agentpm-harness`;
   - [ ] continuing to accept existing execution surfaces;
@@ -440,12 +440,14 @@ Covered milestones: 6-7.
 This gives us a hardened shared package-detail shell across kinds plus the registry technical SEO/indexing baseline: unique server-rendered metadata, canonical behavior, OpenGraph/social previews, sitemap and robots boundaries, and crawl control over arbitrary Explore query/filter URLs. Broad structured-data/schema.org work stays out of scope here and waits on Stage 2 category semantics. SEO is deliberately last in the web sequence — canonicals and sitemaps are only worth emitting once the detail routes and discovery URLs underneath them have stopped moving. At the end of this band the public registry is technically ready for inbound traffic; Band 6 adds measurement before traffic is intentionally increased.
 
 ## Milestone 8: CLI Scaffolding and Lint Quality
-> Scope note: fix the highest-impact CLI creation and linting rough edges so a newly scaffolded artifact is valid and lint output prioritizes actionable domain errors over schema noise. This milestone preserves machine-readable lint contracts and focuses on validation/rendering quality. It does not redesign all CLI output, add new runtime behavior, change AgentPM package semantics, or perform Stage 2 terminology migration.
+> Scope note: fix the highest-impact CLI creation and linting rough edges so a newly scaffolded artifact is valid and lint output prioritizes actionable domain errors over schema noise. This milestone preserves machine-readable lint contracts and focuses on validation/rendering quality. It does not redesign all CLI output, add new runtime behavior, change AgentPM package semantics, or perform Stage 2 terminology migration. It **does** own the root kind-union diagnostic restructure that Stage 2's APDS rule-ID/JSON-path diagnostics depend on.
 > Implementation notes:
 > - Current confirmed first-run defect: `agentpm init --kind tool` scaffolds `files: []`, `entrypoint.command: ""`, and `entrypoint.args: []`, then immediately fails `agentpm lint`; the other seven kinds lint clean.
 > - Prefer generating a minimal valid/runnable Tool stub over deliberately generating an invalid placeholder plus warning.
 > - AgentPM semantic validators already produce the best lint messages. Preserve those and remove generic schema noise that obscures them.
 > - Current `oneOf`/`anyOf` failure cliffs can serialize the entire containing object and can be duplicated through both `/properties/<kind>` and `/dependentSchemas/<kind>`.
+> - The worst cliff is the **root kind union itself**. Kind selection is an eight-branch top-level `oneOf`, so any kind-specific violation reports as `{entire manifest} is not valid under any of the schemas listed in the 'oneOf' keyword` at path `/oneOf` — no failing branch, no failing field. Verified on CLI 0.1.33 with an Agent manifest missing `tools`. Because `kind` is always present and is the discriminator, the branch is knowable: either restructure root dispatch to `if`/`then` per kind, or keep `oneOf` and map the failure to the branch matching the declared `kind` before rendering.
+> - **This milestone owns that restructure, and Stage 2 depends on it.** Stage 2's APDS work requires every diagnostic to carry a stable rule ID *and* a manifest JSON path; a verdict anchored at `/oneOf` cannot satisfy that. Fixing root dispatch here keeps the diagnostic layer in one stage instead of having Stage 2 re-cut the same code.
 > - Suppress a generic parent oneOf/anyOf message when a more specific semantic/domain error already exists at or beneath the same instance path.
 > - Deduplicate only genuinely equivalent errors; do not hide the only available structural error.
 > - Human rendering may improve significantly while JSON/NDJSON remains contract-stable.
@@ -460,13 +462,17 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [ ] Harden Tool package validation so a `manifest.files` entry that does not exist is a fatal packaging/publish error rather than a warning followed by silent omission.
 - [ ] Correct stale Tool packaging comments/docs that describe `files` entries as globs when the implementation treats them as literal file/directory paths, unless true glob support is deliberately added.
 - [ ] Verify all eight `init` kinds lint clean immediately.
+- [ ] **Cross-stage, ship with this milestone's CLI release:** add `standard` to the manifest schema's root `properties` with a permissive shape so the field is *accepted and ignored*. Do not emit it, validate it, or require it — Stage 2 M3A owns emission. Rationale: the root is `additionalProperties: false`, so once Stage 2 publishes packages declaring `standard`, every CLI released before this change hard-fails `agentpm lint` (exit 1) and fails `agentpm new` inside `validate_generated_manifests_blocking`. Relax the root by **this one field only**; a misspelled top-level key must still be rejected. See Stage 2 `spec.md` §2 "Old-client forward compatibility" and Stage 2 M1A.1.
+- [ ] Verify the `standard` field survives every manifest-rewriting path: `agentpm install <pkg>` write-back and `knowledge build --write` must preserve it (both operate on the loaded `serde_json::Value`, so this should hold — prove it with a regression test using `standard` plus one extra unknown key). Keep `serde_json` pinned without `preserve_order`; alphabetized rewrites are expected and lose nothing.
+- [ ] Record the released CLI version carrying this tolerance change — Stage 2 M4B names it as the minimum CLI version in its outdated-client error.
 - [ ] Refactor human lint rendering:
   - [ ] semantic/domain errors first;
   - [ ] suppress redundant parent oneOf/anyOf errors when covered by a more specific descendant/domain error;
   - [ ] deduplicate `/properties/<kind>` and `/dependentSchemas/<kind>` duplicates when they describe the same underlying failure;
   - [ ] truncate/bound instance echoes so large nested objects are never dumped inline;
   - [ ] print the failing pointer/path even when value echo is suppressed;
-  - [ ] print expected discriminator values for closed unions where practical.
+  - [ ] print expected discriminator values for closed unions where practical;
+  - [ ] resolve the **root kind union** to the branch named by the declared `kind` so a kind-specific violation reports the offending field and path instead of `/oneOf` with the whole manifest echoed.
 - [ ] For `packageRef` failures, prefer an actionable message describing accepted forms:
   - [ ] `"@ns/name@1.2.3"` string;
   - [ ] `{name, version?}` object.
@@ -475,6 +481,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
   - [ ] `transform`;
   - [ ] `delete`.
 - [ ] Add test coverage across known oneOf/anyOf cliffs:
+  - [ ] root kind dispatch (for example `kind: "agent"` missing a kind-required field) asserting a branch-specific path/message rather than `/oneOf`;
   - [ ] packageRef;
   - [ ] memoryTrigger;
   - [ ] memoryOperation;
@@ -488,6 +495,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [ ] Keep JSON/NDJSON lint output contracts stable unless explicitly versioned.
 - [ ] Make publish validation use the same human lint renderer, including a contextual manifest header instead of beginning with unattributed `[ERROR]`.
 - [ ] Add ordering tests ensuring actionable semantic messages appear before generic schema fallback.
+- [ ] Confirm the diagnostic shape produced here can carry an external rule identifier alongside the path, so Stage 2's APDS rule IDs attach without re-cutting the renderer. Do not implement APDS rules in this milestone — only avoid foreclosing them.
 
 ## Milestone 9: CLI Error and Success Consistency
 > Scope note: make non-Harness CLI success/failure behavior feel like one coherent product by centralizing transport errors, correcting exit codes, normalizing sibling inspect output, and cleaning up low-level path/filesystem leaks. This milestone does not alter Harness output, introduce new package/runtime capabilities, change machine-readable contracts beyond explicitly specified fixes, or absorb the Python portability work from later milestones.
@@ -681,7 +689,7 @@ This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a st
   - [ ] `x86_64-pc-windows-msvc`;
   - [ ] room for future supported targets/ABI variants.
 - [ ] Add deterministic current-target detection/mapping rather than treating raw `std::env::consts::{OS,ARCH}` as the compatibility ID.
-- [ ] Extend Tool runtime schema with optional Python `dependencies` when `runtime.type == "python"`.
+- [ ] Extend Tool runtime schema with optional Python `dependencies` when `runtime.type == "python"`. **Cross-stage note:** `$defs/runtime` is `additionalProperties: false, required: [type, version]`, so this is a conformance-affecting change and Stage 2's APDS v1.0.0 freeze (Stage 2 M1B) is gated on it. Flag the merge to the Stage 2 track.
 - [ ] Extend all relevant typed runtime representations, including runner-side `RuntimeDecl`, so the new field is understood consistently.
 - [ ] Reject `dependencies` for Node Tools.
 - [ ] Add Python requirement syntax validation.
