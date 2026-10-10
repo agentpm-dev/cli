@@ -12,55 +12,55 @@
 > - Relevance currently performs a strict FTS pass and may switch to a relaxed trigram pass when results are sparse. Pagination/totals must remain stable enough that users do not see impossible page counts or lose continuation state.
 > - Search state should remain URL-driven. Do not introduce hidden client-only pagination/filter state that breaks refresh, deep links, or browser navigation.
 
-- [ ] Fix Explore page-size mismatch:
-  - [ ] choose one authoritative page size for Explore;
-  - [ ] ensure the frontend sends that limit explicitly to `/search`;
-  - [ ] derive displayed page counts from the same effective limit;
-  - [ ] avoid duplicating the page-size constant in multiple layers where possible.
-- [ ] Fix cursor history so Page 2 can return to Page 1:
-  - [ ] represent the initial/start-of-results state explicitly in cursor history or otherwise make Page 1 a valid previous destination;
-  - [ ] do not rely only on the current frontend special case that strips the cursor to return to Page 1.
-- [ ] Remove/raise the `HISTORY_MAX = 10` limitation so sequential Previous navigation can return through the full result set.
-- [ ] Add regression coverage for:
-  - [ ] 0 results;
-  - [ ] less than one page;
-  - [ ] exactly one page;
-  - [ ] page-size + 1;
-  - [ ] 2 pages;
-  - [ ] 3+ pages;
-  - [ ] >10 pages;
-  - [ ] 1 → 2 → 3 → 2 → 1.
-- [ ] Verify the API only emits `next_cursor` when at least one stream can truly advance and only emits `prev_cursor` when a real previous page exists.
-- [ ] Verify mixed namespace/package cursor pagination remains stable:
-  - [ ] package-only contribution on a page;
-  - [ ] namespace-only contribution on a page;
-  - [ ] both streams contributing;
-  - [ ] one stream reaching EOF before the other.
-- [ ] Fix private-result inconsistency across Relevance/Newest versus Trending/Most Downloaded:
-  - [ ] apply the same authorized-private visibility rule to every supported sort;
-  - [ ] preserve anonymous/public behavior.
-- [ ] Test and harden strict/relaxed relevance behavior so totals/page counts do not become misleading mid-pagination:
-  - [ ] avoid switching candidate-set semantics in a way that invalidates an existing cursor;
-  - [ ] if strict/relaxed mode becomes part of the cursor contract, encode it explicitly rather than inferring it independently on each page.
-- [ ] Replace `Loading tools...` with:
-  - [ ] `Searching AgentPM…` for mixed searches;
-  - [ ] kind-specific loading text for filtered searches.
-- [ ] Add explicit no-results UI:
-  - [ ] preserve the user’s current query text;
-  - [ ] show `Clear filters` when filters are active;
-  - [ ] show `Search all kinds` when a kind constraint is active;
-  - [ ] do not introduce the future AgentPM Developer prompt CTA in Stage 1.
-- [ ] Add visible recoverable search-error state:
-  - [ ] distinguish transport/server failure from a legitimate zero-result query;
-  - [ ] provide a retry/recovery affordance where appropriate.
-- [ ] Replace unstable array-index React keys on search result cards with stable entity IDs where applicable.
-- [ ] Verify query/kind/sort/filter changes reset pagination to page 1 rather than attempting to reuse a stale cursor.
-- [ ] Verify browser Back/Forward restores:
-  - [ ] query;
-  - [ ] kind;
-  - [ ] sort;
-  - [ ] filters;
-  - [ ] cursor/page position.
+- [x] Fix Explore page-size mismatch:
+  - [x] choose one authoritative page size for Explore;
+  - [x] ensure the frontend sends that limit explicitly to `/search`;
+  - [x] derive displayed page counts from the same effective limit;
+  - [x] avoid duplicating the page-size constant in multiple layers where possible.
+- [x] Fix cursor history so Page 2 can return to Page 1:
+  - [x] represent the initial/start-of-results state explicitly in cursor history or otherwise make Page 1 a valid previous destination;
+  - [x] do not rely only on the current frontend special case that strips the cursor to return to Page 1.
+- [x] Remove/raise the `HISTORY_MAX = 10` limitation so sequential Previous navigation can return through the full result set.
+- [x] Add regression coverage for:
+  - [x] 0 results;
+  - [x] less than one page;
+  - [x] exactly one page;
+  - [x] page-size + 1;
+  - [x] 2 pages;
+  - [x] 3+ pages;
+  - [x] >10 pages;
+  - [x] 1 → 2 → 3 → 2 → 1.
+- [x] Verify the API only emits `next_cursor` when at least one stream can truly advance and only emits `prev_cursor` when a real previous page exists.
+- [x] Verify mixed namespace/package cursor pagination remains stable:
+  - [x] package-only contribution on a page;
+  - [x] namespace-only contribution on a page;
+  - [x] both streams contributing;
+  - [x] one stream reaching EOF before the other.
+- [x] Fix private-result inconsistency across Relevance/Newest versus Trending/Most Downloaded:
+  - [x] apply the same authorized-private visibility rule to every supported sort;
+  - [x] preserve anonymous/public behavior.
+- [x] Test and harden strict/relaxed relevance behavior so totals/page counts do not become misleading mid-pagination:
+  - [x] avoid switching candidate-set semantics in a way that invalidates an existing cursor;
+  - [x] if strict/relaxed mode becomes part of the cursor contract, encode it explicitly rather than inferring it independently on each page.
+- [x] Replace `Loading tools...` with:
+  - [x] `Searching AgentPM…` for mixed searches;
+  - [x] kind-specific loading text for filtered searches.
+- [x] Add explicit no-results UI:
+  - [x] preserve the user’s current query text;
+  - [x] show `Clear filters` when filters are active;
+  - [x] show `Search all kinds` when a kind constraint is active;
+  - [x] do not introduce the future AgentPM Developer prompt CTA in Stage 1.
+- [x] Add visible recoverable search-error state:
+  - [x] distinguish transport/server failure from a legitimate zero-result query;
+  - [x] provide a retry/recovery affordance where appropriate.
+- [x] Replace unstable array-index React keys on search result cards with stable entity IDs where applicable.
+- [x] Verify query/kind/sort/filter changes reset pagination to page 1 rather than attempting to reuse a stale cursor.
+- [x] Verify browser Back/Forward restores:
+  - [x] query;
+  - [x] kind;
+  - [x] sort;
+  - [x] filters;
+  - [x] cursor/page position.
 
 ## Release Band 1: Explore Correctness Baseline
 Covered milestones: 1.
