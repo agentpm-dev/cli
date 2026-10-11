@@ -115,10 +115,12 @@ Expand search into selected user-meaningful structured semantic metadata at lowe
   - display name;
   - use case;
   - stack;
-  - execution surfaces.
+  - execution surfaces;
+  - declared dependency identities at very low weight, including depended-on Agent Packages.
 - Skills:
   - descriptive compatibility/runtime labels;
-  - meaningful authored metadata.
+  - meaningful authored metadata;
+  - declared Tool dependency identities at very low weight.
 - Knowledge:
   - content type;
   - language;
@@ -139,7 +141,23 @@ Expand search into selected user-meaningful structured semantic metadata at lowe
   - phase objectives;
   - outcome descriptions.
 
-Dependency/package identity matches must participate in search at very low weight so dependent Agent Packages can be discovered without outranking the directly matching dependency.
+Dependency/package identity matches must participate in search at very low weight so a dependent artifact can be
+discovered without outranking the directly matching dependency. This applies to **every kind that declares
+dependencies**, not only Agent Packages:
+
+- Agent Packages declare Tools, Skills, Knowledge, Memory, Profiles, Loop and MCP-bound Tool identities.
+- Templates declare Tools and Agent Packages (both required by the schema) plus optional Skills, Knowledge, Memory
+  and Profiles. The Agent Package edge is unique to Templates and makes a Template discoverable by the Agent it
+  scaffolds.
+- Skills declare Tool dependencies at the manifest top level rather than under `skill`. A Skill's value is largely
+  the Tools it brings into scope, so leaving this edge unindexed while indexing the Agent equivalent would be an
+  inconsistency users notice.
+
+Index **direct** declared dependencies only. Resolving and indexing the transitive closure would inflate the search
+document and blur the weighting hierarchy this section exists to protect.
+
+Indexing dependency identities for recall is distinct from reverse-dependency discovery as a product feature
+("Used by these Agent Packages"), which remains out of scope.
 
 Do not index arbitrary full manifests, schema blobs, hashes, paths, generated build metadata, or full README bodies in Stage 1.
 
@@ -152,7 +170,6 @@ The filter sidebar should become a real faceted-search surface.
 Universal filters:
 
 - Kind.
-- Namespace via typeahead/search, not an enumerated list.
 - License.
 - Signed.
 - Updated/published recency.
@@ -196,7 +213,7 @@ Do not expose a filter merely because a field exists in the schema.
 
 Add `agentpm-harness` as a first-class Template execution-surface enum.
 
-Relevant Templates should be updated to use it where appropriate.
+Relevant Templates should be updated to use it where appropriate. The schema/lint change and the Template updates are deliberately separated: the enum lands first, and Templates are republished only after a CLI carrying it has been released, since `agentpm publish` validates against the CLI's bundled schema.
 
 Harness should not be represented indirectly through `agentpm-run` when Harness is the intended execution surface.
 
@@ -1276,7 +1293,6 @@ OIDC/keyless AgentPM registry publishing is deferred.
 - Strict/relaxed relevance does not produce misleading page counts or invalid continuation behavior.
 - Filters sidebar replaces `Coming soon`.
 - Filter state is URL-addressable.
-- Namespace filter uses searchable typeahead.
 - Kind-specific filters appear only when relevant.
 - Search expansion returns lower-weight semantic/dependency matches without outranking direct identity matches.
 - Fixed relevance fixture set passes.
@@ -1457,7 +1473,6 @@ OIDC/keyless AgentPM registry publishing is deferred.
 - Mixed namespace/package cursor pagination is complex; preserve architecture unless a rewrite is justified.
 - Filter combinatorics can lead to hard-to-maintain ad hoc query branching if not implemented as a coherent faceted-query layer.
 - Moving Kind into Filters must not reduce discoverability or break deep links.
-- Namespace typeahead must avoid expensive unbounded lookups.
 
 ### Stars / trending
 

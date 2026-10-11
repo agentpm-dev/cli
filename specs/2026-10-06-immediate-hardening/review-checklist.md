@@ -39,12 +39,11 @@
 ## Search and filters
 
 - Confirm filters apply server-side before sorting/pagination.
-- Confirm namespace filtering is typeahead-based.
 - Confirm OR-within / AND-across semantics.
 - Confirm Agent Package Includes uses AND semantics.
 - Confirm kind-specific filters appear only where intended.
 - Confirm no Profile/Loop-specific filters were added without justification.
-- Confirm dependency identity search is very low weight.
+- Confirm dependency identity search is very low weight, covers **every kind that declares dependencies** (Agent Package, Template, Skill — Skill's Tool deps sit at the manifest top level and are easy to miss), uses one shared weight class across kinds, and indexes direct declarations only rather than the transitive closure.
 - Confirm exact/direct matches still outrank dependent matches.
 - Confirm full README bodies and arbitrary manifest content were not indexed.
 - Confirm search fixture tests represent meaningful relevance behavior rather than brittle exact rank snapshots.

@@ -76,74 +76,69 @@ This gives us a correct, predictable Explore surface: sane page-size/cursor beha
 >   - AND across different groups;
 >   - Agent Package `Includes` is intentionally stricter: multiple selected component types mean the Agent Package must include all selected types.
 > - The current package-kind tabs under the search bar feel disconnected from the filter model. Move Kind into the filter surface unless implementation review finds a strong UX reason to retain the tabs.
-> - Namespace filtering must scale to many namespaces. Use typeahead/search-backed selection, not a giant static dropdown.
 > - Do not expose a field merely because it exists in `agent.json`; filters should correspond to natural discovery questions for the best-fit initial user.
 > - Stage 2 may add objective Package Health facets later. Structure the backend/filter representation so adding those does not require another query-system rewrite.
 > - `agentpm-harness` should become a real Template execution-surface enum rather than overloading `agentpm-run` when Harness is the intended execution path.
+> - This milestone lands the **schema and lint** change only. Updating the published example Templates to declare it is **Milestone 3.1**, deliberately deferred to the end of this release band: publishing a Template that declares `agentpm-harness` requires a CLI whose bundled schema already accepts it, so the CLI has to be released first.
 
-- [ ] Move Kind into the Filters area and remove the disconnected kind-tab treatment if the final UX confirms this direction.
-- [ ] Replace `Filters: Coming soon` with working filters.
-- [ ] Implement a reusable filter-query representation shared by frontend and backend rather than one-off query parameters handled independently in multiple code paths.
-- [ ] Implement URL-addressable filter state:
-  - [ ] preserve multiple selected values;
-  - [ ] ensure deterministic serialization/order where practical;
-  - [ ] clear stale cursor whenever filters change.
-- [ ] Implement universal filters:
-  - [ ] Kind;
-  - [ ] Namespace typeahead:
-    - [ ] query namespaces incrementally;
-    - [ ] allow selecting at least one namespace;
-    - [ ] support multiple namespaces if the shared filter model already supports it cleanly;
-  - [ ] License;
-  - [ ] Signed;
-  - [ ] Updated/published recency.
-- [ ] Define initial Updated/published recency buckets in one place; recommended starting options:
-  - [ ] past 30 days;
-  - [ ] past 90 days;
-  - [ ] past year.
-- [ ] Implement Tool-specific Runtime filter:
-  - [ ] Python;
-  - [ ] Node.
-- [ ] Implement Agent Package Includes filter:
-  - [ ] Skills;
-  - [ ] Knowledge;
-  - [ ] Memory;
-  - [ ] Profiles;
-  - [ ] Loop;
-  - [ ] MCP.
-- [ ] Define `Includes` from the authored/resolved Agent composition model rather than from incidental README text.
-- [ ] Implement Template filters:
-  - [ ] Stack;
-  - [ ] Execution Surface.
-- [ ] Implement Skill Runtime Compatibility filter using the closed runtime compatibility enum only.
-- [ ] Implement Knowledge Mode filter:
-  - [ ] context;
-  - [ ] vector.
-- [ ] Implement Memory Supports Retrieval filter:
-  - [ ] key;
-  - [ ] filter;
-  - [ ] chronological;
-  - [ ] full text;
-  - [ ] semantic.
-- [ ] Leave Profile and Loop without kind-specific v1 filters.
-- [ ] Implement OR-within/AND-across filter-group semantics.
-- [ ] Implement AND semantics for selected Agent Package Includes values.
-- [ ] Apply filters server-side before:
-  - [ ] relevance ranking;
-  - [ ] non-relevance sorting;
-  - [ ] pagination.
-- [ ] Ensure strict and relaxed relevance passes use the same hard filter predicate and never broaden outside the user-selected filter set.
-- [ ] Ensure authorized-private visibility is applied before filters/sort and remains consistent across all sorts.
-- [ ] Build the faceted-query layer so new Stage 2 objective filters can be added without ad hoc branching.
-- [ ] Add `agentpm-harness` to Template execution-surface schema. **Cross-stage note:** `$defs/templateMetadata.execution_surfaces` is a closed enum and Stage 2's APDS v1.0.0 structural freeze (Stage 2 M1B) is gated on this landing. Flag the merge to the Stage 2 track.
-- [ ] Update lint/schema tests for:
-  - [ ] accepting `agentpm-harness`;
-  - [ ] continuing to accept existing execution surfaces;
-  - [ ] rejecting unknown execution surfaces.
-- [ ] Update relevant example Templates/manifests to declare `agentpm-harness` when Harness is genuinely the intended execution surface.
+- [x] Move Kind into the Filters area and remove the disconnected kind-tab treatment if the final UX confirms this direction.
+- [x] Replace `Filters: Coming soon` with working filters.
+- [x] Implement a reusable filter-query representation shared by frontend and backend rather than one-off query parameters handled independently in multiple code paths.
+- [x] Implement URL-addressable filter state:
+  - [x] preserve multiple selected values;
+  - [x] ensure deterministic serialization/order where practical;
+  - [x] clear stale cursor whenever filters change.
+- [x] Implement universal filters:
+  - [x] Kind;
+  - [x] License;
+  - [x] Signed;
+  - [x] Updated/published recency.
+- [x] Define initial Updated/published recency buckets in one place; recommended starting options:
+  - [x] past 30 days;
+  - [x] past 90 days;
+  - [x] past year.
+- [x] Implement Tool-specific Runtime filter:
+  - [x] Python;
+  - [x] Node.
+- [x] Implement Agent Package Includes filter:
+  - [x] Skills;
+  - [x] Knowledge;
+  - [x] Memory;
+  - [x] Profiles;
+  - [x] Loop;
+  - [x] MCP.
+- [x] Define `Includes` from the authored/resolved Agent composition model rather than from incidental README text.
+- [x] Implement Template filters:
+  - [x] Stack;
+  - [x] Execution Surface.
+- [x] Implement Skill Runtime Compatibility filter using the closed runtime compatibility enum only.
+- [x] Implement Knowledge Mode filter:
+  - [x] context;
+  - [x] vector.
+- [x] Implement Memory Supports Retrieval filter:
+  - [x] key;
+  - [x] filter;
+  - [x] chronological;
+  - [x] full text;
+  - [x] semantic.
+- [x] Leave Profile and Loop without kind-specific v1 filters.
+- [x] Implement OR-within/AND-across filter-group semantics.
+- [x] Implement AND semantics for selected Agent Package Includes values.
+- [x] Apply filters server-side before:
+  - [x] relevance ranking;
+  - [x] non-relevance sorting;
+  - [x] pagination.
+- [x] Ensure strict and relaxed relevance passes use the same hard filter predicate and never broaden outside the user-selected filter set.
+- [x] Ensure authorized-private visibility is applied before filters/sort and remains consistent across all sorts.
+- [x] Build the faceted-query layer so new Stage 2 objective filters can be added without ad hoc branching.
+- [x] Add `agentpm-harness` to Template execution-surface schema. **Cross-stage note:** `$defs/templateMetadata.execution_surfaces` is a closed enum and Stage 2's APDS v1.0.0 structural freeze (Stage 2 M1B) is gated on this landing. Flag the merge to the Stage 2 track.
+- [x] Update lint/schema tests for:
+  - [x] accepting `agentpm-harness`;
+  - [x] continuing to accept existing execution surfaces;
+  - [x] rejecting unknown execution surfaces.
 
 ## Milestone 3: Search Relevance Expansion
-> Scope note: increase deterministic search recall by indexing selected user-meaningful semantic metadata at deliberately lower weights while preserving direct identity matches as the strongest signals. This milestone includes a fixed relevance fixture set to guard against noisy regressions. It does not index full READMEs/arbitrary manifest text, add embeddings or LLM reranking, change the faceted-filter contract, or build recommendations.
+> Scope note: increase deterministic search recall by indexing selected user-meaningful semantic metadata at deliberately lower weights while preserving direct identity matches as the strongest signals. Dependency-identity indexing covers every kind that declares dependencies — Agent Packages, Templates and Skills — using direct declarations only. This milestone includes a fixed relevance fixture set to guard against noisy regressions. It does not index full READMEs/arbitrary manifest text, add embeddings or LLM reranking, change the faceted-filter contract, or build recommendations.
 > Implementation notes:
 > - Keep the current PostgreSQL FTS + trigram architecture. This milestone is an evolution of the existing weighted materialized search index, not a search-engine replacement.
 > - Preserve the current intent that identity-level matches dominate:
@@ -152,83 +147,116 @@ This gives us a correct, predictable Explore surface: sane page-size/cursor beha
 >   - top-level description lower;
 >   - richer kind-specific semantic metadata lower still;
 >   - dependency/component identities very low weight.
-> - A search for a dependency such as `github-tool` should be able to surface an Agent Package that depends on it, but the actual `github-tool` result must clearly outrank that dependent Agent Package.
+> - A search for a dependency such as `github-tool` should be able to surface an artifact that depends on it, but the actual `github-tool` result must clearly outrank the dependent artifact. This applies to **Agent Packages, Templates and Skills** — all three declare dependencies, and indexing only the Agent edge would make a Skill built around a Tool invisible to a search for that Tool.
+> - Index **direct** declared dependencies only. Transitive resolution is out of scope here and would blur the weight hierarchy this milestone exists to protect.
+> - Indexing dependency identities for recall is **not** reverse-dependency discovery as a product feature ("Used by these Agent Packages"), which stays deferred. This is search recall at the lowest weight class.
 > - Keep typo/fuzzy trigram behavior focused on package names and namespace handles. Do not fuzzy-match every long descriptive field.
 > - Avoid indexing full README bodies: authored prose contains many incidental terms and is likely to create noisy matches.
 > - Prefer indexing human-meaningful fields over implementation plumbing such as paths, hashes, raw schemas, generated metadata, and internal IDs.
 > - The relevance fixture set should assert important relationships/ordering properties, not freeze every exact numeric rank forever.
 
-- [ ] Extend the search materialized/indexed document with selected lower-weight semantic fields.
-- [ ] Preserve strongest weighting for:
-  - [ ] name;
-  - [ ] namespace;
-  - [ ] top-level description.
-- [ ] Define explicit additional weighted search vector(s) or equivalent structure so lower-weight semantic fields are not accidentally promoted to the same relevance class as top-level description.
-- [ ] Add lower-weight Agent Package semantic fields:
-  - [ ] authored Examples prompt titles/text where available;
-  - [ ] useful composition/binding labels that help discovery;
-  - [ ] avoid indexing internal phase/binding IDs unless they carry real user meaning.
-- [ ] Add very-low-weight dependency/component package identity matches:
-  - [ ] Tools;
-  - [ ] Skills;
-  - [ ] Knowledge;
-  - [ ] Memory;
-  - [ ] Profiles;
-  - [ ] Loop;
-  - [ ] MCP-bound Tool package identities where available.
-- [ ] Add Template:
-  - [ ] display name;
-  - [ ] use case;
-  - [ ] stack;
-  - [ ] execution surfaces.
-- [ ] Add Skill descriptive compatibility/runtime metadata:
-  - [ ] controlled runtime labels;
-  - [ ] other descriptive fields only where they are sufficiently normalized to be useful.
-- [ ] Add Knowledge:
-  - [ ] content type;
-  - [ ] language;
-  - [ ] mode;
-  - [ ] document descriptions.
-- [ ] Add Memory:
-  - [ ] space descriptions;
-  - [ ] record type descriptions;
-  - [ ] operation descriptions;
-  - [ ] retrieval modes.
-- [ ] Add Profile:
-  - [ ] role;
-  - [ ] expertise;
-  - [ ] objectives;
-  - [ ] audience description.
-- [ ] Add Loop:
-  - [ ] archetype;
-  - [ ] phase objectives;
-  - [ ] outcome descriptions.
-- [ ] Keep trigram fuzzy matching focused on names/namespaces.
-- [ ] Do not index:
-  - [ ] full READMEs;
-  - [ ] arbitrary manifest bodies;
-  - [ ] schema blobs;
-  - [ ] hashes;
-  - [ ] generated build metadata;
-  - [ ] package-relative file paths as general discovery text.
-- [ ] Create a fixed search relevance fixture set using representative artifacts across multiple kinds.
-- [ ] Include fixture cases for:
-  - [ ] exact package name;
-  - [ ] exact namespace;
-  - [ ] typo;
-  - [ ] direct name vs dependency-only match;
-  - [ ] metadata-only match;
-  - [ ] multi-word query;
-  - [ ] filtered query;
-  - [ ] no-result query.
-- [ ] Assert direct package identity matches outrank dependency-only matches.
-- [ ] Assert lower-weight semantic metadata can make an otherwise-unfindable relevant artifact discoverable without displacing obvious identity matches.
-- [ ] Assert result ordering is deterministic under ties using stable tie-breakers.
-- [ ] Document weighting rationale in code/tests so future changes do not accidentally flatten the intended hierarchy.
+- [x] Extend the search materialized/indexed document with selected lower-weight semantic fields.
+- [x] Preserve strongest weighting for:
+  - [x] name;
+  - [x] namespace;
+  - [x] top-level description.
+- [x] Define explicit additional weighted search vector(s) or equivalent structure so lower-weight semantic fields are not accidentally promoted to the same relevance class as top-level description.
+- [x] Add lower-weight Agent Package semantic fields:
+  - [x] authored Examples prompt titles/text where available;
+  - [x] useful composition/binding labels that help discovery;
+  - [x] avoid indexing internal phase/binding IDs unless they carry real user meaning.
+- [x] Add very-low-weight **direct** dependency/component package identity matches for every kind that declares dependencies. Index declared direct dependencies only — do not resolve and index the transitive closure, which would inflate the document and blur the weighting hierarchy:
+  - [x] **Agent Package** (`kind: agent`) declared identities:
+    - [x] Tools;
+    - [x] Skills;
+    - [x] Knowledge;
+    - [x] Memory;
+    - [x] Profiles;
+    - [x] Loop;
+    - [x] MCP-bound Tool package identities where available.
+  - [x] **Template** (`template.dependencies`, a `templateDependencyGroup`) declared identities:
+    - [x] Tools and Agent Packages — both are schema-required, and the Agent Package edge is unique to Templates;
+    - [x] Skills, Knowledge, Memory and Profiles where declared.
+  - [x] **Skill** declared Tool identities — note these live at the **manifest top level** (`tools`), not under `skill`, which is easy to miss. Already populated in the live corpus: `issue-triage-playbook`, `slack-status-update`, `research-brief-playbook`.
+  - [x] Use one shared very-low-weight class for all three so no kind's dependency edges outrank another's.
+- [x] Add Template:
+  - [x] display name;
+  - [x] use case;
+  - [x] stack;
+  - [x] execution surfaces.
+- [x] Add Skill descriptive compatibility/runtime metadata:
+  - [x] controlled runtime labels;
+  - [x] other descriptive fields only where they are sufficiently normalized to be useful.
+- [x] Add Knowledge:
+  - [x] content type;
+  - [x] language;
+  - [x] mode;
+  - [x] document descriptions.
+- [x] Add Memory:
+  - [x] space descriptions;
+  - [x] record type descriptions;
+  - [x] operation descriptions;
+  - [x] retrieval modes.
+- [x] Add Profile:
+  - [x] role;
+  - [x] expertise;
+  - [x] objectives;
+  - [x] audience description.
+- [x] Add Loop:
+  - [x] archetype;
+  - [x] phase objectives;
+  - [x] outcome descriptions.
+- [x] Keep trigram fuzzy matching focused on names/namespaces.
+- [x] Do not index:
+  - [x] full READMEs;
+  - [x] arbitrary manifest bodies;
+  - [x] schema blobs;
+  - [x] hashes;
+  - [x] generated build metadata;
+  - [x] package-relative file paths as general discovery text.
+- [x] Create a fixed search relevance fixture set using representative artifacts across multiple kinds.
+- [x] Include fixture cases for:
+  - [x] exact package name;
+  - [x] exact namespace;
+  - [x] typo;
+  - [x] direct name vs dependency-only match;
+  - [x] dependency-only match for each declaring kind — Agent Package, Template and Skill — so no kind's edges are silently unindexed;
+  - [x] Template discovered through its declared **Agent Package** dependency, the one edge no other kind produces;
+  - [x] metadata-only match;
+  - [x] multi-word query;
+  - [x] filtered query;
+  - [x] no-result query.
+- [x] Assert direct package identity matches outrank dependency-only matches, for each of Agent Package, Template and Skill dependents.
+- [x] Assert a dependency-only match does not outrank another kind's dependency-only match purely because of the dependent's kind.
+- [x] Assert lower-weight semantic metadata can make an otherwise-unfindable relevant artifact discoverable without displacing obvious identity matches.
+- [x] Assert result ordering is deterministic under ties using stable tie-breakers.
+- [x] Document weighting rationale in code/tests so future changes do not accidentally flatten the intended hierarchy.
+
+## Milestone 3.1: Release the CLI, Then Update Example Templates
+> Scope note: close out the release band by publishing the CLI that carries the Milestone 2 schema change, then using that CLI to republish the example Templates whose real execution path is Harness. Owns the CLI release and the `agentpm-examples` Template updates. It does not change the schema, add execution surfaces, author new Templates, or alter Template functionality beyond the declared execution surface.
+> Implementation notes:
+> - **Order matters and is the reason this milestone exists.** `agentpm publish` validates against the CLI's bundled manifest schema. Any CLI built before Milestone 2 rejects `agentpm-harness` as an invalid enum value, so the Templates cannot be republished until the new CLI is released and installed locally. Release first, verify the installed version accepts the surface, then update Templates.
+> - **Consumers are not at risk and no tolerance release is needed.** `TemplateMetadata.execution_surfaces` deserializes as `Vec<String>` with `#[serde(default)]`, not a typed enum, and registry-fetched Templates are not schema-validated client-side — only `agentpm new ./local-path` validates a Template's own manifest. An older CLI installing a Template that declares `agentpm-harness` reads the value and ignores it.
+> - Published versions are immutable. Each updated Template is a **new version**; the existing versions keep declaring `agentpm-run` and must remain installable unchanged.
+> - `execution_surfaces` is an array, so a Template that is genuinely both SDK-hosted and Harness-executed should declare both rather than swapping one for the other.
+> - Judge each Template by what it actually does, not by its name. The signal is a shipped `agentpm.harness.json` **plus** entrypoints that invoke `agentpm harness`. A Template that merely hosts Harness through an SDK is correctly declared as that SDK surface already.
+
+- [ ] Release the CLI version carrying the Milestone 2 manifest-schema change and record the released version number.
+- [ ] Install that CLI locally and confirm it lints a Template manifest declaring `agentpm-harness` and still rejects an unknown surface.
+- [ ] Audit every Template in `agentpm-examples` against the actual execution path before editing. Current state at the time of writing:
+  - [ ] straight `agentpm-run` → `agentpm-harness`: `harness-minimal-agent`, `harness-provider-lab`, `harness-mcp-bridge` — each ships `agentpm.harness.json` and runs `agentpm harness` from its entrypoints;
+  - [ ] decide one way or the other for `harness-embedding-provider` — declares `node-sdk`, ships harness config, and its entrypoint runs `agentpm harness`, so `["node-sdk", "agentpm-harness"]` is the likely answer;
+  - [ ] leave `harness-sdk-host-node` and `harness-sdk-host-python` unchanged unless review disagrees — the SDK hosts Harness there, so the existing SDK surface is the honest declaration;
+  - [ ] leave `cli-automation-worker`, `mcp-tool-server`, `research-assistant-node`, `support-assistant-workspace` and `triage-worker-python` unchanged — no Harness execution path.
+- [ ] Bump and republish each changed Template as a new version.
+- [ ] Verify prior published versions remain byte-identical and installable, with digests recorded before and after.
+- [ ] For each republished Template, run `agentpm new` from a clean directory and confirm the scaffold still generates, resolves, installs and lints clean.
+- [ ] Confirm each republished Template's advertised execution surface actually works end to end, rather than only passing lint.
+- [ ] Record which Templates were deliberately **not** changed and why, so the remaining `agentpm-run` declarations read as intentional.
 
 ## Release Band 2: Faceted Filters and Search Relevance
-Covered milestones: 2-3.
-This gives us a reusable server-side faceted-search foundation, the first objective universal and kind-specific filters, `agentpm-harness` as a Template execution surface, and deliberately low-weighted indexing of selected user-meaningful semantic metadata with direct identity matches preserved as the strongest signal, guarded by a fixed relevance fixture set. Indexing full READMEs or arbitrary manifest text, embeddings, and LLM reranking all stay out of scope. Filters and recall ship together because a filter set over a thin index produces confidently wrong empty states; neither half is convincing without the other.
+Covered milestones: 2-3.1.
+This gives us a reusable server-side faceted-search foundation, the first objective universal and kind-specific filters, `agentpm-harness` as a Template execution surface, and deliberately low-weighted indexing of selected user-meaningful semantic metadata with direct identity matches preserved as the strongest signal, guarded by a fixed relevance fixture set. Indexing full READMEs or arbitrary manifest text, embeddings, and LLM reranking all stay out of scope. Filters and recall ship together because a filter set over a thin index produces confidently wrong empty states; neither half is convincing without the other. The band closes with Milestone 3.1: release the CLI carrying the new `agentpm-harness` execution surface, then use that CLI to republish the example Templates whose real execution path is Harness. That ordering is forced — a Template declaring the new surface cannot be published by a CLI whose bundled schema predates it.
 
 ## Milestone 4: Stars, Trending, and Popularity Signals
 > Scope note: add lightweight ecosystem popularity/engagement primitives and make Trending useful in a low-activity registry. This milestone introduces identity-level stars, replaces weak weekly-change presentation, and separates full-result-set trend computation from top-N presentation. It does not add ratings, reviews, comments, social feeds, universal quality scoring, or Stage 2 Package Health semantics.

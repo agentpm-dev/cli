@@ -73,7 +73,9 @@ Required assertions:
 - namespace match behaves as expected;
 - known typo still returns intended package;
 - metadata-only match is discoverable;
-- dependency-only Agent Package match appears but ranks below the directly matching dependency;
+- dependency-only match appears but ranks below the directly matching dependency, verified for each declaring kind — Agent Package, Template and Skill;
+- a Template is discoverable through its declared Agent Package dependency, the one edge no other kind produces;
+- only direct declared dependencies match; a transitively-reachable package does not surface its ancestor;
 - full README-only terms do not influence results;
 - filters are hard constraints;
 - no-result query stays empty;
@@ -340,7 +342,6 @@ Automated or integration cases:
   - Previous twice;
   - browser Back/Forward.
 - Change filters while on later page and confirm reset to page 1.
-- Verify Namespace typeahead usability.
 - Verify Agent Package Includes AND semantics.
 - Verify no-results state is understandable.
 - Verify loading text:

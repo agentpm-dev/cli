@@ -1368,6 +1368,7 @@
               "python-sdk",
               "node-sdk",
               "agentpm-run",
+              "agentpm-harness",
               "agentpm-serve-mcp",
               "multi-agent-workspace"
             ]
