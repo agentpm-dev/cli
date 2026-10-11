@@ -241,18 +241,19 @@ This gives us a correct, predictable Explore surface: sane page-size/cursor beha
 > - `execution_surfaces` is an array, so a Template that is genuinely both SDK-hosted and Harness-executed should declare both rather than swapping one for the other.
 > - Judge each Template by what it actually does, not by its name. The signal is a shipped `agentpm.harness.json` **plus** entrypoints that invoke `agentpm harness`. A Template that merely hosts Harness through an SDK is correctly declared as that SDK surface already.
 
-- [ ] Release the CLI version carrying the Milestone 2 manifest-schema change and record the released version number.
-- [ ] Install that CLI locally and confirm it lints a Template manifest declaring `agentpm-harness` and still rejects an unknown surface.
-- [ ] Audit every Template in `agentpm-examples` against the actual execution path before editing. Current state at the time of writing:
-  - [ ] straight `agentpm-run` → `agentpm-harness`: `harness-minimal-agent`, `harness-provider-lab`, `harness-mcp-bridge` — each ships `agentpm.harness.json` and runs `agentpm harness` from its entrypoints;
-  - [ ] decide one way or the other for `harness-embedding-provider` — declares `node-sdk`, ships harness config, and its entrypoint runs `agentpm harness`, so `["node-sdk", "agentpm-harness"]` is the likely answer;
-  - [ ] leave `harness-sdk-host-node` and `harness-sdk-host-python` unchanged unless review disagrees — the SDK hosts Harness there, so the existing SDK surface is the honest declaration;
-  - [ ] leave `cli-automation-worker`, `mcp-tool-server`, `research-assistant-node`, `support-assistant-workspace` and `triage-worker-python` unchanged — no Harness execution path.
-- [ ] Bump and republish each changed Template as a new version.
-- [ ] Verify prior published versions remain byte-identical and installable, with digests recorded before and after.
-- [ ] For each republished Template, run `agentpm new` from a clean directory and confirm the scaffold still generates, resolves, installs and lints clean.
-- [ ] Confirm each republished Template's advertised execution surface actually works end to end, rather than only passing lint.
-- [ ] Record which Templates were deliberately **not** changed and why, so the remaining `agentpm-run` declarations read as intentional.
+- [x] Release the CLI version carrying the Milestone 2 manifest-schema change and record the released version number.
+- [x] Install that CLI locally and confirm it lints a Template manifest declaring `agentpm-harness` and still rejects an unknown surface.
+- [x] Audit every Template in `agentpm-examples` against the actual execution path before editing. Current state at the time of writing:
+  - [x] straight `agentpm-run` → `agentpm-harness`: `harness-minimal-agent`, `harness-provider-lab`, `harness-mcp-bridge` — each ships `agentpm.harness.json` and runs `agentpm harness` from its entrypoints;
+  - [x] decide one way or the other for `harness-embedding-provider` — declares `node-sdk`, ships harness config, and its entrypoint runs `agentpm harness`, so `["node-sdk", "agentpm-harness"]` is the likely answer;
+  - [x] leave `harness-sdk-host-node` and `harness-sdk-host-python` unchanged unless review disagrees — the SDK hosts Harness there, so the existing SDK surface is the honest declaration;
+  - [x] leave `cli-automation-worker`, `mcp-tool-server`, `research-assistant-node`, `support-assistant-workspace` and `triage-worker-python` unchanged — no Harness execution path.
+- [x] Bump each changed Template as a new version.
+- [x] Republish each changed Template as a new version.
+- [x] Verify prior published versions remain byte-identical and installable, with digests recorded before and after.
+- [x] For each republished Template, run `agentpm new` from a clean directory and confirm the scaffold still generates, resolves, installs and lints clean.
+- [x] Confirm each republished Template's advertised execution surface actually works end to end, rather than only passing lint.
+- [x] Record which Templates were deliberately **not** changed and why, so the remaining `agentpm-run` declarations read as intentional.
 
 ## Release Band 2: Faceted Filters and Search Relevance
 Covered milestones: 2-3.1.
