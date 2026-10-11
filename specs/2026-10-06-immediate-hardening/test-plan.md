@@ -340,7 +340,6 @@ Automated or integration cases:
   - Previous twice;
   - browser Back/Forward.
 - Change filters while on later page and confirm reset to page 1.
-- Verify Namespace typeahead usability.
 - Verify Agent Package Includes AND semantics.
 - Verify no-results state is understandable.
 - Verify loading text:

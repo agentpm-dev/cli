@@ -3552,6 +3552,68 @@ mod tests {
     }
 
     #[test]
+    fn template_manifest_accepts_harness_execution_surface() {
+        assert_manifest_ok(json!({
+            "kind": "template",
+            "name": "harness-operator-workspace",
+            "version": "0.1.0",
+            "description": "Harness starter for an operator workflow.",
+            "template": {
+                "display_name": "Harness Operator Workspace",
+                "use_case": "operations",
+                "execution_surfaces": ["agentpm-harness"],
+                "stack": ["node"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run Harness",
+                        "command": "agentpm harness"
+                    }
+                ]
+            }
+        }));
+    }
+
+    #[test]
+    fn template_manifest_rejects_unknown_execution_surface() {
+        let issues = assert_manifest_invalid(json!({
+            "kind": "template",
+            "name": "invalid-template-surface",
+            "version": "0.1.0",
+            "description": "Template with an unknown execution surface.",
+            "template": {
+                "display_name": "Invalid Template Surface",
+                "use_case": "operations",
+                "execution_surfaces": ["agentpm-dashboard"],
+                "files_root": "template",
+                "variables": [],
+                "dependencies": {
+                    "tools": [],
+                    "agents": []
+                },
+                "entrypoints": [
+                    {
+                        "label": "Run",
+                        "command": "agentpm harness"
+                    }
+                ]
+            }
+        }));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.instance_path == "/template/execution_surfaces/0"),
+            "expected invalid template execution surface failure, got: {issues:#?}"
+        );
+    }
+
+    #[test]
     fn valid_template_manifest_with_skill_dependencies_validates() {
         assert_manifest_ok(json!({
             "kind": "template",

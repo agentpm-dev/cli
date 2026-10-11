@@ -39,7 +39,6 @@
 ## Search and filters
 
 - Confirm filters apply server-side before sorting/pagination.
-- Confirm namespace filtering is typeahead-based.
 - Confirm OR-within / AND-across semantics.
 - Confirm Agent Package Includes uses AND semantics.
 - Confirm kind-specific filters appear only where intended.
