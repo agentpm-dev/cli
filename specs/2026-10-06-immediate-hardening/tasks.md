@@ -155,82 +155,82 @@ This gives us a correct, predictable Explore surface: sane page-size/cursor beha
 > - Prefer indexing human-meaningful fields over implementation plumbing such as paths, hashes, raw schemas, generated metadata, and internal IDs.
 > - The relevance fixture set should assert important relationships/ordering properties, not freeze every exact numeric rank forever.
 
-- [ ] Extend the search materialized/indexed document with selected lower-weight semantic fields.
-- [ ] Preserve strongest weighting for:
-  - [ ] name;
-  - [ ] namespace;
-  - [ ] top-level description.
-- [ ] Define explicit additional weighted search vector(s) or equivalent structure so lower-weight semantic fields are not accidentally promoted to the same relevance class as top-level description.
-- [ ] Add lower-weight Agent Package semantic fields:
-  - [ ] authored Examples prompt titles/text where available;
-  - [ ] useful composition/binding labels that help discovery;
-  - [ ] avoid indexing internal phase/binding IDs unless they carry real user meaning.
-- [ ] Add very-low-weight **direct** dependency/component package identity matches for every kind that declares dependencies. Index declared direct dependencies only — do not resolve and index the transitive closure, which would inflate the document and blur the weighting hierarchy:
-  - [ ] **Agent Package** (`kind: agent`) declared identities:
-    - [ ] Tools;
-    - [ ] Skills;
-    - [ ] Knowledge;
-    - [ ] Memory;
-    - [ ] Profiles;
-    - [ ] Loop;
-    - [ ] MCP-bound Tool package identities where available.
-  - [ ] **Template** (`template.dependencies`, a `templateDependencyGroup`) declared identities:
-    - [ ] Tools and Agent Packages — both are schema-required, and the Agent Package edge is unique to Templates;
-    - [ ] Skills, Knowledge, Memory and Profiles where declared.
-  - [ ] **Skill** declared Tool identities — note these live at the **manifest top level** (`tools`), not under `skill`, which is easy to miss. Already populated in the live corpus: `issue-triage-playbook`, `slack-status-update`, `research-brief-playbook`.
-  - [ ] Use one shared very-low-weight class for all three so no kind's dependency edges outrank another's.
-- [ ] Add Template:
-  - [ ] display name;
-  - [ ] use case;
-  - [ ] stack;
-  - [ ] execution surfaces.
-- [ ] Add Skill descriptive compatibility/runtime metadata:
-  - [ ] controlled runtime labels;
-  - [ ] other descriptive fields only where they are sufficiently normalized to be useful.
-- [ ] Add Knowledge:
-  - [ ] content type;
-  - [ ] language;
-  - [ ] mode;
-  - [ ] document descriptions.
-- [ ] Add Memory:
-  - [ ] space descriptions;
-  - [ ] record type descriptions;
-  - [ ] operation descriptions;
-  - [ ] retrieval modes.
-- [ ] Add Profile:
-  - [ ] role;
-  - [ ] expertise;
-  - [ ] objectives;
-  - [ ] audience description.
-- [ ] Add Loop:
-  - [ ] archetype;
-  - [ ] phase objectives;
-  - [ ] outcome descriptions.
-- [ ] Keep trigram fuzzy matching focused on names/namespaces.
-- [ ] Do not index:
-  - [ ] full READMEs;
-  - [ ] arbitrary manifest bodies;
-  - [ ] schema blobs;
-  - [ ] hashes;
-  - [ ] generated build metadata;
-  - [ ] package-relative file paths as general discovery text.
-- [ ] Create a fixed search relevance fixture set using representative artifacts across multiple kinds.
-- [ ] Include fixture cases for:
-  - [ ] exact package name;
-  - [ ] exact namespace;
-  - [ ] typo;
-  - [ ] direct name vs dependency-only match;
-  - [ ] dependency-only match for each declaring kind — Agent Package, Template and Skill — so no kind's edges are silently unindexed;
-  - [ ] Template discovered through its declared **Agent Package** dependency, the one edge no other kind produces;
-  - [ ] metadata-only match;
-  - [ ] multi-word query;
-  - [ ] filtered query;
-  - [ ] no-result query.
-- [ ] Assert direct package identity matches outrank dependency-only matches, for each of Agent Package, Template and Skill dependents.
-- [ ] Assert a dependency-only match does not outrank another kind's dependency-only match purely because of the dependent's kind.
-- [ ] Assert lower-weight semantic metadata can make an otherwise-unfindable relevant artifact discoverable without displacing obvious identity matches.
-- [ ] Assert result ordering is deterministic under ties using stable tie-breakers.
-- [ ] Document weighting rationale in code/tests so future changes do not accidentally flatten the intended hierarchy.
+- [x] Extend the search materialized/indexed document with selected lower-weight semantic fields.
+- [x] Preserve strongest weighting for:
+  - [x] name;
+  - [x] namespace;
+  - [x] top-level description.
+- [x] Define explicit additional weighted search vector(s) or equivalent structure so lower-weight semantic fields are not accidentally promoted to the same relevance class as top-level description.
+- [x] Add lower-weight Agent Package semantic fields:
+  - [x] authored Examples prompt titles/text where available;
+  - [x] useful composition/binding labels that help discovery;
+  - [x] avoid indexing internal phase/binding IDs unless they carry real user meaning.
+- [x] Add very-low-weight **direct** dependency/component package identity matches for every kind that declares dependencies. Index declared direct dependencies only — do not resolve and index the transitive closure, which would inflate the document and blur the weighting hierarchy:
+  - [x] **Agent Package** (`kind: agent`) declared identities:
+    - [x] Tools;
+    - [x] Skills;
+    - [x] Knowledge;
+    - [x] Memory;
+    - [x] Profiles;
+    - [x] Loop;
+    - [x] MCP-bound Tool package identities where available.
+  - [x] **Template** (`template.dependencies`, a `templateDependencyGroup`) declared identities:
+    - [x] Tools and Agent Packages — both are schema-required, and the Agent Package edge is unique to Templates;
+    - [x] Skills, Knowledge, Memory and Profiles where declared.
+  - [x] **Skill** declared Tool identities — note these live at the **manifest top level** (`tools`), not under `skill`, which is easy to miss. Already populated in the live corpus: `issue-triage-playbook`, `slack-status-update`, `research-brief-playbook`.
+  - [x] Use one shared very-low-weight class for all three so no kind's dependency edges outrank another's.
+- [x] Add Template:
+  - [x] display name;
+  - [x] use case;
+  - [x] stack;
+  - [x] execution surfaces.
+- [x] Add Skill descriptive compatibility/runtime metadata:
+  - [x] controlled runtime labels;
+  - [x] other descriptive fields only where they are sufficiently normalized to be useful.
+- [x] Add Knowledge:
+  - [x] content type;
+  - [x] language;
+  - [x] mode;
+  - [x] document descriptions.
+- [x] Add Memory:
+  - [x] space descriptions;
+  - [x] record type descriptions;
+  - [x] operation descriptions;
+  - [x] retrieval modes.
+- [x] Add Profile:
+  - [x] role;
+  - [x] expertise;
+  - [x] objectives;
+  - [x] audience description.
+- [x] Add Loop:
+  - [x] archetype;
+  - [x] phase objectives;
+  - [x] outcome descriptions.
+- [x] Keep trigram fuzzy matching focused on names/namespaces.
+- [x] Do not index:
+  - [x] full READMEs;
+  - [x] arbitrary manifest bodies;
+  - [x] schema blobs;
+  - [x] hashes;
+  - [x] generated build metadata;
+  - [x] package-relative file paths as general discovery text.
+- [x] Create a fixed search relevance fixture set using representative artifacts across multiple kinds.
+- [x] Include fixture cases for:
+  - [x] exact package name;
+  - [x] exact namespace;
+  - [x] typo;
+  - [x] direct name vs dependency-only match;
+  - [x] dependency-only match for each declaring kind — Agent Package, Template and Skill — so no kind's edges are silently unindexed;
+  - [x] Template discovered through its declared **Agent Package** dependency, the one edge no other kind produces;
+  - [x] metadata-only match;
+  - [x] multi-word query;
+  - [x] filtered query;
+  - [x] no-result query.
+- [x] Assert direct package identity matches outrank dependency-only matches, for each of Agent Package, Template and Skill dependents.
+- [x] Assert a dependency-only match does not outrank another kind's dependency-only match purely because of the dependent's kind.
+- [x] Assert lower-weight semantic metadata can make an otherwise-unfindable relevant artifact discoverable without displacing obvious identity matches.
+- [x] Assert result ordering is deterministic under ties using stable tie-breakers.
+- [x] Document weighting rationale in code/tests so future changes do not accidentally flatten the intended hierarchy.
 
 ## Milestone 3.1: Release the CLI, Then Update Example Templates
 > Scope note: close out the release band by publishing the CLI that carries the Milestone 2 schema change, then using that CLI to republish the example Templates whose real execution path is Harness. Owns the CLI release and the `agentpm-examples` Template updates. It does not change the schema, add execution surfaces, author new Templates, or alter Template functionality beyond the declared execution surface.
