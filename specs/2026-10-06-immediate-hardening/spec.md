@@ -115,10 +115,12 @@ Expand search into selected user-meaningful structured semantic metadata at lowe
   - display name;
   - use case;
   - stack;
-  - execution surfaces.
+  - execution surfaces;
+  - declared dependency identities at very low weight, including depended-on Agent Packages.
 - Skills:
   - descriptive compatibility/runtime labels;
-  - meaningful authored metadata.
+  - meaningful authored metadata;
+  - declared Tool dependency identities at very low weight.
 - Knowledge:
   - content type;
   - language;
@@ -139,7 +141,23 @@ Expand search into selected user-meaningful structured semantic metadata at lowe
   - phase objectives;
   - outcome descriptions.
 
-Dependency/package identity matches must participate in search at very low weight so dependent Agent Packages can be discovered without outranking the directly matching dependency.
+Dependency/package identity matches must participate in search at very low weight so a dependent artifact can be
+discovered without outranking the directly matching dependency. This applies to **every kind that declares
+dependencies**, not only Agent Packages:
+
+- Agent Packages declare Tools, Skills, Knowledge, Memory, Profiles, Loop and MCP-bound Tool identities.
+- Templates declare Tools and Agent Packages (both required by the schema) plus optional Skills, Knowledge, Memory
+  and Profiles. The Agent Package edge is unique to Templates and makes a Template discoverable by the Agent it
+  scaffolds.
+- Skills declare Tool dependencies at the manifest top level rather than under `skill`. A Skill's value is largely
+  the Tools it brings into scope, so leaving this edge unindexed while indexing the Agent equivalent would be an
+  inconsistency users notice.
+
+Index **direct** declared dependencies only. Resolving and indexing the transitive closure would inflate the search
+document and blur the weighting hierarchy this section exists to protect.
+
+Indexing dependency identities for recall is distinct from reverse-dependency discovery as a product feature
+("Used by these Agent Packages"), which remains out of scope.
 
 Do not index arbitrary full manifests, schema blobs, hashes, paths, generated build metadata, or full README bodies in Stage 1.
 

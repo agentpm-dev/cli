@@ -138,7 +138,7 @@ This gives us a correct, predictable Explore surface: sane page-size/cursor beha
   - [x] rejecting unknown execution surfaces.
 
 ## Milestone 3: Search Relevance Expansion
-> Scope note: increase deterministic search recall by indexing selected user-meaningful semantic metadata at deliberately lower weights while preserving direct identity matches as the strongest signals. This milestone includes a fixed relevance fixture set to guard against noisy regressions. It does not index full READMEs/arbitrary manifest text, add embeddings or LLM reranking, change the faceted-filter contract, or build recommendations.
+> Scope note: increase deterministic search recall by indexing selected user-meaningful semantic metadata at deliberately lower weights while preserving direct identity matches as the strongest signals. Dependency-identity indexing covers every kind that declares dependencies — Agent Packages, Templates and Skills — using direct declarations only. This milestone includes a fixed relevance fixture set to guard against noisy regressions. It does not index full READMEs/arbitrary manifest text, add embeddings or LLM reranking, change the faceted-filter contract, or build recommendations.
 > Implementation notes:
 > - Keep the current PostgreSQL FTS + trigram architecture. This milestone is an evolution of the existing weighted materialized search index, not a search-engine replacement.
 > - Preserve the current intent that identity-level matches dominate:
@@ -147,7 +147,9 @@ This gives us a correct, predictable Explore surface: sane page-size/cursor beha
 >   - top-level description lower;
 >   - richer kind-specific semantic metadata lower still;
 >   - dependency/component identities very low weight.
-> - A search for a dependency such as `github-tool` should be able to surface an Agent Package that depends on it, but the actual `github-tool` result must clearly outrank that dependent Agent Package.
+> - A search for a dependency such as `github-tool` should be able to surface an artifact that depends on it, but the actual `github-tool` result must clearly outrank the dependent artifact. This applies to **Agent Packages, Templates and Skills** — all three declare dependencies, and indexing only the Agent edge would make a Skill built around a Tool invisible to a search for that Tool.
+> - Index **direct** declared dependencies only. Transitive resolution is out of scope here and would blur the weight hierarchy this milestone exists to protect.
+> - Indexing dependency identities for recall is **not** reverse-dependency discovery as a product feature ("Used by these Agent Packages"), which stays deferred. This is search recall at the lowest weight class.
 > - Keep typo/fuzzy trigram behavior focused on package names and namespace handles. Do not fuzzy-match every long descriptive field.
 > - Avoid indexing full README bodies: authored prose contains many incidental terms and is likely to create noisy matches.
 > - Prefer indexing human-meaningful fields over implementation plumbing such as paths, hashes, raw schemas, generated metadata, and internal IDs.
@@ -163,14 +165,20 @@ This gives us a correct, predictable Explore surface: sane page-size/cursor beha
   - [ ] authored Examples prompt titles/text where available;
   - [ ] useful composition/binding labels that help discovery;
   - [ ] avoid indexing internal phase/binding IDs unless they carry real user meaning.
-- [ ] Add very-low-weight dependency/component package identity matches:
-  - [ ] Tools;
-  - [ ] Skills;
-  - [ ] Knowledge;
-  - [ ] Memory;
-  - [ ] Profiles;
-  - [ ] Loop;
-  - [ ] MCP-bound Tool package identities where available.
+- [ ] Add very-low-weight **direct** dependency/component package identity matches for every kind that declares dependencies. Index declared direct dependencies only — do not resolve and index the transitive closure, which would inflate the document and blur the weighting hierarchy:
+  - [ ] **Agent Package** (`kind: agent`) declared identities:
+    - [ ] Tools;
+    - [ ] Skills;
+    - [ ] Knowledge;
+    - [ ] Memory;
+    - [ ] Profiles;
+    - [ ] Loop;
+    - [ ] MCP-bound Tool package identities where available.
+  - [ ] **Template** (`template.dependencies`, a `templateDependencyGroup`) declared identities:
+    - [ ] Tools and Agent Packages — both are schema-required, and the Agent Package edge is unique to Templates;
+    - [ ] Skills, Knowledge, Memory and Profiles where declared.
+  - [ ] **Skill** declared Tool identities — note these live at the **manifest top level** (`tools`), not under `skill`, which is easy to miss. Already populated in the live corpus: `issue-triage-playbook`, `slack-status-update`, `research-brief-playbook`.
+  - [ ] Use one shared very-low-weight class for all three so no kind's dependency edges outrank another's.
 - [ ] Add Template:
   - [ ] display name;
   - [ ] use case;
@@ -212,11 +220,14 @@ This gives us a correct, predictable Explore surface: sane page-size/cursor beha
   - [ ] exact namespace;
   - [ ] typo;
   - [ ] direct name vs dependency-only match;
+  - [ ] dependency-only match for each declaring kind — Agent Package, Template and Skill — so no kind's edges are silently unindexed;
+  - [ ] Template discovered through its declared **Agent Package** dependency, the one edge no other kind produces;
   - [ ] metadata-only match;
   - [ ] multi-word query;
   - [ ] filtered query;
   - [ ] no-result query.
-- [ ] Assert direct package identity matches outrank dependency-only matches.
+- [ ] Assert direct package identity matches outrank dependency-only matches, for each of Agent Package, Template and Skill dependents.
+- [ ] Assert a dependency-only match does not outrank another kind's dependency-only match purely because of the dependent's kind.
 - [ ] Assert lower-weight semantic metadata can make an otherwise-unfindable relevant artifact discoverable without displacing obvious identity matches.
 - [ ] Assert result ordering is deterministic under ties using stable tie-breakers.
 - [ ] Document weighting rationale in code/tests so future changes do not accidentally flatten the intended hierarchy.
