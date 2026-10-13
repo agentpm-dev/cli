@@ -268,6 +268,9 @@ Star contract:
 - star relation stores `created_ts`;
 - users may star their own artifacts;
 - private artifacts can be starred only by authorized users;
+- a viewer whose session no longer verifies is served the anonymous payload, so `starred` returns `false`
+  even for a package they have starred. The star control must not render a confidently wrong state and then
+  fail on click; either show the signed-out state or let the rejected write prompt re-authentication;
 - private star activity/counts must not leak private package existence into public discovery.
 
 UI:
@@ -435,6 +438,10 @@ Known priorities:
 - for closed unions, prefer actionable expected-values messaging;
 - centralize friendly transport errors across `install`, `export`, `new`, `whoami`, and similar commands;
 - `whoami` must exit non-zero on connection failure;
+- `install` must distinguish rejected credentials from a missing package. `auth_optional` now falls through
+  anonymously rather than returning 401, and the install endpoints use it while the SDK attaches a PAT, so a
+  revoked token resolves as anonymous and a private package simply disappears. The status code no longer
+  carries that distinction, so it has to be carried explicitly in the request/response contract;
 - normalize inspect output shape across Knowledge and Memory;
 - normalize displayed paths and remove `/./`;
 - reuse one lint renderer across `lint` and publish validation;
