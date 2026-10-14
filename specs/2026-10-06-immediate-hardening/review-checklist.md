@@ -56,6 +56,7 @@
 - Confirm stars are identity-level.
 - Confirm one star per user/artifact identity.
 - Confirm private star data cannot leak private package existence.
+- Confirm `auth_optional` falls through as anonymous on an unverifiable token with `g.auth` left `None`, and that `auth_required` still returns 401. Check both consequences were handled rather than absorbed silently: a private resource now reads as 404 instead of 401 (install diagnostics), and a public resource returns degraded data instead of an error (`starred: false`, member emails omitted).
 - Confirm star timestamps are stored.
 - Confirm stars are not presented as quality/health scores.
 - Confirm Tool Score & Rating placeholder is removed.

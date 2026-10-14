@@ -277,49 +277,52 @@ This gives us a reusable server-side faceted-search foundation, the first object
 > - Do not treat stars as quality, trust, or Package Health.
 > - The preferred detail-page star interaction is a full-width footer rail integrated into the main identity card, with a subtle starred-state transition and no gamification.
 > - M4 owns the star data/API/trending primitive and shared star UI component. Milestone 6 applies/verifies that primitive across every detail-page kind.
+> - **Auth semantics changed here, and it reaches further than stars.** `auth_optional` previously returned 401 whenever a bearer token failed verification, so a stale Clerk session or a revoked PAT broke *public* reads. It now falls through to the handler as anonymous (`g.auth` stays `None`; `auth_required` is unchanged and still 401s). That is the correct meaning of optional auth, but it changes behavior across all 13 `auth_optional` endpoints — tool and namespace detail GETs, `/search`, and `/install/resolve` + `/install/init` — in two ways worth tracking:
+>   1. **private resource + bad token now reads as 404 rather than 401**, so "your credentials were rejected" is no longer distinguishable from "it does not exist" (follow-up in Milestone 9);
+>   2. **public resource + bad token now returns silently degraded data rather than an error** — most visibly `starred: false` on a package the viewer has actually starred, and `/namespaces/{id}/members` omitting emails for an org admin (follow-up in Milestone 6).
 
-- [ ] Add star persistence model:
-  - [ ] user/account identity;
-  - [ ] artifact identity;
-  - [ ] `created_ts`;
-  - [ ] unique constraint per user/identity.
-- [ ] Add star/unstar API:
-  - [ ] idempotent enough for normal optimistic UI behavior;
-  - [ ] correct authorization for public/private artifacts.
-- [ ] Enforce authorization/visibility for private artifacts.
-- [ ] Add aggregate star count to relevant registry/search DTOs and materialized/search data needed for sorting.
-- [ ] Add current-user `starred` state to detail/API responses where needed for interactive UI.
-- [ ] Add passive star counts to Explore and namespace result cards.
-- [ ] Add reusable detail-page interactive star rail component:
-  - [ ] unstarred state;
-  - [ ] starred state;
-  - [ ] immediate count update;
-  - [ ] subtle border/background/accent transition;
-  - [ ] no confetti/bounce/social gamification.
-- [ ] Remove Tool-only `Score & rating / Coming Soon` UI.
-- [ ] Remove/hide Tool Evaluations tab while it has no real content.
-- [ ] Replace weekly `0 / -100%` style popularity presentation with durable signals:
-  - [ ] total installs;
-  - [ ] stars;
-  - [ ] do not show a misleading percentage delta when the base period is zero.
-- [ ] Refactor trending signal computation so it is computed for the full eligible result set.
-- [ ] Separate top-N presentation shortlist from trend signal computation.
-- [ ] Remove top-12-per-kind truncation from the canonical Explore trending source.
-- [ ] Preserve or recreate a top-N-per-kind query/view only for homepage/curated presentation where useful.
-- [ ] Implement Trending ranking:
-  - [ ] installs last 7d;
-  - [ ] total stars;
-  - [ ] all-time installs;
-  - [ ] latest publish;
-  - [ ] stable tie-breaker.
-- [ ] Keep the Trending implementation understandable in code; avoid introducing a black-box weighted score unless required by existing query structure.
-- [ ] Add star timestamps even if recent-star scoring is not used yet.
-- [ ] Add tests for:
-  - [ ] all-zero recent activity;
-  - [ ] equal recent installs but different stars;
-  - [ ] equal stars but different all-time installs;
-  - [ ] full tie resolved by freshness/stable ID.
-- [ ] Verify private stars never affect public discovery/trending.
+- [x] Add star persistence model:
+  - [x] user/account identity;
+  - [x] artifact identity;
+  - [x] `created_ts`;
+  - [x] unique constraint per user/identity.
+- [x] Add star/unstar API:
+  - [x] idempotent enough for normal optimistic UI behavior;
+  - [x] correct authorization for public/private artifacts.
+- [x] Enforce authorization/visibility for private artifacts.
+- [x] Add aggregate star count to relevant registry/search DTOs and materialized/search data needed for sorting.
+- [x] Add current-user `starred` state to detail/API responses where needed for interactive UI.
+- [x] Add passive star counts to Explore and namespace result cards.
+- [x] Add reusable detail-page interactive star rail component:
+  - [x] unstarred state;
+  - [x] starred state;
+  - [x] immediate count update;
+  - [x] subtle border/background/accent transition;
+  - [x] no confetti/bounce/social gamification.
+- [x] Remove Tool-only `Score & rating / Coming Soon` UI.
+- [x] Remove/hide Tool Evaluations tab while it has no real content.
+- [x] Replace weekly `0 / -100%` style popularity presentation with durable signals:
+  - [x] total installs;
+  - [x] stars;
+  - [x] do not show a misleading percentage delta when the base period is zero.
+- [x] Refactor trending signal computation so it is computed for the full eligible result set.
+- [x] Separate top-N presentation shortlist from trend signal computation.
+- [x] Remove top-12-per-kind truncation from the canonical Explore trending source.
+- [x] Preserve or recreate a top-N-per-kind query/view only for homepage/curated presentation where useful.
+- [x] Implement Trending ranking:
+  - [x] installs last 7d;
+  - [x] total stars;
+  - [x] all-time installs;
+  - [x] latest publish;
+  - [x] stable tie-breaker.
+- [x] Keep the Trending implementation understandable in code; avoid introducing a black-box weighted score unless required by existing query structure.
+- [x] Add star timestamps even if recent-star scoring is not used yet.
+- [x] Add tests for:
+  - [x] all-zero recent activity;
+  - [x] equal recent installs but different stars;
+  - [x] equal stars but different all-time installs;
+  - [x] full tie resolved by freshness/stable ID.
+- [x] Verify private stars never affect public discovery/trending.
 
 ## Milestone 5: Namespace Curation and Scoped Discovery
 > Scope note: turn namespace pages into curated and scalable discovery surfaces by adding owner/admin pins and reusing the shared Explore search/filter/sort/pagination foundation under a hard namespace constraint. This milestone does not create a separate namespace search implementation, redesign namespace taxonomy, add Stage 2 category hierarchy, or broaden namespace permissions beyond what pin management requires.
@@ -333,31 +336,32 @@ This gives us a reusable server-side faceted-search foundation, the first object
 > - Namespace discovery should call the same underlying search/filter service as `/explore` with an enforced namespace constraint; do not fork ranking/filter/pagination logic.
 > - The namespace page can use a more compact UI than Explore, but the query semantics and result-card behavior should remain shared.
 
-- [ ] Implement namespace pinned artifacts.
-- [ ] Add persistence for pin identity and explicit order.
-- [ ] Allow Owner/Admin management only.
-- [ ] Limit pins to namespace-owned visible artifacts.
-- [ ] Enforce pin maximum (default target: 6 unless changed).
-- [ ] Add explicit pin ordering:
+- [x] Implement namespace pinned artifacts.
+- [x] Add persistence for pin identity and explicit order.
+- [x] Allow Owner/Admin management only.
+- [x] Limit pins to namespace-owned visible artifacts.
+- [x] Enforce pin maximum (default target: 6 unless changed).
+- [x] Add explicit pin ordering:
   - [ ] drag/drop if it fits current UI patterns cleanly; or
-  - [ ] deterministic move-up/down/order controls.
-- [ ] Ensure deleting/unpublishing/yanking an artifact does not leave a broken visible pin:
+  - [x] deterministic move-up/down/order controls.
+- [x] Ensure deleting/unpublishing/yanking an artifact does not leave a broken visible pin:
   - [ ] either remove invalid pins automatically; or
-  - [ ] suppress them and expose cleanup to Owner/Admin.
-- [ ] Hide empty pin section from normal visitors.
-- [ ] Show empty-state management prompt to Owner/Admin.
-- [ ] Render pinned items for visitors when pins exist.
-- [ ] Reuse shared result/card primitives for pinned items where practical rather than creating a visually unrelated card system.
-- [ ] Replace namespace `0/week` popularity signals with shared improved result-card signals from Milestone 4.
-- [ ] Add namespace-scoped text search.
-- [ ] Reuse shared faceted filters within namespace package list:
-  - [ ] omit Namespace selector because the namespace is already fixed;
-  - [ ] retain Kind and applicable universal/kind-specific filters.
-- [ ] Reuse shared sorts and pagination.
-- [ ] Enforce namespace as a server-side hard search constraint that cannot be overridden by query params.
-- [ ] Keep namespace filter/search state URL-addressable.
-- [ ] Remove/simplify current mechanical type summary where redundant with real filtering.
-- [ ] Verify namespace discovery and global Explore produce consistent result behavior for equivalent constraints.
+  - [x] suppress them and expose cleanup to Owner/Admin.
+- [x] Hide empty pin section from normal visitors.
+- [x] Show empty-state management prompt to Owner/Admin.
+- [x] Render pinned items for visitors when pins exist.
+- [x] Reuse shared result/card primitives for pinned items where practical rather than creating a visually unrelated card system.
+- [x] Replace namespace `0/week` popularity signals with shared improved result-card signals from Milestone 4.
+- [x] Add namespace-scoped text search.
+- [x] Reuse shared faceted filters within namespace package list:
+  - [x] omit Namespace selector because the namespace is already fixed;
+  - [x] retain Kind and applicable universal/kind-specific filters.
+- [x] Only show recent activity if there is recent activity
+- [x] Reuse shared sorts and pagination.
+- [x] Enforce namespace as a server-side hard search constraint that cannot be overridden by query params.
+- [x] Keep namespace filter/search state URL-addressable.
+- [x] Remove/simplify current mechanical type summary where redundant with real filtering.
+- [x] Verify namespace discovery and global Explore produce consistent result behavior for equivalent constraints.
 
 ## Release Band 3: Popularity Signals and Namespace Discovery
 Covered milestones: 4-5.
@@ -379,6 +383,7 @@ This gives us identity-level stars with visibility-safe aggregates, a Trending s
 - [ ] Place the star rail consistently at the bottom of the primary identity card unless the existing shared layout requires a small adaptation.
 - [ ] Replace weak weekly change signal in shared sidebar/shell with the durable popularity treatment established in Milestone 4.
 - [ ] Preserve identity-level stars while version selector changes.
+- [ ] Handle the stale-session star state introduced by Milestone 4's `auth_optional` change. A viewer whose token no longer verifies is served the anonymous payload, so `starred` returns `false` for a package they have in fact starred — the rail renders unstarred, and clicking it hits the `auth_required` star endpoint and 401s. Decide and implement the behavior rather than leaving the mismatch: surface the signed-out state in the rail, or have the failed write prompt re-authentication. Do not ship a control that shows the wrong state and then errors on use.
 - [ ] Preserve version-specific Security/integrity data.
 - [ ] Remove Tool Score & Rating placeholder.
 - [ ] Hide Tool Evaluations placeholder/tab until actual evaluation content exists.
@@ -530,6 +535,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 > Scope note: make non-Harness CLI success/failure behavior feel like one coherent product by centralizing transport errors, correcting exit codes, normalizing sibling inspect output, and cleaning up low-level path/filesystem leaks. This milestone does not alter Harness output, introduce new package/runtime capabilities, change machine-readable contracts beyond explicitly specified fixes, or absorb the Python portability work from later milestones.
 > Implementation notes:
 > - `whoami` already demonstrates a friendlier connection message, while `install`, `export`, and `new` currently expose raw reqwest URLs. Reuse one shared formatter rather than cloning command-specific wrappers.
+> - **Rejected credentials now look like a missing package on the install path.** Milestone 4 changed `auth_optional` to fall through anonymously instead of returning 401, and `/install/resolve` + `/install/init` use that decorator while the SDK attaches the PAT (`crates/agentpm-sdk/src/client.rs`, `bearer_auth`). A revoked or expired PAT installing a private package therefore resolves as anonymous, the package is invisible, and the user is told it does not exist. The status code alone can no longer carry that distinction, so the fix belongs in the request/response contract rather than in message wording.
 > - Current exit-code convention is otherwise coherent:
 >   - runtime error = 1;
 >   - clap/usage error = 2.
@@ -549,6 +555,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [ ] Preserve low-level transport detail behind verbose/debug output if existing CLI patterns support it.
 - [ ] Avoid surfacing irrelevant internal endpoint names as the primary error for higher-level commands such as `export --skill`.
 - [ ] Fix `whoami` to exit non-zero on network failure.
+- [ ] Distinguish "credentials rejected" from "not found" on `install`. Since `auth_optional` no longer returns 401, decide how the server signals that a supplied token was ignored — an explicit response field, a dedicated header, or moving the install endpoints to `auth_required` — and have the CLI say so plainly instead of reporting a missing package. Verify against a revoked PAT plus a private package, which is the real-world case (token rotation or revocation).
 - [ ] Add exit-code regression tests:
   - [ ] runtime error → 1;
   - [ ] clap/usage error → 2;

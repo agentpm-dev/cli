@@ -57,6 +57,9 @@ Add automated cases for:
 - namespace-scoped search reuse.
 - star create/delete/count.
 - private star authorization.
+- `auth_optional` falls through as anonymous on an unverifiable JWT and on an unverifiable PAT, leaving `g.auth` `None`; `auth_required` still returns 401 for the same token.
+- stale-session star state: a viewer whose token no longer verifies receives `starred: false` for a package they have starred, and the star control does not render a wrong state that then fails on click.
+- revoked PAT installing a private package reports rejected credentials rather than a missing package.
 - pinned artifact authorization/order/limit.
 - trending full-result-set ranking.
 - top-N presentation not truncating Explore sort.
