@@ -336,31 +336,32 @@ This gives us a reusable server-side faceted-search foundation, the first object
 > - Namespace discovery should call the same underlying search/filter service as `/explore` with an enforced namespace constraint; do not fork ranking/filter/pagination logic.
 > - The namespace page can use a more compact UI than Explore, but the query semantics and result-card behavior should remain shared.
 
-- [ ] Implement namespace pinned artifacts.
-- [ ] Add persistence for pin identity and explicit order.
-- [ ] Allow Owner/Admin management only.
-- [ ] Limit pins to namespace-owned visible artifacts.
-- [ ] Enforce pin maximum (default target: 6 unless changed).
-- [ ] Add explicit pin ordering:
+- [x] Implement namespace pinned artifacts.
+- [x] Add persistence for pin identity and explicit order.
+- [x] Allow Owner/Admin management only.
+- [x] Limit pins to namespace-owned visible artifacts.
+- [x] Enforce pin maximum (default target: 6 unless changed).
+- [x] Add explicit pin ordering:
   - [ ] drag/drop if it fits current UI patterns cleanly; or
-  - [ ] deterministic move-up/down/order controls.
-- [ ] Ensure deleting/unpublishing/yanking an artifact does not leave a broken visible pin:
+  - [x] deterministic move-up/down/order controls.
+- [x] Ensure deleting/unpublishing/yanking an artifact does not leave a broken visible pin:
   - [ ] either remove invalid pins automatically; or
-  - [ ] suppress them and expose cleanup to Owner/Admin.
-- [ ] Hide empty pin section from normal visitors.
-- [ ] Show empty-state management prompt to Owner/Admin.
-- [ ] Render pinned items for visitors when pins exist.
-- [ ] Reuse shared result/card primitives for pinned items where practical rather than creating a visually unrelated card system.
-- [ ] Replace namespace `0/week` popularity signals with shared improved result-card signals from Milestone 4.
-- [ ] Add namespace-scoped text search.
-- [ ] Reuse shared faceted filters within namespace package list:
-  - [ ] omit Namespace selector because the namespace is already fixed;
-  - [ ] retain Kind and applicable universal/kind-specific filters.
-- [ ] Reuse shared sorts and pagination.
-- [ ] Enforce namespace as a server-side hard search constraint that cannot be overridden by query params.
-- [ ] Keep namespace filter/search state URL-addressable.
-- [ ] Remove/simplify current mechanical type summary where redundant with real filtering.
-- [ ] Verify namespace discovery and global Explore produce consistent result behavior for equivalent constraints.
+  - [x] suppress them and expose cleanup to Owner/Admin.
+- [x] Hide empty pin section from normal visitors.
+- [x] Show empty-state management prompt to Owner/Admin.
+- [x] Render pinned items for visitors when pins exist.
+- [x] Reuse shared result/card primitives for pinned items where practical rather than creating a visually unrelated card system.
+- [x] Replace namespace `0/week` popularity signals with shared improved result-card signals from Milestone 4.
+- [x] Add namespace-scoped text search.
+- [x] Reuse shared faceted filters within namespace package list:
+  - [x] omit Namespace selector because the namespace is already fixed;
+  - [x] retain Kind and applicable universal/kind-specific filters.
+- [x] Only show recent activity if there is recent activity
+- [x] Reuse shared sorts and pagination.
+- [x] Enforce namespace as a server-side hard search constraint that cannot be overridden by query params.
+- [x] Keep namespace filter/search state URL-addressable.
+- [x] Remove/simplify current mechanical type summary where redundant with real filtering.
+- [x] Verify namespace discovery and global Explore produce consistent result behavior for equivalent constraints.
 
 ## Release Band 3: Popularity Signals and Namespace Discovery
 Covered milestones: 4-5.
