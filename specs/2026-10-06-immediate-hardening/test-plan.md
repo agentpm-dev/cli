@@ -66,6 +66,65 @@ Add automated cases for:
 - stable result keys/rendering where testable.
 - package Security/detail DTO renders both legacy single-artifact versions and new-format release/artifact versions correctly once portability milestones land.
 
+### Package detail shell verification
+
+Milestone 6 uses the existing shared `StarRail` and `PackageStatsGrid` across Tool,
+Agent, Skill, Knowledge, Memory, Profile, Loop, and Template pages.
+
+Run in `agentpm-web`:
+
+```bash
+pnpm vitest run src/components/ui/StarRail.test.tsx src/components/tools/PackageDetailShell.test.tsx src/components/tools/PackageSecurity.test.tsx
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm build
+```
+
+Keep `PackageStatsGrid` server-only: the Installs and Last publish cells, `Panel`
+wrappers, and `agoText` stay server-rendered. Only `StarStatCell` reads client star
+context, shared with `StarRail` through the identity-keyed `PackageStarProvider`.
+Verify both mobile and desktop Stars cells change during an optimistic write,
+accept the server's returned count, and roll back with the rail after a failure.
+Seed star state only when the identity-keyed provider mounts. A successful write
+must not call `router.refresh()`, and changed initial props for the same mounted
+identity must not overwrite its local star state. Verify a different identity
+remounts with its own server state. This deliberately favors preserving the user's
+write over reconciling concurrent changes from another tab or device; fresh server
+state is loaded when the provider remounts.
+
+Run UTC calendar-boundary tests under different process timezones:
+
+```bash
+TZ=UTC pnpm vitest run src/lib/date/ago.test.ts
+TZ=America/Los_Angeles pnpm vitest run src/lib/date/ago.test.ts
+```
+
+The focused tests cover successful star/unstar writes, pending-write suppression,
+401 recovery through sign-in with a return URL, server/network failure rollback,
+protection from stale same-identity props, identity remounts, and all eight kinds' footer placement, popularity panels,
+version switching, install/load/bootstrap/inspect/query actions, and specialized tab
+links. Security tests use the real fetchers and response schemas, switch between
+two versions with different integrity/provenance/scan/license values, and verify
+the selected version's rendered data. The latest-publish panel must pair the
+latest timestamp with the latest version, even when an older version is selected.
+
+Run the existing API suite with `uv run pytest -q` using the repository's test
+environment. The current Security contract remains the extension point for later
+release/artifact data. Milestone 14C owns the new-format Security/detail UI and
+release inventory verification, including legacy rendering compatibility, alongside
+its public Security/read DTO changes. Milestones 13A–14B supply the prerequisite
+release/artifact data and signing foundation/statements.
+
+Browser evidence (2026-10-14): all eight kinds were rendered against the local app
+at 390px and 1440px widths. All 16 checks confirm the package header fits the
+viewport and the star control ends at the header's bottom border. Retained
+measurements: [detail-bounds.json](assets/milestone-6/detail-bounds.json).
+Representative screenshots: [Tool mobile](assets/milestone-6/tool-mobile.png) and
+[Template desktop](assets/milestone-6/template-desktop.png). Session-expiry recovery
+is verified with mocked Clerk and write responses; a live account sign-out/sign-in
+was not performed.
+
 ### Search relevance fixtures
 
 Create and run a deterministic fixture corpus.
@@ -376,6 +435,55 @@ Using rendered HTML / browser dev tools:
   - authenticated/private route.
 - inspect OG/Twitter preview values.
 - verify sitemap contains intended public URLs only.
+
+Milestone 7 regression commands:
+
+- In `agentpm-web`: `pnpm test`, `pnpm typecheck`, `pnpm lint`, and `pnpm build`.
+  Build in a disposable copy when a development server is active; do not let two processes
+  write to the same `.next` directory.
+- In `agentpm-api`: `uv run pytest -q`. Set `AGENTPM_SEARCH_TEST_DATABASE_URI` to a local
+  Postgres test connection to also run `tests/test_sitemap.py` and the existing search
+  behavior fixtures. Sitemap fixtures use transaction-local tables and leave registry data intact.
+- Run API pre-commit checks on `app/models/cache.py`, `app/stats/application/stats.py`,
+  `app/stats/stats_routes.py`, and `tests/test_sitemap.py`.
+
+Recorded evidence (2026-10-14): `assets/milestone-7/seo-evidence.json` contains 23
+production-rendered route inspections without executing JavaScript, plus the sitemap inventory
+(54 public/static/docs URLs and 72 public registry namespace/version URLs in the local dataset).
+`assets/milestone-7/error-evidence.json` records a fault-injected HTTP 500 response with `noindex`.
+The HTML audit covers all eight package kinds, public/private namespaces, private/missing
+packages, docs aliases and concrete versions, search/filter URLs, sign-in and the account redirect.
+Every successful primary public page has one H1 and no image missing its alt attribute.
+The existing share image was checked at 1200x630. Older docs version behavior and private
+payload rejection are additionally pinned by unit fixtures; no signed-in private browser session
+was used for this audit.
+
+Docs canonical decision: prefer version-specific documentation identity over consolidating
+current-guide search signals on the stable `/docs/latest/...` URL. `latest` remains a usable,
+shareable navigation alias, but metadata and sitemap entries identify the resolved concrete
+version. Historical versions remain independently discoverable rather than pointing at guidance
+for a newer release. This is an identity/consistency choice, not a claim of better search ranking.
+
+Accepted tradeoff: when the current docs version changes, the canonical target of a `latest`
+link changes too. Search signals may be distributed across version URLs over time instead of
+consolidating on an evergreen URL. Milestone 17 should carry this decision forward explicitly.
+If evergreen discovery becomes the priority, reconsider canonicalizing both current concrete
+pages and their aliases to `/docs/latest/...`, while keeping historical pages self-canonical.
+Such a change must update metadata, sitemap selection, tests, and documented policy together;
+it should not happen incidentally during docs copy or navigation work.
+
+Verification result: web tests, typecheck, lint and the isolated production build pass;
+the complete API suite passes with Postgres fixtures enabled. The full API pre-commit invocation
+still reports two existing imported-module mypy errors in `app/tools/application/search.py`
+(lines 1486 and 1856), and the pinned Bandit hook lacks `pbr` in its isolated environment.
+The four touched Python files pass mypy with imported-module checking suppressed, and pinned
+Bandit passes with its missing tool dependencies supplied in a separate temporary environment.
+All other applicable pre-commit hooks pass. These existing issues were not changed in Milestone 7.
+
+Deployment note: deploy the registry's `/stats/sitemap` endpoint before or with the web update.
+The sitemap index and its bounded registry partitions are generated at request time, not during
+the web build. Sitemap responses have a five-minute cache window. Robots directives are not
+access controls, and this work does not replace private namespace authorization.
 
 ### CLI
 

@@ -1,0 +1,440 @@
+{
+  "source": "isolated Next production server; live anonymous local registry; parsed HTML without executing JavaScript",
+  "routes": [
+    {
+      "label": "landing",
+      "path": "/",
+      "status": 200,
+      "title": "AgentPM - Agent Package Manager",
+      "description": "Discover, verify, and integrate reusable tools for AI agents. AgentPM is the agent package manager.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/",
+      "ogTitle": "AgentPM - Agent Package Manager",
+      "ogDescription": "Discover, verify, and integrate reusable tools for AI agents. AgentPM is the agent package manager.",
+      "ogUrl": "https://agentpackagemanager.com",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "AgentPM - Agent Package Manager",
+      "twitterDescription": "Discover, verify, and integrate reusable tools for AI agents. AgentPM is the agent package manager.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "The package manager for AI agents"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "pricing",
+      "path": "/pricing",
+      "status": 200,
+      "title": "Pricing · AgentPM™",
+      "description": "The public registry is free for everyone. Upgrade to Pro or Team for private namespaces and team workflows.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/pricing",
+      "ogTitle": "Pricing",
+      "ogDescription": "The public registry is free for everyone. Upgrade to Pro or Team for private namespaces and team workflows.",
+      "ogUrl": "https://agentpackagemanager.com/pricing",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "Pricing",
+      "twitterDescription": "The public registry is free for everyone. Upgrade to Pro or Team for private namespaces and team workflows.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "Simple pricing. Always free to start."
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "tools",
+      "path": "/tools/3668409b-a9f3-45f4-94f6-5cdce8c32cc2/v0.1.0/overview",
+      "status": 200,
+      "title": "@zack/milestone-4-test v0.1.0 · AgentPM™",
+      "description": "Tests Milestone 4 - tool package, version 0.1.0.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/tools/3668409b-a9f3-45f4-94f6-5cdce8c32cc2/v0.1.0/overview",
+      "ogTitle": "@zack/milestone-4-test v0.1.0",
+      "ogDescription": "Tests Milestone 4 - tool package, version 0.1.0.",
+      "ogUrl": "https://agentpackagemanager.com/tools/3668409b-a9f3-45f4-94f6-5cdce8c32cc2/v0.1.0/overview",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "@zack/milestone-4-test v0.1.0",
+      "twitterDescription": "Tests Milestone 4 - tool package, version 0.1.0.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "@zack/milestone-4-test"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "agents",
+      "path": "/agents/930543de-b972-4c81-8f70-275c6bce2c13/v0.1.0/overview",
+      "status": 200,
+      "title": "@zack/research-assistant-m7 v0.1.0 · AgentPM™",
+      "description": "Assistant composed of multiple tools - agent package, version 0.1.0.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/agents/930543de-b972-4c81-8f70-275c6bce2c13/v0.1.0/overview",
+      "ogTitle": "@zack/research-assistant-m7 v0.1.0",
+      "ogDescription": "Assistant composed of multiple tools - agent package, version 0.1.0.",
+      "ogUrl": "https://agentpackagemanager.com/agents/930543de-b972-4c81-8f70-275c6bce2c13/v0.1.0/overview",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "@zack/research-assistant-m7 v0.1.0",
+      "twitterDescription": "Assistant composed of multiple tools - agent package, version 0.1.0.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "@zack/research-assistant-m7"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "skills",
+      "path": "/skills/5776f937-c703-49b1-b2e2-24a5e5d0f51b/v0.1.0/overview",
+      "status": 200,
+      "title": "@zack/my-test-skill v0.1.0 · AgentPM™",
+      "description": "A test skill for test things - skill package, version 0.1.0.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/skills/5776f937-c703-49b1-b2e2-24a5e5d0f51b/v0.1.0/overview",
+      "ogTitle": "@zack/my-test-skill v0.1.0",
+      "ogDescription": "A test skill for test things - skill package, version 0.1.0.",
+      "ogUrl": "https://agentpackagemanager.com/skills/5776f937-c703-49b1-b2e2-24a5e5d0f51b/v0.1.0/overview",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "@zack/my-test-skill v0.1.0",
+      "twitterDescription": "A test skill for test things - skill package, version 0.1.0.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "@zack/my-test-skill"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "templates",
+      "path": "/templates/854c797d-6578-400d-bf33-4239bf17d307/v0.1.0/overview",
+      "status": 200,
+      "title": "@zack/milestone-1-test v0.1.0 · AgentPM™",
+      "description": "Tests Milestone 1 - template package, version 0.1.0.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/templates/854c797d-6578-400d-bf33-4239bf17d307/v0.1.0/overview",
+      "ogTitle": "@zack/milestone-1-test v0.1.0",
+      "ogDescription": "Tests Milestone 1 - template package, version 0.1.0.",
+      "ogUrl": "https://agentpackagemanager.com/templates/854c797d-6578-400d-bf33-4239bf17d307/v0.1.0/overview",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "@zack/milestone-1-test v0.1.0",
+      "twitterDescription": "Tests Milestone 1 - template package, version 0.1.0.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "Milestone 1 Test"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "knowledge",
+      "path": "/knowledge/47c8173d-fa0b-4934-aaa4-82b11c7c638c/v0.1.0/overview",
+      "status": 200,
+      "title": "@zack/sample-playbook v0.1.0 · AgentPM™",
+      "description": "Sample playbook context - knowledge package, version 0.1.0.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/knowledge/47c8173d-fa0b-4934-aaa4-82b11c7c638c/v0.1.0/overview",
+      "ogTitle": "@zack/sample-playbook v0.1.0",
+      "ogDescription": "Sample playbook context - knowledge package, version 0.1.0.",
+      "ogUrl": "https://agentpackagemanager.com/knowledge/47c8173d-fa0b-4934-aaa4-82b11c7c638c/v0.1.0/overview",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "@zack/sample-playbook v0.1.0",
+      "twitterDescription": "Sample playbook context - knowledge package, version 0.1.0.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "@zack/sample-playbook"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "memory",
+      "path": "/memory/86762abf-007c-448e-916f-91255951158d/v0.1.0/overview",
+      "status": 200,
+      "title": "@zack/public-memory-m8m9 v0.1.0 · AgentPM™",
+      "description": "Manual test memory package. - memory package, version 0.1.0.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/memory/86762abf-007c-448e-916f-91255951158d/v0.1.0/overview",
+      "ogTitle": "@zack/public-memory-m8m9 v0.1.0",
+      "ogDescription": "Manual test memory package. - memory package, version 0.1.0.",
+      "ogUrl": "https://agentpackagemanager.com/memory/86762abf-007c-448e-916f-91255951158d/v0.1.0/overview",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "@zack/public-memory-m8m9 v0.1.0",
+      "twitterDescription": "Manual test memory package. - memory package, version 0.1.0.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "@zack/public-memory-m8m9"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "profiles",
+      "path": "/profiles/464e631b-337b-4f1e-995b-68ecf42dedcc/v0.1.0/overview",
+      "status": 200,
+      "title": "@zack/escalation-style v0.1.0 · AgentPM™",
+      "description": "Profile declared by a generated local Agent manifest. - profile package, version 0.1.0.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/profiles/464e631b-337b-4f1e-995b-68ecf42dedcc/v0.1.0/overview",
+      "ogTitle": "@zack/escalation-style v0.1.0",
+      "ogDescription": "Profile declared by a generated local Agent manifest. - profile package, version 0.1.0.",
+      "ogUrl": "https://agentpackagemanager.com/profiles/464e631b-337b-4f1e-995b-68ecf42dedcc/v0.1.0/overview",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "@zack/escalation-style v0.1.0",
+      "twitterDescription": "Profile declared by a generated local Agent manifest. - profile package, version 0.1.0.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "@zack/escalation-style"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "loops",
+      "path": "/loops/96ade214-b74b-4372-b372-460af030abbd/v0.1.0/overview",
+      "status": 200,
+      "title": "@zack/escalation-loop v0.1.0 · AgentPM™",
+      "description": "Replacement loop package - loop package, version 0.1.0.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/loops/96ade214-b74b-4372-b372-460af030abbd/v0.1.0/overview",
+      "ogTitle": "@zack/escalation-loop v0.1.0",
+      "ogDescription": "Replacement loop package - loop package, version 0.1.0.",
+      "ogUrl": "https://agentpackagemanager.com/loops/96ade214-b74b-4372-b372-460af030abbd/v0.1.0/overview",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "@zack/escalation-loop v0.1.0",
+      "twitterDescription": "Replacement loop package - loop package, version 0.1.0.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "@zack/escalation-loop"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "namespace",
+      "path": "/namespaces/b9b471fc-3769-4d1c-adc8-5363b2c8e4f7",
+      "status": 200,
+      "title": "@test · AgentPM™",
+      "description": "Browse public packages published in the @test namespace.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/namespaces/b9b471fc-3769-4d1c-adc8-5363b2c8e4f7",
+      "ogTitle": "@test",
+      "ogDescription": "Browse public packages published in the @test namespace.",
+      "ogUrl": "https://agentpackagemanager.com/namespaces/b9b471fc-3769-4d1c-adc8-5363b2c8e4f7",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "@test",
+      "twitterDescription": "Browse public packages published in the @test namespace.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "@test"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "namespace-query",
+      "path": "/namespaces/b9b471fc-3769-4d1c-adc8-5363b2c8e4f7?q=zack&sort=Newest",
+      "status": 200,
+      "title": "@test · AgentPM™",
+      "description": "Browse public packages published in the @test namespace.",
+      "robots": "noindex, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/namespaces/b9b471fc-3769-4d1c-adc8-5363b2c8e4f7",
+      "ogTitle": "@test",
+      "ogDescription": "Browse public packages published in the @test namespace.",
+      "ogUrl": "https://agentpackagemanager.com/namespaces/b9b471fc-3769-4d1c-adc8-5363b2c8e4f7",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "@test",
+      "twitterDescription": "Browse public packages published in the @test namespace.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "@test"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "docs-latest",
+      "path": "/docs/latest/getting-started/introduction",
+      "status": 200,
+      "title": "Introduction (v0.1 docs) · AgentPM™",
+      "description": "What is AgentPM and how it fits into your agent stack. - AgentPM v0.1 documentation.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/docs/v0.1/getting-started/introduction",
+      "ogTitle": "Introduction (v0.1 docs)",
+      "ogDescription": "What is AgentPM and how it fits into your agent stack. - AgentPM v0.1 documentation.",
+      "ogUrl": "https://agentpackagemanager.com/docs/v0.1/getting-started/introduction",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "Introduction (v0.1 docs)",
+      "twitterDescription": "What is AgentPM and how it fits into your agent stack. - AgentPM v0.1 documentation.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "Introduction#"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "docs-concrete",
+      "path": "/docs/v0.1/getting-started/introduction",
+      "status": 200,
+      "title": "Introduction (v0.1 docs) · AgentPM™",
+      "description": "What is AgentPM and how it fits into your agent stack. - AgentPM v0.1 documentation.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/docs/v0.1/getting-started/introduction",
+      "ogTitle": "Introduction (v0.1 docs)",
+      "ogDescription": "What is AgentPM and how it fits into your agent stack. - AgentPM v0.1 documentation.",
+      "ogUrl": "https://agentpackagemanager.com/docs/v0.1/getting-started/introduction",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "Introduction (v0.1 docs)",
+      "twitterDescription": "What is AgentPM and how it fits into your agent stack. - AgentPM v0.1 documentation.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "Introduction#"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "explore",
+      "path": "/explore",
+      "status": 200,
+      "title": "Explore packages · AgentPM™",
+      "description": "Search public packages in the AgentPM registry.",
+      "robots": "index, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/explore",
+      "ogTitle": "Explore packages",
+      "ogDescription": "Search public packages in the AgentPM registry.",
+      "ogUrl": "https://agentpackagemanager.com/explore",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "Explore packages",
+      "twitterDescription": "Search public packages in the AgentPM registry.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "Explore packages"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "explore-query",
+      "path": "/explore?q=zack&kind=tool",
+      "status": 200,
+      "title": "Explore packages · AgentPM™",
+      "description": "Search public packages in the AgentPM registry.",
+      "robots": "noindex, follow",
+      "headerRobots": null,
+      "canonical": "https://agentpackagemanager.com/explore",
+      "ogTitle": "Explore packages",
+      "ogDescription": "Search public packages in the AgentPM registry.",
+      "ogUrl": "https://agentpackagemanager.com/explore",
+      "ogImage": "https://agentpackagemanager.com/og.png",
+      "twitterTitle": "Explore packages",
+      "twitterDescription": "Search public packages in the AgentPM registry.",
+      "twitterImage": "https://agentpackagemanager.com/og.png",
+      "h1": [
+        "Explore packages"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "not-found",
+      "path": "/does-not-exist-m7",
+      "status": 404,
+      "title": "404: This page could not be found.",
+      "description": "Discover, verify, and integrate reusable tools for AI agents. AgentPM is the agent package manager.",
+      "robots": "noindex",
+      "headerRobots": null,
+      "h1": [
+        "404"
+      ],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "missing-package",
+      "path": "/tools/00000000-0000-4000-8000-000000000000/v0.1.0/overview",
+      "status": 404,
+      "title": "Package not found · AgentPM™",
+      "description": "Discover, verify, and integrate reusable tools for AI agents. AgentPM is the agent package manager.",
+      "robots": "noindex",
+      "headerRobots": null,
+      "h1": [],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "private-package",
+      "path": "/templates/c4a55db9-01ac-4448-a9c6-8ad3666287e2/v0.1.0/overview",
+      "status": 404,
+      "title": "Package not found · AgentPM™",
+      "description": "Discover, verify, and integrate reusable tools for AI agents. AgentPM is the agent package manager.",
+      "robots": "noindex",
+      "headerRobots": null,
+      "h1": [],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "private-namespace",
+      "path": "/namespaces/84d599cb-8729-4122-9a6a-cae6e1ec166e",
+      "status": 404,
+      "title": "Namespace not found · AgentPM™",
+      "description": "Discover, verify, and integrate reusable tools for AI agents. AgentPM is the agent package manager.",
+      "robots": "noindex",
+      "headerRobots": null,
+      "h1": [],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "missing-doc",
+      "path": "/docs/latest/does-not-exist-m7",
+      "status": 404,
+      "title": "AgentPM™ – Agent Package Manager",
+      "description": "Discover, verify, and integrate reusable tools for AI agents. AgentPM is the agent package manager.",
+      "robots": "noindex",
+      "headerRobots": null,
+      "h1": [],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "account",
+      "path": "/profile",
+      "status": 307,
+      "title": "",
+      "headerRobots": "noindex, nofollow",
+      "h1": [],
+      "imagesMissingAlt": 0
+    },
+    {
+      "label": "sign-in",
+      "path": "/signIn",
+      "status": 200,
+      "title": "Sign in · AgentPM™",
+      "description": "Discover, verify, and integrate reusable tools for AI agents. AgentPM is the agent package manager.",
+      "robots": "noindex, nofollow",
+      "headerRobots": "noindex, nofollow",
+      "h1": [
+        "Welcome back"
+      ],
+      "imagesMissingAlt": 0
+    }
+  ],
+  "sitemaps": [
+    {
+      "path": "/sitemap/pages.xml",
+      "count": 54,
+      "sample": [
+        "https://agentpackagemanager.com/",
+        "https://agentpackagemanager.com/pricing",
+        "https://agentpackagemanager.com/explore"
+      ]
+    },
+    {
+      "path": "/sitemap/registry-0.xml",
+      "count": 72,
+      "sample": [
+        "https://agentpackagemanager.com/agents/930543de-b972-4c81-8f70-275c6bce2c13/v0.1.0/overview",
+        "https://agentpackagemanager.com/agents/930543de-b972-4c81-8f70-275c6bce2c13/v0.1.1/overview",
+        "https://agentpackagemanager.com/agents/be6bd0fd-5ebc-45d5-80d2-82d283ac3ea7/v0.1.0/overview"
+      ]
+    }
+  ]
+}

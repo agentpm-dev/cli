@@ -350,6 +350,8 @@ Shared Stage 1 changes should be implemented in the common detail shell where po
 - remove Tool-only Score & Rating placeholder;
 - hide/remove Tool Evaluations tab while it only says `Coming Soon`.
 
+The shared **Last publish** panel is a package-level latest-release summary: it pairs the latest published timestamp with `latest_version`, regardless of the selected version. Security/integrity data remains specific to the selected version.
+
 Preserve useful kind-specific surfaces:
 
 - Agent Package:
@@ -411,6 +413,11 @@ Required technical SEO primitives:
 - basic heading hierarchy and alt/accessibility metadata should be checked.
 
 Immutable package-version pages should normally canonicalize to themselves.
+
+The implemented canonical URL for each immutable package version is its `/v<version>/overview`
+page. Other tabs and version URL aliases point to that same version, never to the latest release.
+Docs aliases such as `/docs/latest/...` point to the resolved concrete docs version; visible
+historical versions retain their own canonical URLs and are included separately in the sitemap.
 
 Stage 2 owns the category-facing wording of titles/descriptions/headings.
 

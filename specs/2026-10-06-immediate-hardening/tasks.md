@@ -372,53 +372,53 @@ This gives us identity-level stars with visibility-safe aggregates, a Trending s
 > Implementation notes:
 > - Every kind currently uses essentially the same identity/version shell. Make shared changes once in that shell rather than patching each kind independently.
 > - Keep identity-level and selected-version data conceptually separate:
->   - identity-level: star state/count, long-lived popularity, name/namespace;
->   - version-level: selected version, publish timestamp, SHA-256, signatures, registry attestation, malware result, version-specific manifest metadata.
+>   - identity/package-level: star state/count, long-lived popularity, name/namespace, and the Last publish summary pairing the latest published timestamp with `latest_version` regardless of selected version;
+>   - selected-version-level: selected version, SHA-256, signatures, registry attestation, malware result, version-specific manifest metadata, and any explicitly selected-version publish timestamp.
 > - Changing the selected version must not make the package appear newly starred/unstarred because the star belongs to identity.
 > - Security remains version-specific and should not be reinterpreted as an identity-level badge in Stage 1.
 > - Do not remove useful specialized views while cleaning up the shared shell.
 > - README content is author-published. Do not rewrite or normalize README wording as part of this milestone.
 
-- [ ] Implement the Milestone-4 shared star rail across all artifact kinds.
-- [ ] Place the star rail consistently at the bottom of the primary identity card unless the existing shared layout requires a small adaptation.
-- [ ] Replace weak weekly change signal in shared sidebar/shell with the durable popularity treatment established in Milestone 4.
-- [ ] Preserve identity-level stars while version selector changes.
-- [ ] Handle the stale-session star state introduced by Milestone 4's `auth_optional` change. A viewer whose token no longer verifies is served the anonymous payload, so `starred` returns `false` for a package they have in fact starred — the rail renders unstarred, and clicking it hits the `auth_required` star endpoint and 401s. Decide and implement the behavior rather than leaving the mismatch: surface the signed-out state in the rail, or have the failed write prompt re-authentication. Do not ship a control that shows the wrong state and then errors on use.
-- [ ] Preserve version-specific Security/integrity data.
-- [ ] Remove Tool Score & Rating placeholder.
-- [ ] Hide Tool Evaluations placeholder/tab until actual evaluation content exists.
-- [ ] Ensure removing placeholder sections does not leave empty cards, spacing gaps, or dead navigation states.
-- [ ] Verify install/use action areas remain kind-appropriate:
-  - [ ] Tool install/run/load behavior;
-  - [ ] Agent Package install/load behavior unchanged in Stage 1;
-  - [ ] Template bootstrap flow;
-  - [ ] Knowledge inspect/query flow;
-  - [ ] Memory/Profile/Loop/Skill component actions.
-- [ ] Verify all existing kind-specific tabs still work:
-  - [ ] Agent Package Bindings/Examples;
-  - [ ] Memory Lifecycle/Record Contracts;
-  - [ ] Loop Phases;
-  - [ ] Security;
-  - [ ] README;
-  - [ ] Knowledge inspection metadata;
-  - [ ] Template bootstrap metadata;
-  - [ ] Profile detail metadata;
-  - [ ] Skill detail metadata.
-- [ ] Keep the shared Security/detail contract extensible for the new release model implemented later in Stage 1; when Milestones 13A–14C land, update the same surface rather than introducing a separate new-format-only page.
-- [ ] Verify Security tab continues to display the selected version’s:
-  - [ ] package/artifact type;
-  - [ ] digest;
-  - [ ] author-signature state;
-  - [ ] registry-attestation state;
-  - [ ] malware status;
-  - [ ] license.
-- [ ] After Milestones 13A–14C, ensure new-format Tool versions additionally expose, without Package Health scoring:
-  - [ ] release-level digest;
-  - [ ] author-signature/registry-attestation state;
-  - [ ] available target-artifact inventory and per-artifact digest/scan state where useful;
-  - [ ] while legacy versions continue rendering their existing single-artifact Security data.
-- [ ] Verify no shared-shell change conflates identity-level and version-level data.
-- [ ] Do not add the Stage-2 `Run with Harness` Agent Package action in this milestone; record that as Stage 2 work only.
+- [x] Implement the Milestone-4 shared star rail across all artifact kinds.
+- [x] Place the star rail consistently at the bottom of the primary identity card unless the existing shared layout requires a small adaptation.
+- [x] Replace weak weekly change signal in shared sidebar/shell with the durable popularity treatment established in Milestone 4.
+- [x] Preserve identity-level stars while version selector changes.
+- [x] Synchronize the star rail and mobile/desktop Stars cells through shared identity-keyed state, including optimistic writes, authoritative response counts, and rollback. Keep `PackageStatsGrid`, its `Panel` wrappers, Installs, Last publish, and `agoText` server-rendered; only the Stars cell reads client context.
+- [x] Handle the stale-session star state introduced by Milestone 4's `auth_optional` change. A viewer whose token no longer verifies is served the anonymous payload, so `starred` returns `false` for a package they have in fact starred — the rail renders unstarred, and clicking it hits the `auth_required` star endpoint and 401s. Decide and implement the behavior rather than leaving the mismatch: surface the signed-out state in the rail, or have the failed write prompt re-authentication. Do not ship a control that shows the wrong state and then errors on use.
+- [x] Preserve version-specific Security/integrity data.
+- [x] Remove Tool Score & Rating placeholder.
+- [x] Hide Tool Evaluations placeholder/tab until actual evaluation content exists.
+- [x] Ensure removing placeholder sections does not leave empty cards, spacing gaps, or dead navigation states.
+- [x] Verify install/use action areas remain kind-appropriate:
+  - [x] Tool install/run/load behavior;
+  - [x] Agent Package install/load behavior unchanged in Stage 1;
+  - [x] Template bootstrap flow;
+  - [x] Knowledge inspect/query flow;
+  - [x] Memory/Profile/Loop/Skill component actions.
+- [x] Verify all existing kind-specific tabs still work:
+  - [x] Agent Package Bindings/Examples;
+  - [x] Memory Lifecycle/Record Contracts;
+  - [x] Loop Phases;
+  - [x] Security;
+  - [x] README;
+  - [x] Knowledge inspection metadata;
+  - [x] Template bootstrap metadata;
+  - [x] Profile detail metadata;
+  - [x] Skill detail metadata.
+- [x] Keep the shared Security/detail contract extensible for the new release model implemented later in Stage 1; when Milestones 13A–14C land, update the same surface rather than introducing a separate new-format-only page.
+- [x] Verify Security tab continues to display the selected version’s:
+  - [x] package/artifact type;
+  - [x] digest;
+  - [x] author-signature state;
+  - [x] registry-attestation state;
+  - [x] malware status;
+  - [x] license.
+- [x] Verify no shared-shell change conflates identity-level and version-level data.
+- [x] Do not add the Stage-2 `Run with Harness` Agent Package action in this milestone; record that as Stage 2 work only.
+
+> Milestone 6 verification (2026-10-14): audited all eight package kinds. The shared footer rail, durable installs/stars panels, and Tool placeholder removal were already present from Milestone 4. Added pending-write protection, rollback/error feedback, rejected-session sign-out/sign-in recovery with a return URL, and shared star state after writes. The latest-publish timestamp is now labeled with `latest_version`, independently of the selected version. `PackageDetailShell.test.tsx` covers all eight layouts, version changes, actions, and specialized tab links; `PackageSecurity.test.tsx` exercises the real fetch/schema/render path for selected-version type, digest, author signature, attestation, malware, and license across all eight kinds. Existing specialized overview, Bindings, Phases, Lifecycle, Record Contracts, Manual, and README suites also pass. Full web suite: 132 passed; API suite: 352 passed, 65 subtests passed, 5 optional PostgreSQL cases skipped. Web typecheck, lint (six existing warnings), and production build pass. The new-format Security UI and verification checklist now lives in Milestone 14C alongside the public Security/read DTO evolution; the current shared detail contract and version-specific Security routes remain the extension point. `Run with Harness` remains Stage 2 work.
+
+> Milestone 6 follow-up verification (2026-10-14): split the client `StarStatCell` from the server-only stats grid and connected all eight detail layouts through `PackageStarProvider`. The provider seeds state only on its identity-keyed mount; successful writes update context without a route refresh, and stale same-identity RSC props cannot overwrite the user's result. Concurrent changes from another tab/device are picked up on remount rather than by same-identity prop reconciliation. Tests exercise both mobile and desktop Stars cells during optimistic writes, authoritative count updates, and failure rollback, including Clerk sign-out failure preserving the sign-in message. Corrected `agoText` to use UTC accessors for day/month/year boundaries; all nine date cases pass under both `TZ=UTC` and `TZ=America/Los_Angeles`. The full frontend suite now has 142 passing tests. Typecheck and lint pass (the six existing warnings remain). A production build run in an isolated temporary copy passes; its client-reference manifest includes the provider, rail, and Stars cell while excluding the stats grid and date formatter.
 
 ## Milestone 7: Registry Technical SEO
 > Scope note: establish the technical SEO/indexing baseline required before intentionally generating traffic: metadata uniqueness, canonical behavior, social previews, sitemap/robots boundaries, and crawl control. This milestone does not rewrite category-facing copy, perform keyword/content marketing strategy, add broad structured-data/schema.org work, or make Stage 2 information-architecture decisions.
@@ -431,43 +431,48 @@ This gives us identity-level stars with visibility-safe aggregates, a Trending s
 > - Docs use a `/docs/latest/...` model; define one deliberate canonical strategy so the same article is not unintentionally indexed under multiple version aliases.
 > - Do not use this milestone to force the new Stage-2 category vocabulary into titles/descriptions prematurely.
 
-- [ ] Audit and implement unique `<title>` and meta description for:
-  - [ ] landing;
-  - [ ] pricing;
-  - [ ] package/version pages;
-  - [ ] namespace pages;
-  - [ ] docs pages.
-- [ ] Ensure dynamic package metadata derives from public package/version data server-side and does not require client hydration to become crawlable.
-- [ ] Ensure namespace metadata derives from public namespace data server-side.
-- [ ] Add/verify canonical tags.
-- [ ] Make immutable package-version pages canonical to themselves.
-- [ ] Define and implement docs-version canonical behavior:
-  - [ ] decide whether `/latest/` is canonical or points to a concrete docs version;
-  - [ ] ensure old versions do not duplicate-current content unintentionally.
-- [ ] Add/verify OpenGraph metadata:
-  - [ ] title;
-  - [ ] description;
-  - [ ] canonical URL;
-  - [ ] image where available.
-- [ ] Add/verify Twitter metadata.
-- [ ] Add/verify share image behavior for landing, package, namespace, pricing, and docs surfaces where practical.
-- [ ] Add sitemap coverage for intended public pages:
-  - [ ] landing;
-  - [ ] pricing;
-  - [ ] docs;
-  - [ ] public namespaces;
-  - [ ] public package/version pages.
-- [ ] Audit robots directives.
-- [ ] Set arbitrary Explore query/filter result pages to `noindex,follow`.
-- [ ] Canonicalize arbitrary Explore query/filter URLs to `/explore` unless a deliberate indexable facet is introduced later.
-- [ ] Prevent private/authenticated/account/settings surfaces from indexing.
-- [ ] Prevent 404/error pages from indexing.
-- [ ] Check heading hierarchy:
-  - [ ] one meaningful H1 per page where appropriate;
-  - [ ] logical H2/H3 structure.
-- [ ] Check basic image alt/accessibility metadata on primary public pages.
-- [ ] Add regression tests for metadata/canonical/robots behavior where practical.
-- [ ] Leave category-facing metadata copy refinement to Stage 2.
+- [x] Audit and implement unique `<title>` and meta description for:
+  - [x] landing;
+  - [x] pricing;
+  - [x] package/version pages;
+  - [x] namespace pages;
+  - [x] docs pages.
+- [x] Ensure dynamic package metadata derives from public package/version data server-side and does not require client hydration to become crawlable.
+- [x] Ensure namespace metadata derives from public namespace data server-side.
+- [x] Add/verify canonical tags.
+- [x] Make immutable package-version pages canonical to themselves.
+- [x] Define and implement docs-version canonical behavior:
+  - [x] decide whether `/latest/` is canonical or points to a concrete docs version;
+  - [x] ensure old versions do not duplicate-current content unintentionally.
+- [x] Add/verify OpenGraph metadata:
+  - [x] title;
+  - [x] description;
+  - [x] canonical URL;
+  - [x] image where available.
+- [x] Add/verify Twitter metadata.
+- [x] Add/verify share image behavior for landing, package, namespace, pricing, and docs surfaces where practical.
+- [x] Add sitemap coverage for intended public pages:
+  - [x] landing;
+  - [x] pricing;
+  - [x] docs;
+  - [x] public namespaces;
+  - [x] public package/version pages.
+- [x] Audit robots directives.
+- [x] Set arbitrary Explore query/filter result pages to `noindex,follow`.
+- [x] Canonicalize arbitrary Explore query/filter URLs to `/explore` unless a deliberate indexable facet is introduced later.
+- [x] Prevent private/authenticated/account/settings surfaces from indexing.
+- [x] Prevent 404/error pages from indexing.
+- [x] Check heading hierarchy:
+  - [x] one meaningful H1 per page where appropriate;
+  - [x] logical H2/H3 structure.
+- [x] Check basic image alt/accessibility metadata on primary public pages.
+- [x] Add regression tests for metadata/canonical/robots behavior where practical.
+- [x] Leave category-facing metadata copy refinement to Stage 2.
+
+Implementation and verification evidence (2026-10-14): see the SEO section of `test-plan.md`
+and `assets/milestone-7/seo-evidence.json` / `assets/milestone-7/error-evidence.json`.
+Registry and web changes only; no CLI/SDK release or Stage 2 copy work. Existing API
+pre-commit limitations are recorded in the test plan rather than treated as passing checks.
 
 ## Release Band 4: Package Detail and Technical SEO
 Covered milestones: 6-7.
@@ -1098,6 +1103,11 @@ This gives us a typed Rust representation of the existing `agentpm.package.signa
   - [ ] make `GET /v1/registry/signing-keys` **fail closed** when a valid root signature cannot be produced, rather than serving an unsigned or partial key set;
   - [ ] keep the pinned root public key auditable in the repository rather than injected at build time from an opaque source, and treat changing it as requiring a CLI release.
 - [ ] Evolve the public Security/read DTO for new-format versions so the web UI can inspect release-level integrity/provenance and target artifacts without using truncated digests as verification inputs; keep legacy responses compatible.
+- [ ] Update and verify the existing Tool Security/detail surface for new-format versions using the release/artifact data from Milestones 13A–13B and signing foundation/statements from Milestones 14A–14B, without Package Health scoring:
+  - [ ] expose the release-level digest;
+  - [ ] expose release-level author-signature/registry-attestation state;
+  - [ ] expose the available target-artifact inventory and per-artifact digest/scan state where useful;
+  - [ ] verify legacy versions continue rendering their existing single-artifact Security data on the same surface.
 - [ ] Extend install/init verification payload to include:
   - [ ] canonical release manifest/release digest;
   - [ ] author signature + statement + full public key + signer status;
