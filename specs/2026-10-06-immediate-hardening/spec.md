@@ -350,6 +350,8 @@ Shared Stage 1 changes should be implemented in the common detail shell where po
 - remove Tool-only Score & Rating placeholder;
 - hide/remove Tool Evaluations tab while it only says `Coming Soon`.
 
+The shared **Last publish** panel is a package-level latest-release summary: it pairs the latest published timestamp with `latest_version`, regardless of the selected version. Security/integrity data remains specific to the selected version.
+
 Preserve useful kind-specific surfaces:
 
 - Agent Package:

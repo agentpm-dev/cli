@@ -66,6 +66,65 @@ Add automated cases for:
 - stable result keys/rendering where testable.
 - package Security/detail DTO renders both legacy single-artifact versions and new-format release/artifact versions correctly once portability milestones land.
 
+### Package detail shell verification
+
+Milestone 6 uses the existing shared `StarRail` and `PackageStatsGrid` across Tool,
+Agent, Skill, Knowledge, Memory, Profile, Loop, and Template pages.
+
+Run in `agentpm-web`:
+
+```bash
+pnpm vitest run src/components/ui/StarRail.test.tsx src/components/tools/PackageDetailShell.test.tsx src/components/tools/PackageSecurity.test.tsx
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm build
+```
+
+Keep `PackageStatsGrid` server-only: the Installs and Last publish cells, `Panel`
+wrappers, and `agoText` stay server-rendered. Only `StarStatCell` reads client star
+context, shared with `StarRail` through the identity-keyed `PackageStarProvider`.
+Verify both mobile and desktop Stars cells change during an optimistic write,
+accept the server's returned count, and roll back with the rail after a failure.
+Seed star state only when the identity-keyed provider mounts. A successful write
+must not call `router.refresh()`, and changed initial props for the same mounted
+identity must not overwrite its local star state. Verify a different identity
+remounts with its own server state. This deliberately favors preserving the user's
+write over reconciling concurrent changes from another tab or device; fresh server
+state is loaded when the provider remounts.
+
+Run UTC calendar-boundary tests under different process timezones:
+
+```bash
+TZ=UTC pnpm vitest run src/lib/date/ago.test.ts
+TZ=America/Los_Angeles pnpm vitest run src/lib/date/ago.test.ts
+```
+
+The focused tests cover successful star/unstar writes, pending-write suppression,
+401 recovery through sign-in with a return URL, server/network failure rollback,
+protection from stale same-identity props, identity remounts, and all eight kinds' footer placement, popularity panels,
+version switching, install/load/bootstrap/inspect/query actions, and specialized tab
+links. Security tests use the real fetchers and response schemas, switch between
+two versions with different integrity/provenance/scan/license values, and verify
+the selected version's rendered data. The latest-publish panel must pair the
+latest timestamp with the latest version, even when an older version is selected.
+
+Run the existing API suite with `uv run pytest -q` using the repository's test
+environment. The current Security contract remains the extension point for later
+release/artifact data. Milestone 14C owns the new-format Security/detail UI and
+release inventory verification, including legacy rendering compatibility, alongside
+its public Security/read DTO changes. Milestones 13A–14B supply the prerequisite
+release/artifact data and signing foundation/statements.
+
+Browser evidence (2026-10-14): all eight kinds were rendered against the local app
+at 390px and 1440px widths. All 16 checks confirm the package header fits the
+viewport and the star control ends at the header's bottom border. Retained
+measurements: [detail-bounds.json](assets/milestone-6/detail-bounds.json).
+Representative screenshots: [Tool mobile](assets/milestone-6/tool-mobile.png) and
+[Template desktop](assets/milestone-6/template-desktop.png). Session-expiry recovery
+is verified with mocked Clerk and write responses; a live account sign-out/sign-in
+was not performed.
+
 ### Search relevance fixtures
 
 Create and run a deterministic fixture corpus.
