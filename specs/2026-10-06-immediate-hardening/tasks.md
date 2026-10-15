@@ -431,43 +431,48 @@ This gives us identity-level stars with visibility-safe aggregates, a Trending s
 > - Docs use a `/docs/latest/...` model; define one deliberate canonical strategy so the same article is not unintentionally indexed under multiple version aliases.
 > - Do not use this milestone to force the new Stage-2 category vocabulary into titles/descriptions prematurely.
 
-- [ ] Audit and implement unique `<title>` and meta description for:
-  - [ ] landing;
-  - [ ] pricing;
-  - [ ] package/version pages;
-  - [ ] namespace pages;
-  - [ ] docs pages.
-- [ ] Ensure dynamic package metadata derives from public package/version data server-side and does not require client hydration to become crawlable.
-- [ ] Ensure namespace metadata derives from public namespace data server-side.
-- [ ] Add/verify canonical tags.
-- [ ] Make immutable package-version pages canonical to themselves.
-- [ ] Define and implement docs-version canonical behavior:
-  - [ ] decide whether `/latest/` is canonical or points to a concrete docs version;
-  - [ ] ensure old versions do not duplicate-current content unintentionally.
-- [ ] Add/verify OpenGraph metadata:
-  - [ ] title;
-  - [ ] description;
-  - [ ] canonical URL;
-  - [ ] image where available.
-- [ ] Add/verify Twitter metadata.
-- [ ] Add/verify share image behavior for landing, package, namespace, pricing, and docs surfaces where practical.
-- [ ] Add sitemap coverage for intended public pages:
-  - [ ] landing;
-  - [ ] pricing;
-  - [ ] docs;
-  - [ ] public namespaces;
-  - [ ] public package/version pages.
-- [ ] Audit robots directives.
-- [ ] Set arbitrary Explore query/filter result pages to `noindex,follow`.
-- [ ] Canonicalize arbitrary Explore query/filter URLs to `/explore` unless a deliberate indexable facet is introduced later.
-- [ ] Prevent private/authenticated/account/settings surfaces from indexing.
-- [ ] Prevent 404/error pages from indexing.
-- [ ] Check heading hierarchy:
-  - [ ] one meaningful H1 per page where appropriate;
-  - [ ] logical H2/H3 structure.
-- [ ] Check basic image alt/accessibility metadata on primary public pages.
-- [ ] Add regression tests for metadata/canonical/robots behavior where practical.
-- [ ] Leave category-facing metadata copy refinement to Stage 2.
+- [x] Audit and implement unique `<title>` and meta description for:
+  - [x] landing;
+  - [x] pricing;
+  - [x] package/version pages;
+  - [x] namespace pages;
+  - [x] docs pages.
+- [x] Ensure dynamic package metadata derives from public package/version data server-side and does not require client hydration to become crawlable.
+- [x] Ensure namespace metadata derives from public namespace data server-side.
+- [x] Add/verify canonical tags.
+- [x] Make immutable package-version pages canonical to themselves.
+- [x] Define and implement docs-version canonical behavior:
+  - [x] decide whether `/latest/` is canonical or points to a concrete docs version;
+  - [x] ensure old versions do not duplicate-current content unintentionally.
+- [x] Add/verify OpenGraph metadata:
+  - [x] title;
+  - [x] description;
+  - [x] canonical URL;
+  - [x] image where available.
+- [x] Add/verify Twitter metadata.
+- [x] Add/verify share image behavior for landing, package, namespace, pricing, and docs surfaces where practical.
+- [x] Add sitemap coverage for intended public pages:
+  - [x] landing;
+  - [x] pricing;
+  - [x] docs;
+  - [x] public namespaces;
+  - [x] public package/version pages.
+- [x] Audit robots directives.
+- [x] Set arbitrary Explore query/filter result pages to `noindex,follow`.
+- [x] Canonicalize arbitrary Explore query/filter URLs to `/explore` unless a deliberate indexable facet is introduced later.
+- [x] Prevent private/authenticated/account/settings surfaces from indexing.
+- [x] Prevent 404/error pages from indexing.
+- [x] Check heading hierarchy:
+  - [x] one meaningful H1 per page where appropriate;
+  - [x] logical H2/H3 structure.
+- [x] Check basic image alt/accessibility metadata on primary public pages.
+- [x] Add regression tests for metadata/canonical/robots behavior where practical.
+- [x] Leave category-facing metadata copy refinement to Stage 2.
+
+Implementation and verification evidence (2026-10-14): see the SEO section of `test-plan.md`
+and `assets/milestone-7/seo-evidence.json` / `assets/milestone-7/error-evidence.json`.
+Registry and web changes only; no CLI/SDK release or Stage 2 copy work. Existing API
+pre-commit limitations are recorded in the test plan rather than treated as passing checks.
 
 ## Release Band 4: Package Detail and Technical SEO
 Covered milestones: 6-7.

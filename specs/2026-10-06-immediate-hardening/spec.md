@@ -414,6 +414,11 @@ Required technical SEO primitives:
 
 Immutable package-version pages should normally canonicalize to themselves.
 
+The implemented canonical URL for each immutable package version is its `/v<version>/overview`
+page. Other tabs and version URL aliases point to that same version, never to the latest release.
+Docs aliases such as `/docs/latest/...` point to the resolved concrete docs version; visible
+historical versions retain their own canonical URLs and are included separately in the sitemap.
+
 Stage 2 owns the category-facing wording of titles/descriptions/headings.
 
 ### 15. CLI output contract

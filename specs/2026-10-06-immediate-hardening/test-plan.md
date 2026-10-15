@@ -436,6 +436,55 @@ Using rendered HTML / browser dev tools:
 - inspect OG/Twitter preview values.
 - verify sitemap contains intended public URLs only.
 
+Milestone 7 regression commands:
+
+- In `agentpm-web`: `pnpm test`, `pnpm typecheck`, `pnpm lint`, and `pnpm build`.
+  Build in a disposable copy when a development server is active; do not let two processes
+  write to the same `.next` directory.
+- In `agentpm-api`: `uv run pytest -q`. Set `AGENTPM_SEARCH_TEST_DATABASE_URI` to a local
+  Postgres test connection to also run `tests/test_sitemap.py` and the existing search
+  behavior fixtures. Sitemap fixtures use transaction-local tables and leave registry data intact.
+- Run API pre-commit checks on `app/models/cache.py`, `app/stats/application/stats.py`,
+  `app/stats/stats_routes.py`, and `tests/test_sitemap.py`.
+
+Recorded evidence (2026-10-14): `assets/milestone-7/seo-evidence.json` contains 23
+production-rendered route inspections without executing JavaScript, plus the sitemap inventory
+(54 public/static/docs URLs and 72 public registry namespace/version URLs in the local dataset).
+`assets/milestone-7/error-evidence.json` records a fault-injected HTTP 500 response with `noindex`.
+The HTML audit covers all eight package kinds, public/private namespaces, private/missing
+packages, docs aliases and concrete versions, search/filter URLs, sign-in and the account redirect.
+Every successful primary public page has one H1 and no image missing its alt attribute.
+The existing share image was checked at 1200x630. Older docs version behavior and private
+payload rejection are additionally pinned by unit fixtures; no signed-in private browser session
+was used for this audit.
+
+Docs canonical decision: prefer version-specific documentation identity over consolidating
+current-guide search signals on the stable `/docs/latest/...` URL. `latest` remains a usable,
+shareable navigation alias, but metadata and sitemap entries identify the resolved concrete
+version. Historical versions remain independently discoverable rather than pointing at guidance
+for a newer release. This is an identity/consistency choice, not a claim of better search ranking.
+
+Accepted tradeoff: when the current docs version changes, the canonical target of a `latest`
+link changes too. Search signals may be distributed across version URLs over time instead of
+consolidating on an evergreen URL. Milestone 17 should carry this decision forward explicitly.
+If evergreen discovery becomes the priority, reconsider canonicalizing both current concrete
+pages and their aliases to `/docs/latest/...`, while keeping historical pages self-canonical.
+Such a change must update metadata, sitemap selection, tests, and documented policy together;
+it should not happen incidentally during docs copy or navigation work.
+
+Verification result: web tests, typecheck, lint and the isolated production build pass;
+the complete API suite passes with Postgres fixtures enabled. The full API pre-commit invocation
+still reports two existing imported-module mypy errors in `app/tools/application/search.py`
+(lines 1486 and 1856), and the pinned Bandit hook lacks `pbr` in its isolated environment.
+The four touched Python files pass mypy with imported-module checking suppressed, and pinned
+Bandit passes with its missing tool dependencies supplied in a separate temporary environment.
+All other applicable pre-commit hooks pass. These existing issues were not changed in Milestone 7.
+
+Deployment note: deploy the registry's `/stats/sitemap` endpoint before or with the web update.
+The sitemap index and its bounded registry partitions are generated at request time, not during
+the web build. Sitemap responses have a five-minute cache window. Robots directives are not
+access controls, and this work does not replace private namespace authorization.
+
 ### CLI
 
 Run representative commands in a real terminal and compare overall tone/shape:

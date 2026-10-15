@@ -1,0 +1,9 @@
+{
+  "scenario": "Malformed upstream stats payload causes a real server-rendering failure",
+  "status": 500,
+  "robots": [
+    "noindex",
+    "index, follow"
+  ],
+  "title": "AgentPM - Agent Package Manager"
+}
