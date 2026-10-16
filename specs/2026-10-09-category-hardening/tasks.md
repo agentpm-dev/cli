@@ -98,7 +98,7 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 - [ ] Confirm `serde_json` stays pinned **without** `preserve_order` (`crates/agentpm-cli/Cargo.toml` notes publish author signatures depend on it). Rewrites alphabetize keys while losing nothing; that is expected and is consistent with the RFC 8785/JCS canonicalization in M14A-equivalent Stage 2 work.
 - [ ] Verify the tolerance build on every schema-validating command: `lint`, `publish` preflight (dry run), `new`, `export`, `knowledge build`, `memory build` all accept a manifest carrying `standard`.
 - [ ] Verify `agentpm new` from a Template whose scaffolded files carry `standard` completes, including `validate_generated_manifests_blocking`.
-- [ ] Release it and record the version number — it becomes the minimum CLI version named by M4B's outdated-client error and by the detail page's install guidance. **The schema change itself already landed in Stage 1 M8**, which carries the permissive root `standard` field; the release that publishes it closes Stage 1 **Release Band 5**, and that band's note is where the version number is recorded. Take the version from there rather than cutting a separate release.
+- [ ] Confirm publication of **CLI 0.1.35** and record it as the minimum CLI version named by M4B's outdated-client error and by the detail page's install guidance. **The schema change itself already landed in Stage 1 M8**; Stage 1 **Release Band 5** prepared `v0.1.35` on **2026-10-16**, but operator publication is still pending. Take publication confirmation from that band's release record rather than cutting a separate release. Do not treat prepared version markers as a shipped release.
 - [ ] Do **not** emit `standard` from any command in this milestone; emission is M3A.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
@@ -308,7 +308,7 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 > **Scope note:** Change new authoring to start with a valid Agent Package and keep explicit scaffolds for seven other kinds. Outside this milestone: mandatory Loop/Tools/Profile; preserve Stage 1 Tool scaffold repair.
 > **Implementation notes:**
 > - This is an intentional early adopter compatibility change. Existing scripts that relied on `init` producing a Tool should select `--kind tool` explicitly; explain the migration in help.
-> - **Dependencies:** M1B/M2B; **M1A.1 tolerance release published** (nothing may emit `standard` before every released CLI can round-trip it); Stage 1 M8 CLI authoring improvements.
+> - **Dependencies:** M1B/M2B; **M1A.1 tolerance release 0.1.35 published and confirmed in Stage 1 Release Band 5** (nothing may emit `standard` before this release is out); Stage 1 M8 CLI authoring improvements.
 > - **Decisions:** D04. **Acceptance:** S2-AC-02, S2-AC-03.
 
 **Implementation checklist**
@@ -418,7 +418,7 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 - [ ] Inventory real pre-APDS published versions and immutable digest/signature references.
 - [ ] Define server-controlled enforcement boundary for each new finalized release.
 - [ ] Choose and record in-flight session restart/grace policy; do not trust client timestamp.
-- [ ] Make outdated CLI error actionable by naming the **concrete minimum CLI version** — the M1A.1 tolerance release version — not a generic "upgrade your CLI". Surface the same floor on the package detail page's install guidance. An upgrade error without a version floor is not actionable.
+- [ ] Make outdated CLI error actionable by naming the **concrete minimum CLI version, 0.1.35** — the designated M1A.1 tolerance release, subject to Stage 1 Release Band 5 publication confirmation — not a generic "upgrade your CLI". Surface the same floor on the package detail page's install guidance. An upgrade error without a version floor is not actionable.
 - [ ] Preserve already published manifest bytes and stored integrity values exactly.
 - [ ] Represent effective legacy `agentpm/1.0.0` interpretation as **inferred**, not verified.
 - [ ] Require explicit standard for new versions of historically legacy package identities.

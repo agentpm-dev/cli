@@ -260,6 +260,40 @@ the operator's readability approval.
 
 #### Milestone 9 evidence
 
+Operator runbook:
+[`manual-tests/CLI_M9_MANUAL_TESTS.md`](manual-tests/CLI_M9_MANUAL_TESTS.md).
+`scripts/cli_m9_manual.py setup` creates empty, gitignored `cli-m9-test/`
+directories and records the CLI digest; it does not run test cases or pre-create
+their manifests/results. The operator runs each actual CLI command. The real
+local backend is used for valid/revoked PAT plus private-package checks; the
+optional loopback mock covers controlled status/decode failures only. Operator
+acceptance was confirmed on 2026-10-16, independently of builder smoke
+verification. The supplied local-registry transcript shows valid PAT identity
+and validation-only login, successful private install, rejected credentials with
+exit 1 after revocation, anonymous private not-found with exit 1, successful
+anonymous public install, and informational no-token `whoami` against the closed
+address. No credential value is retained in this evidence record.
+
+Manual-runbook preparation verified 2026-10-16: six stdlib helper guard tests
+passed; all 40 shell blocks passed both bash and zsh syntax checks; the local
+Knowledge/Memory/Template commands were smoke-tested in a separate temporary
+directory, including strict manifest lint. All six optional mock CLI commands
+produced the documented actual messages/exit codes. Black and `git diff --check`
+passed. The existing five CLI messaging integration tests passed on a serial
+rerun with loopback access. An earlier parallel run encountered a transient
+`WouldBlock` in the existing Rust mock socket reader; that fixture was not
+changed by this runbook work. No operator PAT was created/revoked, and no live
+private/public package install is claimed by this preparation check. The
+default `cli-m9-test/` workspace was left uncreated for the operator.
+
+README guidance follow-up: `new` now points to the generated `README.md` only
+when it is a file; otherwise it suggests reviewing the generated project.
+Authored entrypoints are unchanged. The new compiled-CLI regression failed on
+the previous unconditional message and passes for both an absent README and a
+directory named `README.md`. All six messaging integration tests passed serially;
+workspace rustfmt/check and strict Clippy passed. The CLI docs' applicable
+pre-commit text checks passed, and the manual runbook includes the fallback case.
+
 Verified 2026-10-16. Changes are limited to non-Harness CLI messages/exit codes,
 inspect presentation, and rejection of supplied invalid install credentials.
 
@@ -340,12 +374,41 @@ Deployment dependency: deploy registry install-auth changes before or with the
 CLI release. Older registries still silently downgrade invalid tokens, so a new
 CLI cannot reliably identify rejection from their anonymous 404 alone. The
 registry change is backward-compatible with existing clients' 401 handling and
-retains anonymous public installs. No live credential was revoked during tests.
+retains anonymous public installs. No live credential was revoked during the
+automated tests; the operator separately performed the local-registry revocation
+walkthrough recorded above.
 Human wording changed intentionally; inspect JSON field layouts and unrelated
-machine protocols are unchanged. No CLI/SDK versions were bumped in this task;
-release-version recording remains a Release Band 5 activity. An operator's
-interactive wording/readability walkthrough is not claimed by these automated
-results.
+machine protocols are unchanged. No CLI/SDK versions were bumped during
+Milestone 9 implementation; the CLI version is prepared separately in Release
+Band 5. Interactive wording/readability acceptance comes from the operator's
+walkthrough above, not these automated results.
+
+#### Release Band 5 preparation evidence
+
+Prepared **2026-10-16** for CLI **0.1.35** / tag **v0.1.35**. The CLI crate and
+Cargo lockfile agree, and the website status page carries the same version and
+date. Rust/Node/Python SDK version markers are unchanged. Stage 2's spec and
+M1A.1/M3A/M4B tasks now carry **0.1.35** as the designated tolerance-release
+floor; emission of `standard` remains blocked until operator publication is
+confirmed. The Release Band 5 recording/handoff task is checked off at the
+operator's request; they own publication confirmation. M8's actual-publication
+record remains pending, and the checklist handoff is not evidence of deployment.
+
+- `cargo test --workspace --offline --locked --quiet`: **1,086 passed**, zero
+  failed/ignored (1,060 CLI unit, six authoring, six messaging, seven machine
+  integration, seven Rust SDK tests).
+- `cargo clippy --workspace --all-targets --offline --locked -- -D warnings`:
+  passed; `cargo fmt --all --check`: passed.
+- Both manual-helper unittest suites: **11 passed**.
+- Website `pnpm test`: **182 passed**; `pnpm typecheck`: passed; `pnpm lint`:
+  zero errors, the same six existing unused-variable warnings.
+- Website status-page Prettier write/check and `git diff --check`: passed.
+  The metadata-only website update did not require restarting the running dev
+  server; a production build was not rerun in this preparation step.
+
+Deploy the registry's install-auth changes first, publish the CLI, then deploy
+the website. No release/tag, push, deployment, or compatibility-gate activation
+was performed by these preparation checks.
 
 ### Analytics
 

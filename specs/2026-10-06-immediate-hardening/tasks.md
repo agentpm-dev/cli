@@ -505,7 +505,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [x] Verify all eight `init` kinds lint clean immediately.
 - [x] **Cross-stage, ship with this milestone's CLI release:** add `standard` to the manifest schema's root `properties` with a permissive shape so the field is *accepted and ignored*. Do not emit it, validate it, or require it — Stage 2 M3A owns emission. Rationale: the root is `additionalProperties: false`, so once Stage 2 publishes packages declaring `standard`, every CLI released before this change hard-fails `agentpm lint` (exit 1) and fails `agentpm new` inside `validate_generated_manifests_blocking`. Relax the root by **this one field only**; a misspelled top-level key must still be rejected. See Stage 2 `spec.md` §2 "Old-client forward compatibility" and Stage 2 M1A.1.
 - [x] Verify the `standard` field survives every manifest-rewriting path: `agentpm install <pkg>` write-back and `knowledge build` (which writes by default; there is no `--write` flag) must preserve it. Regression tests use `standard` plus one extra unknown key; Knowledge build uses a local schema override for the extra key so the bundled root stays closed. Keep `serde_json` pinned without `preserve_order`; alphabetized rewrites are expected and lose nothing.
-- [ ] Record the released CLI version carrying this tolerance change — Stage 2 M4B names it as the minimum CLI version in its outdated-client error.
+- [ ] Record the released CLI version carrying this tolerance change — Stage 2 M4B names it as the minimum CLI version in its outdated-client error. Release target: **0.1.35**; preparation is complete, but publication confirmation remains pending under Release Band 5.
 - [x] Refactor human lint rendering:
   - [x] semantic/domain errors first;
   - [x] suppress redundant parent oneOf/anyOf errors when covered by a more specific descendant/domain error;
@@ -540,7 +540,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [x] Add a reproducible operator runbook and disposable fixtures: `specs/2026-10-06-immediate-hardening/manual-tests/CLI_M8_MANUAL_TESTS.md` and `scripts/cli_m8_manual.py`.
 - [ ] Complete the operator walkthrough and record readability/unexpected-output notes in the runbook. Builder smoke checks do not replace this manual acceptance.
 
-Implementation and verification completed 2026-10-15; see `specs/2026-10-06-immediate-hardening/test-plan.md`, "Milestone 8 evidence". The schema tolerance is implemented but not released. Recording its actual released version remains open for Release Band 5; the currently installed `0.1.34` must not be used as the new compatibility floor.
+Implementation and verification completed 2026-10-15; see `specs/2026-10-06-immediate-hardening/test-plan.md`, "Milestone 8 evidence". The schema tolerance is implemented. Release Band 5 prepares **0.1.35** as its first shipping version; publication confirmation remains open. Published `0.1.34` must not be used as the new compatibility floor.
 
 ## Milestone 9: CLI Error and Success Consistency
 > Scope note: make non-Harness CLI success/failure behavior feel like one coherent product by centralizing transport errors, correcting exit codes, normalizing sibling inspect output, and cleaning up low-level path/filesystem leaks. This milestone does not alter Harness output, introduce new package/runtime capabilities, change machine-readable contracts beyond explicitly specified fixes, or absorb the Python portability work from later milestones.
@@ -596,6 +596,9 @@ Implementation and verification completed 2026-10-15; see `specs/2026-10-06-imme
   - [x] avoid unnecessary home-directory disclosure in normal output.
 - [x] Preserve `1` runtime / `2` clap usage exit-code convention.
 - [x] Add regression tests for all corrected messages and exit codes.
+- [x] Complete the operator walkthrough in
+  [CLI messaging and exit codes manual verification](manual-tests/CLI_M9_MANUAL_TESTS.md)
+  before closing Release Band 5; record any blocked real-registry cases.
 
 Implementation and automated verification completed 2026-10-16; see "Milestone 9 evidence" in `specs/2026-10-06-immediate-hardening/test-plan.md`. Install resolve/init use `auth_optional(reject_invalid=True)`: missing credentials remain anonymous, while supplied invalid/revoked credentials return 401 before package lookup. Default optional authentication on public reads is unchanged. CLI transport formatting is applied at the non-Harness command boundary, with underlying reqwest errors retained by the Rust client. No schema, Harness, Node/Python SDK, or version-marker changes were made. Existing API pre-commit environment/baseline failures are recorded separately in the test plan, not counted as passing checks.
 
@@ -605,8 +608,15 @@ This gives us trustworthy scaffolding, lint output that explains what is actuall
 
 **🚦 On release, record the published CLI version — this band carries a cross-stage gate.** Milestone 8 added the permissive root `standard` field so already-released CLIs tolerate manifests that declare it. That tolerance only exists for users once a CLI carrying it ships, so the released version number becomes the **minimum CLI version** for the whole APDS rollout. Two things depend on it and cannot proceed until it is recorded:
 
-- [ ] Record the released CLI version here and in Milestone 8's final task (the one item M8 leaves unchecked by design, since it cannot be satisfied before release).
-- [ ] Hand that version to the Stage 2 track: **Stage 2 M4B** names it in its outdated-client error, and **Stage 2 M3A** must not emit `standard` from any command until this release is out. See Stage 2 `spec.md` §2 "Old-client forward compatibility" and Stage 2 M1A.1.
+- [x] Prepare CLI **0.1.35** (`v0.1.35`) and the matching website status-page release date **2026-10-16**. CLI crate and lockfile agree; SDK version markers are unchanged.
+- [x] Record CLI **0.1.35** as the Release Band 5 tolerance-release version and hand publication confirmation to the operator. Checked off at the operator's request; they will personally confirm publication. This is not independent verification that the release is already live.
+- [x] Hand **0.1.35** to the Stage 2 track as the designated tolerance-release floor: recorded in Stage 2 `spec.md` and M1A.1/M3A/M4B in `tasks.md`. **Stage 2 M4B** must name this version in its outdated-client error, and **Stage 2 M3A** must not emit `standard` until publication of **0.1.35** is confirmed.
+
+Release handoff prepared **2026-10-16**. Actual publication/deployment is still
+operator-owned and unconfirmed. Deploy the registry first, then publish CLI
+`v0.1.35`, then deploy the website with its matching status marker. Once the CLI
+release is confirmed, complete the publication record in M8 and
+Stage 2 M1A.1's release task; until then the Stage 2 emission gate stays closed.
 
 Publishing a package that declares `standard` before this CLI is released makes `agentpm lint` hard-fail (exit 1) and `agentpm new` fail inside `validate_generated_manifests_blocking` for every user on an older build — and published packages are immutable, so it cannot be walked back.
 

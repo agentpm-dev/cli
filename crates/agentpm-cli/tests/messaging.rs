@@ -332,11 +332,46 @@ fn new_reports_created_project_and_readme_next_step_when_noninteractive() {
     let output = project.success(&["new", ".", "./generated", "--quiet"]);
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(
-        text.contains("Created project: generated")
-            && text.contains("Next: review generated")
-            && text.contains("README.md"),
+        text.starts_with(
+            "Created project: generated\n\
+             Next: review generated/README.md before running the generated entrypoints.\n"
+        ) && text.contains("Review generated scaffold: cat README.md"),
         "{text}"
     );
     assert!(!text.contains("/./"));
     assert!(project.0.join("generated/README.md").exists());
+}
+
+#[test]
+fn new_uses_generic_next_step_without_readme_and_preserves_authored_entrypoints() {
+    for readme_is_directory in [false, true] {
+        let project = Project::new();
+        project.success(&["init", "--kind", "template", "--name", "starter"]);
+        let readme = project.0.join("template/README.md");
+        fs::remove_file(&readme).unwrap();
+        if readme_is_directory {
+            fs::create_dir(&readme).unwrap();
+        }
+        let manifest_path = project.0.join("agent.json");
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["template"]["entrypoints"] = json!([{"label": "Run", "command": "echo ready"}]);
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        project.success(&["lint", "--strict"]);
+
+        let output = project.success(&["new", ".", "./generated", "--quiet"]);
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            text,
+            "Created project: generated\n\
+             Next: review the generated project before running its entrypoints.\n\
+             Run: echo ready\n"
+        );
+        assert!(project.0.join("generated/agent.json").is_file());
+        assert!(!project.0.join("generated/README.md").is_file());
+    }
 }
