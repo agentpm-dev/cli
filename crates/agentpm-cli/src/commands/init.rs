@@ -4,6 +4,7 @@ use crate::assets::{
     LOOP_README_MD_TPL, MEMORY_AGENT_JSON_TPL, MEMORY_README_MD_TPL, MEMORY_SCHEMA_JSON_TPL,
     PROFILE_AGENT_JSON_TPL, PROFILE_README_MD_TPL, SKILL_AGENT_JSON_TPL, SKILL_INIT_MD_TPL,
     TEMPLATE_GENERATED_README_MD_TPL, TEMPLATE_PACKAGE_AGENT_JSON_TPL, TOOL_AGENT_JSON_TPL,
+    TOOL_MAIN_PY_TPL,
 };
 use crate::io::fs::{ensure_dirs, write_atomic};
 use crate::prelude::*;
@@ -62,6 +63,11 @@ impl InitArgs {
         let out = self.out_dir.unwrap_or(std::env::current_dir()?);
         match self.kind {
             InitKind::Tool => {
+                let source_path = out.join("main.py");
+                let create_source = !source_path.exists();
+                if !create_source && !source_path.is_file() {
+                    bail!("{} already exists and is not a file", source_path.display());
+                }
                 let rendered = render(
                     TOOL_AGENT_JSON_TPL,
                     &[
@@ -72,6 +78,12 @@ impl InitArgs {
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
                 println!("Created {}", path.display());
+                if create_source {
+                    write_atomic(&source_path, TOOL_MAIN_PY_TPL)?;
+                    println!("Created {}", source_path.display());
+                } else {
+                    println!("Kept existing {}", source_path.display());
+                }
             }
             InitKind::Agent => {
                 let rendered = render(

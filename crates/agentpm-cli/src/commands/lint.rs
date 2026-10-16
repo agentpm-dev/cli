@@ -1,3 +1,4 @@
+use crate::lint_output::render_lint_report;
 use crate::manifest::{
     LintFileReport, LintIssue, discover_manifest_files, load_manifest_value, resolve_schema_source,
     validate_manifest_value, write_manifest_pretty,
@@ -56,6 +57,9 @@ impl LintArgs {
                             message: format!("Failed to parse JSON: {e}"),
                             instance_path: "".into(),
                             schema_path: "".into(),
+                            rule_id: None,
+                            human_message: None,
+                            details: Vec::new(),
                         }],
                     });
                     continue;
@@ -103,24 +107,7 @@ impl LintArgs {
             _ => {
                 // pretty
                 for r in &reports {
-                    if r.ok {
-                        println!("✓ {}", r.file);
-                    } else {
-                        println!("✗ {}", r.file);
-                    }
-                    for i in &r.issues {
-                        let badge = match i.level {
-                            "error" => "ERROR",
-                            _ => "WARN ",
-                        };
-                        println!("  [{badge}] {}", i.message);
-                        if !i.instance_path.is_empty() {
-                            println!("        at instance {}", i.instance_path);
-                        }
-                        if !i.schema_path.is_empty() {
-                            println!("        vs schema  {}", i.schema_path);
-                        }
-                    }
+                    print!("{}", render_lint_report(r));
                 }
             }
         }

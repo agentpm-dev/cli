@@ -98,7 +98,7 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 - [ ] Confirm `serde_json` stays pinned **without** `preserve_order` (`crates/agentpm-cli/Cargo.toml` notes publish author signatures depend on it). Rewrites alphabetize keys while losing nothing; that is expected and is consistent with the RFC 8785/JCS canonicalization in M14A-equivalent Stage 2 work.
 - [ ] Verify the tolerance build on every schema-validating command: `lint`, `publish` preflight (dry run), `new`, `export`, `knowledge build`, `memory build` all accept a manifest carrying `standard`.
 - [ ] Verify `agentpm new` from a Template whose scaffolded files carry `standard` completes, including `validate_generated_manifests_blocking`.
-- [ ] Release it and record the version number — it becomes the minimum CLI version named by M4B's outdated-client error and by the detail page's install guidance.
+- [ ] Release it and record the version number — it becomes the minimum CLI version named by M4B's outdated-client error and by the detail page's install guidance. **The schema change itself already landed in Stage 1 M8**, which carries the permissive root `standard` field; the release that publishes it closes Stage 1 **Release Band 5**, and that band's note is where the version number is recorded. Take the version from there rather than cutting a separate release.
 - [ ] Do **not** emit `standard` from any command in this milestone; emission is M3A.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.

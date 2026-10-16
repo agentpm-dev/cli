@@ -34,7 +34,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tar::{Builder as TarBuilder, EntryType, Header};
-use tracing::{info, warn};
+use tracing::info;
 use walkdir::WalkDir;
 
 const MAX_ARTIFACT_BYTES: u64 = 3 * 1024 * 1024 * 1024; // 3 GB
@@ -113,18 +113,6 @@ impl PublishArgs {
             /*fix=*/ false,
         )?;
 
-        // Print issues like lint
-        for i in &issues {
-            let badge = if i.level == "error" { "ERROR" } else { "WARN " };
-            eprintln!("  [{badge}] {}", i.message);
-            if !i.instance_path.is_empty() {
-                eprintln!("        at instance {}", i.instance_path);
-            }
-            if !i.schema_path.is_empty() {
-                eprintln!("        vs schema  {}", i.schema_path);
-            }
-        }
-
         // strict semantics match lint
         let has_error = issues.iter().any(|i| i.level == "error");
         let has_warning = issues.iter().any(|i| i.level == "warning");
@@ -133,6 +121,16 @@ impl PublishArgs {
         } else {
             schema_ok && !has_error
         };
+        if !issues.is_empty() {
+            eprint!(
+                "{}",
+                crate::lint_output::render_lint_report(&crate::manifest::LintFileReport {
+                    file: manifest_path.to_string_lossy().into_owned(),
+                    ok: ok_flag,
+                    issues,
+                })
+            );
+        }
         if !ok_flag {
             s.err("failed");
             return Err(anyhow!(
@@ -453,8 +451,8 @@ fn build_publish_metadata(
 
 /// Create a .tar.gz containing:
 /// - agent.json (as root/agent.json)
-/// - entrypoint (preserve the relative path)
-/// - files patterns (globs/dirs), preserving relative paths
+/// - entrypoint script (preserve the relative path)
+/// - literal file/directory paths, preserving relative paths (no glob expansion)
 fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf> {
     // Root directory where manifest lives
     let root = manifest_path.parent().unwrap_or(Path::new("."));
@@ -495,8 +493,10 @@ fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf
             let rel = Path::new(pat);
             let abs = root.join(rel);
             if !abs.exists() {
-                warn!("files entry does not exist: {}", abs.display());
-                continue;
+                bail!(
+                    "manifest.files entry `{pat}` does not exist at {}. Create it or correct the literal file/directory path before publishing (globs are not expanded).",
+                    abs.display()
+                );
             }
 
             if abs.is_file() {

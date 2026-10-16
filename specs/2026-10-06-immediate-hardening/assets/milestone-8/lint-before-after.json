@@ -1,0 +1,127 @@
+{
+  "date": "2026-10-15",
+  "note": "Before uses the installed released CLI; after uses this working tree. Both binaries report 0.1.34 because no release version bump is part of Milestone 8. This is not a released-version claim.",
+  "cases": [
+    {
+      "label": "invalid-loop",
+      "command": "agentpm lint",
+      "manifest": {
+        "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+        "kind": "loop",
+        "name": "invalid-transition",
+        "version": "0.1.0",
+        "description": "Regression: schema union noise must not obscure the invalid transition.",
+        "loop": {
+          "entry_phase": "inspect",
+          "phases": [
+            {
+              "id": "inspect",
+              "objective": "Inspect the request."
+            }
+          ],
+          "transitions": [
+            {
+              "from": "inspect",
+              "on": "complete",
+              "to": "$unknown"
+            }
+          ]
+        }
+      },
+      "before": {
+        "version": "agentpm 0.1.34",
+        "exit_code": 1,
+        "stdout": "✗ agent.json\n  [ERROR] {\"entry_phase\":\"inspect\",\"phases\":[{\"id\":\"inspect\",\"objective\":\"Inspect the request.\"}],\"transitions\":[{\"from\":\"inspect\",\"on\":\"complete\",\"to\":\"$unknown\"}]} is not valid under any of the schemas listed in the 'oneOf' keyword\n        at instance /loop\n        vs schema  /properties/loop/oneOf\n  [ERROR] {\"$schema\":\"https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json\",\"description\":\"Regression: schema union noise must not obscure the invalid transition.\",\"kind\":\"loop\",\"loop\":{\"entry_phase\":\"inspect\",\"phases\":[{\"id\":\"inspect\",\"objective\":\"Inspect the request.\"}],\"transitions\":[{\"from\":\"inspect\",\"on\":\"complete\",\"to\":\"$unknown\"}]},\"name\":\"invalid-transition\",\"version\":\"0.1.0\"} is not valid under any of the schemas listed in the 'oneOf' keyword\n        vs schema  /dependentSchemas/loop/oneOf\n  [ERROR] transition destination `$unknown` must be a declared phase or supported terminal\n        at instance /loop/transitions/0/to\n  [ERROR] loop must be able to reach at least one terminal outcome\n        at instance /loop/transitions\n",
+        "stderr": "Error: Lint failed\n"
+      },
+      "after": {
+        "version": "agentpm 0.1.34",
+        "exit_code": 1,
+        "stdout": "✗ agent.json\n  [ERROR] transition destination `$unknown` must be a declared phase or supported terminal\n        at instance /loop/transitions/0/to\n  [ERROR] loop must be able to reach at least one terminal outcome\n        at instance /loop/transitions\n",
+        "stderr": "Error: Lint failed\n"
+      }
+    },
+    {
+      "label": "invalid-memory-operation",
+      "command": "agentpm lint",
+      "manifest": {
+        "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+        "kind": "memory",
+        "name": "invalid-operation",
+        "version": "0.1.0",
+        "description": "Regression: an unknown Memory operation must name the allowed kinds.",
+        "memory": {
+          "scopes": {
+            "user": {
+              "description": "Memory owner."
+            }
+          },
+          "record_types": {
+            "preference": {
+              "version": "1.0.0",
+              "description": "A preference.",
+              "schema": "schemas/preference.json"
+            }
+          },
+          "spaces": {
+            "profile": {
+              "description": "User profile.",
+              "model": "document",
+              "record_types": [
+                "preference"
+              ],
+              "scope": [
+                "user"
+              ],
+              "retrieval": {
+                "modes": [
+                  "key"
+                ]
+              }
+            }
+          },
+          "operations": {
+            "refresh": {
+              "type": "archive"
+            }
+          }
+        }
+      },
+      "before": {
+        "version": "agentpm 0.1.34",
+        "exit_code": 1,
+        "stdout": "✗ agent.json\n  [ERROR] {\"operations\":{\"refresh\":{\"type\":\"archive\"}},\"record_types\":{\"preference\":{\"description\":\"A preference.\",\"schema\":\"schemas/preference.json\",\"version\":\"1.0.0\"}},\"scopes\":{\"user\":{\"description\":\"Memory owner.\"}},\"spaces\":{\"profile\":{\"description\":\"User profile.\",\"model\":\"document\",\"record_types\":[\"preference\"],\"retrieval\":{\"modes\":[\"key\"]},\"scope\":[\"user\"]}}} is not valid under any of the schemas listed in the 'oneOf' keyword\n        at instance /memory\n        vs schema  /properties/memory/oneOf\n  [ERROR] {\"$schema\":\"https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json\",\"description\":\"Regression: an unknown Memory operation must name the allowed kinds.\",\"kind\":\"memory\",\"memory\":{\"operations\":{\"refresh\":{\"type\":\"archive\"}},\"record_types\":{\"preference\":{\"description\":\"A preference.\",\"schema\":\"schemas/preference.json\",\"version\":\"1.0.0\"}},\"scopes\":{\"user\":{\"description\":\"Memory owner.\"}},\"spaces\":{\"profile\":{\"description\":\"User profile.\",\"model\":\"document\",\"record_types\":[\"preference\"],\"retrieval\":{\"modes\":[\"key\"]},\"scope\":[\"user\"]}}},\"name\":\"invalid-operation\",\"version\":\"0.1.0\"} is not valid under any of the schemas listed in the 'oneOf' keyword\n        vs schema  /dependentSchemas/memory/oneOf\n",
+        "stderr": "Error: Lint failed\n"
+      },
+      "after": {
+        "version": "agentpm 0.1.34",
+        "exit_code": 1,
+        "stdout": "✗ agent.json\n  [ERROR] Expected `type` to be one of: consolidate, transform, delete.\n        at instance /memory/operations/refresh/type\n        vs schema  /properties/memory/oneOf/1/properties/operations/additionalProperties/oneOf\n",
+        "stderr": "Error: Lint failed\n"
+      }
+    },
+    {
+      "label": "missing-agent-tools",
+      "command": "agentpm lint",
+      "manifest": {
+        "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+        "kind": "agent",
+        "name": "missing-tools",
+        "version": "0.1.0",
+        "description": "Agent missing its required tools field."
+      },
+      "before": {
+        "version": "agentpm 0.1.34",
+        "exit_code": 1,
+        "stdout": "✗ agent.json\n  [ERROR] {\"$schema\":\"https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json\",\"description\":\"Agent missing its required tools field.\",\"kind\":\"agent\",\"name\":\"missing-tools\",\"version\":\"0.1.0\"} is not valid under any of the schemas listed in the 'oneOf' keyword\n        vs schema  /oneOf\n",
+        "stderr": "Error: Lint failed\n"
+      },
+      "after": {
+        "version": "agentpm 0.1.34",
+        "exit_code": 1,
+        "stdout": "✗ agent.json\n  [ERROR] Missing required field \"tools\".\n        at instance /tools\n        vs schema  /oneOf/0/required\n",
+        "stderr": "Error: Lint failed\n"
+      }
+    }
+  ]
+}

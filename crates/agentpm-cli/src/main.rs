@@ -14,6 +14,7 @@ mod harness_plan;
 mod harness_runtime;
 mod io;
 mod keys;
+mod lint_output;
 mod manifest;
 mod prelude;
 mod runner;

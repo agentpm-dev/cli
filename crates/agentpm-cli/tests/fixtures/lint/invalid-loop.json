@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "kind": "loop",
+  "name": "invalid-transition",
+  "version": "0.1.0",
+  "description": "Regression: schema union noise must not obscure the invalid transition.",
+  "loop": {
+    "entry_phase": "inspect",
+    "phases": [{ "id": "inspect", "objective": "Inspect the request." }],
+    "transitions": [{ "from": "inspect", "on": "complete", "to": "$unknown" }]
+  }
+}

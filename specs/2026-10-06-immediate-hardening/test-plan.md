@@ -161,7 +161,7 @@ Add fixture/command tests for:
 - Tool scaffold contains valid minimal files/entrypoint;
 - oneOf/anyOf suppression;
 - a manifest carrying a permissive `standard` field lints clean for all eight kinds, while a misspelled top-level key (`standrad`, `tool`) is still rejected — proving the root relaxed by one field, not opened;
-- `standard` plus one extra unknown top-level key survives `agentpm install <pkg>` write-back and `knowledge build --write` with no field loss;
+- `standard` plus one extra unknown top-level key survives `agentpm install <pkg>` write-back and `knowledge build` (the existing default write mode) with no field loss; use a local schema override to allow the extra key for Knowledge build without opening the bundled schema root;
 - root kind-union dispatch: a kind-specific violation (e.g. `kind: "agent"` missing a kind-required field) reports the offending branch/field and path, not `/oneOf` with the manifest echoed;
 - the diagnostic shape can carry an external rule identifier next to the path, so Stage 2's APDS rule IDs attach without re-cutting the renderer;
 - duplicate schema error removal;
@@ -177,6 +177,63 @@ Add fixture/command tests for:
 - `new` success output;
 - clap failure for missing `--mcp`;
 - concise bad key-id message.
+
+#### Milestone 8 evidence
+
+Verified 2026-10-15, scoped to scaffolding, packaging validation, schema tolerance,
+and lint diagnostics. The transport/inspect/key-message cases above belong to
+Milestone 9 and were not implemented here.
+
+Commands and results:
+
+- `cargo fmt --all` and `cargo fmt --all --check`: passed.
+- `cargo clippy --workspace --all-targets --offline -- -D warnings`: passed.
+- `cargo test --workspace --offline --quiet`: 1,077 passed, zero failed or ignored
+  (1,057 CLI unit tests, six authoring integration tests, seven machine-run
+  integration tests, seven Rust SDK tests). Localhost access was enabled for the
+  existing mock HTTP/process fixtures; no live registry/provider was required.
+- Black check on `crates/agentpm-cli/assets/templates/tool_main.py.tpl`: passed.
+- API pre-commit checks for the six updated MDX pages: whitespace, EOF, and
+  merge-conflict checks passed; Python-only hooks correctly skipped MDX.
+  Frontmatter parsed successfully for all six pages; no routes or ordering changed.
+
+`crates/agentpm-cli/tests/authoring.rs` drives the compiled CLI to verify all eight
+fresh scaffolds pass strict lint with no issues, each accepts arbitrary `standard`
+values without emitting the field, and each still rejects unknown root keys.
+It asserts matching Python runtime metadata (`type: python`, minimum `version: 3`)
+so published scaffolds are discoverable by runtime. It executes the Tool's JSON
+echo source, preserves existing source, packages the
+scaffold, and rejects missing file/directory/glob-literal entries without leaving a
+partial archive. It checks actual lint/publish output equivalence and exact normal
+JSON/NDJSON report and issue field sets.
+
+The existing install mock-server test now asserts that `standard` and a future
+unknown field survive a real dependency installation and manifest write-back.
+The Knowledge build integration test verifies `standard` with the bundled schema,
+then preserves both fields using a local schema override for the unknown key.
+Knowledge build already writes by default; no new `--write` flag was added.
+`serde_json` remains without `preserve_order`.
+
+`lint_output` tests cover every listed union cliff, semantic-first ordering,
+duplicate suppression, distinct structural constraints, retained sole structural
+errors, Unicode/control-character bounds, and an optional external rule ID.
+Custom schemas with references outside `$defs` retain their original validation
+diagnostic when human-only expansion cannot resolve the reference.
+
+Retained command output is in
+[`assets/milestone-8/lint-before-after.json`](assets/milestone-8/lint-before-after.json).
+It includes the complete manifests, commands, exit codes, and before/after stdout
+and stderr for the invalid Loop transition, unknown Memory operation, and an
+Agent missing `tools`. All exit 1. The Loop now prioritizes semantic errors without
+schema object dumps; Memory names `consolidate, transform, delete` once; the Agent
+points to `/tools` and `/oneOf/0/required`. Nested human-only expansion does not
+change machine issue fields; root kind dispatch intentionally supplies the actual
+branch/field diagnostics in all formats.
+
+Release acceptance still open: record the actual CLI version shipping the
+permissive `standard` field during Release Band 5. The installed baseline and
+unreleased working-tree binary both report `0.1.34`; this evidence is not a claim
+that the published `0.1.34` supports the change. No version bump was made here.
 
 ### Analytics
 
@@ -484,6 +541,22 @@ Deployment note: deploy the registry's `/stats/sitemap` endpoint before or with 
 The sitemap index and its bounded registry partitions are generated at request time, not during
 the web build. Sitemap responses have a five-minute cache window. Robots directives are not
 access controls, and this work does not replace private namespace authorization.
+
+Blog sitemap follow-up (2026-10-15, completed with Milestone 8): the pages partition
+now includes individual `/blog/<slug>` URLs from the existing public blog feed,
+in addition to `/blog`. URL components are encoded and the combined pages partition
+retains the 50,000-entry guard. A failed or malformed blog feed fails sitemap generation
+rather than publishing a successful but incomplete sitemap; a genuinely empty feed remains
+valid. The blog index's existing empty-list fallback is unchanged.
+
+Verification: all 182 web tests passed, including nine sitemap tests covering article
+inclusion, encoded URLs in the emitted XML, valid empty feeds, and failed/malformed feeds.
+`pnpm typecheck`, Prettier checks, and the isolated production `pnpm build` passed.
+`pnpm lint` passed with six existing unused-variable warnings in untouched files.
+The build required network access for the existing Google Font and was run in a disposable
+copy so the live development `.next` directory was not disturbed. Applicable API docs
+pre-commit checks passed for the sitemap documentation update. No registry API or CLI
+behavior changed in this follow-up.
 
 ### CLI
 
