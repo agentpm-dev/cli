@@ -25,35 +25,12 @@ impl WhoAmIArgs {
             return Ok(());
         }
 
-        match client.whoami().await {
-            Ok(who) => {
-                println!(
-                    "✅  Logged in as {} ({:?})",
-                    who.email,
-                    who.scopes.unwrap_or_else(Vec::new),
-                );
-            }
-            Err(SdkError::Unauthorized) => {
-                eprintln!(
-                    "Token validation failed (401 Unauthorized). Is the PAT correct and unrevoked?"
-                );
-            }
-            Err(SdkError::Http(e)) if e.is_connect() => {
-                eprintln!(
-                    "Can’t connect to {}. Check DNS/hosts or server is running.\n{e}",
-                    cfg.base_url
-                );
-            }
-            Err(SdkError::Http(e)) if e.is_timeout() => {
-                eprintln!(
-                    "Request to {} timed out. Is the server reachable?\n{e}",
-                    cfg.base_url
-                );
-            }
-            Err(e) => {
-                eprintln!("{e}");
-            }
-        }
+        let who = client.whoami().await?;
+        println!(
+            "✅  Logged in as {} ({:?})",
+            who.email,
+            who.scopes.unwrap_or_else(Vec::new),
+        );
         Ok(())
     }
 }

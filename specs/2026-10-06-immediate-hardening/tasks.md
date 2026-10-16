@@ -556,50 +556,52 @@ Implementation and verification completed 2026-10-15; see `specs/2026-10-06-imme
 > - Normalize user-supplied `.` paths before display so `/./` never appears.
 > - Error/success wording should answer: what happened, where, why, and what next.
 
-- [ ] Centralize network/transport error formatting in a reusable CLI helper.
-- [ ] Apply friendly connection errors to:
-  - [ ] install;
-  - [ ] export;
-  - [ ] new;
-  - [ ] whoami;
-  - [ ] other matching registry-backed commands discovered during implementation.
-- [ ] Preserve low-level transport detail behind verbose/debug output if existing CLI patterns support it.
-- [ ] Avoid surfacing irrelevant internal endpoint names as the primary error for higher-level commands such as `export --skill`.
-- [ ] Fix `whoami` to exit non-zero on network failure.
-- [ ] Distinguish "credentials rejected" from "not found" on `install`. Since `auth_optional` no longer returns 401, decide how the server signals that a supplied token was ignored — an explicit response field, a dedicated header, or moving the install endpoints to `auth_required` — and have the CLI say so plainly instead of reporting a missing package. Verify against a revoked PAT plus a private package, which is the real-world case (token rotation or revocation).
-- [ ] Add exit-code regression tests:
-  - [ ] runtime error → 1;
-  - [ ] clap/usage error → 2;
-  - [ ] successful command → 0.
-- [ ] Normalize Knowledge/Memory inspect header structure, for example:
-  - [ ] `<Kind>: name@version`;
-  - [ ] `Target: ...`;
-  - [ ] `Status: fresh|stale|...`;
-  - [ ] normalized manifest path/name;
-  - [ ] then kind-specific details.
-- [ ] Normalize freshness/status label across sibling inspect commands.
-- [ ] Normalize paths before printing.
-- [ ] Reduce unnecessary absolute path verbosity in normal human output.
-- [ ] Preserve richer paths in verbose/machine output where useful.
-- [ ] Improve Memory missing-sidecar wording from `is invalid: reading <path>` to an explicit “references X, which could not be read” style message.
-- [ ] Make `new` success output include:
-  - [ ] created target/path;
-  - [ ] useful next step;
-  - [ ] retain the existing README review guidance where useful.
-- [ ] Move `serve --mcp` requirement into clap argument validation:
-  - [ ] use clap-required/constraint behavior rather than runtime `currently requires --mcp`;
-  - [ ] preserve exit code 2 for missing required usage.
-- [ ] Improve `keys export <bad-id>` to:
-  - [ ] say no local key with that ID exists;
-  - [ ] suggest `agentpm keys list`;
-  - [ ] avoid duplicate filesystem exception lines;
-  - [ ] avoid unnecessary home-directory disclosure in normal output.
-- [ ] Preserve `1` runtime / `2` clap usage exit-code convention.
-- [ ] Add regression tests for all corrected messages and exit codes.
+- [x] Centralize network/transport error formatting in a reusable CLI helper.
+- [x] Apply friendly connection errors to:
+  - [x] install;
+  - [x] export;
+  - [x] new;
+  - [x] whoami;
+  - [x] other matching registry-backed commands discovered during implementation.
+- [x] Preserve low-level transport detail behind verbose/debug output if existing CLI patterns support it.
+- [x] Avoid surfacing irrelevant internal endpoint names as the primary error for higher-level commands such as `export --skill`.
+- [x] Fix `whoami` to exit non-zero on network failure.
+- [x] Distinguish "credentials rejected" from "not found" on `install`. Since `auth_optional` no longer returns 401, decide how the server signals that a supplied token was ignored — an explicit response field, a dedicated header, or moving the install endpoints to `auth_required` — and have the CLI say so plainly instead of reporting a missing package. Verify against a revoked PAT plus a private package, which is the real-world case (token rotation or revocation).
+- [x] Add exit-code regression tests:
+  - [x] runtime error → 1;
+  - [x] clap/usage error → 2;
+  - [x] successful command → 0.
+- [x] Normalize Knowledge/Memory inspect header structure, for example:
+  - [x] `<Kind>: name@version`;
+  - [x] `Target: ...`;
+  - [x] `Status: fresh|stale|...`;
+  - [x] normalized manifest path/name;
+  - [x] then kind-specific details.
+- [x] Normalize freshness/status label across sibling inspect commands.
+- [x] Normalize paths before printing.
+- [x] Reduce unnecessary absolute path verbosity in normal human output.
+- [x] Preserve richer paths in verbose/machine output where useful.
+- [x] Improve Memory missing-sidecar wording from `is invalid: reading <path>` to an explicit “references X, which could not be read” style message.
+- [x] Make `new` success output include:
+  - [x] created target/path;
+  - [x] useful next step;
+  - [x] retain the existing README review guidance where useful.
+- [x] Move `serve --mcp` requirement into clap argument validation:
+  - [x] use clap-required/constraint behavior rather than runtime `currently requires --mcp`;
+  - [x] preserve exit code 2 for missing required usage.
+- [x] Improve `keys export <bad-id>` to:
+  - [x] say no local key with that ID exists;
+  - [x] suggest `agentpm keys list`;
+  - [x] avoid duplicate filesystem exception lines;
+  - [x] avoid unnecessary home-directory disclosure in normal output.
+- [x] Preserve `1` runtime / `2` clap usage exit-code convention.
+- [x] Add regression tests for all corrected messages and exit codes.
+
+Implementation and automated verification completed 2026-10-16; see "Milestone 9 evidence" in `specs/2026-10-06-immediate-hardening/test-plan.md`. Install resolve/init use `auth_optional(reject_invalid=True)`: missing credentials remain anonymous, while supplied invalid/revoked credentials return 401 before package lookup. Default optional authentication on public reads is unchanged. CLI transport formatting is applied at the non-Harness command boundary, with underlying reqwest errors retained by the Rust client. No schema, Harness, Node/Python SDK, or version-marker changes were made. Existing API pre-commit environment/baseline failures are recorded separately in the test plan, not counted as passing checks.
 
 ## Release Band 5: CLI Authoring and Messaging Quality
 Covered milestones: 8-9.
-This gives us trustworthy scaffolding, lint output that explains what is actually wrong (including the `oneOf`/`anyOf` cases that currently produce unusable messages), and consistent error/success wording and exit codes across non-Harness commands. It is a self-contained CLI release with no server dependency, and it is worth shipping before the dependency/release work because that work adds new failure modes to the same messaging surface.
+This gives us trustworthy scaffolding, lint output that explains what is actually wrong (including the `oneOf`/`anyOf` cases that currently produce unusable messages), and consistent error/success wording and exit codes across non-Harness commands. Ship it before the dependency/release work because that work adds new failure modes to the same messaging surface. Deploy the registry's opt-in strict install-token handling before or with the CLI: the new client recognizes its existing 401 contract, but cannot distinguish rejected credentials from anonymous not-found responses sent by an older registry.
 
 **🚦 On release, record the published CLI version — this band carries a cross-stage gate.** Milestone 8 added the permissive root `standard` field so already-released CLIs tolerate manifests that declare it. That tolerance only exists for users once a CLI carrying it ships, so the released version number becomes the **minimum CLI version** for the whole APDS rollout. Two things depend on it and cannot proceed until it is recorded:
 

@@ -258,6 +258,95 @@ passed Black. The install smoke check used only its temporary localhost server;
 no live registry or provider was contacted. These are builder smoke results, not
 the operator's readability approval.
 
+#### Milestone 9 evidence
+
+Verified 2026-10-16. Changes are limited to non-Harness CLI messages/exit codes,
+inspect presentation, and rejection of supplied invalid install credentials.
+
+- `cargo fmt --all` and `cargo fmt --all --check`: passed.
+- `cargo clippy --workspace --all-targets --offline -- -D warnings`: passed.
+- `cargo test --workspace --offline --quiet`: 1,085 passed, zero failed/ignored
+  (1,060 CLI unit tests, six authoring integration tests, five messaging
+  integration tests, seven machine-run integration tests, seven Rust SDK tests).
+- In `agentpm-api`, `uv run python -m pytest -q` with
+  `AGENTPM_SEARCH_TEST_DATABASE_URI` pointing to local Postgres and a test-only
+  registry signing key: 366 passed, 84 subtests passed, no skips.
+- API pre-commit on the four touched Python files and ten CLI MDX pages:
+  Black, isort, flake8, Pylint, pyupgrade, whitespace/EOF/conflict checks passed.
+  Full mypy still fails on the previously recorded two assignments in untouched
+  `app/tools/application/search.py` (lines 1486 and 1856). The touched files pass
+  the same pinned mypy with `--follow-imports=silent`.
+- The pinned pre-commit Bandit environment still lacks `pbr`. Running the same
+  Bandit 1.7.5 separately with `pbr` and `setuptools` supplied passed on all four
+  Python files, with zero findings. Neither baseline/tooling issue was changed.
+- Frontmatter validation passed for all ten updated CLI MDX pages. Docs routes,
+  order and navigation metadata were preserved.
+- A PTY smoke walkthrough in a disposable directory exercised Tool init, strict
+  lint, dry-run publish, Knowledge/Memory init/build/inspect, local-template
+  `new`, failed `whoami`, unknown-key export and bare `serve`. The resulting
+  output was inspected: success commands exited 0, the two runtime failures
+  exited 1, and clap rejected missing `--mcp` with exit 2. No package was published.
+
+`crates/agentpm-cli/tests/messaging.rs` executes the compiled CLI, rather than
+only a formatter helper. Removing any install/export/new/whoami routing entry
+reintroduces raw transport output and fails the test. The same coverage includes
+publish, PAT login validation and namespace signer commands. It checks connection
+failure exit 1, debug-only underlying transport details, successful and no-token
+`whoami` exit 0, rejected credentials versus 403/404/500, invalid response handling,
+missing `serve --mcp` exit 2, unknown-key recovery guidance, noninteractive/quiet
+`new` success, and local Knowledge/Memory inspect headers. Credential/config
+locations are isolated for these CLI test processes.
+
+The sibling inspect test confirms the first four human lines are identity,
+target, status, manifest, with no redundant `.` or working-directory absolute
+prefix. It checks Knowledge staleness, full paths in each existing JSON layout,
+and the missing Memory schema-reference message. Existing Memory status,
+no-write and installed-package confinement tests remain passing. Unit coverage
+additionally checks request timeout classification, URL/query suppression,
+unchanged non-transport errors, and preservation of `..` components so display
+cleanup does not pretend to resolve symlinks.
+
+`tests/test_install_auth.py` verifies both resolve and init reject bad PATs,
+expired JWTs and malformed auth while allowing no credentials and valid PATs.
+Public optional-auth fallback and authenticated hidden/not-found behavior remain
+covered. Its Postgres fixture uses the actual active-PAT lookup and real Argon2
+verification: a generated PAT can access the fixture's private-package lookup,
+then an actual SQL revocation makes both routes return 401 before that lookup.
+The same private target returns 404 anonymously. Tables are transaction-local;
+no real registry credentials, packages or membership data are changed.
+
+Representative corrected output, also asserted by the command fixtures:
+
+```text
+Error: Cannot connect at http://127.0.0.1:<port> while trying to export Skill @example/tool. Check your network, registry address, and server availability, then retry.
+
+Knowledge: fixture@0.1.0
+Target: .
+Status: fresh
+Manifest: agent.json
+
+Memory: fixture@0.1.0
+Target: .
+Status: fresh
+Manifest: agent.json
+
+Created project: generated
+Next: review generated/README.md before running the generated entrypoints.
+
+Error: No local key with id `missing-key` exists. Run `agentpm keys list` to find an available key.
+```
+
+Deployment dependency: deploy registry install-auth changes before or with the
+CLI release. Older registries still silently downgrade invalid tokens, so a new
+CLI cannot reliably identify rejection from their anonymous 404 alone. The
+registry change is backward-compatible with existing clients' 401 handling and
+retains anonymous public installs. No live credential was revoked during tests.
+Human wording changed intentionally; inspect JSON field layouts and unrelated
+machine protocols are unchanged. No CLI/SDK versions were bumped in this task;
+release-version recording remains a Release Band 5 activity. An operator's
+interactive wording/readability walkthrough is not claimed by these automated
+results.
+
 ### Analytics
 
 Use local/dev PostHog test configuration or event sink abstraction.

@@ -100,8 +100,7 @@ fn try_open(url: &str) {
 // Validates PAT via whoami, prints user-friendly messages, and optionally persists.
 // Returns:
 //   Ok(true)  -> token valid (and written unless no_write)
-//   Ok(false) -> token invalid/forbidden/other API error (already printed; no write)
-//   Err(..)   -> unexpected local error (e.g., writing file failed)
+//   Err(..)   -> validation or local write failed; the CLI boundary formats the error.
 pub async fn try_whoami_and_maybe_persist(
     cfg: &Config,
     base_url: &str,
@@ -134,24 +133,7 @@ pub async fn try_whoami_and_maybe_persist(
             }
             Ok(true)
         }
-        Err(e) => {
-            // Friendly one-liners; do NOT return Err to avoid a backtrace
-            let msg = e.to_string();
-            let lmsg = msg.to_ascii_lowercase();
-            if msg.contains("401")
-                || lmsg.contains("unauthorized")
-                || lmsg.contains("invalid token")
-            {
-                eprintln!(
-                    "Token validation failed (401 Unauthorized). Is the PAT correct and unrevoked?"
-                );
-            } else if msg.contains("403") || lmsg.contains("forbidden") {
-                eprintln!("Token validated but lacks required scopes (403 Forbidden).");
-            } else {
-                eprintln!("Failed to validate token: {msg}");
-            }
-            Ok(false)
-        }
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -288,7 +270,14 @@ impl LoginArgs {
 
                 Err(e) => {
                     // Network hiccup—don’t crash immediately
-                    eprintln!("Polling error: {e}. Retrying…");
+                    eprintln!(
+                        "{}. Retrying...",
+                        crate::ui::registry_error(
+                            e.into(),
+                            "complete device sign-in",
+                            &cfg.base_url
+                        )
+                    );
                 }
             }
 

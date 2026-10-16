@@ -1327,15 +1327,28 @@ fn validate_memory_manifest_semantics(
                     &schema_path,
                     &mut issues,
                 ),
-                Err(err) => push_manifest_error(
-                    file_label,
-                    &format!("/memory/record_types/{record_type_key}/schema"),
-                    format!(
-                        "record type `{record_type_key}` schema `{}` is invalid: {err}",
-                        record_type.schema
-                    ),
-                    &mut issues,
-                ),
+                Err(err) => {
+                    let message = if err
+                        .chain()
+                        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+                    {
+                        format!(
+                            "record type `{record_type_key}` references schema `{}`, which could not be read. Restore the file or correct the schema path in agent.json.",
+                            record_type.schema
+                        )
+                    } else {
+                        format!(
+                            "record type `{record_type_key}` schema `{}` is invalid: {err}",
+                            record_type.schema
+                        )
+                    };
+                    push_manifest_error(
+                        file_label,
+                        &format!("/memory/record_types/{record_type_key}/schema"),
+                        message,
+                        &mut issues,
+                    );
+                }
             }
         }
     }

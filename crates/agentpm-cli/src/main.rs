@@ -64,7 +64,22 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    match cli.command {
+    let registry_action = match &cli.command {
+        commands::Commands::Install(args) => Some(format!(
+            "install {}",
+            args.spec.as_deref().unwrap_or("dependencies")
+        )),
+        commands::Commands::Export(args) => Some(format!("export Skill {}", args.skill)),
+        commands::Commands::New(args) => {
+            Some(format!("create a project from {}", args.template_ref))
+        }
+        commands::Commands::Whoami(_) => Some("check authentication".into()),
+        commands::Commands::Publish(_) => Some("publish the package".into()),
+        commands::Commands::Login(_) => Some("sign in".into()),
+        commands::Commands::Namespace(_) => Some("manage namespace signers".into()),
+        _ => None,
+    };
+    let result = match cli.command {
         commands::Commands::Whoami(args) => args.run(cli.base_url.clone()).await,
         commands::Commands::Login(args) => args.run(cli.base_url.clone()).await,
         commands::Commands::Init(args) => args.run(cli.base_url.clone()).await,
@@ -80,5 +95,9 @@ async fn main() -> Result<()> {
         commands::Commands::Export(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Keys(args) => args.run().await,
         commands::Commands::Namespace(args) => args.run(cli.base_url.clone()).await,
-    }
+    };
+    result.map_err(|error| match registry_action {
+        Some(action) => ui::registry_error(error, &action, &cli.base_url),
+        None => error,
+    })
 }

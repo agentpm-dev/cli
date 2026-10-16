@@ -23,7 +23,7 @@ const MCP_PROTOCOL_VERSION: &str = "2025-03-26";
 #[derive(Args, Debug, Clone)]
 pub struct ServeArgs {
     /// Start the built-in local MCP server
-    #[arg(long)]
+    #[arg(long, required = true)]
     pub mcp: bool,
 
     /// Host address for the MCP server
@@ -49,10 +49,6 @@ pub struct ServeArgs {
 
 impl ServeArgs {
     pub async fn run(self, _base_url: String) -> Result<()> {
-        if !self.mcp {
-            bail!("serve currently requires --mcp");
-        }
-
         let project_dir = std::env::current_dir().context("reading current directory")?;
         let registry = build_registry(&project_dir, &self.selected_tools()?)?;
         let addr = SocketAddr::new(

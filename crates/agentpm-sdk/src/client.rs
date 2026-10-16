@@ -89,10 +89,7 @@ impl AgentPmClient {
         let resp = self.auth(self.http.get(url)).send().await?;
 
         let whoami_resp = self.ensure_success(resp).await?;
-        let whoami = whoami_resp
-            .json::<User>()
-            .await
-            .map_err(|e| SdkError::Other(format!("parsing init response: {}", e)))?;
+        let whoami = whoami_resp.json::<User>().await.map_err(SdkError::Http)?;
 
         Ok(whoami)
     }
@@ -125,13 +122,13 @@ impl AgentPmClient {
             .json(metadata)
             .send()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))?;
+            .map_err(SdkError::Http)?;
 
         let init_resp = self.ensure_success(init_resp).await?;
         let init = init_resp
             .json::<InitPublish>()
             .await
-            .map_err(|e| SdkError::Other(format!("parsing init response: {}", e)))?;
+            .map_err(SdkError::Http)?;
 
         // Optional guard: respect max_bytes if present
         if let Some(max) = init.max_bytes
@@ -163,7 +160,7 @@ impl AgentPmClient {
             .body(bytes)
             .send()
             .await
-            .map_err(|e| SdkError::Other(format!("S3 PUT failed to start: {}", e)))?;
+            .map_err(SdkError::Http)?;
 
         let status = s3_put.status();
         if !status.is_success() {
@@ -196,13 +193,13 @@ impl AgentPmClient {
             .json(&finalize_body)
             .send()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))?;
+            .map_err(SdkError::Http)?;
 
         let finalize_resp = self.ensure_success(finalize_resp).await?;
         let receipt = finalize_resp
             .json::<PublishReceipt>()
             .await
-            .map_err(|e| SdkError::Other(format!("parsing finalize response: {}", e)))?;
+            .map_err(SdkError::Http)?;
 
         Ok(receipt)
     }
@@ -214,13 +211,13 @@ impl AgentPmClient {
             .json(desired)
             .send()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))?;
+            .map_err(SdkError::Http)?;
 
         let resp = self.ensure_success(resp).await?;
         let resolve_resp = resp
             .json::<ResolveResponse>()
             .await
-            .map_err(|e| SdkError::Other(format!("parsing resolve response: {}", e)))?;
+            .map_err(SdkError::Http)?;
 
         Ok(resolve_resp)
     }
@@ -232,13 +229,13 @@ impl AgentPmClient {
             .json(plan)
             .send()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))?;
+            .map_err(SdkError::Http)?;
 
         let resp = self.ensure_success(resp).await?;
         let resolve_resp = resp
             .json::<InstallInitResponse>()
             .await
-            .map_err(|e| SdkError::Other(format!("parsing init response: {}", e)))?;
+            .map_err(SdkError::Http)?;
 
         Ok(resolve_resp)
     }
@@ -250,7 +247,7 @@ impl AgentPmClient {
             .json(&serde_json::json!({"session_id": session_id}))
             .send()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))?;
+            .map_err(SdkError::Http)?;
 
         let _ = self.ensure_success(resp).await?;
 
@@ -275,13 +272,13 @@ impl AgentPmClient {
             .json(&req)
             .send()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))?;
+            .map_err(SdkError::Http)?;
 
         let resp = self.ensure_success(resp).await?;
         let start_resp = resp
             .json::<DeviceStartRes>()
             .await
-            .map_err(|e| SdkError::Other(format!("parsing device/start response: {}", e)))?;
+            .map_err(SdkError::Http)?;
 
         Ok(start_resp)
     }
@@ -297,13 +294,10 @@ impl AgentPmClient {
             .json(&req)
             .send()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))?;
+            .map_err(SdkError::Http)?;
 
         let status = resp.status();
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| SdkError::Other(format!("reading device/poll body: {}", e)))?;
+        let bytes = resp.bytes().await.map_err(SdkError::Http)?;
 
         // 2xx: either pending or success
         if status.is_success() {
@@ -404,7 +398,7 @@ impl AgentPmClient {
             .json(&req)
             .send()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))?;
+            .map_err(SdkError::Http)?;
 
         let resp = self.ensure_success(resp).await?;
 
@@ -429,7 +423,7 @@ impl AgentPmClient {
             .json(&req)
             .send()
             .await
-            .map_err(|e| SdkError::Other(e.to_string()))?;
+            .map_err(SdkError::Http)?;
 
         let resp = self.ensure_success(resp).await?;
 

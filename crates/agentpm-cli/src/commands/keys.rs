@@ -131,9 +131,24 @@ impl KeysArgs {
             }
 
             KeysCmd::Export { key_id, out } => {
+                if key_id.is_empty()
+                    || !key_id
+                        .bytes()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'-')
+                {
+                    return Err(anyhow!(
+                        "No local key with id `{key_id}` exists. Run `agentpm keys list` to find an available key."
+                    ));
+                }
                 let path = key_path(&key_id)?;
-                let k =
-                    read_key_file(&path).with_context(|| format!("reading {}", path.display()))?;
+                let k = read_key_file(&path).map_err(|error| {
+                    tracing::debug!(?error, "Could not read local signing key");
+                    if error.chain().filter_map(|cause| cause.downcast_ref::<std::io::Error>()).any(|cause| cause.kind() == std::io::ErrorKind::NotFound) {
+                        anyhow!("No local key with id `{key_id}` exists. Run `agentpm keys list` to find an available key.")
+                    } else {
+                        anyhow!("Could not read local key `{key_id}`. Check its file permissions and contents; run `agentpm keys list` to find an available key.")
+                    }
+                })?;
 
                 // We only export the **public** key in raw base64 (32 bytes)
                 if let Some(f) = out {
