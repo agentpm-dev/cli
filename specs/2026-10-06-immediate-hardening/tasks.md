@@ -537,6 +537,8 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [x] Make publish validation use the same human lint renderer, including a contextual manifest header instead of beginning with unattributed `[ERROR]`.
 - [x] Add ordering tests ensuring actionable semantic messages appear before generic schema fallback.
 - [x] Confirm the diagnostic shape produced here can carry an external rule identifier alongside the path, so Stage 2's APDS rule IDs attach without re-cutting the renderer. Do not implement APDS rules in this milestone — only avoid foreclosing them.
+- [x] Add a reproducible operator runbook and disposable fixtures: `specs/2026-10-06-immediate-hardening/manual-tests/CLI_M8_MANUAL_TESTS.md` and `scripts/cli_m8_manual.py`.
+- [ ] Complete the operator walkthrough and record readability/unexpected-output notes in the runbook. Builder smoke checks do not replace this manual acceptance.
 
 Implementation and verification completed 2026-10-15; see `specs/2026-10-06-immediate-hardening/test-plan.md`, "Milestone 8 evidence". The schema tolerance is implemented but not released. Recording its actual released version remains open for Release Band 5; the currently installed `0.1.34` must not be used as the new compatibility floor.
 

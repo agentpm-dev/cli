@@ -235,6 +235,29 @@ permissive `standard` field during Release Band 5. The installed baseline and
 unreleased working-tree binary both report `0.1.34`; this evidence is not a claim
 that the published `0.1.34` supports the change. No version bump was made here.
 
+Operator walkthrough:
+[`manual-tests/CLI_M8_MANUAL_TESTS.md`](manual-tests/CLI_M8_MANUAL_TESTS.md).
+`scripts/cli_m8_manual.py setup` prepares gitignored `cli-m8-test/` fixtures;
+its eight independent `run` sections use the real compiled CLI and require no
+live registry. The install section manages an ephemeral loopback registry,
+including a real artifact download/hash check and manifest write-back. Expected
+CLI failures are asserted without altering the operator's shell error settings.
+Each command retains stdout/stderr and its exact exit code; the summary requires
+every expected command in all eight sections from the same binary digest.
+The optional blog-sitemap browser check is separate from the CLI summary.
+Human readability acceptance remains pending until the operator completes the
+runbook's record.
+
+Builder verification of the runbook helper (2026-10-15): `cargo build -p agentpm-cli
+--offline` passed; fixture setup, all eight sections (122 CLI/source commands),
+and the final summary passed. A summary requested before running any section
+correctly exited 1. `python3 -B -m unittest discover -s scripts -p
+test_cli_m8_manual.py -v` passed five guard tests, including both directions of
+the expected-exit check and incomplete-section rejection. Both helper files
+passed Black. The install smoke check used only its temporary localhost server;
+no live registry or provider was contacted. These are builder smoke results, not
+the operator's readability approval.
+
 ### Analytics
 
 Use local/dev PostHog test configuration or event sink abstraction.
