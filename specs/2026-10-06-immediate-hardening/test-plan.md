@@ -161,7 +161,7 @@ Add fixture/command tests for:
 - Tool scaffold contains valid minimal files/entrypoint;
 - oneOf/anyOf suppression;
 - a manifest carrying a permissive `standard` field lints clean for all eight kinds, while a misspelled top-level key (`standrad`, `tool`) is still rejected — proving the root relaxed by one field, not opened;
-- `standard` plus one extra unknown top-level key survives `agentpm install <pkg>` write-back and `knowledge build --write` with no field loss;
+- `standard` plus one extra unknown top-level key survives `agentpm install <pkg>` write-back and `knowledge build` (the existing default write mode) with no field loss; use a local schema override to allow the extra key for Knowledge build without opening the bundled schema root;
 - root kind-union dispatch: a kind-specific violation (e.g. `kind: "agent"` missing a kind-required field) reports the offending branch/field and path, not `/oneOf` with the manifest echoed;
 - the diagnostic shape can carry an external rule identifier next to the path, so Stage 2's APDS rule IDs attach without re-cutting the renderer;
 - duplicate schema error removal;
@@ -177,6 +177,238 @@ Add fixture/command tests for:
 - `new` success output;
 - clap failure for missing `--mcp`;
 - concise bad key-id message.
+
+#### Milestone 8 evidence
+
+Verified 2026-10-15, scoped to scaffolding, packaging validation, schema tolerance,
+and lint diagnostics. The transport/inspect/key-message cases above belong to
+Milestone 9 and were not implemented here.
+
+Commands and results:
+
+- `cargo fmt --all` and `cargo fmt --all --check`: passed.
+- `cargo clippy --workspace --all-targets --offline -- -D warnings`: passed.
+- `cargo test --workspace --offline --quiet`: 1,077 passed, zero failed or ignored
+  (1,057 CLI unit tests, six authoring integration tests, seven machine-run
+  integration tests, seven Rust SDK tests). Localhost access was enabled for the
+  existing mock HTTP/process fixtures; no live registry/provider was required.
+- Black check on `crates/agentpm-cli/assets/templates/tool_main.py.tpl`: passed.
+- API pre-commit checks for the six updated MDX pages: whitespace, EOF, and
+  merge-conflict checks passed; Python-only hooks correctly skipped MDX.
+  Frontmatter parsed successfully for all six pages; no routes or ordering changed.
+
+`crates/agentpm-cli/tests/authoring.rs` drives the compiled CLI to verify all eight
+fresh scaffolds pass strict lint with no issues, each accepts arbitrary `standard`
+values without emitting the field, and each still rejects unknown root keys.
+It asserts matching Python runtime metadata (`type: python`, minimum `version: 3`)
+so published scaffolds are discoverable by runtime. It executes the Tool's JSON
+echo source, preserves existing source, packages the
+scaffold, and rejects missing file/directory/glob-literal entries without leaving a
+partial archive. It checks actual lint/publish output equivalence and exact normal
+JSON/NDJSON report and issue field sets.
+
+The existing install mock-server test now asserts that `standard` and a future
+unknown field survive a real dependency installation and manifest write-back.
+The Knowledge build integration test verifies `standard` with the bundled schema,
+then preserves both fields using a local schema override for the unknown key.
+Knowledge build already writes by default; no new `--write` flag was added.
+`serde_json` remains without `preserve_order`.
+
+`lint_output` tests cover every listed union cliff, semantic-first ordering,
+duplicate suppression, distinct structural constraints, retained sole structural
+errors, Unicode/control-character bounds, and an optional external rule ID.
+Custom schemas with references outside `$defs` retain their original validation
+diagnostic when human-only expansion cannot resolve the reference.
+
+Retained command output is in
+[`assets/milestone-8/lint-before-after.json`](assets/milestone-8/lint-before-after.json).
+It includes the complete manifests, commands, exit codes, and before/after stdout
+and stderr for the invalid Loop transition, unknown Memory operation, and an
+Agent missing `tools`. All exit 1. The Loop now prioritizes semantic errors without
+schema object dumps; Memory names `consolidate, transform, delete` once; the Agent
+points to `/tools` and `/oneOf/0/required`. Nested human-only expansion does not
+change machine issue fields; root kind dispatch intentionally supplies the actual
+branch/field diagnostics in all formats.
+
+Release acceptance still open: record the actual CLI version shipping the
+permissive `standard` field during Release Band 5. The installed baseline and
+unreleased working-tree binary both report `0.1.34`; this evidence is not a claim
+that the published `0.1.34` supports the change. No version bump was made here.
+
+Operator walkthrough:
+[`manual-tests/CLI_M8_MANUAL_TESTS.md`](manual-tests/CLI_M8_MANUAL_TESTS.md).
+`scripts/cli_m8_manual.py setup` prepares gitignored `cli-m8-test/` fixtures;
+its eight independent `run` sections use the real compiled CLI and require no
+live registry. The install section manages an ephemeral loopback registry,
+including a real artifact download/hash check and manifest write-back. Expected
+CLI failures are asserted without altering the operator's shell error settings.
+Each command retains stdout/stderr and its exact exit code; the summary requires
+every expected command in all eight sections from the same binary digest.
+The optional blog-sitemap browser check is separate from the CLI summary.
+Human readability acceptance remains pending until the operator completes the
+runbook's record.
+
+Builder verification of the runbook helper (2026-10-15): `cargo build -p agentpm-cli
+--offline` passed; fixture setup, all eight sections (122 CLI/source commands),
+and the final summary passed. A summary requested before running any section
+correctly exited 1. `python3 -B -m unittest discover -s scripts -p
+test_cli_m8_manual.py -v` passed five guard tests, including both directions of
+the expected-exit check and incomplete-section rejection. Both helper files
+passed Black. The install smoke check used only its temporary localhost server;
+no live registry or provider was contacted. These are builder smoke results, not
+the operator's readability approval.
+
+#### Milestone 9 evidence
+
+Operator runbook:
+[`manual-tests/CLI_M9_MANUAL_TESTS.md`](manual-tests/CLI_M9_MANUAL_TESTS.md).
+`scripts/cli_m9_manual.py setup` creates empty, gitignored `cli-m9-test/`
+directories and records the CLI digest; it does not run test cases or pre-create
+their manifests/results. The operator runs each actual CLI command. The real
+local backend is used for valid/revoked PAT plus private-package checks; the
+optional loopback mock covers controlled status/decode failures only. Operator
+acceptance was confirmed on 2026-10-16, independently of builder smoke
+verification. The supplied local-registry transcript shows valid PAT identity
+and validation-only login, successful private install, rejected credentials with
+exit 1 after revocation, anonymous private not-found with exit 1, successful
+anonymous public install, and informational no-token `whoami` against the closed
+address. No credential value is retained in this evidence record.
+
+Manual-runbook preparation verified 2026-10-16: six stdlib helper guard tests
+passed; all 40 shell blocks passed both bash and zsh syntax checks; the local
+Knowledge/Memory/Template commands were smoke-tested in a separate temporary
+directory, including strict manifest lint. All six optional mock CLI commands
+produced the documented actual messages/exit codes. Black and `git diff --check`
+passed. The existing five CLI messaging integration tests passed on a serial
+rerun with loopback access. An earlier parallel run encountered a transient
+`WouldBlock` in the existing Rust mock socket reader; that fixture was not
+changed by this runbook work. No operator PAT was created/revoked, and no live
+private/public package install is claimed by this preparation check. The
+default `cli-m9-test/` workspace was left uncreated for the operator.
+
+README guidance follow-up: `new` now points to the generated `README.md` only
+when it is a file; otherwise it suggests reviewing the generated project.
+Authored entrypoints are unchanged. The new compiled-CLI regression failed on
+the previous unconditional message and passes for both an absent README and a
+directory named `README.md`. All six messaging integration tests passed serially;
+workspace rustfmt/check and strict Clippy passed. The CLI docs' applicable
+pre-commit text checks passed, and the manual runbook includes the fallback case.
+
+Verified 2026-10-16. Changes are limited to non-Harness CLI messages/exit codes,
+inspect presentation, and rejection of supplied invalid install credentials.
+
+- `cargo fmt --all` and `cargo fmt --all --check`: passed.
+- `cargo clippy --workspace --all-targets --offline -- -D warnings`: passed.
+- `cargo test --workspace --offline --quiet`: 1,085 passed, zero failed/ignored
+  (1,060 CLI unit tests, six authoring integration tests, five messaging
+  integration tests, seven machine-run integration tests, seven Rust SDK tests).
+- In `agentpm-api`, `uv run python -m pytest -q` with
+  `AGENTPM_SEARCH_TEST_DATABASE_URI` pointing to local Postgres and a test-only
+  registry signing key: 366 passed, 84 subtests passed, no skips.
+- API pre-commit on the four touched Python files and ten CLI MDX pages:
+  Black, isort, flake8, Pylint, pyupgrade, whitespace/EOF/conflict checks passed.
+  Full mypy still fails on the previously recorded two assignments in untouched
+  `app/tools/application/search.py` (lines 1486 and 1856). The touched files pass
+  the same pinned mypy with `--follow-imports=silent`.
+- The pinned pre-commit Bandit environment still lacks `pbr`. Running the same
+  Bandit 1.7.5 separately with `pbr` and `setuptools` supplied passed on all four
+  Python files, with zero findings. Neither baseline/tooling issue was changed.
+- Frontmatter validation passed for all ten updated CLI MDX pages. Docs routes,
+  order and navigation metadata were preserved.
+- A PTY smoke walkthrough in a disposable directory exercised Tool init, strict
+  lint, dry-run publish, Knowledge/Memory init/build/inspect, local-template
+  `new`, failed `whoami`, unknown-key export and bare `serve`. The resulting
+  output was inspected: success commands exited 0, the two runtime failures
+  exited 1, and clap rejected missing `--mcp` with exit 2. No package was published.
+
+`crates/agentpm-cli/tests/messaging.rs` executes the compiled CLI, rather than
+only a formatter helper. Removing any install/export/new/whoami routing entry
+reintroduces raw transport output and fails the test. The same coverage includes
+publish, PAT login validation and namespace signer commands. It checks connection
+failure exit 1, debug-only underlying transport details, successful and no-token
+`whoami` exit 0, rejected credentials versus 403/404/500, invalid response handling,
+missing `serve --mcp` exit 2, unknown-key recovery guidance, noninteractive/quiet
+`new` success, and local Knowledge/Memory inspect headers. Credential/config
+locations are isolated for these CLI test processes.
+
+The sibling inspect test confirms the first four human lines are identity,
+target, status, manifest, with no redundant `.` or working-directory absolute
+prefix. It checks Knowledge staleness, full paths in each existing JSON layout,
+and the missing Memory schema-reference message. Existing Memory status,
+no-write and installed-package confinement tests remain passing. Unit coverage
+additionally checks request timeout classification, URL/query suppression,
+unchanged non-transport errors, and preservation of `..` components so display
+cleanup does not pretend to resolve symlinks.
+
+`tests/test_install_auth.py` verifies both resolve and init reject bad PATs,
+expired JWTs and malformed auth while allowing no credentials and valid PATs.
+Public optional-auth fallback and authenticated hidden/not-found behavior remain
+covered. Its Postgres fixture uses the actual active-PAT lookup and real Argon2
+verification: a generated PAT can access the fixture's private-package lookup,
+then an actual SQL revocation makes both routes return 401 before that lookup.
+The same private target returns 404 anonymously. Tables are transaction-local;
+no real registry credentials, packages or membership data are changed.
+
+Representative corrected output, also asserted by the command fixtures:
+
+```text
+Error: Cannot connect at http://127.0.0.1:<port> while trying to export Skill @example/tool. Check your network, registry address, and server availability, then retry.
+
+Knowledge: fixture@0.1.0
+Target: .
+Status: fresh
+Manifest: agent.json
+
+Memory: fixture@0.1.0
+Target: .
+Status: fresh
+Manifest: agent.json
+
+Created project: generated
+Next: review generated/README.md before running the generated entrypoints.
+
+Error: No local key with id `missing-key` exists. Run `agentpm keys list` to find an available key.
+```
+
+Deployment dependency: deploy registry install-auth changes before or with the
+CLI release. Older registries still silently downgrade invalid tokens, so a new
+CLI cannot reliably identify rejection from their anonymous 404 alone. The
+registry change is backward-compatible with existing clients' 401 handling and
+retains anonymous public installs. No live credential was revoked during the
+automated tests; the operator separately performed the local-registry revocation
+walkthrough recorded above.
+Human wording changed intentionally; inspect JSON field layouts and unrelated
+machine protocols are unchanged. No CLI/SDK versions were bumped during
+Milestone 9 implementation; the CLI version is prepared separately in Release
+Band 5. Interactive wording/readability acceptance comes from the operator's
+walkthrough above, not these automated results.
+
+#### Release Band 5 preparation evidence
+
+Prepared **2026-10-16** for CLI **0.1.35** / tag **v0.1.35**. The CLI crate and
+Cargo lockfile agree, and the website status page carries the same version and
+date. Rust/Node/Python SDK version markers are unchanged. Stage 2's spec and
+M1A.1/M3A/M4B tasks now carry **0.1.35** as the designated tolerance-release
+floor; emission of `standard` remains blocked until operator publication is
+confirmed. The Release Band 5 recording/handoff task is checked off at the
+operator's request; they own publication confirmation. M8's actual-publication
+record remains pending, and the checklist handoff is not evidence of deployment.
+
+- `cargo test --workspace --offline --locked --quiet`: **1,086 passed**, zero
+  failed/ignored (1,060 CLI unit, six authoring, six messaging, seven machine
+  integration, seven Rust SDK tests).
+- `cargo clippy --workspace --all-targets --offline --locked -- -D warnings`:
+  passed; `cargo fmt --all --check`: passed.
+- Both manual-helper unittest suites: **11 passed**.
+- Website `pnpm test`: **182 passed**; `pnpm typecheck`: passed; `pnpm lint`:
+  zero errors, the same six existing unused-variable warnings.
+- Website status-page Prettier write/check and `git diff --check`: passed.
+  The metadata-only website update did not require restarting the running dev
+  server; a production build was not rerun in this preparation step.
+
+Deploy the registry's install-auth changes first, publish the CLI, then deploy
+the website. No release/tag, push, deployment, or compatibility-gate activation
+was performed by these preparation checks.
 
 ### Analytics
 
@@ -484,6 +716,22 @@ Deployment note: deploy the registry's `/stats/sitemap` endpoint before or with 
 The sitemap index and its bounded registry partitions are generated at request time, not during
 the web build. Sitemap responses have a five-minute cache window. Robots directives are not
 access controls, and this work does not replace private namespace authorization.
+
+Blog sitemap follow-up (2026-10-15, completed with Milestone 8): the pages partition
+now includes individual `/blog/<slug>` URLs from the existing public blog feed,
+in addition to `/blog`. URL components are encoded and the combined pages partition
+retains the 50,000-entry guard. A failed or malformed blog feed fails sitemap generation
+rather than publishing a successful but incomplete sitemap; a genuinely empty feed remains
+valid. The blog index's existing empty-list fallback is unchanged.
+
+Verification: all 182 web tests passed, including nine sitemap tests covering article
+inclusion, encoded URLs in the emitted XML, valid empty feeds, and failed/malformed feeds.
+`pnpm typecheck`, Prettier checks, and the isolated production `pnpm build` passed.
+`pnpm lint` passed with six existing unused-variable warnings in untouched files.
+The build required network access for the existing Google Font and was run in a disposable
+copy so the live development `.next` directory was not disturbed. Applicable API docs
+pre-commit checks passed for the sitemap documentation update. No registry API or CLI
+behavior changed in this follow-up.
 
 ### CLI
 

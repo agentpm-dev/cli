@@ -4404,6 +4404,8 @@ mod tests {
             &json!({
                 "kind": "agent",
                 "name": "support-agent",
+                "standard": {"name": "future-standard", "version": 7},
+                "future_extension": {"opaque": [3, 2, 1]},
                 "version": "0.1.0",
                 "tools": [{"name":"@zack/echo","version":"0.1.0"}],
                 "skills": []
@@ -4478,6 +4480,14 @@ mod tests {
 
         let manifest_after: Value =
             serde_json::from_str(&fs::read_to_string(root.join("agent.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest_after["standard"],
+            json!({"name": "future-standard", "version": 7})
+        );
+        assert_eq!(
+            manifest_after["future_extension"],
+            json!({"opaque": [3, 2, 1]})
+        );
         assert_eq!(
             manifest_after["tools"],
             json!([{"name":"@zack/echo","version":"0.1.0"}])

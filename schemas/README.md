@@ -9,6 +9,7 @@ This folder contains the JSON Schemas bundled with the AgentPM CLI.
   - Defines optional `agentpm.harness.json` runtime harness configuration.
   - Lets local harness runners validate model/provider/runtime configuration without changing the package manifest contract.
 - **Strictness:** schemas reject unknown fields where those objects are intended to be closed contracts.
+- **Reserved manifest metadata:** the root `standard` field accepts any JSON value without interpretation. It is optional and is not emitted by scaffolding. Other unknown root fields remain invalid.
 
 ---
 
@@ -29,19 +30,23 @@ agentpm init --kind tool --name summarize --description "Summarize input text"
   "name": "summarize",
   "version": "0.1.0",
   "description": "Summarize input text",
+  "runtime": { "type": "python", "version": "3" },
   "entrypoint": {
-    "command": "node",
-    "args": ["dist/summarize.js"],
-    "cwd": ".",
-    "timeout_ms": 60000,
-    "env": { }
+    "command": "python3",
+    "args": ["main.py"]
   },
-  "inputs": { "type": "object" },
-  "outputs": { "type": "object" },
-  "files": ["dist/"],
-  "runtime": { "type": "node", "version": "20.10" }
+  "inputs": {},
+  "outputs": {},
+  "files": ["main.py"]
 }
 ```
+
+Tool init also creates a minimal `main.py` JSON echo stub, preserving an existing
+source file rather than overwriting it. Its runtime metadata declares Python 3,
+matching the entrypoint and making published Tools discoverable by runtime.
+Customize its logic and input/output
+schemas before publishing. `files` entries are literal package-relative file or
+directory paths, not glob patterns; packaging fails if a declared path is missing.
 
 ```bash
 agentpm init --kind agent --name research-assistant --description "Assistant composed of multiple tools"

@@ -79,7 +79,6 @@ impl NamespaceArgs {
                     Ok(..) => {
                         println!("✅  Added signer \"{}\"", label);
                     }
-                    Err(SdkError::Unauthorized) => eprintln!("Unauthorized (401)."),
                     Err(e) => return Err(anyhow!(e)),
                 }
             }
@@ -106,8 +105,6 @@ impl NamespaceArgs {
                     .await
                 {
                     Ok(_) => println!("✅  Revoked signer {}", signer_id),
-                    Err(SdkError::NotFound) => eprintln!("Signer not found."),
-                    Err(SdkError::Unauthorized) => eprintln!("Unauthorized (401)."),
                     Err(e) => return Err(anyhow!(e)),
                 }
             }

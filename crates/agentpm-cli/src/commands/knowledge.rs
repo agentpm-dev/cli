@@ -1680,20 +1680,25 @@ fn build_inspect_text(
     manifest_mismatches: &[String],
     local_index: Option<&ResolvedLocalIndexValidation>,
 ) -> String {
-    let mut lines = vec![
-        format!("Knowledge: {}@{}", manifest.name, manifest.version),
-        format!("Target: {}", target.display_target),
-        format!("Manifest: {}", target.manifest_path.display()),
-        format!("Mode: {}", manifest.knowledge.mode),
-        format!(
-            "Manifest metadata freshness: {}",
-            if manifest_mismatches.is_empty() {
-                "fresh"
-            } else {
-                "stale"
-            }
-        ),
-    ];
+    let fresh = manifest_mismatches.is_empty()
+        && local_index.is_none_or(|index| index.mismatches.is_empty());
+    let mut lines = crate::ui::inspect_header(
+        "Knowledge",
+        &manifest.name,
+        &manifest.version,
+        &target.display_target,
+        if fresh { "fresh" } else { "stale" },
+        &target.manifest_path,
+    );
+    lines.push(format!("Mode: {}", manifest.knowledge.mode));
+    lines.push(format!(
+        "Manifest status: {}",
+        if manifest_mismatches.is_empty() {
+            "fresh"
+        } else {
+            "stale"
+        }
+    ));
     if !manifest_mismatches.is_empty() {
         lines.push(format!(
             "Manifest mismatches: {}",
@@ -1750,7 +1755,7 @@ fn build_inspect_text(
                     index.resolved.metadata.algorithm
                 ));
                 lines.push(format!(
-                    "Index metadata freshness: {}",
+                    "Index status: {}",
                     if index.mismatches.is_empty() {
                         "fresh"
                     } else {
@@ -1876,7 +1881,7 @@ fn validate_manifest_or_bail(manifest_path: &Path, value: &mut Value) -> Result<
 
     bail!(
         "manifest validation failed for {}:\n{}",
-        manifest_path.display(),
+        crate::ui::display_path(manifest_path),
         format_issues(&issues)
     );
 }
@@ -3382,7 +3387,7 @@ mod tests {
         assert_eq!(view.json["mode"], "vector");
         assert_eq!(view.json["index"]["algorithm"], "exact");
         assert_eq!(view.json["index"]["fresh"], true);
-        assert!(view.text.contains("Index metadata freshness: fresh"));
+        assert!(view.text.contains("Index status: fresh"));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -3408,7 +3413,7 @@ mod tests {
 
         assert_eq!(view.json["index"]["fresh"], false);
         assert_eq!(view.json["index"]["mismatches"], json!(["metric"]));
-        assert!(view.text.contains("Index metadata freshness: stale"));
+        assert!(view.text.contains("Index status: stale"));
         assert!(view.text.contains("Index mismatches: metric"));
 
         let _ = fs::remove_dir_all(root);

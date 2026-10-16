@@ -231,7 +231,7 @@ impl NewArgs {
                 },
             )?;
 
-            print_success(&target_dir, &downloaded_manifest, quiet);
+            print_success(&target_dir, &downloaded_manifest);
             Ok(())
         }
         .await;
@@ -1259,11 +1259,18 @@ fn validate_generated_manifests_blocking(
     Ok(())
 }
 
-fn print_success(target_dir: &Path, template_manifest: &TemplateManifest, quiet: bool) {
-    crate::ui::Step::final_msg(
-        format!("Generated workspace ✓ {}", target_dir.display()),
-        quiet,
-    );
+fn print_success(target_dir: &Path, template_manifest: &TemplateManifest) {
+    let target = crate::ui::display_path(target_dir);
+    println!("Created project: {target}");
+    let readme = target_dir.join("README.md");
+    if readme.is_file() {
+        println!(
+            "Next: review {} before running the generated entrypoints.",
+            crate::ui::display_path(&readme)
+        );
+    } else {
+        println!("Next: review the generated project before running its entrypoints.");
+    }
     for entrypoint in &template_manifest.template.entrypoints {
         println!("{}: {}", entrypoint.label, entrypoint.command);
     }

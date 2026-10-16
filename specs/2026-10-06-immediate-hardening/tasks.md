@@ -454,6 +454,7 @@ This gives us identity-level stars with visibility-safe aggregates, a Trending s
 - [x] Add sitemap coverage for intended public pages:
   - [x] landing;
   - [x] pricing;
+  - [x] blog index and individual blog posts (follow-up completed with Milestone 8);
   - [x] docs;
   - [x] public namespaces;
   - [x] public package/version pages.
@@ -491,50 +492,55 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 > - Deduplicate only genuinely equivalent errors; do not hide the only available structural error.
 > - Human rendering may improve significantly while JSON/NDJSON remains contract-stable.
 
-- [ ] Make `agentpm init --kind tool` scaffold lint-valid output.
-- [ ] Prefer a minimal runnable Tool stub:
-  - [ ] valid `files`;
-  - [ ] valid interpreter command;
-  - [ ] valid non-empty args;
-  - [ ] minimal source file needed by the entrypoint.
-- [ ] Keep the Tool scaffold small; do not turn `init` into a large framework/template generator.
-- [ ] Harden Tool package validation so a `manifest.files` entry that does not exist is a fatal packaging/publish error rather than a warning followed by silent omission.
-- [ ] Correct stale Tool packaging comments/docs that describe `files` entries as globs when the implementation treats them as literal file/directory paths, unless true glob support is deliberately added.
-- [ ] Verify all eight `init` kinds lint clean immediately.
-- [ ] **Cross-stage, ship with this milestone's CLI release:** add `standard` to the manifest schema's root `properties` with a permissive shape so the field is *accepted and ignored*. Do not emit it, validate it, or require it — Stage 2 M3A owns emission. Rationale: the root is `additionalProperties: false`, so once Stage 2 publishes packages declaring `standard`, every CLI released before this change hard-fails `agentpm lint` (exit 1) and fails `agentpm new` inside `validate_generated_manifests_blocking`. Relax the root by **this one field only**; a misspelled top-level key must still be rejected. See Stage 2 `spec.md` §2 "Old-client forward compatibility" and Stage 2 M1A.1.
-- [ ] Verify the `standard` field survives every manifest-rewriting path: `agentpm install <pkg>` write-back and `knowledge build --write` must preserve it (both operate on the loaded `serde_json::Value`, so this should hold — prove it with a regression test using `standard` plus one extra unknown key). Keep `serde_json` pinned without `preserve_order`; alphabetized rewrites are expected and lose nothing.
-- [ ] Record the released CLI version carrying this tolerance change — Stage 2 M4B names it as the minimum CLI version in its outdated-client error.
-- [ ] Refactor human lint rendering:
-  - [ ] semantic/domain errors first;
-  - [ ] suppress redundant parent oneOf/anyOf errors when covered by a more specific descendant/domain error;
-  - [ ] deduplicate `/properties/<kind>` and `/dependentSchemas/<kind>` duplicates when they describe the same underlying failure;
-  - [ ] truncate/bound instance echoes so large nested objects are never dumped inline;
-  - [ ] print the failing pointer/path even when value echo is suppressed;
-  - [ ] print expected discriminator values for closed unions where practical;
-  - [ ] resolve the **root kind union** to the branch named by the declared `kind` so a kind-specific violation reports the offending field and path instead of `/oneOf` with the whole manifest echoed.
-- [ ] For `packageRef` failures, prefer an actionable message describing accepted forms:
-  - [ ] `"@ns/name@1.2.3"` string;
-  - [ ] `{name, version?}` object.
-- [ ] For closed Memory operation kinds, prefer expected values such as:
-  - [ ] `consolidate`;
-  - [ ] `transform`;
-  - [ ] `delete`.
-- [ ] Add test coverage across known oneOf/anyOf cliffs:
-  - [ ] root kind dispatch (for example `kind: "agent"` missing a kind-required field) asserting a branch-specific path/message rather than `/oneOf`;
-  - [ ] packageRef;
-  - [ ] memoryTrigger;
-  - [ ] memoryOperation;
-  - [ ] loopTransitionTarget;
-  - [ ] loopToolFailurePolicy;
-  - [ ] knowledgeMetadata;
-  - [ ] agentMemoryBinding;
-  - [ ] entrypoint.command.
-- [ ] Add a regression fixture reproducing the existing Loop case where one invalid transition currently emits giant schema messages before good semantic errors.
-- [ ] Add a regression fixture reproducing the Memory invalid-operation-kind case where today no useful semantic error exists.
-- [ ] Keep JSON/NDJSON lint output contracts stable unless explicitly versioned.
-- [ ] Make publish validation use the same human lint renderer, including a contextual manifest header instead of beginning with unattributed `[ERROR]`.
-- [ ] Add ordering tests ensuring actionable semantic messages appear before generic schema fallback.
-- [ ] Confirm the diagnostic shape produced here can carry an external rule identifier alongside the path, so Stage 2's APDS rule IDs attach without re-cutting the renderer. Do not implement APDS rules in this milestone — only avoid foreclosing them.
+- [x] Make `agentpm init --kind tool` scaffold lint-valid output.
+- [x] Prefer a minimal runnable Tool stub:
+  - [x] valid `files`;
+  - [x] valid interpreter command;
+  - [x] matching Python runtime metadata so published scaffolds match the Runtime facet;
+  - [x] valid non-empty args;
+  - [x] minimal source file needed by the entrypoint.
+- [x] Keep the Tool scaffold small; do not turn `init` into a large framework/template generator.
+- [x] Harden Tool package validation so a `manifest.files` entry that does not exist is a fatal packaging/publish error rather than a warning followed by silent omission.
+- [x] Correct stale Tool packaging comments/docs that describe `files` entries as globs when the implementation treats them as literal file/directory paths, unless true glob support is deliberately added.
+- [x] Verify all eight `init` kinds lint clean immediately.
+- [x] **Cross-stage, ship with this milestone's CLI release:** add `standard` to the manifest schema's root `properties` with a permissive shape so the field is *accepted and ignored*. Do not emit it, validate it, or require it — Stage 2 M3A owns emission. Rationale: the root is `additionalProperties: false`, so once Stage 2 publishes packages declaring `standard`, every CLI released before this change hard-fails `agentpm lint` (exit 1) and fails `agentpm new` inside `validate_generated_manifests_blocking`. Relax the root by **this one field only**; a misspelled top-level key must still be rejected. See Stage 2 `spec.md` §2 "Old-client forward compatibility" and Stage 2 M1A.1.
+- [x] Verify the `standard` field survives every manifest-rewriting path: `agentpm install <pkg>` write-back and `knowledge build` (which writes by default; there is no `--write` flag) must preserve it. Regression tests use `standard` plus one extra unknown key; Knowledge build uses a local schema override for the extra key so the bundled root stays closed. Keep `serde_json` pinned without `preserve_order`; alphabetized rewrites are expected and lose nothing.
+- [ ] Record the released CLI version carrying this tolerance change — Stage 2 M4B names it as the minimum CLI version in its outdated-client error. Release target: **0.1.35**; preparation is complete, but publication confirmation remains pending under Release Band 5.
+- [x] Refactor human lint rendering:
+  - [x] semantic/domain errors first;
+  - [x] suppress redundant parent oneOf/anyOf errors when covered by a more specific descendant/domain error;
+  - [x] deduplicate `/properties/<kind>` and `/dependentSchemas/<kind>` duplicates when they describe the same underlying failure;
+  - [x] truncate/bound instance echoes so large nested objects are never dumped inline;
+  - [x] print the failing pointer/path even when value echo is suppressed;
+  - [x] print expected discriminator values for closed unions where practical;
+  - [x] resolve the **root kind union** to the branch named by the declared `kind` so a kind-specific violation reports the offending field and path instead of `/oneOf` with the whole manifest echoed.
+- [x] For `packageRef` failures, prefer an actionable message describing accepted forms:
+  - [x] `"@ns/name@1.2.3"` string;
+  - [x] `{name, version?}` object.
+- [x] For closed Memory operation kinds, prefer expected values such as:
+  - [x] `consolidate`;
+  - [x] `transform`;
+  - [x] `delete`.
+- [x] Add test coverage across known oneOf/anyOf cliffs:
+  - [x] root kind dispatch (for example `kind: "agent"` missing a kind-required field) asserting a branch-specific path/message rather than `/oneOf`;
+  - [x] packageRef;
+  - [x] memoryTrigger;
+  - [x] memoryOperation;
+  - [x] loopTransitionTarget;
+  - [x] loopToolFailurePolicy;
+  - [x] knowledgeMetadata;
+  - [x] agentMemoryBinding;
+  - [x] entrypoint.command.
+- [x] Add a regression fixture reproducing the existing Loop case where one invalid transition currently emits giant schema messages before good semantic errors.
+- [x] Add a regression fixture reproducing the Memory invalid-operation-kind case where today no useful semantic error exists.
+- [x] Keep JSON/NDJSON lint output contracts stable unless explicitly versioned.
+- [x] Make publish validation use the same human lint renderer, including a contextual manifest header instead of beginning with unattributed `[ERROR]`.
+- [x] Add ordering tests ensuring actionable semantic messages appear before generic schema fallback.
+- [x] Confirm the diagnostic shape produced here can carry an external rule identifier alongside the path, so Stage 2's APDS rule IDs attach without re-cutting the renderer. Do not implement APDS rules in this milestone — only avoid foreclosing them.
+- [x] Add a reproducible operator runbook and disposable fixtures: `specs/2026-10-06-immediate-hardening/manual-tests/CLI_M8_MANUAL_TESTS.md` and `scripts/cli_m8_manual.py`.
+- [ ] Complete the operator walkthrough and record readability/unexpected-output notes in the runbook. Builder smoke checks do not replace this manual acceptance.
+
+Implementation and verification completed 2026-10-15; see `specs/2026-10-06-immediate-hardening/test-plan.md`, "Milestone 8 evidence". The schema tolerance is implemented. Release Band 5 prepares **0.1.35** as its first shipping version; publication confirmation remains open. Published `0.1.34` must not be used as the new compatibility floor.
 
 ## Milestone 9: CLI Error and Success Consistency
 > Scope note: make non-Harness CLI success/failure behavior feel like one coherent product by centralizing transport errors, correcting exit codes, normalizing sibling inspect output, and cleaning up low-level path/filesystem leaks. This milestone does not alter Harness output, introduce new package/runtime capabilities, change machine-readable contracts beyond explicitly specified fixes, or absorb the Python portability work from later milestones.
@@ -550,50 +556,69 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 > - Normalize user-supplied `.` paths before display so `/./` never appears.
 > - Error/success wording should answer: what happened, where, why, and what next.
 
-- [ ] Centralize network/transport error formatting in a reusable CLI helper.
-- [ ] Apply friendly connection errors to:
-  - [ ] install;
-  - [ ] export;
-  - [ ] new;
-  - [ ] whoami;
-  - [ ] other matching registry-backed commands discovered during implementation.
-- [ ] Preserve low-level transport detail behind verbose/debug output if existing CLI patterns support it.
-- [ ] Avoid surfacing irrelevant internal endpoint names as the primary error for higher-level commands such as `export --skill`.
-- [ ] Fix `whoami` to exit non-zero on network failure.
-- [ ] Distinguish "credentials rejected" from "not found" on `install`. Since `auth_optional` no longer returns 401, decide how the server signals that a supplied token was ignored — an explicit response field, a dedicated header, or moving the install endpoints to `auth_required` — and have the CLI say so plainly instead of reporting a missing package. Verify against a revoked PAT plus a private package, which is the real-world case (token rotation or revocation).
-- [ ] Add exit-code regression tests:
-  - [ ] runtime error → 1;
-  - [ ] clap/usage error → 2;
-  - [ ] successful command → 0.
-- [ ] Normalize Knowledge/Memory inspect header structure, for example:
-  - [ ] `<Kind>: name@version`;
-  - [ ] `Target: ...`;
-  - [ ] `Status: fresh|stale|...`;
-  - [ ] normalized manifest path/name;
-  - [ ] then kind-specific details.
-- [ ] Normalize freshness/status label across sibling inspect commands.
-- [ ] Normalize paths before printing.
-- [ ] Reduce unnecessary absolute path verbosity in normal human output.
-- [ ] Preserve richer paths in verbose/machine output where useful.
-- [ ] Improve Memory missing-sidecar wording from `is invalid: reading <path>` to an explicit “references X, which could not be read” style message.
-- [ ] Make `new` success output include:
-  - [ ] created target/path;
-  - [ ] useful next step;
-  - [ ] retain the existing README review guidance where useful.
-- [ ] Move `serve --mcp` requirement into clap argument validation:
-  - [ ] use clap-required/constraint behavior rather than runtime `currently requires --mcp`;
-  - [ ] preserve exit code 2 for missing required usage.
-- [ ] Improve `keys export <bad-id>` to:
-  - [ ] say no local key with that ID exists;
-  - [ ] suggest `agentpm keys list`;
-  - [ ] avoid duplicate filesystem exception lines;
-  - [ ] avoid unnecessary home-directory disclosure in normal output.
-- [ ] Preserve `1` runtime / `2` clap usage exit-code convention.
-- [ ] Add regression tests for all corrected messages and exit codes.
+- [x] Centralize network/transport error formatting in a reusable CLI helper.
+- [x] Apply friendly connection errors to:
+  - [x] install;
+  - [x] export;
+  - [x] new;
+  - [x] whoami;
+  - [x] other matching registry-backed commands discovered during implementation.
+- [x] Preserve low-level transport detail behind verbose/debug output if existing CLI patterns support it.
+- [x] Avoid surfacing irrelevant internal endpoint names as the primary error for higher-level commands such as `export --skill`.
+- [x] Fix `whoami` to exit non-zero on network failure.
+- [x] Distinguish "credentials rejected" from "not found" on `install`. Since `auth_optional` no longer returns 401, decide how the server signals that a supplied token was ignored — an explicit response field, a dedicated header, or moving the install endpoints to `auth_required` — and have the CLI say so plainly instead of reporting a missing package. Verify against a revoked PAT plus a private package, which is the real-world case (token rotation or revocation).
+- [x] Add exit-code regression tests:
+  - [x] runtime error → 1;
+  - [x] clap/usage error → 2;
+  - [x] successful command → 0.
+- [x] Normalize Knowledge/Memory inspect header structure, for example:
+  - [x] `<Kind>: name@version`;
+  - [x] `Target: ...`;
+  - [x] `Status: fresh|stale|...`;
+  - [x] normalized manifest path/name;
+  - [x] then kind-specific details.
+- [x] Normalize freshness/status label across sibling inspect commands.
+- [x] Normalize paths before printing.
+- [x] Reduce unnecessary absolute path verbosity in normal human output.
+- [x] Preserve richer paths in verbose/machine output where useful.
+- [x] Improve Memory missing-sidecar wording from `is invalid: reading <path>` to an explicit “references X, which could not be read” style message.
+- [x] Make `new` success output include:
+  - [x] created target/path;
+  - [x] useful next step;
+  - [x] retain the existing README review guidance where useful.
+- [x] Move `serve --mcp` requirement into clap argument validation:
+  - [x] use clap-required/constraint behavior rather than runtime `currently requires --mcp`;
+  - [x] preserve exit code 2 for missing required usage.
+- [x] Improve `keys export <bad-id>` to:
+  - [x] say no local key with that ID exists;
+  - [x] suggest `agentpm keys list`;
+  - [x] avoid duplicate filesystem exception lines;
+  - [x] avoid unnecessary home-directory disclosure in normal output.
+- [x] Preserve `1` runtime / `2` clap usage exit-code convention.
+- [x] Add regression tests for all corrected messages and exit codes.
+- [x] Complete the operator walkthrough in
+  [CLI messaging and exit codes manual verification](manual-tests/CLI_M9_MANUAL_TESTS.md)
+  before closing Release Band 5; record any blocked real-registry cases.
+
+Implementation and automated verification completed 2026-10-16; see "Milestone 9 evidence" in `specs/2026-10-06-immediate-hardening/test-plan.md`. Install resolve/init use `auth_optional(reject_invalid=True)`: missing credentials remain anonymous, while supplied invalid/revoked credentials return 401 before package lookup. Default optional authentication on public reads is unchanged. CLI transport formatting is applied at the non-Harness command boundary, with underlying reqwest errors retained by the Rust client. No schema, Harness, Node/Python SDK, or version-marker changes were made. Existing API pre-commit environment/baseline failures are recorded separately in the test plan, not counted as passing checks.
 
 ## Release Band 5: CLI Authoring and Messaging Quality
 Covered milestones: 8-9.
-This gives us trustworthy scaffolding, lint output that explains what is actually wrong (including the `oneOf`/`anyOf` cases that currently produce unusable messages), and consistent error/success wording and exit codes across non-Harness commands. It is a self-contained CLI release with no server dependency, and it is worth shipping before the dependency/release work because that work adds new failure modes to the same messaging surface.
+This gives us trustworthy scaffolding, lint output that explains what is actually wrong (including the `oneOf`/`anyOf` cases that currently produce unusable messages), and consistent error/success wording and exit codes across non-Harness commands. Ship it before the dependency/release work because that work adds new failure modes to the same messaging surface. Deploy the registry's opt-in strict install-token handling before or with the CLI: the new client recognizes its existing 401 contract, but cannot distinguish rejected credentials from anonymous not-found responses sent by an older registry.
+
+**🚦 On release, record the published CLI version — this band carries a cross-stage gate.** Milestone 8 added the permissive root `standard` field so already-released CLIs tolerate manifests that declare it. That tolerance only exists for users once a CLI carrying it ships, so the released version number becomes the **minimum CLI version** for the whole APDS rollout. Two things depend on it and cannot proceed until it is recorded:
+
+- [x] Prepare CLI **0.1.35** (`v0.1.35`) and the matching website status-page release date **2026-10-16**. CLI crate and lockfile agree; SDK version markers are unchanged.
+- [x] Record CLI **0.1.35** as the Release Band 5 tolerance-release version and hand publication confirmation to the operator. Checked off at the operator's request; they will personally confirm publication. This is not independent verification that the release is already live.
+- [x] Hand **0.1.35** to the Stage 2 track as the designated tolerance-release floor: recorded in Stage 2 `spec.md` and M1A.1/M3A/M4B in `tasks.md`. **Stage 2 M4B** must name this version in its outdated-client error, and **Stage 2 M3A** must not emit `standard` until publication of **0.1.35** is confirmed.
+
+Release handoff prepared **2026-10-16**. Actual publication/deployment is still
+operator-owned and unconfirmed. Deploy the registry first, then publish CLI
+`v0.1.35`, then deploy the website with its matching status marker. Once the CLI
+release is confirmed, complete the publication record in M8 and
+Stage 2 M1A.1's release task; until then the Stage 2 emission gate stays closed.
+
+Publishing a package that declares `standard` before this CLI is released makes `agentpm lint` hard-fail (exit 1) and `agentpm new` fail inside `validate_generated_manifests_blocking` for every user on an older build — and published packages are immutable, so it cannot be walked back.
 
 ## Milestone 10A: Product Analytics, Billing Funnel, and Feedback
 > Scope note: stop flying blind before early traffic by adding a deliberately small web/registry analytics vocabulary, authoritative server-side events where possible, billing conversion events, one funnel dashboard, and a lightweight feedback path. Local CLI telemetry and its privacy contract are split into Milestone 10B. This milestone does not enable session replay, experimentation, NPS, sophisticated attribution, broad behavioral profiling, or replace Lemon Squeezy as billing source of truth.

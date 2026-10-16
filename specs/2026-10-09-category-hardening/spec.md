@@ -304,6 +304,13 @@ publishable/installable.
 
 #### Old-client forward compatibility — tolerance release before any `standard` emission
 
+**Stage 1 release handoff (2026-10-16):** Release Band 5 designates CLI **0.1.35**
+as the tolerance-release minimum for M4B's outdated-client error and package-detail
+upgrade guidance. The version and release metadata are prepared, not confirmation
+of publication. M3A must not emit `standard` until the operator confirms that
+`v0.1.35` is published in
+[`Stage 1 Release Band 5`](../2026-10-06-immediate-hardening/tasks.md#release-band-5-cli-authoring-and-messaging-quality).
+
 **REQUIRED, and sequenced before M3A.** The root schema is `additionalProperties: false`, so every CLI
 already in users' hands hard-rejects a manifest carrying `standard`: verified on 0.1.33, `agentpm lint`
 returns `[ERROR] Additional properties are not allowed ('standard' was unexpected)` and exits 1. The

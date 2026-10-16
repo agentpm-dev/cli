@@ -10,4 +10,3 @@ pub use crate::config::Config;
 
 // SDK client (so commands don’t have to name the path)
 pub use agentpm_sdk::AgentPmClient;
-pub use agentpm_sdk::SdkError;

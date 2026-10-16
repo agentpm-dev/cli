@@ -719,15 +719,22 @@ fn build_memory_inspect_text(
     contracts: &[MemoryInspectContractEntry],
 ) -> String {
     let manifest = &executed.manifest;
-    let mut lines = vec![
-        format!("Memory inspect: {}@{}", manifest.name, manifest.version),
-        format!("Target: {}", target.display_target),
-        format!("Status: {}", memory_inspect_status_name(status)),
-        format!("Manifest path: {}", target.manifest_path.display()),
-        format!("Package root: {}", target.package_root.display()),
-        format!("Build metadata: {}", build_path.display()),
-        format!("Contract index: {}", index_path.display()),
-    ];
+    let mut lines = crate::ui::inspect_header(
+        "Memory",
+        &manifest.name,
+        &manifest.version,
+        &target.display_target,
+        memory_inspect_status_name(status),
+        &target.manifest_path,
+    );
+    lines.extend([
+        format!(
+            "Package root: {}",
+            crate::ui::display_path(&target.package_root)
+        ),
+        format!("Build metadata: {}", crate::ui::display_path(build_path)),
+        format!("Contract index: {}", crate::ui::display_path(index_path)),
+    ]);
 
     if let Some(guidance) = memory_inspect_guidance(status) {
         lines.push(format!("Guidance: {guidance}"));
@@ -1058,7 +1065,7 @@ fn validate_manifest_or_bail(manifest_path: &Path, value: &mut Value) -> Result<
 
     bail!(
         "manifest validation failed for {}:\n{}",
-        manifest_path.display(),
+        crate::ui::display_path(manifest_path),
         format_issues(&issues)
     );
 }

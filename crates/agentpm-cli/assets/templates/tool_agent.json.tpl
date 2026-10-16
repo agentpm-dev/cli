@@ -4,10 +4,11 @@
   "name": "{{TOOL_NAME}}",
   "version": "0.1.0",
   "description": "{{TOOL_DESCRIPTION}}",
-  "files": [],
+  "runtime": { "type": "python", "version": "3" },
+  "files": ["main.py"],
   "entrypoint": {
-    "command": "",
-    "args": []
+    "command": "python3",
+    "args": ["main.py"]
   },
   "inputs": {},
   "outputs": {}

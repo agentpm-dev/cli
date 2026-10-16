@@ -21,6 +21,12 @@ pub struct LintIssue {
     pub message: String,
     pub instance_path: String,
     pub schema_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+    #[serde(skip)]
+    pub human_message: Option<String>,
+    #[serde(skip)]
+    pub details: Vec<LintIssue>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -863,25 +869,7 @@ fn validate_manifest_value_with_manifest_path(
 ) -> Result<(bool, Vec<LintIssue>)> {
     // Compile schema (keep simple for now; we can cache later if needed)
     let schema_value = load_schema_value(schema_source)?;
-    let schema_static: &'static serde_json::Value = Box::leak(Box::new(schema_value));
-    let compiled = JSONSchema::options()
-        .with_draft(Draft::Draft202012)
-        .compile(schema_static)?;
-
-    let mut issues: Vec<LintIssue> = Vec::new();
-
-    // Schema errors
-    if let Err(errors) = compiled.validate(value) {
-        for e in errors {
-            issues.push(LintIssue {
-                file: file_label.to_string(),
-                level: "error",
-                message: e.to_string(),
-                instance_path: e.instance_path.to_string(),
-                schema_path: e.schema_path.to_string(),
-            });
-        }
-    }
+    let mut issues = crate::lint_output::schema_issues(&schema_value, file_label, value)?;
 
     // Semantic warnings (mirror what `lint` had)
     if value.get("$schema").is_none() {
@@ -891,6 +879,9 @@ fn validate_manifest_value_with_manifest_path(
             message: "Missing $schema; editors may lack IntelliSense.".into(),
             instance_path: "".into(),
             schema_path: "".into(),
+            rule_id: None,
+            human_message: None,
+            details: Vec::new(),
         });
         if fix && let Some(obj) = value.as_object_mut() {
             obj.insert("$schema".into(), Value::String(schema_source.to_string()));
@@ -906,6 +897,9 @@ fn validate_manifest_value_with_manifest_path(
             message: "`description` should not be empty".into(),
             instance_path: "/description".into(),
             schema_path: "".into(),
+            rule_id: None,
+            human_message: None,
+            details: Vec::new(),
         });
     }
 
@@ -924,6 +918,9 @@ fn validate_manifest_value_with_manifest_path(
                     message: format!("duplicate template variable name `{name}`"),
                     instance_path: format!("/template/variables/{idx}/name"),
                     schema_path: "".into(),
+                    rule_id: None,
+                    human_message: None,
+                    details: Vec::new(),
                 });
             }
         }
@@ -951,6 +948,9 @@ fn validate_manifest_value_with_manifest_path(
                 ),
                 instance_path: "/runtime/type".into(),
                 schema_path: "".into(),
+                rule_id: None,
+                human_message: None,
+                details: Vec::new(),
             });
         }
     }
@@ -1327,15 +1327,28 @@ fn validate_memory_manifest_semantics(
                     &schema_path,
                     &mut issues,
                 ),
-                Err(err) => push_manifest_error(
-                    file_label,
-                    &format!("/memory/record_types/{record_type_key}/schema"),
-                    format!(
-                        "record type `{record_type_key}` schema `{}` is invalid: {err}",
-                        record_type.schema
-                    ),
-                    &mut issues,
-                ),
+                Err(err) => {
+                    let message = if err
+                        .chain()
+                        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+                    {
+                        format!(
+                            "record type `{record_type_key}` references schema `{}`, which could not be read. Restore the file or correct the schema path in agent.json.",
+                            record_type.schema
+                        )
+                    } else {
+                        format!(
+                            "record type `{record_type_key}` schema `{}` is invalid: {err}",
+                            record_type.schema
+                        )
+                    };
+                    push_manifest_error(
+                        file_label,
+                        &format!("/memory/record_types/{record_type_key}/schema"),
+                        message,
+                        &mut issues,
+                    );
+                }
             }
         }
     }
@@ -2498,6 +2511,9 @@ fn validate_source_schema_file(
                 message: format!("failed to read source schema: {err}"),
                 instance_path: "".into(),
                 schema_path: "".into(),
+                rule_id: None,
+                human_message: None,
+                details: Vec::new(),
             });
             return;
         }
@@ -2512,6 +2528,9 @@ fn validate_source_schema_file(
                 message: format!("source schema is not valid JSON: {err}"),
                 instance_path: "".into(),
                 schema_path: "".into(),
+                rule_id: None,
+                human_message: None,
+                details: Vec::new(),
             });
             return;
         }
@@ -2528,6 +2547,9 @@ fn validate_source_schema_file(
             message: format!("source schema is not valid JSON Schema Draft 2020-12: {err}"),
             instance_path: "".into(),
             schema_path: "".into(),
+            rule_id: None,
+            human_message: None,
+            details: Vec::new(),
         });
     }
 
@@ -2570,6 +2592,9 @@ fn validate_source_schema_tree(
                                     ),
                                     instance_path: child_pointer.clone(),
                                     schema_path: "".into(),
+                                    rule_id: None,
+                                    human_message: None,
+                                    details: Vec::new(),
                                 });
                             }
                         }
@@ -2586,6 +2611,9 @@ fn validate_source_schema_tree(
                                     ),
                                     instance_path: child_pointer.clone(),
                                     schema_path: "".into(),
+                                    rule_id: None,
+                                    human_message: None,
+                                    details: Vec::new(),
                                 });
                             }
                         }
@@ -2597,6 +2625,9 @@ fn validate_source_schema_tree(
                                     message: format!("`{key}` must be a boolean"),
                                     instance_path: child_pointer.clone(),
                                     schema_path: "".into(),
+                                    rule_id: None,
+                                    human_message: None,
+                                    details: Vec::new(),
                                 });
                             }
                         }
@@ -2606,6 +2637,9 @@ fn validate_source_schema_tree(
                             message: format!("unsupported AgentPM governance keyword `{key}`"),
                             instance_path: child_pointer.clone(),
                             schema_path: "".into(),
+                            rule_id: None,
+                            human_message: None,
+                            details: Vec::new(),
                         }),
                     }
                 }
@@ -2620,6 +2654,9 @@ fn validate_source_schema_tree(
                         message: "only in-document `#...` JSON Schema references are supported in Memory Blueprint source schemas".into(),
                         instance_path: child_pointer.clone(),
                         schema_path: "".into(),
+                        rule_id: None,
+                        human_message: None,
+                        details: Vec::new(),
                     });
                 }
 
@@ -2676,6 +2713,9 @@ fn validate_persist_required_conflicts(
                                 "x-agentpm-persist",
                             ),
                             schema_path: "".into(),
+                            rule_id: None,
+                            human_message: None,
+                            details: Vec::new(),
                         });
                     }
                 }
@@ -2773,6 +2813,9 @@ fn push_manifest_error(
         message,
         instance_path: instance_path.to_string(),
         schema_path: "".into(),
+        rule_id: None,
+        human_message: None,
+        details: Vec::new(),
     });
 }
 
@@ -6359,8 +6402,11 @@ mod tests {
         }));
 
         assert!(
-            issues.iter().any(|issue| issue.schema_path == "/oneOf"),
-            "expected oneOf failure caused by the remaining missing tool field, got: {issues:#?}"
+            issues
+                .iter()
+                .any(|issue| issue.schema_path == "/oneOf/1/required"
+                    && issue.instance_path == "/files"),
+            "expected the selected Tool branch to identify missing files, got: {issues:#?}"
         );
     }
 

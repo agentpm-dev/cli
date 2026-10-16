@@ -1,4 +1,5 @@
 pub const TOOL_AGENT_JSON_TPL: &str = include_str!("../assets/templates/tool_agent.json.tpl");
+pub const TOOL_MAIN_PY_TPL: &str = include_str!("../assets/templates/tool_main.py.tpl");
 pub const AGENT_JSON_TPL: &str = include_str!("../assets/templates/agent.json.tpl");
 pub const KNOWLEDGE_CONTEXT_AGENT_JSON_TPL: &str =
     include_str!("../assets/templates/knowledge_context_agent.json.tpl");

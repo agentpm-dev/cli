@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "kind": "memory",
+  "name": "invalid-operation",
+  "version": "0.1.0",
+  "description": "Regression: an unknown Memory operation must name the allowed kinds.",
+  "memory": {
+    "scopes": { "user": { "description": "Memory owner." } },
+    "record_types": {
+      "preference": { "version": "1.0.0", "description": "A preference.", "schema": "schemas/preference.json" }
+    },
+    "spaces": {
+      "profile": {
+        "description": "User profile.", "model": "document", "record_types": ["preference"],
+        "scope": ["user"], "retrieval": { "modes": ["key"] }
+      }
+    },
+    "operations": { "refresh": { "type": "archive" } }
+  }
+}
