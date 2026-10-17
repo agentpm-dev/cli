@@ -424,6 +424,286 @@ Verify:
 - anonymous install ID behavior is stable;
 - private package identity does not enter telemetry payloads.
 
+#### Milestone 10A Implementation Evidence (2026-10-16)
+
+Implemented the explicit web/Registry allowlist, post-commit server events,
+verified Lemon Squeezy webhook mappings, AgentPM feedback dialog, native
+PostHog survey submission, and web/feedback docs/privacy disclosure. See
+`analytics-contract.md` for the shared event/identity contract and
+`manual-tests/ANALYTICS_M10A_SETUP.md` for the operator walkthrough.
+
+Automated verification:
+
+- API: `uv run python -m pytest -q`, with the existing local
+  `AGENTPM_SEARCH_TEST_DATABASE_URI` configured: **383 passed, 88 subtests
+  passed**, no skips.
+- Web: `pnpm test`: **209 passed** across 59 files after the header-search
+  follow-up; `pnpm typecheck` passed.
+- `pnpm lint` passed with six existing unused-symbol warnings outside these
+  changes. Prettier ran on every touched TypeScript/TSX file.
+- `pnpm build` passed, including all 30 static pages, in an isolated temporary
+  copy with fake build-only credentials. The operator's running dev server and
+  `.next` cache were not replaced.
+- API pre-commit ran against all 12 touched Python files and both MDX files.
+  Black, isort, flake8, Pylint, pyupgrade and text checks passed. The full hook
+  set is **not green**: existing imported `search.py` assignments at lines 1486
+  and 1856 fail mypy, and the pinned Bandit hook environment cannot import
+  `pbr`. Scoped same-version mypy with `--follow-imports=silent` passed all
+  12 touched Python files. Bandit 1.7.5 with its missing runtime dependencies
+  supplied (`pbr`, `setuptools`) reported no findings on those files. These are
+  explicit baseline/tooling blockers, not claimed as successful hook runs.
+
+The tests exercise production capture routes, reject extra/sensitive fields
+and browser attempts to forge authoritative events, and prove commit-before-
+capture, rollback/commit-failure suppression, and nonfatal capture outages.
+Actual install-finalize, star/unstar, user-creation and publish paths are
+exercised. The decorated billing service test verifies all four webhook
+mappings, delivery only after commit, duplicate suppression, and no conversion
+event from reconciliation. Web tests cover all eight package layouts,
+cookie/auth correlation, opt-out, shared-browser identity rotation, feedback
+failure/retry, and public-origin checks behind Render's internal hostname.
+
+Playwright/Chrome checks passed on desktop (1440x1000) and mobile (390x844):
+dialog bounds, Escape, retained answers after a 503, successful retry, stable
+submission ID, and no page errors. Analytics and feedback requests were
+intercepted: these checks sent **no real PostHog data**. Screenshots are retained
+at `assets/milestone-10a/feedback-desktop.png` and `feedback-mobile.png`.
+
+Still unmet: inspect the remaining real development event payloads;
+replay test-mode billing webhooks against the live development integration;
+finish the remaining **Early Product Funnel** dashboard panels; review production project/survey configuration,
+privacy copy and feedback access/retention. Do not close Milestone 10A on mocked
+results alone. Dashboard CLI/Harness panels must explicitly say pending
+Milestone 10B. CLI opt-out and anonymous install-ID tests above belong to 10B,
+not this implementation. Ordinary delivery is bounded-time/best-effort, not a
+durable outbox; outages or a process crash can lose analytics events.
+
+Operator confirmed live `Identify` and `landing_viewed` events and the expected
+`contract_version`, `environment`, and `source` properties. That live inspection
+also found an ingestion-added IP address despite `$geoip_disable: true`.
+AgentPM's capture payload does not include an IP; project-side **Discard client
+IP data** must be enabled and a new event inspected before accepting IP
+retention behavior. This is now an explicit development/production setup check.
+Operator subsequently enabled the development project's discard setting and
+confirmed a newly captured landing event has the expected product properties
+and no IP property. Development landing capture/IP retention is accepted;
+production configuration and the remaining live checks are still pending.
+
+Operator also configured the API survey/question IDs and confirmed a real
+response in PostHog survey reporting: both text answers stored, email blank,
+follow-up No. Its separate `feedback_submitted` event contains the expected
+common metadata, `has_email: false`, and `follow_up: false`, without the submitted
+text, email address, or IP property. This accepts live feedback storage and the
+unchecked-consent branch. Subsequent screenshots confirm the API survey is
+Running/Active, both submissions are Completed, and the supplied-email /
+follow-up Yes case stores the email only in the survey. The corresponding
+ordinary event has `has_email: true` and `follow_up: true`, with no answer text,
+email address, or IP property. Both live consent branches are accepted.
+The persistent Responses 1 / Completed 2 display is consistent with PostHog's
+default unique-person performance counter: the two submissions share one
+respondent. AgentPM does not emit survey impression events, so the displayed
+Shown/response-rate metrics are not meaningful for this integration.
+
+Operator created the single **Early Product Funnel** dashboard and supplied a
+screenshot of its saved **Arrivals** panel: `landing_viewed` unique users and
+total count, last 7 days, filtered to `environment = development`. Dashboard
+creation and arrivals reporting are accepted; the other insights remain open.
+
+Operator also supplied the saved **Discovery** panel with all four discovery
+events as total counts, last 7 days, and `environment = development`; that panel
+is accepted. Live review identified that global-header search did not emit
+`explore_searched`. The header now captures at explicit nonempty submission,
+using the existing sort/filter-count allowlist, never the query or URL. Arrival
+on Explore stays silent to avoid double-counting the header submission.
+`SearchAnalytics.test.tsx` exercises both real components and the real capture
+helper with intercepted HTTP: Enter/form submission once, empty/whitespace
+suppression, no capture while typing or on mount/rerender, exact allowlisted
+request bodies without query/cursor, and header-to-Explore navigation without
+a second event. Removing the production header capture call made the targeted
+regression test fail with zero captures; the call was restored afterward.
+Final follow-up verification: all 209 web tests, typecheck, lint (the same six
+existing warnings), Prettier, and the isolated production build passed. Chrome
+with analytics intercepted confirmed one search event from the header, still
+one after Explore arrival and browser reload, and two only after an explicit
+Explore submission. Both request bodies had exactly the allowed event and
+sort/filter-count fields. The API MDX change passed applicable text pre-commit
+hooks. Operator subsequently submitted a fresh header search and confirmed the
+event appeared in PostHog Activity; live header-search emission is accepted.
+
+Fresh-account signup: operator completed real email verification and observed
+`signup_started`, `account_created`, and `$identify` in Activity. The signup
+event's raw anonymous `distinct_id` exactly matches the identify event's
+`$anon_distinct_id`; identify and account creation use the same account person.
+The linking payload is accepted. Operator then saved **Signup** with Sequential
+step order, Overall conversion, and a 7-day conversion window. The unobscured
+chart shows one person at `signup_started` and the same completed journey at
+`account_created`: one conversion, 100%, zero drop-offs. Fresh-signup identity
+linkage and the Signup panel are accepted. Activity's original anonymous label
+does not imply a failed merge.
+
+Registry-use walkthrough: local API health and the real published
+`@zack/bound-agent@0.1.0` were verified read-only. Operator ran an isolated
+anonymous install against that local API and confirmed `package_install_completed`
+in PostHog. A dependency-free Profile scaffold was created separately for smoke
+verification; installed CLI `agentpm lint` and local-targeted `publish --dry-run`
+both passed. No real publish was performed by the builder. The local-only
+publish commands, local PAT handling, and cleanup are recorded in the manual
+walkthrough. Operator subsequently completed the real local-only publish and
+provided its saved **Registry use** panel: `package_install_completed` and
+`publish_completed`, both total counts, last 7 days, filtered to
+`environment = development`. Registry install/publish capture and that panel
+are accepted; this does not claim CLI-local usage telemetry or a person-level
+join from the anonymous install to a website visitor. Remaining live payload
+inspection is still tracked separately.
+
+Operator supplied the saved **Engagement** panel with `package_starred`,
+`package_unstarred`, and `feedback_submitted`, all total count, last 7 days,
+filtered to `environment = development`. This panel is accepted. Operator also
+confirmed the CLI/Harness availability text card was added with the Milestone
+10B disclosure and the registry-completion/execution distinction. The M10A card
+is accepted; actual CLI-local measurement remains 10B, not implemented or
+claimed here. Billing panels and the remaining operator acceptance checks are
+still open.
+
+Billing connectivity: operator confirmed the IntelliJ test-mode flag is true,
+restored ngrok forwarding to backend port 5000, and ran a real unsigned POST to
+the public `/billing/webhooks/lemonsqueezy` callback. It returned HTTP 403 with
+`Invalid webhook signature`. Reachability and unsigned rejection are accepted;
+this is not evidence of successful signed delivery or a subscription conversion.
+Operator then reached a visibly test-mode checkout and confirmed `pricing_viewed`
+and `checkout_started` in PostHog. After test purchase, operator reported the
+expected `subscription_started` properties: `plan: pro`, `test_mode: true`,
+`source: registry`, `environment: development`, `contract_version: 1`, and GeoIP
+disabled. The conversion event is accepted. Operator replayed the webhook and
+confirmed HTTP 200 with `ok: true` and `duplicate: true`. Backend duplicate
+recognition is accepted. Operator confirmed PostHog still contains only one
+`subscription_started` after replay, completing the duplicate-conversion check.
+Two subsequent `subscription_updated` events correspond to distinct webhook
+deliveries: `subscription_updated` at 02:22:15 UTC and
+`subscription_payment_success` at 02:22:16 UTC on October 17. Operator verified
+these event names and received timestamps from the database. Both map to the
+generic analytics update event; they are not evidence of duplicate conversions.
+Operator then cancelled the test subscription through the merchant dashboard and
+reported `subscription_cancelled` with `plan: pro`, `test_mode: true`,
+`source: registry`, `environment: development`, `contract_version: 1`, and GeoIP
+disabled. Merchant-side cancellation capture is accepted. Operator then sent the
+available `subscription_payment_failed` test simulation and confirmed the event
+in PostHog with development environment, registry source, test mode true,
+contract version 1, and GeoIP disabled. Its plan was `unknown`: current analytics
+derives plan only from webhook product/variant IDs, not stored entitlement data.
+Invoice payloads lacking those fields therefore have incomplete plan attribution;
+cancellation status is not used to select the analytics plan. Payment-failure
+event delivery is accepted, not plan-level classification. These checks do not
+verify customer-portal cancellation or an actual failed renewal charge.
+
+Billing dashboard: operator supplied a screenshot of the saved **Billing intent
+and conversion** funnel with `pricing_viewed` -> `checkout_started` ->
+`subscription_started`, last 7 days, and `environment = development`. It shows
+one person reaching the final step at 100% conversion. This accepts the billing
+intent/conversion panel. Operator subsequently supplied the saved **Billing
+lifecycle** daily line chart with `subscription_updated`,
+`subscription_cancelled`, and `subscription_payment_failed` total counts of
+4, 1, and 1 respectively on October 17 UTC. The lifecycle panel is accepted;
+the screenshot does not independently show its environment-filter setting.
+
+Access review: operator confirmed they are the only PostHog organization member.
+This accepts the organization-membership check. Operator separately confirmed
+public sharing is disabled on the Development Early Product Funnel dashboard.
+Operator subsequently confirmed public sharing is disabled on the Production
+copy too.
+Operator also confirmed Pay-as-you-go was selected at initial setup; no billing
+change was made. PostHog's pricing documentation lists seven-year event/metadata
+retention for paid plans. After being informed that stored survey text and
+optional email use that retention, operator accepted the provider default for
+this release. No shorter retention/deletion automation was introduced, and this
+is not a promise of deletion exactly at seven years. The predeployment
+access/sharing/retention/configuration review is accepted; remaining payload
+inspection and production verification checks stay open.
+
+Production survey: operator supplied the API survey JSON with the expected four
+questions, optional email and follow-up, and Yes/No choices. The subsequent JSON
+has `start_date: 2026-10-17T03:09:01.260000Z` and `end_date: null`, confirming
+launch. Survey configuration is accepted. Operator subsequently confirmed all
+specified production backend/web environment values were added to Render;
+secrets were not shared or inspected. Environment configuration is recorded as
+operator-confirmed, not deployed verification. Backend deployment, web rebuild,
+and the live checks will follow the M10A code push: operator explicitly chose
+to save Render environment values without redeploying. In particular,
+deployed event capture and feedback storage, IP suppression, and the remaining
+privacy checks are not yet verified. Operator confirmed all dashboard panels
+were copied to Production and saved with `environment = production` filters.
+Production dashboard configuration and disabled public sharing on that copy
+are accepted; live production data is not yet verified.
+
+Independent review: operator confirmed Claude's code review is already complete
+and everything looked good. This is operator-reported review acceptance, not a
+new test run, deployment confirmation, or resolution of the portal residual.
+
+Release progress: operator subsequently reported everything was pushed out.
+The release push is recorded; successful backend/web service rollout and live
+production event capture, IP suppression, and feedback storage still require
+verification. No deploy or runtime check was performed by the builder here.
+Operator subsequently observed `landing_viewed` events in AgentPM Production
+and shared properties from the event at `2026-10-17T04:11:04.638Z`:
+`environment: production`, `source: web`, `contract_version: 1`, and GeoIP
+disabled, without an IP property. This accepts the deployed web-to-registry
+capture path and stored-event IP suppression for that event. It is not
+independent inspection of Render build logs or verification of production
+feedback storage and dashboard data, which remain open.
+
+Production feedback storage: operator supplied the stored AgentPM Feedback
+response from the production smoke test. Goal and obstacle appeared under the
+correct questions, email was blank, and follow-up was No. Survey storage and
+question mapping are accepted. Operator then supplied the separate
+`feedback_submitted` event at `2026-10-17T04:14:21.632Z` with
+`environment: production`, `source: registry`, `contract_version: 1`,
+`has_email: false`, `follow_up: false`, and GeoIP disabled. The shared property
+list contains no answers, email, or IP. Generic feedback-event flags and
+separation from survey content are accepted for this production submission.
+
+Production dashboard: operator confirmed charts now update with production
+data. They also performed real star and unstar actions and observed those events
+in Engagement. This accepts production dashboard data and star/unstar capture;
+the ordinary-event payload spot-check was completed afterward. Operator reported
+no unexpected properties when inspecting existing Development
+`explore_searched`, `package_viewed`, `package_install_completed`, and
+`publish_completed` against their allowlists. The privacy spot-check and scoped
+M10A live operator acceptance are complete. The portal redirect and invoice-event
+plan-attribution limitation remain recorded residuals, not resolved by these
+analytics checks. CLI/Harness emission remains outside M10A and deferred to M10B.
+This final checklist update did not change application code or rerun automated
+tests; the earlier automated results and baseline hook limitations still apply.
+
+Customer portal residual: Manage billing returns HTTP 200 and a URL at
+`https://agentpm.lemonsqueezy.com/billing` with a signature, expiry, and
+`test_mode=1`. Operator confirmed the portal is enabled. Following a fresh link
+redirects to the merchant dashboard in the regular session and to
+`https://auth.lemonsqueezy.com/login` in a fresh Incognito session. URL structure
+checks do not establish signature validity or successful customer authentication.
+Root cause and customer cancellation through the portal remain unresolved; do
+not classify this as an expected test-mode restriction or a passed portal flow.
+
+#### Milestone 10B Dashboard Acceptance (Pending Implementation)
+
+The two unchecked dashboard questions under M10A are owned by the explicit M10B
+dashboard tasks, not satisfied by emitting the events alone. Verify:
+
+- The existing Early Product Funnel dashboard in both Development and Production
+  contains a CLI adoption chart based on `cli_first_used` and unique anonymous
+  installations, matching the chosen first-use frequency. It is not presented
+  as all CLI command usage or package installs.
+- A Harness activity chart shows `harness_started` and `harness_completed`
+  counts matching real Development test runs; opt-out emits no local events.
+- Each project's saved insights use the correct environment filter. Verify
+  production capture after the Release Band 7 rollout without fake events.
+- Update the M10A availability card only after release and verification. Preserve
+  the registry-completion/local-execution distinction and the disclosure that
+  missing or opted-out telemetry does not establish zero usage. Do not imply
+  that anonymous CLI installations are identified website accounts.
+
+These are future acceptance checks; no M10B telemetry or charts were implemented
+or verified when adding this tracking section.
+
 ### Python dependency schema / lock / runtime environment
 
 Add tests for:

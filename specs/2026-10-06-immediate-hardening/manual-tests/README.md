@@ -8,3 +8,5 @@ are disposable and gitignored.
 - [CLI messaging and exit codes (Milestone 9)](CLI_M9_MANUAL_TESTS.md): individual
   CLI commands; setup creates empty directories only. Uses your local backend
   for real PAT revocation and an optional mock for controlled HTTP failures.
+- [PostHog setup and verification (Milestone 10A)](ANALYTICS_M10A_SETUP.md):
+  operator-guided project, survey, event, billing, and dashboard checks.
