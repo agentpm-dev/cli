@@ -633,53 +633,63 @@ Publishing a package that declares `standard` before this CLI is released makes 
 > - PostHog may provide the survey backend/reporting, but the visible feedback UI should look and feel like AgentPM.
 > - Do not enable session replay in Stage 1.
 
-- [ ] Create PostHog project/config integration for web/backend/CLI surfaces as needed.
-- [ ] Decide one shared event naming/property convention and document it before instrumenting broadly.
-- [ ] Disable/avoid broad autocapture if it would violate the explicit event/property contract.
-- [ ] Implement initial web/registry events:
-  - [ ] `landing_viewed`;
-  - [ ] `docs_viewed`;
-  - [ ] `explore_searched`;
-  - [ ] `package_viewed`;
-  - [ ] `namespace_viewed`;
-  - [ ] `signup_started`;
-  - [ ] `pricing_viewed`;
-  - [ ] `checkout_started`;
-  - [ ] `feedback_submitted`.
-- [ ] Implement server-authoritative events for:
-  - [ ] `account_created` where the backend has an authoritative completion point;
-  - [ ] `package_install_completed`;
-  - [ ] `publish_completed`;
-  - [ ] `package_starred` / unstar equivalent if needed for analysis;
-  - [ ] subscription lifecycle.
-- [ ] Add `pricing_viewed` at actual pricing-page exposure and `checkout_started` at Lemon Squeezy checkout handoff.
-- [ ] Map Lemon Squeezy webhook events to:
-  - [ ] subscription started;
-  - [ ] subscription updated;
-  - [ ] subscription cancelled;
-  - [ ] payment failed where supported.
-- [ ] Make webhook-derived analytics idempotent so retries do not double-count subscription lifecycle events.
-- [ ] Keep Lemon Squeezy as billing source of truth; PostHog receives product events, not authoritative billing state.
-- [ ] Create one Early Product Funnel PostHog dashboard rather than many dashboards.
+- [x] Create PostHog project/config integration for web/backend/CLI surfaces as needed. Development project/token configured by operator; CLI emission remains Milestone 10B. Live delivery and production setup remain below.
+- [x] Decide one shared event naming/property convention and document it before instrumenting broadly. See `analytics-contract.md`.
+- [x] Disable/avoid broad autocapture if it would violate the explicit event/property contract.
+- [x] Implement initial web/registry events:
+  - [x] `landing_viewed`;
+  - [x] `docs_viewed`;
+  - [x] `explore_searched`; explicit nonempty submissions from Explore and the global header; no capture on results-page arrival/refresh.
+  - [x] `package_viewed`;
+  - [x] `namespace_viewed`;
+  - [x] `signup_started`;
+  - [x] `pricing_viewed`;
+  - [x] `checkout_started`;
+  - [x] `feedback_submitted`.
+- [x] Implement server-authoritative events for:
+  - [x] `account_created` where the backend has an authoritative completion point;
+  - [x] `package_install_completed`;
+  - [x] `publish_completed`;
+  - [x] `package_starred` / unstar equivalent if needed for analysis;
+  - [x] subscription lifecycle.
+- [x] Add `pricing_viewed` at actual pricing-page exposure and `checkout_started` at Lemon Squeezy checkout handoff.
+- [x] Map Lemon Squeezy webhook events to:
+  - [x] subscription started;
+  - [x] subscription updated;
+  - [x] subscription cancelled;
+  - [x] payment failed where supported.
+- [x] Make webhook-derived analytics idempotent so retries do not double-count subscription lifecycle events.
+- [x] Keep Lemon Squeezy as billing source of truth; PostHog receives product events, not authoritative billing state.
+- [x] Create one Early Product Funnel PostHog dashboard rather than many dashboards. Operator created it in AgentPM Development; remaining panels are tracked below.
 - [ ] Dashboard should answer at minimum:
-  - [ ] are people arriving?;
-  - [ ] do they reach docs/explore/package pages?;
-  - [ ] do they install/use the CLI?;
-  - [ ] do installs complete?;
-  - [ ] do Harness runs start/complete?;
-  - [ ] do users publish?;
-  - [ ] do users start checkout/subscribe?;
-  - [ ] are users giving feedback/stars?
-- [ ] Add AgentPM-branded Feedback entry in shared site/docs/registry chrome.
-- [ ] Back feedback storage/reporting with PostHog survey capability.
-- [ ] Initial feedback form should capture:
-  - [ ] what user was trying to do;
-  - [ ] what got in the way or surprised them;
-  - [ ] optional email;
-  - [ ] follow-up consent.
-- [ ] Do not make satisfaction score/NPS the primary Stage 1 feedback mechanism.
-- [ ] Add GitHub Issue branch/link for reproducible bugs.
-- [ ] Do not enable session replay in Stage 1.
+  - [x] are people arriving?; Arrivals panel verified with `landing_viewed` unique users / total count, last 7 days, and `environment = development`.
+  - [x] do they reach docs/explore/package pages?; Discovery panel verified with all four discovery events as total counts, last 7 days, and `environment = development`.
+  - [x] do signup starts connect to account creation?; Saved Signup funnel verified with one person completing both steps (100%), Sequential order, and a 7-day conversion window.
+  - [ ] do they install/use the CLI?; Actual CLI-local measurement is deferred to Milestone 10B; the M10A availability card is present.
+  - [x] do installs complete?; Real local-registry install captured and Registry use panel saved with completion-event total counts.
+  - [ ] do Harness runs start/complete?; Actual local Harness measurement is deferred to Milestone 10B; the M10A availability card is present.
+  - [x] do users publish?; Real local-only publish completed and Registry use panel saved with `publish_completed` total count.
+  - [x] do users start checkout/subscribe?; Operator confirmed test checkout and conversion events, then saved Billing intent and conversion with the three expected steps, last 7 days, and `environment = development`. Screenshot shows one person reaching subscription creation at 100% conversion.
+  - [x] are users giving feedback/stars?; Engagement panel verified with `package_starred`, `package_unstarred`, and `feedback_submitted` total counts, last 7 days, and `environment = development`.
+- [x] Add the M10A CLI/Harness availability text card: local telemetry pending Milestone 10B; missing data is not zero usage; registry completions are not CLI/Harness execution counts. Operator confirmed it was added.
+- [x] Billing lifecycle panel saved with `subscription_updated`, `subscription_cancelled`, and `subscription_payment_failed`; operator screenshot shows total counts of 4, 1, and 1 respectively on October 17 UTC.
+- [x] Add AgentPM-branded Feedback entry in shared site/docs/registry chrome.
+- [x] Back feedback storage/reporting with PostHog survey capability. Running API survey with real question IDs; operator confirmed stored answers and separate allowlisted `feedback_submitted` events for both blank email / follow-up No and supplied email / follow-up Yes.
+- [x] Initial feedback form should capture:
+  - [x] what user was trying to do;
+  - [x] what got in the way or surprised them;
+  - [x] optional email;
+  - [x] follow-up consent.
+- [x] Do not make satisfaction score/NPS the primary Stage 1 feedback mechanism.
+- [x] Add GitHub Issue branch/link for reproducible bugs.
+- [x] Do not enable session replay in Stage 1.
+- [ ] Complete live operator acceptance in `manual-tests/ANALYTICS_M10A_SETUP.md`: inspect real payloads and signup linkage; verify survey storage and test-mode billing replay; review production project/survey configuration and privacy/access/retention settings.
+
+Implementation/offline verification is recorded in `test-plan.md`. Milestone 10A
+remains open for the remaining live payload/privacy/production checks and the
+unresolved customer-portal redirect recorded in the test plan;
+mocked acceptance is not evidence that those resources exist. CLI/Harness panels
+must explicitly say pending Milestone 10B rather than imply zero usage.
 
 ## Release Band 6: Product Analytics, Billing Funnel, and Feedback
 Covered milestones: 10A.
