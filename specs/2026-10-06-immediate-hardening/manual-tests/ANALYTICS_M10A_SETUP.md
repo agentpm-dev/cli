@@ -47,7 +47,9 @@ do not assume this removes IPs from existing events.
 
 Open the website landing page, docs article, package detail, namespace page, and
 pricing page. Submit a nonempty search on Explore, then another using the global
-header from a page where it is visible. Each submission should emit exactly one
+header from a page where it is visible. Repeat the global-header submission at
+a mobile viewport or on a phone; it uses a separate component from desktop.
+Each submission should emit exactly one
 `explore_searched` with only `sort` and `filter_count` plus common metadata.
 Typing without submitting, empty/whitespace submissions, and arriving on or
 refreshing the resulting Explore URL must not emit another search event.
@@ -372,6 +374,17 @@ implemented here; those are Milestone 10B.
 
 Scoped M10A operator acceptance is complete. Evidence is operator-reported where
 noted; no new automated tests were run during this final checklist update.
+
+## Mobile Search Follow-up
+
+Post-release testing found that the mobile global header omitted search capture.
+The local fix now uses the existing analytics helper and sort/filter-count
+allowlist, matching desktop. Regression tests and intercepted browser checks
+cover both headers and Explore without sending fixture events to PostHog.
+
+- [x] Reproduce the missing mobile event with behavioral tests and fix the mobile submission path.
+- [x] Verify desktop/mobile Enter and form submission once, silent typing/blank input, no query/cursor in event properties, and no additional event on Explore arrival or reload.
+- [ ] After deploying the web patch, submit a nonempty search from the mobile global header on the production homepage. Confirm exactly one new `explore_searched` in AgentPM Production with production environment, web source, sort Relevance, filter_count 1, and no raw query/URL/IP. Reloading Explore must not emit another search event.
 
 ## Known Residuals
 

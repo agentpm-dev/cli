@@ -639,7 +639,7 @@ Publishing a package that declares `standard` before this CLI is released makes 
 - [x] Implement initial web/registry events:
   - [x] `landing_viewed`;
   - [x] `docs_viewed`;
-  - [x] `explore_searched`; explicit nonempty submissions from Explore and the global header; no capture on results-page arrival/refresh.
+  - [x] `explore_searched`; explicit nonempty submissions from Explore and the desktop/mobile global header; no capture on results-page arrival/refresh. The post-release mobile omission is fixed and locally verified; its deployment/recheck is tracked in the manual guide.
   - [x] `package_viewed`;
   - [x] `namespace_viewed`;
   - [x] `signup_started`;
