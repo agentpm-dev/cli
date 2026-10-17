@@ -683,6 +683,42 @@ checks do not establish signature validity or successful customer authentication
 Root cause and customer cancellation through the portal remain unresolved; do
 not classify this as an expected test-mode restriction or a passed portal flow.
 
+#### Milestone 10A Mobile Global Search Follow-up
+
+Post-release operator testing identified a separate active mobile-header
+component, `MobileGobalSearchClient.tsx`, that routed to Explore without calling
+the analytics helper. Added capture at the existing nonempty submission point,
+using the same `explore_searched` event, Relevance sort, and filter-count
+calculation as desktop. No query, URL, or new event property is captured.
+
+Expanded `SearchAnalytics.test.tsx` to exercise the real capture helper through
+desktop header, mobile header, and Explore. Before the fix, three mobile cases
+failed with zero requests; after the fix all 17 cases pass. They cover Enter and
+form submission exactly once, silent typing and blank submissions, no event on
+mount/rerender, exact allowlisted payloads, preserved search navigation, and no
+second event when arriving on Explore.
+
+Follow-up verification:
+
+- Full web suite: **215 passed** across 59 files; typecheck passed.
+- Lint passed with the same six existing unused-symbol warnings. Prettier check
+  passed for both changed TSX files and the updated API MDX documentation.
+- API documentation pre-commit text hooks passed; Python hooks were skipped
+  because no Python files changed in this follow-up.
+- Isolated production build passed, including all 30 static pages. No secrets
+  were copied into the build fixture and the running dev server's `.next` cache
+  was not replaced.
+- Headless Chrome at 390x844 and 1440x1000 against the local dev server verified
+  one search event per header submission, no typing/Explore-arrival/reload event,
+  and a second event only after explicit Explore submission. Both requests had
+  only the expected event/sort/filter-count fields; no page errors occurred.
+  Analytics requests were intercepted, not sent to PostHog. Screenshots were
+  inspected for the mobile header and saved in `/private/tmp/agentpm-search-*`.
+
+Production mobile-header capture after deployment remains an unchecked operator
+follow-up in the manual guide; the earlier production acceptance did not cover
+this separate mobile component.
+
 #### Milestone 10B Dashboard Acceptance (Pending Implementation)
 
 The two unchecked dashboard questions under M10A are owned by the explicit M10B
