@@ -293,11 +293,42 @@ and project token, set `POSTHOG_ENVIRONMENT=production`, and copy the single
 dashboard with production filters. Review privacy copy and access/retention
 settings for feedback (which can contain personal information).
 
+Use the Development dashboard's actions sidebar -> **Copy to another project**
+to create an independent copy in AgentPM Production, including new copies of
+its insights. In the production copies, change saved `environment` filters to
+`production`; leave the Development dashboard and insights unchanged. Keep
+public sharing disabled on the production copy too. An empty production chart
+before deployment is expected and is not live capture verification.
+
 Operator confirmed the organization has used Pay-as-you-go from initial setup;
 no plan upgrade was requested or performed. PostHog's current
 [pricing documentation](https://posthog.com/pricing) states paid-plan events and
-metadata are retained for seven years. This is not an approved AgentPM feedback
-retention/deletion policy; that review and production-project setup remain open.
+metadata have seven-year paid-plan retention. After reviewing that this also
+applies to stored survey text and optional email, operator accepted the existing
+provider retention for this release. No shorter cleanup policy or automatic
+deletion was added; this does not promise deletion exactly at seven years.
+Production deployment/verification remains open. Operator supplied the
+production API survey JSON with the expected
+four questions and `start_date: 2026-10-17T03:09:01.260000Z`, `end_date: null`,
+confirming launch. Operator confirmed all specified backend/web environment
+values were added to Render and explicitly saved without redeploying; deployment
+was planned with the M10A code push, which the operator now reports is pushed
+out. Successful service rollout and live checks are not yet independently
+verified. Operator also confirmed all dashboard panels
+were copied to Production and their filters changed to `environment = production`.
+Operator separately confirmed public sharing is disabled on the Production
+dashboard. Operator then observed live `landing_viewed` events in AgentPM
+Production, with production environment, web source, contract version 1, GeoIP
+disabled, and no IP property in the shared property list. This verifies the
+production web-to-registry capture path and stored-event IP suppression for the
+homepage event. Operator then confirmed the production smoke-test feedback was
+stored under the correct four survey questions, with blank email and follow-up
+No. Operator also supplied the separate `feedback_submitted` property list with
+production environment, registry source, contract version 1, both flags false,
+GeoIP disabled, and no answers, email, or IP. Production feedback storage and
+generic-event separation are accepted. Operator confirmed the Production
+dashboard charts update and that additional real star/unstar actions appear in
+Engagement. Dashboard live data and production star/unstar capture are accepted.
 
 No CLI instrumentation, CLI opt-out contract, or CLI privacy-policy rollout is
 implemented here; those are Milestone 10B.
@@ -307,12 +338,20 @@ implemented here; those are Milestone 10B.
 - [x] Development project named and region confirmed.
 - [x] Development project token placed in local web/backend environment settings.
 - [x] Development: Discard client IP data enabled and verified on a new event.
-- [ ] Production: Discard client IP data enabled and verified on a new event.
-- [ ] Real development payloads inspected in PostHog.
+- [x] Production API feedback survey created with the expected four questions and launched; operator supplied its JSON with a start date and no end date.
+- [x] Production backend/web PostHog environment values added to Render, confirmed by operator; no secrets were shared.
+- [x] Independent Claude code review completed; operator reported everything looked good. This does not establish live production behavior or resolve the recorded portal issue.
+- [x] Operator reported the M10A release was pushed out; successful service rollout and live capture remain separate verification steps.
+- [x] Production release reported pushed out; operator's live `landing_viewed` verifies the deployed web-to-registry capture path with the production environment configuration. Render build logs were not independently inspected.
+- [x] Production: operator inspected a new `landing_viewed` event with GeoIP disabled and no IP property in the shared property list.
+- [x] Production feedback submission stored under the correct survey questions; operator confirmed the smoke-test answers, blank email, and follow-up No.
+- [x] Production `feedback_submitted` property list inspected: production environment, registry source, contract version 1, has_email false, follow_up false, GeoIP disabled, and no answers/email/IP.
+- [x] Production dashboard displays real capture data; operator confirmed updating charts and real star/unstar actions appearing in Engagement.
+- [x] Development ordinary-event payload spot-check completed: operator reported no unexpected properties after inspecting existing explore_searched, package_viewed, package_install_completed, and publish_completed against their allowlists.
 - [x] API survey configured and real feedback storage verified with blank email / follow-up No.
 - [x] Survey confirmed active/launched; email supplied / follow-up Yes verified in survey reporting and event flags.
 - [x] Real local-registry install produced `package_install_completed` in PostHog.
-- [x] Real local-only publish completed and `publish_completed` is included in the saved Registry use panel. Full event-property inspection remains tracked above.
+- [x] Real local-only publish completed and `publish_completed` is included in the saved Registry use panel. Event-property spot-check is accepted above.
 - [x] ngrok callback reaches the local backend and rejects an unsigned request with HTTP 403 / Invalid webhook signature.
 - [x] Checkout visibly indicates test mode and real `pricing_viewed` / `checkout_started` events appear in PostHog.
 - [x] Test purchase produced `subscription_started` with `plan: pro`, `test_mode: true`, `source: registry`, and `environment: development`; shared properties and GeoIP disabled also confirmed.
@@ -322,8 +361,25 @@ implemented here; those are Milestone 10B.
 - [x] Operator confirmed PostHog still contains only one `subscription_started` after duplicate replay. The two `subscription_updated` events correspond to distinct `subscription_updated` and `subscription_payment_success` webhook deliveries, verified from database event names and timestamps.
 - [x] Early Product Funnel dashboard created and fresh-signup identity linkage verified.
 - [x] Billing intent and conversion funnel saved; screenshot verifies the three expected steps, development filter, and one person reaching subscription creation at 100% conversion.
-- [ ] Resolve customer portal access: enabled portal and fresh signed test-mode link redirect to merchant dashboard (regular session) or Lemon Squeezy login (fresh Incognito). Cause is unconfirmed; a merchant-side cancellation does not verify the customer portal flow.
 - [x] Remaining M10A dashboard insights configured and verified: Billing lifecycle screenshot shows all three required lifecycle events with total counts.
 - [x] Organization membership reviewed: operator confirmed they are the sole member. Dashboard public sharing, retention, and production access settings are not established by this check.
+- [x] Development Early Product Funnel dashboard public sharing disabled, confirmed by operator.
+- [x] Production Early Product Funnel dashboard and insights copied; all environment filters changed to production, confirmed by operator.
+- [x] Production Early Product Funnel dashboard public sharing disabled, confirmed by operator.
 - [x] Existing billing plan confirmed as Pay-as-you-go; no plan upgrade required for the planned separate production project.
-- [ ] Privacy/access/retention and production-project configuration reviewed.
+- [x] Existing provider retention reviewed and accepted for this release, including survey text and optional email; no shorter cleanup policy or automation added.
+- [x] Predeployment access, dashboard sharing, retention, and production survey/environment/dashboard configuration reviewed. Subsequent live payload and production smoke checks are accepted above.
+
+Scoped M10A operator acceptance is complete. Evidence is operator-reported where
+noted; no new automated tests were run during this final checklist update.
+
+## Known Residuals
+
+- Customer portal access remains unresolved: enabled portal and fresh signed
+  test-mode link redirect to the merchant dashboard (regular session) or Lemon
+  Squeezy login (fresh Incognito). Merchant-side cancellation verifies the
+  analytics webhook, not the customer portal flow. This is recorded separately
+  from M10A's analytics acceptance, not classified as expected behavior.
+- Invoice-style payment events lacking product/variant IDs emit `plan: unknown`;
+  event delivery is verified, but plan-level classification is limited.
+- Local CLI/Harness telemetry remains deferred to M10B, not implemented here.

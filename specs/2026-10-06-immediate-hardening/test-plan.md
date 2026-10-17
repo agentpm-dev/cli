@@ -607,12 +607,72 @@ lifecycle** daily line chart with `subscription_updated`,
 the screenshot does not independently show its environment-filter setting.
 
 Access review: operator confirmed they are the only PostHog organization member.
-This accepts the organization-membership check, not public dashboard-sharing,
-retention, or production-project settings, which remain to be reviewed.
+This accepts the organization-membership check. Operator separately confirmed
+public sharing is disabled on the Development Early Product Funnel dashboard.
+Operator subsequently confirmed public sharing is disabled on the Production
+copy too.
 Operator also confirmed Pay-as-you-go was selected at initial setup; no billing
 change was made. PostHog's pricing documentation lists seven-year event/metadata
-retention for paid plans. The organization-specific retention/deletion decision
-for feedback and the separate production-project configuration remain open.
+retention for paid plans. After being informed that stored survey text and
+optional email use that retention, operator accepted the provider default for
+this release. No shorter retention/deletion automation was introduced, and this
+is not a promise of deletion exactly at seven years. The predeployment
+access/sharing/retention/configuration review is accepted; remaining payload
+inspection and production verification checks stay open.
+
+Production survey: operator supplied the API survey JSON with the expected four
+questions, optional email and follow-up, and Yes/No choices. The subsequent JSON
+has `start_date: 2026-10-17T03:09:01.260000Z` and `end_date: null`, confirming
+launch. Survey configuration is accepted. Operator subsequently confirmed all
+specified production backend/web environment values were added to Render;
+secrets were not shared or inspected. Environment configuration is recorded as
+operator-confirmed, not deployed verification. Backend deployment, web rebuild,
+and the live checks will follow the M10A code push: operator explicitly chose
+to save Render environment values without redeploying. In particular,
+deployed event capture and feedback storage, IP suppression, and the remaining
+privacy checks are not yet verified. Operator confirmed all dashboard panels
+were copied to Production and saved with `environment = production` filters.
+Production dashboard configuration and disabled public sharing on that copy
+are accepted; live production data is not yet verified.
+
+Independent review: operator confirmed Claude's code review is already complete
+and everything looked good. This is operator-reported review acceptance, not a
+new test run, deployment confirmation, or resolution of the portal residual.
+
+Release progress: operator subsequently reported everything was pushed out.
+The release push is recorded; successful backend/web service rollout and live
+production event capture, IP suppression, and feedback storage still require
+verification. No deploy or runtime check was performed by the builder here.
+Operator subsequently observed `landing_viewed` events in AgentPM Production
+and shared properties from the event at `2026-10-17T04:11:04.638Z`:
+`environment: production`, `source: web`, `contract_version: 1`, and GeoIP
+disabled, without an IP property. This accepts the deployed web-to-registry
+capture path and stored-event IP suppression for that event. It is not
+independent inspection of Render build logs or verification of production
+feedback storage and dashboard data, which remain open.
+
+Production feedback storage: operator supplied the stored AgentPM Feedback
+response from the production smoke test. Goal and obstacle appeared under the
+correct questions, email was blank, and follow-up was No. Survey storage and
+question mapping are accepted. Operator then supplied the separate
+`feedback_submitted` event at `2026-10-17T04:14:21.632Z` with
+`environment: production`, `source: registry`, `contract_version: 1`,
+`has_email: false`, `follow_up: false`, and GeoIP disabled. The shared property
+list contains no answers, email, or IP. Generic feedback-event flags and
+separation from survey content are accepted for this production submission.
+
+Production dashboard: operator confirmed charts now update with production
+data. They also performed real star and unstar actions and observed those events
+in Engagement. This accepts production dashboard data and star/unstar capture;
+the ordinary-event payload spot-check was completed afterward. Operator reported
+no unexpected properties when inspecting existing Development
+`explore_searched`, `package_viewed`, `package_install_completed`, and
+`publish_completed` against their allowlists. The privacy spot-check and scoped
+M10A live operator acceptance are complete. The portal redirect and invoice-event
+plan-attribution limitation remain recorded residuals, not resolved by these
+analytics checks. CLI/Harness emission remains outside M10A and deferred to M10B.
+This final checklist update did not change application code or rerun automated
+tests; the earlier automated results and baseline hook limitations still apply.
 
 Customer portal residual: Manage billing returns HTTP 200 and a URL at
 `https://agentpm.lemonsqueezy.com/billing` with a signature, expiry, and
@@ -622,6 +682,27 @@ redirects to the merchant dashboard in the regular session and to
 checks do not establish signature validity or successful customer authentication.
 Root cause and customer cancellation through the portal remain unresolved; do
 not classify this as an expected test-mode restriction or a passed portal flow.
+
+#### Milestone 10B Dashboard Acceptance (Pending Implementation)
+
+The two unchecked dashboard questions under M10A are owned by the explicit M10B
+dashboard tasks, not satisfied by emitting the events alone. Verify:
+
+- The existing Early Product Funnel dashboard in both Development and Production
+  contains a CLI adoption chart based on `cli_first_used` and unique anonymous
+  installations, matching the chosen first-use frequency. It is not presented
+  as all CLI command usage or package installs.
+- A Harness activity chart shows `harness_started` and `harness_completed`
+  counts matching real Development test runs; opt-out emits no local events.
+- Each project's saved insights use the correct environment filter. Verify
+  production capture after the Release Band 7 rollout without fake events.
+- Update the M10A availability card only after release and verification. Preserve
+  the registry-completion/local-execution distinction and the disclosure that
+  missing or opted-out telemetry does not establish zero usage. Do not imply
+  that anonymous CLI installations are identified website accounts.
+
+These are future acceptance checks; no M10B telemetry or charts were implemented
+or verified when adding this tracking section.
 
 ### Python dependency schema / lock / runtime environment
 
