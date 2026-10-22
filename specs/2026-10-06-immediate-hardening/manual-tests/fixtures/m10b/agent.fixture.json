@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
+  "kind": "agent",
+  "name": "telemetry-fixture",
+  "version": "0.1.0",
+  "description": "Local M10B telemetry fixture; no real model calls.",
+  "tools": [],
+  "loop": "@fixture/telemetry-loop@0.1.0"
+}

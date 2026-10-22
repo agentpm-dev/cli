@@ -2,6 +2,14 @@
 
 Command-line tool for building, publishing, installing, and validating AgentPM packages.
 
+**Telemetry:** minimal anonymous CLI/Harness usage events are enabled by default.
+Only version/platform, a random installation ID, Harness surface and terminal
+outcome are collected, never prompts, Tool I/O, paths, secrets or package
+identities. Disable with `AGENTPM_TELEMETRY=0` or `[telemetry] enabled = false`
+in the existing CLI `config.toml`. See
+[analytics and opt-out details](https://www.agentpackagemanager.com/docs/latest/advanced/analytics-and-feedback)
+and the [Privacy Policy](https://www.agentpackagemanager.com/privacy).
+
 AgentPM currently supports eight package kinds:
 
 - **tools**: executable capabilities with entrypoints, runtime requirements, inputs, and outputs

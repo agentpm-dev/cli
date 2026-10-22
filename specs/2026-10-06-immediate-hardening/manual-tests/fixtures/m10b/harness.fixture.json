@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "model": { "provider": "openai", "model": "telemetry-fixture" },
+  "trace": { "enabled": false },
+  "runtime": { "limits": { "max_steps": 2 } }
+}

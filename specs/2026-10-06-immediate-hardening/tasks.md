@@ -505,7 +505,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [x] Verify all eight `init` kinds lint clean immediately.
 - [x] **Cross-stage, ship with this milestone's CLI release:** add `standard` to the manifest schema's root `properties` with a permissive shape so the field is *accepted and ignored*. Do not emit it, validate it, or require it — Stage 2 M3A owns emission. Rationale: the root is `additionalProperties: false`, so once Stage 2 publishes packages declaring `standard`, every CLI released before this change hard-fails `agentpm lint` (exit 1) and fails `agentpm new` inside `validate_generated_manifests_blocking`. Relax the root by **this one field only**; a misspelled top-level key must still be rejected. See Stage 2 `spec.md` §2 "Old-client forward compatibility" and Stage 2 M1A.1.
 - [x] Verify the `standard` field survives every manifest-rewriting path: `agentpm install <pkg>` write-back and `knowledge build` (which writes by default; there is no `--write` flag) must preserve it. Regression tests use `standard` plus one extra unknown key; Knowledge build uses a local schema override for the extra key so the bundled root stays closed. Keep `serde_json` pinned without `preserve_order`; alphabetized rewrites are expected and lose nothing.
-- [ ] Record the released CLI version carrying this tolerance change — Stage 2 M4B names it as the minimum CLI version in its outdated-client error. Release target: **0.1.35**; preparation is complete, but publication confirmation remains pending under Release Band 5.
+- [ ] Record the released CLI version carrying this tolerance change — Stage 2 M4B names it as the minimum CLI version in its outdated-client error. Release target: **0.1.36**, prepared in Release Band 7 and recorded in the Band 5 handoff below; actual publication remains unconfirmed. Stage 2 M3A must not emit `standard` until publication of **0.1.36** is confirmed.
 - [x] Refactor human lint rendering:
   - [x] semantic/domain errors first;
   - [x] suppress redundant parent oneOf/anyOf errors when covered by a more specific descendant/domain error;
@@ -540,7 +540,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [x] Add a reproducible operator runbook and disposable fixtures: `specs/2026-10-06-immediate-hardening/manual-tests/CLI_M8_MANUAL_TESTS.md` and `scripts/cli_m8_manual.py`.
 - [ ] Complete the operator walkthrough and record readability/unexpected-output notes in the runbook. Builder smoke checks do not replace this manual acceptance.
 
-Implementation and verification completed 2026-10-15; see `specs/2026-10-06-immediate-hardening/test-plan.md`, "Milestone 8 evidence". The schema tolerance is implemented. Release Band 5 prepares **0.1.35** as its first shipping version; publication confirmation remains open. Published `0.1.34` must not be used as the new compatibility floor.
+Implementation and verification completed 2026-10-15; see `specs/2026-10-06-immediate-hardening/test-plan.md`, "Milestone 8 evidence". The schema tolerance is implemented. The designated first shipping tolerance version is now **0.1.36**, prepared in Release Band 7 on **2026-10-22**, superseding the original **0.1.35** preparation target. Publication confirmation remains open; neither earlier versions nor prepared metadata satisfy the Stage 2 compatibility gate.
 
 ## Milestone 9: CLI Error and Success Consistency
 > Scope note: make non-Harness CLI success/failure behavior feel like one coherent product by centralizing transport errors, correcting exit codes, normalizing sibling inspect output, and cleaning up low-level path/filesystem leaks. This milestone does not alter Harness output, introduce new package/runtime capabilities, change machine-readable contracts beyond explicitly specified fixes, or absorb the Python portability work from later milestones.
@@ -606,16 +606,18 @@ Implementation and automated verification completed 2026-10-16; see "Milestone 9
 Covered milestones: 8-9.
 This gives us trustworthy scaffolding, lint output that explains what is actually wrong (including the `oneOf`/`anyOf` cases that currently produce unusable messages), and consistent error/success wording and exit codes across non-Harness commands. Ship it before the dependency/release work because that work adds new failure modes to the same messaging surface. Deploy the registry's opt-in strict install-token handling before or with the CLI: the new client recognizes its existing 401 contract, but cannot distinguish rejected credentials from anonymous not-found responses sent by an older registry.
 
-**🚦 On release, record the published CLI version — this band carries a cross-stage gate.** Milestone 8 added the permissive root `standard` field so already-released CLIs tolerate manifests that declare it. That tolerance only exists for users once a CLI carrying it ships, so the released version number becomes the **minimum CLI version** for the whole APDS rollout. Two things depend on it and cannot proceed until it is recorded:
+**🚦 On release, record the published CLI version — this band carries a cross-stage gate. The designated tolerance-release floor is now CLI 0.1.36, prepared in Release Band 7; publication is still unconfirmed.** Milestone 8 added the permissive root `standard` field so clients carrying that change tolerate manifests that declare it. That tolerance only exists for users once a CLI carrying it ships, so **0.1.36** becomes the **minimum CLI version** for the whole APDS rollout once actually published. Stage 2 emission cannot proceed until that publication is confirmed and recorded:
 
-- [x] Prepare CLI **0.1.35** (`v0.1.35`) and the matching website status-page release date **2026-10-16**. CLI crate and lockfile agree; SDK version markers are unchanged.
-- [x] Record CLI **0.1.35** as the Release Band 5 tolerance-release version and hand publication confirmation to the operator. Checked off at the operator's request; they will personally confirm publication. This is not independent verification that the release is already live.
-- [x] Hand **0.1.35** to the Stage 2 track as the designated tolerance-release floor: recorded in Stage 2 `spec.md` and M1A.1/M3A/M4B in `tasks.md`. **Stage 2 M4B** must name this version in its outdated-client error, and **Stage 2 M3A** must not emit `standard` until publication of **0.1.35** is confirmed.
+- [x] Original preparation: CLI **0.1.35** (`v0.1.35`) and matching website status date **2026-10-16**. This historical preparation target is superseded by **0.1.36** / **2026-10-22** under Release Band 7; it is not the APDS minimum floor or evidence that the tolerance change shipped.
+- [x] Record CLI **0.1.36** as the designated tolerance-release version carrying M8 and hand publication confirmation to the operator. This records the target only, not an already-published release. M8's actual-publication task remains unchecked.
+- [x] Hand **0.1.36** to the Stage 2 track as the designated tolerance-release floor: recorded in Stage 2 `spec.md` and M1A.1/M3A/M4B in `tasks.md`. **Stage 2 M4B** must name this version in its outdated-client error, and **Stage 2 M3A remains blocked from emitting `standard` until publication of 0.1.36 is confirmed.**
 
-Release handoff prepared **2026-10-16**. Actual publication/deployment is still
-operator-owned and unconfirmed. Deploy the registry first, then publish CLI
-`v0.1.35`, then deploy the website with its matching status marker. Once the CLI
-release is confirmed, complete the publication record in M8 and
+Release handoff updated **2026-10-22** to use **0.1.36**, superseding the
+**2026-10-16** target of **0.1.35**. Actual publication/deployment is still
+operator-owned and unconfirmed. Follow Release Band 7's gate: deploy the
+registry, docs and Privacy Policy first, then publish CLI `v0.1.36`, then deploy
+the website with its matching status marker. Once the CLI release is confirmed,
+complete the publication record in M8 and
 Stage 2 M1A.1's release task; until then the Stage 2 emission gate stays closed.
 
 Publishing a package that declares `standard` before this CLI is released makes `agentpm lint` hard-fail (exit 1) and `agentpm new` fail inside `validate_generated_manifests_blocking` for every user on an older build — and published packages are immutable, so it cannot be walked back.
@@ -705,54 +707,87 @@ This gives us the small deliberate analytics vocabulary, authoritative server-si
 > - Use a strict event/property allowlist. Do not pass broad application objects to PostHog and rely on redaction later.
 > - Never collect prompts, Tool I/O, Harness conversation content, file contents, paths, env vars, secrets, package contents, or private package identities.
 > - The Privacy Policy update is part of this milestone, not a follow-up: shipping collection before disclosure is not acceptable.
+> - **`harness_started`/`harness_completed` are per Harness *run*, not per session.** The engine allocates both (`allocate_harness_session_id` and `allocate_harness_run_id`, with `start_run()` separate from session creation), and a TUI session hosts many runs while a headless invocation is typically one. Per-session counting would make TUI and headless incomparable — twenty TUI prompts would register once, twenty headless invocations twenty times. `cli_first_used` already answers adoption; this pair answers activity, so it is emitted once per run with the surface carried as the runtime-mode enum.
+> - **A missing `harness_completed` is an upper bound on failures, not a failure rate.** SIGKILL, a panic, machine sleep, a failed send, or opting out mid-session all produce a started event with no completion. Say so on the dashboard card rather than presenting the delta as a clean failure count — reuse the M10A framing that missing data is not evidence of zero usage.
+> - **Telemetry must never delay or alter process exit.** `harness_completed` fires on the exit path, so delivery is fire-and-forget with a hard timeout: it must not block exit, must not change the exit code, and a failed send must never surface as a Harness failure. This matters most for headless/CI runs.
 
-- [ ] Add minimal CLI telemetry:
-  - [ ] `cli_first_used`;
-  - [ ] `harness_started`;
-  - [ ] `harness_completed`.
+- [x] Add minimal CLI telemetry:
+  - [x] `cli_first_used`;
+  - [x] `harness_started`;
+  - [x] `harness_completed`.
 - [ ] Extend the existing Early Product Funnel dashboard in Development and Production with the two questions deferred from M10A; do not create a separate dashboard:
-  - [ ] Add a CLI adoption chart using `cli_first_used` and unique anonymous installations, consistent with the first-use semantics chosen below. Do not label it as a count of all CLI commands or package installs.
-  - [ ] Add a Harness activity chart showing `harness_started` and `harness_completed` event counts.
+  - [x] Add a CLI adoption chart using `cli_first_used` and unique anonymous installations, consistent with the first-use semantics chosen below. Do not label it as a count of all CLI commands or package installs.
+  - [x] Add a Harness activity chart showing `harness_started` and `harness_completed` event counts. Label it as **per-run** activity and break it down by surface, so TUI sessions and headless invocations are not silently summed as if equivalent. Note on the chart that a missing completion is an upper bound on failures, not a failure rate.
   - [ ] Save the correct environment filters in each project's new insights and verify their counts with real CLI/Harness test activity in Development, then live capture after the Release Band 7 production rollout. Do not inject fake production events to populate charts.
   - [ ] Update the M10A availability card after local telemetry is released and verified; keep the distinction between registry completions and local execution, and explain that missing/opted-out telemetry is not evidence of zero usage.
-- [ ] Decide whether `cli_first_used` is once per anonymous installation or once per CLI version; prefer once per installation unless product analysis requires version-level adoption.
-- [ ] Generate/store anonymous install ID:
-  - [ ] non-secret random identifier;
-  - [ ] stable across CLI runs;
-  - [ ] not derived from machine serial, username, path, or other identifying system data.
-- [ ] Add strict telemetry property allowlist.
-- [ ] Allowed CLI properties should be limited to fields such as:
-  - [ ] event;
-  - [ ] CLI version;
-  - [ ] OS family;
-  - [ ] CPU architecture;
-  - [ ] anonymous install ID;
-  - [ ] small runtime-mode enum where needed.
-- [ ] Add `AGENTPM_TELEMETRY=0` support.
-- [ ] Add persistent config opt-out if existing config architecture supports it cleanly.
-- [ ] Ensure telemetry never sends:
-  - [ ] prompts;
-  - [ ] Tool I/O;
-  - [ ] Harness conversation content;
-  - [ ] Tool args/results;
-  - [ ] paths;
-  - [ ] env vars;
-  - [ ] secrets;
-  - [ ] package contents;
-  - [ ] private package identities.
-- [ ] Update Privacy Policy to disclose:
-  - [ ] web/product analytics;
-  - [ ] minimal CLI telemetry;
-  - [ ] categories of data collected;
-  - [ ] explicit excluded data categories;
-  - [ ] anonymous install identifier;
-  - [ ] opt-out mechanism;
-  - [ ] PostHog as relevant service/provider;
-  - [ ] feedback form data including optional email.
+
+Development progress (operator-confirmed 2026-10-22): both new insights are
+saved in Early Product Funnel with `environment = development` and `source = cli`.
+CLI adoption shows one unique installation; Harness totals show one headless
+start/completion pair and two TUI pairs, broken down by `runtime_mode`, with the
+missing-completion caveat. Live events share a stable `cli_` distinct ID.
+Operator also confirmed both copied insights appear on the existing Production
+dashboard. Production screenshots verify saved `environment = production` and
+`source = cli` filters on both insights, correct aggregations, and the Harness
+surface breakdown/caveat. Operator confirmed Production dashboard public sharing
+remains disabled. Post-release capture and availability-card updates remain
+pending; the checklist is not yet complete.
+
+- [x] Decide whether `cli_first_used` is once per anonymous installation or once per CLI version; prefer once per installation unless product analysis requires version-level adoption. **Chosen: once per installation, best-effort attempt.**
+- [x] Record the `harness_started`/`harness_completed` contract before instrumenting, since redefining an event's meaning later invalidates the chart's history:
+  - [x] confirm the agreed **per-run** granularity (not per session) and that the surface — `tui`, `headless`, `machine` — is the runtime-mode enum;
+  - [x] decide whether `harness_completed` fires on failure as well as success. **Chosen: success and handled failure, with the closed terminal-outcome enum recorded in `analytics-contract.md` before instrumentation.** The Loop's terminal targets (`$end`, `$abort`, `$handoff`) and max-steps exhaustion are structural facts, not conversation content;
+  - [x] if `harness_completed` instead fires only on success, state plainly that `started − completed` conflates failures, cancellations and crashes. **Not applicable: not success-only; missing completion is still not a failure rate.**
+- [x] Generate/store anonymous install ID:
+  - [x] non-secret random identifier;
+  - [x] stable across CLI runs;
+  - [x] not derived from machine serial, username, path, or other identifying system data.
+- [x] Add strict telemetry property allowlist.
+- [x] Allowed CLI properties should be limited to fields such as:
+  - [x] event;
+  - [x] CLI version;
+  - [x] OS family;
+  - [x] CPU architecture;
+  - [x] anonymous install ID;
+  - [x] runtime-mode enum: the Harness surface (`tui`, `headless`, `machine`);
+  - [x] terminal-outcome enum on `harness_completed`, **only if** the decision above adopts it.
+- [x] Add `AGENTPM_TELEMETRY=0` support.
+- [x] Add persistent config opt-out if existing config architecture supports it cleanly.
+- [x] Ensure telemetry never sends:
+  - [x] prompts;
+  - [x] Tool I/O;
+  - [x] Harness conversation content;
+  - [x] Tool args/results;
+  - [x] paths;
+  - [x] env vars;
+  - [x] secrets;
+  - [x] package contents;
+  - [x] private package identities.
+- [x] Update Privacy Policy to disclose:
+  - [x] web/product analytics;
+  - [x] minimal CLI telemetry;
+  - [x] categories of data collected;
+  - [x] explicit excluded data categories;
+  - [x] anonymous install identifier;
+  - [x] opt-out mechanism;
+  - [x] PostHog as relevant service/provider;
+  - [x] feedback form data including optional email.
+
+Implementation and local verification: see `test-plan.md` and
+`manual-tests/CLI_M10B_MANUAL_TESTS.md`. Development capture and both dashboards'
+configuration are verified as recorded above; real Production capture and the
+availability-card update remain open until rollout. Deploy the API/docs/Privacy
+Policy before distributing the CLI. Release preparation is tracked below and
+does not itself publish, deploy, or close Release Band 7.
 
 ## Release Band 7: CLI Telemetry and Privacy Contract
 Covered milestones: 10B.
 This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a strict event/property allowlist, working opt-out mechanisms, the matching Privacy Policy update, and CLI adoption / Harness activity charts in the existing Early Product Funnel dashboard. It is its own band for two reasons: it ships inside the Rust binary rather than on a web deploy, and it has a legal gate. Collection must not go out ahead of disclosure, and a partially implemented allowlist or opt-out is a privacy defect rather than an incomplete feature, so this band is strictly all-or-nothing.
+
+- [x] Prepare CLI **0.1.36** (`v0.1.36`) and matching website status-page date **2026-10-22**, keeping SDK versions unchanged. Crate/lockfile agree; binary reports `agentpm 0.1.36`. Verification is recorded in `test-plan.md`.
+- [ ] Deploy the Registry/API, docs and Privacy Policy; confirm the disclosure is public before publishing the telemetry-enabled CLI.
+- [ ] Publish CLI **0.1.36**, then deploy the website with the matching status marker.
+- [ ] Verify real Production CLI/Harness capture and chart counts, then update the availability card and close the remaining M10B dashboard acceptance.
 
 ## Milestone 11A: Python Dependency Declaration and Resolution
 > Scope note: establish what a new-format Python Tool may declare and how AgentPM resolves it to exact portable state. Owns the canonical AgentPM target identifier, the `agent.json` dependency surface and its lint rules, the fixed `PythonResolution` v1 contract, and AgentPM-managed `uv` resolution. Produces resolution state but does not yet persist it in `agent.lock` (11B) or install it into a runtime environment (11C).

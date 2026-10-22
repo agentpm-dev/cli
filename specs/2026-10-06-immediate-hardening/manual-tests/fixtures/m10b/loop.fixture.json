@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
+  "kind": "loop",
+  "name": "telemetry-loop",
+  "version": "0.1.0",
+  "description": "Single-phase local fixture.",
+  "loop": {
+    "entry_phase": "respond",
+    "phases": [
+      {
+        "id": "respond",
+        "objective": "Respond with the fixture result.",
+        "outcomes": [{ "id": "complete", "description": "Finished." }]
+      }
+    ],
+    "transitions": [{ "from": "respond", "on": "complete", "to": "$end" }]
+  }
+}

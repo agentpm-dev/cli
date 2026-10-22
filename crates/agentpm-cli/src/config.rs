@@ -68,7 +68,7 @@ fn default_base_url() -> String {
     }
 }
 
-fn project_dirs() -> Option<ProjectDirs> {
+pub(crate) fn project_dirs() -> Option<ProjectDirs> {
     // domain, organization, application
     // These values define OS-specific dirs like:
     // macOS: ~/Library/Application Support/com.agentpm/AgentPM

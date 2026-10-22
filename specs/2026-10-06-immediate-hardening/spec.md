@@ -516,7 +516,32 @@ Allowed examples:
 - OS family;
 - CPU architecture;
 - anonymous install ID;
-- limited runtime mode metadata.
+- runtime-mode enum (`tui`, `headless`, `machine`) for Harness events;
+- terminal-outcome enum on `harness_completed`: `ended`, `handed_off`, `aborted`, `failed`,
+  `cancelled`, `limit_reached`, `approval_required`.
+
+Milestone 10B adopts `cli_first_used` once per anonymous installation, not per CLI version. First use
+is a best-effort, once-only attempt; an atomic local claim prevents concurrent duplicate attempts.
+
+**Harness event granularity.** `harness_started` and `harness_completed` are emitted once per Harness
+**run**, not per session. The engine allocates session and run identifiers separately, and a TUI session
+hosts many runs while a headless invocation is typically one — counting per session would make the two
+surfaces incomparable. `cli_first_used` answers adoption; this pair answers activity. The runtime-mode
+value is the execution surface: `tui`, `headless`, or `machine`.
+
+Milestone 10B adopts `harness_completed` for success and handled failure, including cancellation,
+with the terminal-outcome enum explicitly allowlisted above. Paused interactive approval is not
+completion; terminal approval-required is. A terminal outcome (`$end`, `$abort`, `$handoff`, max-steps
+exhaustion) is a structural fact rather than conversation content. The shared contract and transport
+decisions are recorded in `analytics-contract.md`.
+
+A missing `harness_completed` is an upper bound on failures, not a failure rate: a kill signal, panic,
+machine sleep, failed delivery, or mid-session opt-out all leave a start without a completion. Report it
+that way wherever the delta is shown.
+
+Telemetry must never delay or alter process exit. `harness_completed` fires on the exit path, so delivery
+is fire-and-forget with a hard timeout — it must not block exit, must not change the exit code, and a
+failed send must never surface as a Harness failure.
 
 Never collect:
 

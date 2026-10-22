@@ -20,6 +20,7 @@ mod prelude;
 mod runner;
 mod runtime_version;
 mod semver;
+mod telemetry;
 mod ui;
 mod workspace;
 /*
@@ -33,7 +34,7 @@ Add a hosts entry if you want a pretty domain:
  */
 
 #[derive(Parser)]
-#[command(name = "agentpm", version, about = "AgentPM CLI")]
+#[command(name = "agentpm", version, about = "AgentPM CLI", after_help = telemetry::DISCLOSURE)]
 struct Cli {
     /// API base URL (env: AGENTPM_BASE_URL)
     #[arg(
@@ -64,6 +65,17 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let mode = match &cli.command {
+        commands::Commands::Harness(args) => Some(if args.machine {
+            telemetry::RuntimeMode::Machine
+        } else if args.headless {
+            telemetry::RuntimeMode::Headless
+        } else {
+            telemetry::RuntimeMode::Tui
+        }),
+        _ => None,
+    };
+    telemetry::initialize(&cli.base_url, mode);
     let registry_action = match &cli.command {
         commands::Commands::Install(args) => Some(format!(
             "install {}",

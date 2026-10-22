@@ -21,6 +21,7 @@ fn machine_run_success_writes_single_stdout_envelope() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_agentpm"))
+        .env("AGENTPM_TELEMETRY", "0")
         .current_dir(root.path())
         .env("AGENTPM_PYTHON", python)
         .args([
@@ -59,6 +60,7 @@ fn machine_run_accepts_json_arguments_from_stdin() {
     );
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_agentpm"))
+        .env("AGENTPM_TELEMETRY", "0")
         .current_dir(root.path())
         .env("AGENTPM_PYTHON", python)
         .args(["run", "@zack/machine-echo@0.1.0", "--machine"])
@@ -98,6 +100,7 @@ fn machine_run_failure_writes_envelope_to_stdout_and_diagnostics_to_stderr() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_agentpm"))
+        .env("AGENTPM_TELEMETRY", "0")
         .current_dir(root.path())
         .args([
             "run",
@@ -138,6 +141,7 @@ fn machine_input_schema_category_ignores_instance_error_marker_text() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_agentpm"))
+        .env("AGENTPM_TELEMETRY", "0")
         .current_dir(root.path())
         .args([
             "run",
@@ -173,6 +177,7 @@ fn machine_output_schema_category_ignores_instance_error_marker_text() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_agentpm"))
+        .env("AGENTPM_TELEMETRY", "0")
         .current_dir(root.path())
         .args([
             "run",
@@ -208,6 +213,7 @@ fn machine_output_limit_overrun_has_stable_category() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_agentpm"))
+        .env("AGENTPM_TELEMETRY", "0")
         .current_dir(root.path())
         .args([
             "run",
@@ -247,6 +253,7 @@ fn terminating_machine_run_kills_nested_tool_child_process_group() {
         .join("child.pid");
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_agentpm"))
+        .env("AGENTPM_TELEMETRY", "0")
         .current_dir(root.path())
         .args([
             "run",
