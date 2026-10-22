@@ -134,6 +134,8 @@
 - Confirm billing lifecycle events derive from Lemon Squeezy webhook truth.
 - Confirm CLI telemetry has clear default-on disclosure and opt-out.
 - Confirm telemetry uses a strict allowlist.
+- Confirm `harness_started`/`harness_completed` are emitted **once per run**, not per session, and carry the surface (`tui`/`headless`/`machine`) so the two are comparable. Confirm the failure-case decision was recorded and, if an outcome enum was adopted, that it was added to the allowlist rather than slipped in.
+- Confirm telemetry delivery cannot delay process exit, change an exit code, or turn a failed send into a Harness failure — `harness_completed` fires on the exit path, and headless/CI runs are the common case.
 - Confirm no prompts, Tool I/O, Harness conversations, file contents, paths, env vars, secrets, package contents, or private package identities are sent.
 - Confirm Privacy Policy was updated.
 - Confirm feedback UI is AgentPM-owned and PostHog-backed.

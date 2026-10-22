@@ -451,6 +451,7 @@ pub struct HarnessSession {
     memory_contract_cache: MemoryContractCache,
     local_memory_runtime: Option<LocalSqliteMemoryRuntime>,
     active_run: Option<RunState>,
+    telemetry: crate::telemetry::RunTelemetry,
 }
 
 impl HarnessSession {
@@ -465,6 +466,7 @@ impl HarnessSession {
             memory_contract_cache: MemoryContractCache::new(),
             local_memory_runtime: None,
             active_run: None,
+            telemetry: crate::telemetry::RunTelemetry::from_global(),
         }
     }
 
@@ -479,6 +481,7 @@ impl HarnessSession {
             memory_contract_cache: MemoryContractCache::new(),
             local_memory_runtime: None,
             active_run: None,
+            telemetry: crate::telemetry::RunTelemetry::from_global(),
         }
     }
 
@@ -503,6 +506,7 @@ impl HarnessSession {
             .is_some_and(|run| run.status.harness_status().is_none())
         {
             self.active_run = None;
+            self.telemetry.abandon();
         }
     }
 
@@ -560,6 +564,7 @@ impl HarnessSession {
             repair_count: 0,
             error_count: 0,
         });
+        self.telemetry.started();
         Ok(run_id)
     }
 
@@ -811,6 +816,19 @@ impl HarnessEngine {
         services: &mut HarnessRuntimeServices<'_>,
     ) -> Result<HarnessRunResult> {
         let run_id = session.start_run_with_id(run_id, input.into())?;
+        let result = self.execute_started_run(session, run_id, services);
+        if result.is_err() {
+            session.telemetry.completed(HarnessTerminalStatus::Failed);
+        }
+        result
+    }
+
+    fn execute_started_run(
+        &mut self,
+        session: &mut HarnessSession,
+        run_id: String,
+        services: &mut HarnessRuntimeServices<'_>,
+    ) -> Result<HarnessRunResult> {
         self.emit_service_lifecycle_events(session, Some(&run_id), &mut services.service_events)?;
         let mut current_phase = self.loop_manifest.r#loop.entry_phase.clone();
         loop {

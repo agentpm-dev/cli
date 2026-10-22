@@ -385,14 +385,16 @@ walkthrough above, not these automated results.
 
 #### Release Band 5 preparation evidence
 
-Prepared **2026-10-16** for CLI **0.1.35** / tag **v0.1.35**. The CLI crate and
-Cargo lockfile agree, and the website status page carries the same version and
-date. Rust/Node/Python SDK version markers are unchanged. Stage 2's spec and
-M1A.1/M3A/M4B tasks now carry **0.1.35** as the designated tolerance-release
-floor; emission of `standard` remains blocked until operator publication is
-confirmed. The Release Band 5 recording/handoff task is checked off at the
-operator's request; they own publication confirmation. M8's actual-publication
-record remains pending, and the checklist handoff is not evidence of deployment.
+Historical preparation **2026-10-16** targeted CLI **0.1.35** / tag **v0.1.35**.
+The CLI crate and Cargo lockfile agreed, and the website status page carried
+that version/date; SDK markers were unchanged. **Superseded 2026-10-22:** the
+shipping tolerance-release target and minimum APDS CLI floor is **0.1.36**,
+prepared under Release Band 7 and now recorded in Band 5 and Stage 2's
+spec/M1A.1/M3A/M4B. Publication is still unconfirmed. M8's actual-publication
+task and Stage 2 M1A.1's publication task remain unchecked; **M3A must not emit
+`standard` until actual publication of 0.1.36 is confirmed**. Prepared markers
+and checked-off handoff tasks are not evidence that the release shipped. The
+automated results below describe the original preparation, not publication.
 
 - `cargo test --workspace --offline --locked --quiet`: **1,086 passed**, zero
   failed/ignored (1,060 CLI unit, six authoring, six messaging, seven machine
@@ -422,7 +424,11 @@ Verify:
 - billing webhook event mapping is idempotent;
 - telemetry opt-out suppresses CLI events;
 - anonymous install ID behavior is stable;
-- private package identity does not enter telemetry payloads.
+- private package identity does not enter telemetry payloads;
+- a single Harness run emits exactly one `harness_started` and at most one `harness_completed`, and a TUI session running several prompts emits one pair per run rather than one pair for the session;
+- the same run counted through `--headless` and through the TUI produces comparable events, differing only in the surface enum;
+- a killed or panicking run leaves a start with no completion and does not retry or block;
+- telemetry delivery failure and opt-out both leave the Harness exit code and output unchanged.
 
 #### Milestone 10A Implementation Evidence (2026-10-16)
 
@@ -739,6 +745,125 @@ dashboard tasks, not satisfied by emitting the events alone. Verify:
 
 These are future acceptance checks; no M10B telemetry or charts were implemented
 or verified when adding this tracking section.
+
+#### Milestone 10B Implementation Evidence (2026-10-22)
+
+Implemented only M10B across the CLI and Registry; no SDK, web, manifest schema,
+version or release changes. The CLI uses the existing Registry analytics
+integration through anonymous, size/rate-limited `POST /analytics/cli`; the
+PostHog project key remains server-side. `analytics-contract.md` recorded
+once-per-installation first-use attempts, per-run Harness events, the three
+surfaces and the seven terminal outcomes before instrumentation.
+
+Verification:
+
+- `cargo test --workspace --quiet -- --test-threads=1`: **1,103 passed**
+  (1,071 CLI unit tests, 25 CLI integration tests, 7 Rust SDK tests).
+  Eleven new unit/engine tests and six real-binary integration tests cover
+  atomic concurrent ID/first-use initialization, persistence, invalid/unreadable
+  state, both opt-outs, mid-session disable, all outcome categories, identical
+  content-free per-run events across surfaces, multiple runs in one session,
+  interactive approval pause/cancel, handled runtime errors, real engine panic,
+  killed processes, bounded/disconnected queues, stalled delivery, unchanged
+  success/failure output and exit codes, and CLI help disclosure. Fixture
+  manifests pass the real `agentpm lint --strict`; existing subprocess tests
+  explicitly opt out rather than writing real installation state.
+- The default parallel workspace run exposed an existing `harness_config`
+  fixture collision: `temp_workspace("valid")` uses time-only names and one
+  test can delete another test's workspace. That unrelated helper was not
+  changed; the complete serial run above passed. An asynchronous capture-count
+  race in the new opt-out test was fixed by using a separate receiving endpoint;
+  the kill fixture now remains running until explicitly killed.
+- `cargo fmt --all`, `cargo fmt --all --check` and
+  `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- API `uv run python -m pytest -q -rs`, with the standard fixture signing key:
+  **415 passed, 7 skipped, 88 subtests passed**. The skips require
+  `AGENTPM_SEARCH_TEST_DATABASE_URI` for existing revoked-PAT, search relevance
+  and sitemap fixtures; no M10B test needs Postgres or live PostHog. The CLI
+  ingress tests reject additional top-level/property fields and invalid
+  categories, enforce event authority/UUIDv4/size, preserve anonymity despite
+  supplied auth/browser headers, and exercise disabled/failed capture.
+- API native pre-commit: Black, isort, Flake8, Pylint, pyupgrade and text hooks
+  passed after formatting. Native mypy still reports the pre-existing
+  `app/tools/application/search.py:1486,1856` assignments; native Bandit still
+  cannot import its missing `pbr` dependency. An isolated run of pinned
+  Bandit 1.7.5 with `pbr` supplied passed without findings. No project dependency
+  or unrelated search code was changed to silence these baseline issues.
+- Manual Python fixture formatted with the API's Black 23.9.1. Its documented
+  headless and initialize/start-run/shutdown machine commands were exercised
+  against loopback capture: one first-use event and the two surface-specific
+  pairs, stable installation ID, no prompt/package/path/credential leakage.
+  The fixture and machine process were stopped after verification. This was
+  local capture, not a claim of live PostHog acceptance or a manual TUI pass.
+- Operator-confirmed Development PostHog verification (2026-10-22): received
+  `cli_first_used`, a headless start/completion pair, and two TUI pairs from
+  separate prompts in one session. All share the same `cli_` distinct ID;
+  reported properties have the intended CLI/platform/surface/outcome fields,
+  `source: cli`, `environment: development`, contract version 1, GeoIP disabled,
+  person-profile processing false, and no reported IP/private content. Saved
+  CLI Adoption (Unique Installations) in the existing Early Product Funnel:
+  `cli_first_used`, unique users, one installation. Saved Harness Activity
+  (Per Run): both events by total count, `runtime_mode` breakdown, and the
+  missing-completion caveat. Both insights have Development/source filters;
+  operator confirmed headless totals 1/1 and TUI totals 2/2. This accepts the
+  Development capture and chart counts, not Production readiness.
+- Operator confirmed both copied insights now appear on Production's existing
+  Early Product Funnel dashboard. Screenshots verify saved event filters
+  `environment = production` and `source = cli` on both insights, unique-user
+  aggregation for first use, total-count aggregation for both Harness events,
+  `runtime_mode` breakdown, and the missing-completion caveat. No matching
+  events is expected before CLI rollout; it is not proof of zero usage.
+  Operator also confirmed Production dashboard public sharing remains disabled.
+  Live post-release capture remains pending.
+
+Remaining acceptance and release risks:
+
+- Continue `manual-tests/CLI_M10B_MANUAL_TESTS.md` for post-release Production
+  capture and final payload privacy checks. Leave the pending card until
+  release/live verification; do not inject fake Production events.
+  Cross-project dashboard checkboxes remain open until
+  their Production requirements are satisfied.
+- Deploy the API endpoint, docs and updated Privacy Policy **before** releasing
+  the telemetry-enabled CLI. Release preparation below does not deploy, publish
+  or close Band 7. Production capture remains an operator gate.
+- There is intentionally no exit flush, join, retry or durable queue. Short
+  commands and process termination can lose events, including first-use; missing
+  completion is an upper bound on failures, not a failure rate. Unavailable
+  config/state/entropy disables collection, not commands. CLI identities must
+  never be interpreted as website accounts or reliable execution ledgers.
+
+#### Release Band 7 Preparation (2026-10-22)
+
+Prepared CLI **0.1.36** (`v0.1.36`) in the CLI crate and Cargo-generated
+lockfile. Updated the website status card to **v0.1.36** with release date
+**2026-10-22**. SDK crate and website SDK markers are unchanged. The earlier
+M10B implementation/manual evidence used 0.1.35; this is the subsequent release
+version preparation, not a claim that the release is already published.
+
+Verification:
+
+- `cargo check --offline -p agentpm-cli`: passed; lockfile diff is only the CLI
+  package version.
+- `cargo test --offline -p agentpm-cli --bin agentpm telemetry --quiet`:
+  **11 passed** against the bumped version.
+- `cargo run --offline --quiet -p agentpm-cli -- --version`: **agentpm 0.1.36**.
+- `cargo fmt --all` and `cargo fmt --all --check`: passed.
+- Website `pnpm typecheck`, `pnpm lint` and `pnpm test`: passed;
+  **215 tests across 59 files**. Lint retains six existing warnings outside the
+  status-page edit; no new lint errors.
+- Scoped website Prettier write/check and both repositories' `git diff --check`:
+  passed. A website production build was not rerun for this metadata-only change.
+
+Release order remains Registry/API + docs/Privacy Policy first, CLI publication
+second, and the matching website status marker afterward. No tags, publication,
+deployment, Production telemetry acceptance or availability-card update were
+performed by this preparation.
+
+The M8 final publication task, Band 5 release-gate note, and Stage 2
+spec/M1A.1/M3A/M4B handoff now designate **0.1.36** as the APDS minimum CLI floor.
+This supersedes 0.1.35 only as the planned tolerance-release handoff; historical
+test transcripts remain unchanged. Publication remains unconfirmed and the
+Stage 2 `standard` emission gate stays closed.
 
 ### Python dependency schema / lock / runtime environment
 

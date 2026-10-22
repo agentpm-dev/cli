@@ -200,6 +200,7 @@ impl HarnessEngine {
         run.usage.duration_ms = Some(duration_ms);
         run.terminal_output = output.clone();
         session.usage.record_run_completed(&run.usage);
+        session.telemetry.completed(status);
         let event_type = terminal_event_type(status);
         session.emitter.emit(
             event_type,

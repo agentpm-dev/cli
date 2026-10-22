@@ -25,6 +25,7 @@ impl Project {
 
     fn cli(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_agentpm"))
+            .env("AGENTPM_TELEMETRY", "0")
             .current_dir(&self.0)
             .env("NO_COLOR", "1")
             .args(args)

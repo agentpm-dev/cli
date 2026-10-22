@@ -1,4 +1,4 @@
-# Milestone 10A Event Contract
+# Milestones 10A-10B Event Contract
 
 Version: 1. This vocabulary also governs Milestone 10B; 10A emits no CLI-local
 or Harness telemetry. Development uses the PostHog US project **AgentPM
@@ -17,7 +17,8 @@ session to that pseudonymous account. Shared-browser sign-out rotates the
 anonymous identity. Respect Do Not Track and Global Privacy Control for browser
 events. No analytics configuration means no capture.
 
-Ordinary properties are **allowlisted enums, bounded counts, and booleans**.
+Ordinary properties are **allowlisted enums, bounded counts, booleans, and the
+binary's compile-time CLI version**.
 Never send raw query text, URL/query strings, package/namespace names or IDs,
 file paths, auth data, request bodies, prompts, tool I/O, or application objects.
 Account pseudonyms and random event IDs are protocol identity fields, not
@@ -30,7 +31,7 @@ payload allowlist controls ingestion-side enrichment.
 
 ## Events
 
-All events include `contract_version: 1`, `source: web|registry`, and
+All events include `contract_version: 1`, `source: web|registry|cli`, and
 `environment: development|test|production`. Each has a UUID for deduplication.
 
 | Event | Authority / when | Additional allowed properties |
@@ -67,6 +68,68 @@ general analytics. An unchecked follow-up box does not authorize follow-up.
 Survey delivery failure must not show a successful submission. The GitHub
 issue link is an alternative, not the only feedback path.
 
+## CLI Contract (M10B, Recorded Before Instrumentation)
+
+`cli_first_used` is attempted once per anonymous installation (one CLI config
+directory), not per version or command. A random UUIDv4 in that directory is stable
+across upgrades; deleting that state creates a new installation. A separate
+atomic first-use claim prevents simultaneous processes from double-counting.
+This is an attempt, not guaranteed delivery: short-lived processes may exit
+before capture, so adoption is a lower bound. There is no replay or retry.
+
+`harness_started` is emitted once after the shared engine starts a **run**.
+`harness_completed` is emitted at most once when that run reaches a terminal
+outcome, including handled runtime errors. It is not success-only. Paused
+interactive approval is not completion; terminal approval-required is.
+There is no completion-on-Drop or panic recovery. A multi-prompt TUI session
+therefore produces one pair per run, just like separate headless invocations.
+
+The closed CLI wire schema is `{event, install_id, properties}`. Event-specific
+properties are exactly:
+
+| Event | Properties |
+| --- | --- |
+| `cli_first_used` | `cli_version`, `os_family`, `architecture` |
+| `harness_started` | same, plus `runtime_mode: tui|headless|machine` |
+| `harness_completed` | same, plus `runtime_mode` and `terminal_outcome: ended|handed_off|aborted|failed|cancelled|limit_reached|approval_required` |
+
+Version comes from the binary; platform values come from closed mappings, not
+hostnames. Install IDs are random, never machine/user/path-derived. Run/session
+IDs, durations, package identities and command arguments are not sent. The
+Registry rejects extra fields and invalid values, then adds only the existing
+contract/environment/source and privacy protocol fields. CLI distinct IDs are
+`cli_<UUID>` and are never identified or joined to browser/account identities.
+
+Transport is an anonymous `POST /analytics/cli` on the CLI's selected Registry
+base URL. It reuses M10A's server-side PostHog configuration, keeping project
+keys and authentication out of the binary. Neither credentials nor browser
+identity headers are sent. Redirects and inherited proxies are disabled.
+
+The telemetry-only `.no_proxy()` policy is deliberate: optional usage capture
+does not implicitly inherit general-purpose proxy routing or credentials from
+`HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY`. This does not bypass network controls
+or change the ordinary Registry client's proxy policy. If direct Registry
+access is blocked on a proxy-required network, telemetry fails silently and
+nonfatally rather than trying the proxy. Such environments will be
+underrepresented in adoption/activity charts. The first-use claim is still
+consumed even if delivery fails, so later unproxied access does not recover
+that adoption event. Treat these counts as incomplete, network-biased signals,
+not a census of CLI usage.
+
+A bounded in-memory queue feeds one detached OS thread, with a one-second HTTP
+timeout and no retries, outbox, flush, join, or exit-time wait. Queued events
+can be lost at exit. Sending failures never alter output or exit status.
+
+`AGENTPM_TELEMETRY=0` or `[telemetry] enabled = false` in the existing
+`config.toml` disables collection before ID/claim creation. Unreadable or invalid
+config/state fails closed without affecting commands. Both enqueue and delivery
+recheck opt-out, so changing config during a TUI session suppresses later events.
+Already transmitted events cannot be recalled.
+
+Publish the updated Privacy Policy before distributing this binary. Development
+and Production retain their separate PostHog keys/environment filters and IP
+discard settings. Do not populate Production with synthetic test events.
+
 ## Delivery and Dashboard Limits
 
 Ordinary analytics are best-effort, bounded-time, and never change a successful
@@ -76,7 +139,11 @@ or process crash can lose an event. Event delivery is not billing truth.
 
 Use one **Early Product Funnel** dashboard. Show arrival/discovery, signup,
 registry installs/publishes, pricing/checkout/subscriptions, stars, and feedback.
-CLI/Harness panels are explicitly **pending Milestone 10B**, not zero-adoption
-claims. Do not present anonymous CLI installs and website sessions as one
+CLI/Harness chart setup and live acceptance remain **pending operator
+verification**, not zero-adoption claims. Do not present anonymous CLI installs and website sessions as one
 identified person-level funnel. Production project, survey launch, live payload
 verification, and dashboard creation need operator confirmation.
+
+Label Harness charts **per-run**, break down by `runtime_mode`, and state:
+missing completions are an upper bound on failures, not a failure rate. Kills,
+panics, sleep, failed/dropped sends and mid-session opt-out can all contribute.

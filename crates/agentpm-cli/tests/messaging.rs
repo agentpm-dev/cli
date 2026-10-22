@@ -28,6 +28,7 @@ impl Project {
     fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_agentpm"));
         command
+            .env("AGENTPM_TELEMETRY", "0")
             .current_dir(&self.0)
             .env("NO_COLOR", "1")
             .env("RUST_LOG", "")

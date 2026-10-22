@@ -79,7 +79,11 @@ impl AgentPmActionDispatcher {
                 "Tool `{tool_name}` is not available in the current EffectivePhase"
             ));
         };
-        let output = Command::new(&self.agentpm_binary)
+        let mut command = Command::new(&self.agentpm_binary);
+        // Unit fixtures must not create real installation state or send analytics.
+        #[cfg(test)]
+        command.env("AGENTPM_TELEMETRY", "0");
+        let output = command
             .current_dir(&self.workspace_root)
             .arg("run")
             .arg(format!("{}@{}", tool.name, tool.version))

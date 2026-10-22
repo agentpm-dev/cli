@@ -10,3 +10,6 @@ are disposable and gitignored.
   for real PAT revocation and an optional mock for controlled HTTP failures.
 - [PostHog setup and verification (Milestone 10A)](ANALYTICS_M10A_SETUP.md):
   operator-guided project, survey, event, billing, and dashboard checks.
+- [CLI telemetry and PostHog handoff (Milestone 10B)](CLI_M10B_MANUAL_TESTS.md):
+  individual commands with isolated installation state, deterministic local
+  fixtures, opt-out/exit checks, and the two deferred dashboard insights.
