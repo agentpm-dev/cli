@@ -862,8 +862,49 @@ performed by this preparation.
 The M8 final publication task, Band 5 release-gate note, and Stage 2
 spec/M1A.1/M3A/M4B handoff now designate **0.1.36** as the APDS minimum CLI floor.
 This supersedes 0.1.35 only as the planned tolerance-release handoff; historical
-test transcripts remain unchanged. Publication remains unconfirmed and the
-Stage 2 `standard` emission gate stays closed.
+test transcripts remain unchanged. Publication was unconfirmed at preparation;
+the later operator confirmation below satisfies the publication prerequisite.
+
+#### Release Band 7 Operator Publication / Production Capture Evidence (2026-10-22)
+
+Operator reported backend/web deployed before publishing/installing CLI
+**0.1.36**. Local inspection confirmed the installed binary resolves under
+`/opt/homebrew/bin/agentpm` and reports **agentpm 0.1.36**. Its normal config
+already contained a first-use marker from earlier local testing; the operator
+backed up that empty marker while preserving the installation ID, then reran
+`whoami` against Production. This explains the initially absent first-use event
+without claiming an ingestion outage or changing the once-per-installation
+contract.
+
+Operator then confirmed Production `cli_first_used` at
+**2026-10-22T21:13:36.219Z**, with `cli_version: 0.1.36`, `source: cli`,
+`environment: production`, contract version 1, macOS/aarch64, GeoIP disabled,
+person-profile processing false, and no reported IP/private content.
+
+Operator also shared Production TUI `harness_started` at
+**2026-10-22T21:18:08.215Z** and `harness_completed` at
+**2026-10-22T21:18:10.377Z**, both carrying CLI 0.1.36, production/cli,
+macOS/aarch64, contract version 1 and the same privacy flags. Completion carried
+`terminal_outcome: handed_off`; operator confirmed this was an actual Agent in
+`agentpm-examples`, not the deterministic fixture whose expected outcome is
+`ended`. This is a valid completion outcome, not an assertion of fixture success.
+Operator confirmed the Production CLI Adoption and Harness Activity dashboard
+charts now reflect the installation and runs. Environment-filter and live-count
+acceptance is complete in both projects; no fake Production events were needed.
+
+M8 and Stage 2 M1A.1 publication tasks are now checked on operator confirmation,
+not merely prepared version markers or an independent release-channel audit.
+Stage 2 M3A's publication prerequisite is satisfied; other Stage 2 dependencies
+and tests remain unchanged.
+
+Final operator acceptance (2026-10-22): confirmed the dashboard availability card
+was updated to distinguish anonymous installations, website accounts, per-run
+Harness activity and Registry completions, including the warning that optional
+or missing telemetry is not zero usage. Operator also confirmed the public
+Privacy Policy spot-check includes minimal CLI telemetry and both opt-out
+methods. This closes the remaining M10B dashboard and Release Band 7 acceptance
+items on operator confirmation, not an independent browser audit. No runtime
+code changed during this closeout; `git diff --check` passed.
 
 ### Python dependency schema / lock / runtime environment
 
@@ -879,6 +920,12 @@ Add tests for:
 - Resolution ordering is deterministic (`requirements` and `(name, marker-or-empty, version)` package ordering).
 - Resolution can represent conditional/environment-marker dependencies without publisher-target leakage.
 - Resolution rejects/never records wheel filenames, wheel tags, local paths, publisher target/architecture, interpreter paths, or local environment IDs.
+- Every package entry carries a non-empty `hashes` array of `sha256:` + 64 lowercase hex digests.
+- `hashes` is sorted lexicographically and participates in canonical-byte determinism.
+- Digests are not keyed by target/filename/wheel tag; the same resolution is accepted on more than one target.
+- A multi-wheel package records digests for the distributions all supported targets could install, not only the publishing machine's wheel. **Verify by resolving on one platform and installing on another** — a resolution that only covers the publisher's wheel passes a same-platform test and fails here.
+- Resolution **fails** when a resolved version has no retrievable digest, rather than emitting an empty/omitted `hashes` array.
+- A `PythonResolution` with any digest-less package entry is rejected before it can reach `agent.lock` or a release.
 - Equivalent `PythonResolution` values produce identical RFC 8785/JCS bytes/digests in Rust and Python.
 - Current v2/v3 lock reads remain valid.
 - New capability state writes minimum lockfile version 4.
@@ -889,12 +936,39 @@ Add tests for:
 - New lock records release integrity but no local selected-artifact target/digest.
 - Stale manifest/Python resolution mismatch blocks publish.
 - Published release/artifact contains Tool-specific Python resolution metadata.
+- Re-resolution fingerprint:
+  - unchanged requirements/constraint/target-set/`uv` version → `agentpm publish` reuses the stored resolution and does not re-resolve;
+  - changed authored requirement → re-resolves;
+  - **bumped `uv` pin with identical requirements → invalidates the stored resolution.** This one fails if the `uv` version was left out of the fingerprint, which is the easy omission.
 - Managed Python environment:
   - created under `.agentpm/` separate from payload;
   - keyed by Tool/version/target/interpreter identity;
   - exact applicable locked versions installed;
   - new-format Tool executes through managed interpreter;
-  - changed `AGENTPM_PYTHON`/interpreter identity cannot silently reuse incompatible env.
+  - changed `AGENTPM_PYTHON`/interpreter identity cannot silently reuse incompatible env;
+  - provisioning replays the stored set and cannot install a package absent from it, even when a dependency's own metadata requires one;
+  - an interrupted provisioning run converges to the correct complete set on retry rather than leaving partial state;
+  - environment creation does not depend on the interpreter's `venv`/`ensurepip`. **Verify against an interpreter with `ensurepip` unavailable** — this is the Debian/Ubuntu `python3-venv` case and the reason `uv` is on the consumer side at all.
+- Install-time digest verification:
+  - distribution whose bytes match no recorded digest fails the install fatally, with no warning path and no retry from an alternate source;
+  - failed verification does not leave an environment that looks complete or a successful install session;
+  - distribution missing from the index, digest mismatch, and no-wheel-for-this-target produce three distinguishable errors.
+- Wheel-only install:
+  - a locked version with no target-compatible wheel fails with the no-compatible-wheel error naming package, version, and target;
+  - no source build is attempted even when an sdist digest is recorded and a toolchain is present.
+- Managed resolver acquisition:
+  - lazy — no resolver download occurs for a Tool with no declared Python dependencies;
+  - cached binary is reused on a second install **with no network access**;
+  - downloaded bytes failing the compiled-in SHA-256 are rejected and not cached;
+  - a PATH-installed `uv` of a different version is never selected;
+  - `AGENTPM_UV_PATH` at the pinned version is used;
+  - `AGENTPM_UV_PATH` at a different version is rejected with an error naming the required version (not a warning);
+  - an unsupported target fails **before any network access** — assert no request was attempted, not merely that the command failed — and the error names the supported targets and the override;
+  - unsupported target, network failure, digest mismatch, override version mismatch, and resolver execution failure are five distinguishable errors.
+- Resolver pin table:
+  - the generator fails when any supported AgentPM target lacks an artifact;
+  - the generator rejects an upstream artifact whose attestation does not verify against `astral-sh/uv`;
+  - the committed pin table and the `release.yml` target matrix are checked for agreement, and the check **fails** when a target is added to one and not the other. Verify by mutation: add a target to the matrix only.
 - Legacy `_vendor` Tool still uses legacy run behavior.
 
 ### Payload compatibility
@@ -1225,9 +1299,15 @@ verify a new-format Python Tool whose dependency graph includes at least one pac
 Also verify:
 
 - the same source-controlled `agent.lock` is usable across at least two target platforms without target-specific edits;
+- a lock resolved on one platform installs with digest verification passing on a different platform — this is the real check that digest enumeration covered all supported targets rather than only the publisher's wheel;
 - changing the local selected artifact does not rewrite target information into the lock;
 - changing `AGENTPM_PYTHON` to another compatible minor version does not silently reuse an incompatible native dependency environment;
 - a legacy vendored Python Tool still installs/runs under legacy semantics;
+- a first Python-dependency install on a clean machine acquires the managed resolver, and a second install on the same machine performs no resolver download;
+- an install succeeds on a machine whose Python lacks a working `ensurepip`/`venv` (for example stock Debian/Ubuntu without `python3-venv`);
+- an install succeeds behind an HTTP proxy configured only through standard proxy environment variables;
+- an install succeeds with no outbound access to GitHub, confirming no third-party runtime fetch remains in the install path;
+- an airgapped machine with a preprovisioned pinned `uv` and `AGENTPM_UV_PATH` set can install a Python-dependency Tool;
 - a local pure-source publish can claim `any`;
 - a local native publish claims only the concrete current target;
 - a multi-target CI publish produces one immutable logical version with multiple artifacts;

@@ -55,6 +55,9 @@ Stage 1 does **not** attempt to:
 - Implement dynamic N-of-M namespace signature thresholds; Stage 1 preserves the current effective policy that `required` means at least one valid trusted author signature.
 - Require GitHub Actions for normal local publishing.
 - Require users to adopt `uv` as their project package manager.
+- Bundle `uv` into the `agentpm` executable, or use a PATH-installed `uv`.
+- Build Python dependencies from source distributions during install; Stage 1 install is wheel-only.
+- Add resolver pin support for targets AgentPM's own CLI does not ship (ARM Linux, musl).
 - Invalidate or republish legacy Python Tools.
 - Retrofitting compatibility metadata onto legacy Python Tool versions.
 - Allow adding architectures to an already finalized Tool version.
@@ -620,11 +623,115 @@ Lint must enforce:
 
 AgentPM owns Python dependency resolution.
 
-`uv` is the preferred implementation mechanism, but is an AgentPM implementation dependency rather than a user-project requirement. Users do not need to use `uv`, maintain a `uv.lock`, or convert their repository into a uv project.
+`uv` is AgentPM's internal Python dependency engine. It is an AgentPM implementation dependency, never a user-project requirement: users do not need to install `uv`, maintain a `uv.lock`, or convert their repository into a uv project. AgentPM uses `uv` for two distinct jobs:
+
+- **at resolution time** (publish/lock) as the dependency **resolver** that turns authored requirements into the portable exact `PythonResolution`;
+- **at install time** as the managed **environment/provisioning engine** that creates the environment and installs the already-resolved set.
+
+Install **replays** the stored `PythonResolution`; it does not perform a new unconstrained dependency resolution. A `uv pip sync`-style convergence against the complete stored set is preferred over an install verb that could discover and add omitted dependencies, so an interrupted provisioning run self-heals rather than accumulating partial state.
+
+AgentPM keeps `uv` on the consumer side deliberately, even though replaying exact pins needs no resolver. The managed binary removes the user's `pip`/`ensurepip`/`setuptools` from the install path entirely. That matters concretely: on Debian and Ubuntu, `python3 -m venv` fails unless the separately packaged `python3-venv` is installed, because `ensurepip` is split out of the base Python package. A pinned static `uv` creates and populates the environment without depending on whichever venv/pip behavior shipped with the user's interpreter. This is a dependability requirement, not a performance preference.
+
+**What the `uv` pin does and does not buy.** Pinning `uv` guarantees *consistent resolution semantics whenever AgentPM creates or refreshes a resolution*. It does **not** by itself create reproducibility: resolution output depends on both the resolver and the index state at that moment, so the same `uv` can produce different answers months apart. Dependency reproducibility comes from the stored `PythonResolution` — the exact set, resolved once, replayed and hash-verified at install. Do not state or design as though the `uv` version were load-bearing for install-time reproducibility.
 
 Do not make `requirements.txt`, `pyproject.toml`, Poetry lockfiles, uv lockfiles, or similar project files alternate authoritative dependency sources in Stage 1. A future import command may populate the AgentPM manifest from those sources.
 
 The resolved state must be portable across supported platforms. Do not lock the publisher's selected wheel filename or publisher architecture. The resolution may contain environment markers/conditional dependency branches where a transitive dependency differs by platform or Python version, but every selected package version must be exact.
+
+#### AgentPM-managed `uv` acquisition
+
+This is a **fixed Stage 1 contract**, not an implementation choice:
+
+> AgentPM downloads and caches a pinned, platform-specific standalone `uv` binary on first use, verifies it against an AgentPM-pinned SHA-256, and version-checks it before execution. AgentPM does not use a PATH-installed `uv`. The binary is served from AgentPM-controlled immutable storage rather than fetched from a third party at runtime, and `AGENTPM_UV_PATH` provides an operator-managed override for airgapped and preprovisioned environments. Unsupported targets fail before any network access with an actionable error.
+
+`uv` is **not** bundled into the `agentpm` executable. Bundling would require four platform payloads inside every release artifact, Homebrew/scoop packaging changes, and upstream license notices in AgentPM's distribution — paid by every user, including the majority who never publish or install a Python Tool with declared dependencies.
+
+**Resolution order.** Acquisition is lazy: nothing is downloaded until the first operation that actually needs the Python dependency engine.
+
+```text
+1. AGENTPM_UV_PATH set?        -> validate reported version == pinned version, then use it
+2. Managed binary in cache?    -> validate digest/version, then use it
+3. Target supported?           -> no: fail with unsupported-target error, no network access
+4. Download from AgentPM storage -> verify SHA-256 against the compiled-in pin -> cache -> use
+```
+
+**Cache location.** A per-user, per-version, per-target path outside any project directory, so one download serves every project and a version bump cannot overwrite a binary an older CLI still pins. A conceptual shape:
+
+```text
+~/.cache/agentpm/runtimes/uv/<uv-version>/<target>/uv
+```
+
+**Distribution.** Mirror the pinned binaries through AgentPM's existing registry object storage and presigned-URL distribution path. Do not teach the CLI to parse GitHub Releases, and do not stand up a new CDN hostname or separate download service for this — extend the distribution mechanism the registry already operates. The point is not reducing the number of hostnames AgentPM contacts (package installs already use presigned URLs); it is removing a **third-party runtime fetch from inside the user's `agentpm install`**, which is exactly what fails in proxied CI and allowlisted corporate networks, and which AgentPM does not control the availability or retention of.
+
+Mirrored resolver artifacts are **append-only and never deleted**. Older published CLI versions pin older `uv` versions permanently, so removing a mirrored binary retroactively breaks every CLI release that pinned it. This retention rule must be recorded where storage lifecycle policy is managed, not only here.
+
+The `uv` download must honor standard proxy environment variables. Note the deliberate contrast with Stage 1 telemetry, which uses a no-proxy client: telemetry is optional and must not depend on corporate network configuration, whereas resolver acquisition is required and must work *through* it.
+
+**Supply-chain trust boundary at ingestion, not at runtime.** Upstream `uv` releases publish GitHub Artifact Attestations alongside SHA-256 checksums. AgentPM verifies provenance once, when a pin is adopted, and the end-user CLI then verifies only bytes against a digest it was compiled with:
+
+```text
+maintainer adopts uv <version>
+   -> download upstream artifacts for every supported AgentPM target
+   -> verify upstream artifact attestation (repository = astral-sh/uv)
+   -> compute SHA-256 independently of any upstream checksum file
+   -> upload immutable bytes to AgentPM storage
+   -> update the source-controlled pin table (code review + git history)
+   -> CLI release compiles the pin table in
+   -> CLI verifies downloaded bytes against the compiled-in digest
+```
+
+The consumer CLI therefore needs no `gh`, no Sigstore client, and no network access to GitHub. It needs only `target -> expected SHA-256`.
+
+**Pin table generation.** The digest table must not be a hand-maintained Rust constant. A checked-in script or `xtask` takes the desired `uv` version and performs the ingestion chain above, then writes a generated metadata file committed with the CLI. It must **fail** if any supported AgentPM target lacks an artifact, so a version bump cannot silently ship a partial table:
+
+```json
+{
+  "version": "0.13.4",
+  "artifacts": {
+    "aarch64-apple-darwin":      { "sha256": "..." },
+    "x86_64-apple-darwin":       { "sha256": "..." },
+    "x86_64-unknown-linux-gnu":  { "sha256": "..." },
+    "x86_64-pc-windows-msvc":    { "sha256": "..." }
+  }
+}
+```
+
+**Supported targets come from one source of truth.** The resolver pin table covers exactly the targets AgentPM's own CLI ships, which today is the four-entry matrix in `agentpm/.github/workflows/release.yml`. That list currently exists only as YAML inside the release workflow. Stage 1 must give it a single checked-in machine-readable definition that both the release matrix and the resolver pin table derive from or validate against. Otherwise the first time a target is added to the CLI, the `uv` table silently does not follow and that platform ships a CLI that cannot provision Python at all.
+
+ARM Linux and musl targets are out of scope because AgentPM's CLI does not ship them, not because of any upstream `uv` limitation — upstream publishes considerably more targets. Adding one later is an AgentPM support decision, and the derived-list requirement above is what makes it a one-place change.
+
+**`AGENTPM_UV_PATH`** exists from first release, not as a later advanced option; without it an airgapped install has no path forward at all. It means "use this operator-provided `uv` instead of acquiring AgentPM's managed copy," and AgentPM still enforces exact version equality with the pin. An override that accepts an arbitrary `uv` would reintroduce precisely the variability this design removes, so a version mismatch is an error that names the required version rather than a warning. This override serves airgapped environments, enterprise base images, and preprovisioned CI images **that provision AgentPM's pinned version**; it is deliberately not a way to adopt whatever `uv` an existing image happens to contain.
+
+**Unsupported targets fail before touching the network** — no attempted download, no HTTP 404 surfaced raw, no transport error. The error names the supported targets and the override:
+
+```text
+AgentPM cannot provision its managed Python resolver for
+x86_64-unknown-linux-musl.
+
+Supported resolver targets:
+  aarch64-apple-darwin
+  x86_64-apple-darwin
+  x86_64-unknown-linux-gnu
+  x86_64-pc-windows-msvc
+
+Provide a compatible uv 0.13.4 binary with AGENTPM_UV_PATH
+or use a supported AgentPM platform.
+```
+
+Acquisition failures generally must be distinguishable in error text: unsupported target, network/proxy failure, digest mismatch, override version mismatch, and resolver execution failure are five different operator problems with five different fixes.
+
+#### Re-resolution and staleness
+
+Resolution is not re-run merely because `agentpm publish` was invoked. If a valid `PythonResolution` already exists and still matches author intent, publish uses it; re-resolution happens when the stored resolution is missing or stale, or through an explicit refresh path.
+
+"Still matches" must be a recorded digest over the exact resolution inputs, not a fuzzy comparison. The input fingerprint covers:
+
+- the normalized authored root requirement strings;
+- the normalized `python.requires` constraint;
+- the supported target set the resolution was produced for;
+- the `uv` version that produced it.
+
+The last input is easy to omit and matters: a resolver pin bump must invalidate the stored resolution. Without it, a lock can accumulate entries produced by different resolver versions with no way to tell which, which defeats the only guarantee the pin actually provides.
 
 #### Canonical `PythonResolution` v1 contract
 
@@ -643,24 +750,41 @@ Stage 1 uses one explicit portable resolution object everywhere the resolved Pyt
   "packages": [
     {
       "name": "annotated-types",
-      "version": "0.7.0"
+      "version": "0.7.0",
+      "hashes": [
+        "sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53"
+      ]
     },
     {
       "name": "colorama",
       "version": "0.4.6",
-      "marker": "sys_platform == 'win32'"
+      "marker": "sys_platform == 'win32'",
+      "hashes": [
+        "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"
+      ]
     },
     {
       "name": "openai",
-      "version": "1.51.2"
+      "version": "1.51.2",
+      "hashes": [
+        "sha256:5c5954711cba931423e471c37ff22ae0fd3892be9b083eee36459865fbbb83fa"
+      ]
     },
     {
-      "name": "pydantic",
-      "version": "2.9.2"
+      "name": "pydantic-core",
+      "version": "2.23.4",
+      "hashes": [
+        "sha256:09f03dfc0ef8c22622eaa8608caa4a1e189cfb83ce847045eca34f690895eccb",
+        "sha256:19c0fa39fa154e7e0b7f82f88ef85faa2a4c23cc65aae2f5aea625e3c13c735a",
+        "sha256:2b8ed04b3582771764538f7ee7001b02e1170223cf9b75dff0bc698fadb00cf3",
+        "sha256:f455ee30a9d61d3e1a15abd5068827773d6e4dc513e795f380cdd59932c782d5"
+      ]
     }
   ]
 }
 ```
+
+Digests in the example are illustrative; real entries are the actual published distribution digests. Every digest is `sha256:` followed by 64 lowercase hex characters, never truncated.
 
 Contract rules:
 
@@ -668,13 +792,30 @@ Contract rules:
 - `python.requires` records the normalized minimum/constraint implied by the Tool runtime contract; it is not a publisher interpreter path or machine fingerprint.
 - `requirements` records the normalized authored root requirement strings that were resolved.
 - `packages` is the complete exact resolved distribution set needed by those roots.
-- Each package entry contains normalized distribution `name`, exact `version`, and optional normalized PEP 508 `marker`.
+- Each package entry contains normalized distribution `name`, exact `version`, a required non-empty `hashes` array, and optional normalized PEP 508 `marker`.
 - The same normalized distribution name may appear more than once only when entries are distinguished by mutually exclusive marker conditions needed for portable resolution.
 - Distribution names use one deterministic normalization (PEP 503-style lowercase/hyphen normalization is preferred).
-- `requirements` and `packages` must be emitted in deterministic order; package ordering is by normalized `(name, marker-or-empty, version)`.
+- `requirements` and `packages` must be emitted in deterministic order; package ordering is by normalized `(name, marker-or-empty, version)`, and `hashes` is sorted lexicographically within each entry.
 - Do not record wheel filenames, wheel tags, local paths, publisher architecture, selected target, interpreter path, or a local environment identifier.
 - Stage 1 does not require preserving a full parent/child dependency graph in this object; the exact resolved set plus markers is the portable lock contract.
 - The serialized/digested form is deterministic. When `PythonResolution` participates in the release manifest, its digest is SHA-256 over its RFC 8785/JCS canonical JSON bytes.
+
+#### Distribution digests and install-time verification
+
+Version-only pinning would leave the installer free to pick any distribution for that version at install time, and — when no compatible wheel exists for the consumer's target — to fall back to the source distribution and **compile on the user's machine**, requiring a toolchain AgentPM never promised. That is the "technically possible but not dependable" outcome Milestones 11A–11C exist to eliminate, so Stage 1 records digests in `PythonResolution` v1.
+
+This is settled in v1 and not deferrable: `PythonResolution` v1 is a frozen contract, Stage 2's APDS v1.0.0 freeze is gated on it, and adding per-distribution digests later would be a contract change rather than an additive enhancement.
+
+Rules:
+
+- `hashes` lists the digests of **every published distribution of that exact version that any supported AgentPM target could legitimately install** — the applicable wheels plus the source distribution where one exists. It is not the publisher's selected wheel.
+- Any one listed digest matching is acceptance. This is the standard multi-hash requirement model (as used by hash-checking install modes), and it is what keeps the object portable: the consumer selects the distribution appropriate to its target, and the resolution does not need to know which that will be. Digests are therefore **not** keyed by target, filename, or wheel tag — recording that mapping would reintroduce exactly the publisher-environment leakage the portability rules forbid.
+- Resolution **fails** if any resolved package version has no retrievable digest, rather than emitting an entry with an empty or omitted `hashes` array. A resolution that cannot be verified is not a valid resolution.
+- Install runs hash-verified. A distribution whose bytes match no listed digest is a **fatal install error**, never a warning and never a silent re-download from an alternate source.
+- Install is **wheel-only and never builds from source**. If no wheel compatible with the consumer target/interpreter is available for a locked version, install fails with a distinct no-compatible-wheel error naming the package, version, and target. The sdist digest is recorded because it is part of the published distribution set, not as license to build it. Any future opt-in source-build path is out of scope for Stage 1.
+- Error text must distinguish three cases that look alike to users and are entirely different problems: the distribution is **gone** from the index, the distribution is **present but does not match the recorded digest** (a supply-chain signal), and the distribution is **present and intact but has no wheel for this target**.
+
+The resulting Stage 1 guarantee is **reproducible, digest-verified dependency resolution across supported targets** — not byte-for-byte identical environments on every platform forever, since the consumer still selects a target-appropriate distribution from the verified set. State it that way in docs and acceptance evidence.
 
 `agent.json` is author intent.
 
@@ -702,9 +843,11 @@ A conceptual shape is:
 For new-format Python Tools with declared dependencies:
 
 1. resolve the Python interpreter using the same family/version rules as `agentpm run`, honoring `AGENTPM_PYTHON`;
-2. create/reuse an AgentPM-managed Python environment with that interpreter;
-3. use AgentPM-managed `uv` to install the exact applicable locked dependency versions into that environment;
+2. create/reuse an AgentPM-managed Python environment with that interpreter, using AgentPM-managed `uv` rather than the interpreter's own `venv`/`ensurepip`;
+3. use AgentPM-managed `uv` to converge that environment to the exact applicable locked dependency versions, verified against the recorded distribution digests;
 4. execute the Tool with the managed environment's Python interpreter.
+
+Step 3 **replays** the stored `PythonResolution`. It must not perform a new dependency resolution, and it must not be able to add a package absent from the stored set — a `sync`-style convergence against the complete recorded set is the intended mechanism. Install remains wheel-only: a locked version with no target-compatible wheel fails with the no-compatible-wheel error rather than building from source.
 
 A venv-style managed environment is preferred over modifying the Tool payload or installing into the user's global interpreter.
 
@@ -1436,6 +1579,16 @@ OIDC/keyless AgentPM registry publishing is deferred.
 - `agentpm run` executes new-format dependency-bearing Tools through the managed Python environment.
 - Legacy Python Tools continue to install/run with legacy vendored/PATH semantics.
 - AgentPM controls the resolver implementation and does not require the user's project to use `uv`.
+- `PythonResolution` records a non-empty distribution digest set for every locked package version; a resolution that cannot be fully digested fails rather than emitting unverifiable entries.
+- Install verifies every installed distribution against the recorded digests and fails on mismatch.
+- Install never builds from source; a locked version with no target-compatible wheel fails with a distinct, actionable error.
+- Install replays the stored resolution and cannot add a package absent from it.
+- AgentPM acquires a pinned `uv` from AgentPM-controlled immutable storage, verifies it against a compiled-in SHA-256, and never uses a PATH-installed `uv`.
+- `AGENTPM_UV_PATH` overrides acquisition and is rejected unless it reports the pinned `uv` version.
+- Unsupported resolver targets fail before any network access, naming supported targets and the override.
+- The resolver pin table and the CLI release target matrix derive from one checked-in source of truth; a target present in one and absent from the other fails verification.
+- The pin table is produced by a checked-in generation workflow that verifies upstream artifact provenance and fails on any missing supported target.
+- Re-resolution is driven by a recorded input fingerprint that includes the `uv` version; publish reuses a matching stored resolution instead of re-resolving.
 
 ### Multi-artifact release
 
@@ -1548,6 +1701,12 @@ OIDC/keyless AgentPM registry publishing is deferred.
 - `any` must not be used when runtime behavior is genuinely OS/ABI-specific.
 - Missing declared files becoming fatal may expose currently tolerated broken manifests and should produce actionable errors.
 - AgentPM-managed uv acquisition/versioning must not accidentally make users manage uv themselves.
+- Lazy resolver download adds a first-use network dependency to `agentpm install`/`run`. Proxied CI, allowlisted corporate networks, and airgapped environments are the realistic failure cases; `AGENTPM_UV_PATH` and proxy-aware download behavior are the mitigations, and both must ship with the feature rather than after it.
+- Mirrored resolver artifacts are permanently load-bearing for already-published CLI versions. A storage lifecycle/cleanup policy that deletes them retroactively breaks every CLI release that pinned that version.
+- Verifying upstream provenance only at ingestion moves trust to AgentPM's release process; the pin table's integrity rests on code review and git history, so a generated table must never be edited by hand.
+- Recording distribution digests enlarges `agent.lock` and requires resolution to enumerate distributions across all supported targets, not only the publisher's. Under-enumeration silently produces locks that fail to install on other platforms, so cross-target install coverage is the only honest verification.
+- Digest-verified, wheel-only install converts some previously "it compiled eventually" installs into hard failures. That is intended, but error text must make the cause obvious or it will read as AgentPM being broken.
+- Exact-version equality on `AGENTPM_UV_PATH` means an enterprise image containing a different `uv` build is rejected. This is deliberate; the pressure to relax it into a warning should be resisted, since it would reintroduce arbitrary-resolver behavior through the override.
 
 ### Lockfile evolution
 
@@ -1592,7 +1751,9 @@ OIDC/keyless AgentPM registry publishing is deferred.
 
 ## Implementation choices Codex may resolve within invariants
 
-The following are **not** pre-milestone contract blockers. Codex may choose the implementation that best matches existing repo patterns, provided the surrounding invariant in this spec is preserved. The Stage 1 contract decisions for `PythonResolution`, release-manifest type/schema, release-reservation table names, legacy scalar-column semantics, RFC 8785 canonicalization, and official-registry trust anchors are already fixed above and must not be reopened implicitly during implementation.
+The following are **not** pre-milestone contract blockers. Codex may choose the implementation that best matches existing repo patterns, provided the surrounding invariant in this spec is preserved. The Stage 1 contract decisions for `PythonResolution`, release-manifest type/schema, release-reservation table names, legacy scalar-column semantics, RFC 8785 canonicalization, official-registry trust anchors, and AgentPM-managed `uv` acquisition are already fixed above and must not be reopened implicitly during implementation.
+
+**Previously open, now decided — do not re-open:** the `uv` acquisition strategy. Earlier revisions of this spec left bundled-versus-downloaded open. It is now fixed in §19 "AgentPM-managed `uv` acquisition": pinned standalone binary, AgentPM-controlled immutable storage, compiled-in SHA-256 verification, `AGENTPM_UV_PATH` override at exact pinned version, no PATH `uv`, no bundling. Distribution-digest recording in `PythonResolution` v1 is likewise fixed, not optional.
 
 1. What exact internal representation should the faceted filter query use so new Stage 2 filters can be added without branching explosion?
 2. Should the namespace pin maximum be exactly 6 or remain a small configurable constant?
@@ -1601,14 +1762,14 @@ The following are **not** pre-milestone contract blockers. Codex may choose the 
 5. What exact PostHog SDK/server integration pattern best matches the existing frontend/backend architecture?
 6. What persistent CLI config mechanism should store telemetry opt-out if the current config object does not already provide one?
 7. Which Lemon Squeezy webhook event names map cleanly to subscription started/updated/cancelled/payment failed?
-8. Should AgentPM bundle `uv`, download/cache a pinned standalone `uv`, or use another managed acquisition strategy? **Invariant:** the user's project must not be required to manage uv and AgentPM must pin/version-check the resolver it uses.
-9. What exact on-disk local runtime-state metadata/file layout should record target/interpreter/environment fingerprint and selected artifact digest under `.agentpm/`? **Invariant:** this state is machine-local and never enters portable `agent.lock`.
-10. What retention interval/background job should clean expired staged release artifacts? **Invariant:** cleanup must be retry-safe and must never delete finalized release objects.
-11. Can S3 checksum headers provide the required trusted stored-byte SHA-256 in the current presigned flow, or should AgentPM independently stream/hash staged objects before finalize? **Invariant:** new release finalization cannot trust only publisher-declared metadata.
-12. Should dependency environments be rebuilt automatically by `agentpm run` when the resolved interpreter changes, or should run fail with an explicit `agentpm install --refresh` instruction? **Invariant:** an incompatible existing environment is never silently reused.
-13. Should the new reusable packaging surface be named `agentpm package`, or should an existing command be refactored into an equivalent machine-readable build mode? **Invariant:** the CI-facing build contract is provider-neutral and emits the required artifact descriptor.
-14. Should Windows be added to the first official Tool publish matrix immediately given the existing CLI Windows release support, or follow after the required macOS/Linux proof? **Invariant:** AgentPM's own CLI CI still gains Windows coverage for target/runtime/extraction behavior in this stage.
-15. What exact compatibility/trust fields should Stage 2 Package Health read from the new release/artifact model?
+8. What exact on-disk local runtime-state metadata/file layout should record target/interpreter/environment fingerprint and selected artifact digest under `.agentpm/`? **Invariant:** this state is machine-local and never enters portable `agent.lock`.
+9. What retention interval/background job should clean expired staged release artifacts? **Invariant:** cleanup must be retry-safe, must never delete finalized release objects, and must never delete mirrored resolver artifacts.
+10. Can S3 checksum headers provide the required trusted stored-byte SHA-256 in the current presigned flow, or should AgentPM independently stream/hash staged objects before finalize? **Invariant:** new release finalization cannot trust only publisher-declared metadata.
+11. Should dependency environments be rebuilt automatically by `agentpm run` when the resolved interpreter changes, or should run fail with an explicit `agentpm install --refresh` instruction? **Invariant:** an incompatible existing environment is never silently reused.
+12. Should the new reusable packaging surface be named `agentpm package`, or should an existing command be refactored into an equivalent machine-readable build mode? **Invariant:** the CI-facing build contract is provider-neutral and emits the required artifact descriptor.
+13. Should Windows be added to the first official Tool publish matrix immediately given the existing CLI Windows release support, or follow after the required macOS/Linux proof? **Invariant:** AgentPM's own CLI CI still gains Windows coverage for target/runtime/extraction behavior in this stage.
+14. What exact compatibility/trust fields should Stage 2 Package Health read from the new release/artifact model?
+15. Where should the single checked-in supported-target definition live so both `release.yml`'s matrix and the resolver pin table derive from or validate against it? **Invariant:** the two lists cannot drift silently; a target in one and not the other fails verification.
 
 ## Related Specs
 
