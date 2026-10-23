@@ -927,6 +927,33 @@ fn validate_manifest_value_with_manifest_path(
     }
 
     if let Some(Value::Object(runtime)) = value.get("runtime")
+        && let Some(dependencies) = runtime.get("dependencies")
+    {
+        let issue = if runtime.get("type").and_then(Value::as_str) != Some("python") {
+            Some("runtime.dependencies is only supported for Python Tools".to_owned())
+        } else if let Ok(requirements) = serde_json::from_value::<Vec<String>>(dependencies.clone())
+        {
+            agentpm_sdk::python::normalize_requirements(&requirements)
+                .err()
+                .map(|e| format!("{e:#}"))
+        } else {
+            None // The schema reports the precise type error.
+        };
+        if let Some(message) = issue {
+            issues.push(LintIssue {
+                file: file_label.into(),
+                level: "error",
+                message,
+                instance_path: "/runtime/dependencies".into(),
+                schema_path: "".into(),
+                rule_id: Some("python.dependencies".into()),
+                human_message: None,
+                details: Vec::new(),
+            });
+        }
+    }
+
+    if let Some(Value::Object(runtime)) = value.get("runtime")
         && let Some(Value::String(runtime_type)) = runtime.get("type")
         && let Some(Value::Object(entrypoint)) = value.get("entrypoint")
     {

@@ -931,10 +931,16 @@ Add tests for:
 - New capability state writes minimum lockfile version 4.
 - Future unsupported lockfile version is rejected before lossy deserialization/rewrite.
 - Plain `agentpm install` lock regeneration preserves Python resolution state from the resolve plan.
+- The same resolution digests identically through `agent.lock`, the resolve DTO, and the release-manifest digest input; a divergent re-serialization on any one surface fails rather than yielding a second digest for the same resolution.
+- Lock size is measured against a realistic multi-dependency Python Tool, not the unit fixtures, and the measurement is recorded as evidence. For scale, `pydantic>=2.8,<3` alone is 5 packages / 56 digests / ~5.7 KB canonical.
+- Whatever serialization is chosen for v4, existing v2/v3 locks still round-trip byte-identically.
 - Package key remains logical `kind:name@version`, not target-qualified.
 - `PackageKind` variants stay in agreement across the CLI lockfile/semver types and the SDK install DTOs; a variant added to one side without the other fails a test rather than passing review.
 - New lock records release integrity but no local selected-artifact target/digest.
-- Stale manifest/Python resolution mismatch blocks publish.
+- Stale manifest/Python resolution mismatch blocks publish, using the same input fingerprint the author-side resolution recorded rather than a second staleness rule.
+- Once the M11A publication block lifts, a dependency-bearing publish writes resolution state into `agent.lock` and the published release carries it; a publish whose lock state is missing or stale still fails.
+- The registry no longer rejects non-empty `runtime.dependencies` at `publish:init`, **and** a direct API publish that bypasses the CLI cannot create a dependency-bearing release with no persisted resolution. Verify the server path separately from the CLI path — the CLI gate alone is not the control.
+- A publish that cannot succeed fails before resolver acquisition; assert no resolver download was attempted on a cold cache.
 - Published release/artifact contains Tool-specific Python resolution metadata.
 - Re-resolution fingerprint:
   - unchanged requirements/constraint/target-set/`uv` version → `agentpm publish` reuses the stored resolution and does not re-resolve;
@@ -970,6 +976,207 @@ Add tests for:
   - the generator rejects an upstream artifact whose attestation does not verify against `astral-sh/uv`;
   - the committed pin table and the `release.yml` target matrix are checked for agreement, and the check **fails** when a target is added to one and not the other. Verify by mutation: add a target to the matrix only.
 - Legacy `_vendor` Tool still uses legacy run behavior.
+
+#### Milestone 11A Evidence (2026-10-22, America/Denver)
+
+Scope: declaration/lint, portable resolution, resolver acquisition and input
+fingerprints only. No v4 lock writes, install DTO regeneration, managed Python
+environment, payload classification, multi-artifact release or Node/Python SDK
+changes were implemented. The overlapping lock/DTO/build/inspection/release
+checklist items remain unchecked for their owning later milestones. Both CLI
+and Registry `publish_init` reject non-empty Python dependency declarations
+before upload until portable lock/release integration exists; direct API calls
+cannot use those declarations to bypass the staged publication restriction.
+Legacy declarations and empty Python dependency arrays retain their existing
+validation path. Dry runs prepare typed author-side state under
+`target/agentpm/python-resolutions/`, already excluded by the packager; this is
+not advertised as portable `agent.lock` state or published resolution metadata.
+
+Implementation coverage:
+
+- Optional Python-only schema field and runtime readers, PEP 508/440 parsing,
+  normalized names/extras/requirements, contradictory constraints and overlapping
+  duplicate roots. Node rejects the field even when it is an empty array.
+- Closed `agentpm.python-resolution.v1` type, exact normalized versions,
+  mutually exclusive marker branches, mandatory full lowercase SHA-256 sets,
+  deterministic array ordering, canonical bytes and digest. Rust and Python
+  tests share the string-only contract vector in
+  `crates/agentpm-sdk/contracts/python-resolution-v1.json`; JCS serialization in
+  the producer uses `serde_jcs`, without changing legacy author-signature JSON.
+- The target enum is generated from
+  `crates/agentpm-sdk/platforms/targets.json`; current target uses Cargo's full
+  build target, not analytics OS/CPU fields. CI/release matrix and generated pin
+  coverage use the same list. Mutation tests add targets to only one side and
+  assert rejection.
+- Exact override validation, no implicit PATH search (including a bare override
+  name), lazy acquisition, digest/version-verified cache reuse, valid downloads,
+  tampering rejection without caching/execution, unsupported target with an
+  asserted zero-connection listener, and distinct operator error categories.
+- A real CLI subprocess routes through a local HTTP proxy and verifies that
+  publish credentials are not forwarded to resolver/storage requests. Required
+  downloads keep standard proxy support with explicit 10-second connect and
+  120-second total deadlines, which also bound idle reads. Optional telemetry's
+  no-proxy behavior is unchanged.
+- Fingerprints include normalized roots, Python minimum, supported targets and
+  the resolver version. Matching state is reused without acquiring uv; changed
+  roots, missing/stale fingerprints and explicit refresh re-resolve; corrupt
+  resolution digests fail closed. The uv version is compiled directly from the
+  generated table, so adopting a new pin changes the fingerprint automatically.
+- Registry presigning uses existing S3 configuration and a fixed, allowlisted
+  immutable object key, including historical per-version inventories. Unknown
+  versions/targets cannot select arbitrary keys. Direct publication rejection is
+  tested before any database or S3 work.
+
+Live upstream verification and resolution smoke test:
+
+- Final pin: **uv 0.13.5**, the upstream release observed on 2026-10-22. The
+  checked-in generator downloaded all four supported archives, retrieved public
+  GitHub attestation bundles, verified them with `gh attestation verify --repo
+  astral-sh/uv --bundle ...`, and independently computed the raw executable
+  digests. Generated CLI/current Registry/version-history inventories agree.
+  No upstream checksum file was treated as the trust anchor. Artifacts were
+  **staged only**, not uploaded to S3.
+- On macOS arm64, the attested 0.13.5 binary resolved `click==8.1.8` and
+  `pydantic==2.11.7` for Python `>=3.11` and all supported target environments.
+  Seven distributions were recorded, including Windows-only Colorama and 24
+  distribution hashes for `pydantic-core`, including its sdist. The canonical
+  resolution digest was
+  `ac4666eda2701aec443fcd31f6972fd94a7467a1a410c50a24c7d7f600775ef1`.
+- Final engine path creates a fresh internal `uv lock --no-build`, then exports
+  that exact lock using `uv export --locked --format pylock.toml`. This retains
+  sdist digests without executing source builds. Temporary inputs come only from
+  `agent.json`; user project/uv configuration and AgentPM credential variables
+  are not inherited as resolver configuration. No consumer dependency
+  installation or foreign-platform execution is claimed by this smoke test.
+
+Verification commands/results:
+
+- `cargo test --offline --workspace --quiet --no-fail-fast -- --test-threads=1`:
+  **1,126 passed** (1,083 CLI unit, 29 CLI integration and 14 Rust SDK tests).
+  Added 23 Rust cases. Initial full runs exposed intermittent reads in unchanged
+  messaging/telemetry mock servers: accepted sockets could inherit nonblocking
+  mode on macOS. Those test helpers now explicitly use blocking accepted streams;
+  repeated full runs pass without changing production telemetry or messaging.
+  Local compiler was Homebrew Rust 1.98.0; the existing CI 1.89 toolchain and
+  foreign-platform execution were not run locally.
+- `python3 -m unittest discover -s scripts -p test_resolver_pins.py -v`:
+  **8 passed**, including failed provenance, incomplete target coverage,
+  independent byte hashing, inventory immutability, target drift and the
+  cross-language canonical vector.
+- `python3 scripts/check_resolver_targets.py --registry-pins
+  ../agentpm-api/app/tools/domain/tools/uv-pins.json`: passed; release matrix is
+  derived from that checked source rather than a second hand-maintained list.
+- API `.venv/bin/python -m pytest -q -rs` with the standard non-secret fixture
+  signing key: **437 passed, 7 skipped, 88 subtests passed**. The 16 new resolver
+  download/publication cases pass. Skips remain the existing optional PostgreSQL
+  revoked-PAT, relevance and sitemap cases requiring
+  `AGENTPM_SEARCH_TEST_DATABASE_URI`.
+- `cargo fmt --all` / `--check`, workspace/all-target Clippy `-D warnings`,
+  pinned Black 23.9.1 for maintainer scripts, and API native Black/isort/flake8/
+  pylint/pyupgrade/text hooks passed on touched files. Full native hooks were
+  attempted: mypy still reports the existing `search.py:1486,1856` errors, and
+  the Bandit 1.7.5 hook environment still lacks `pbr`. The same pinned Bandit
+  version with `pbr` supplied in an isolated tool environment scanned all touched
+  Python code with no issues; five narrow, explained annotations cover the
+  fixed HTTPS upstream fetches and trusted verifier subprocess/exception imports.
+  No project dependency or baseline search code was changed to hide these issues.
+
+Review hardening evidence (2026-10-22):
+
+- `scripts/resolver_smoke.py` executes the attested native binary against a fixed
+  Click/Pydantic fixture. Its lock/export commands and the production CLI now
+  consume `platforms/uv-resolution-commands.json`; the fake resolvers independently
+  assert the exact argv, including `--locked`, `--no-emit-project` and `--no-build`.
+- Adoption requires pylock `lock-version = "1.0"`, valid package/version/hash
+  fields, distinct native wheel hashes and Python 3.11 wheel coverage for **all
+  four** supported targets, the native package's sdist hash and the Windows-only
+  Colorama marker. Unknown target coverage fails closed rather than silently
+  treating an older fixture as sufficient for a new platform.
+- The `Resolver Contract` workflow is scoped to relevant pin/contract PR changes
+  and manual candidate-version dispatch, with a native runner for each target.
+  It only emits execution reports; ordinary Rust/Python tests remain offline.
+  Full ingestion revalidates report output, binary digest, version, target and
+  contract fingerprint before the first PUT or either pin-table write. Missing,
+  duplicate and stale foreign-platform reports are errors. Fingerprints normalize
+  Windows/Unix checkout line endings. Reports must come from a trusted, reviewed
+  workflow revision; they are not substitutes for upstream artifact attestations.
+- `python3 -B -m unittest discover -s scripts -p test_resolver_pins.py -v`:
+  **20 passed**, including broken output/schema, each missing platform wheel,
+  missing hashes/sdist/marker, stale evidence, exact command invocation and the
+  no-upload/no-pin-write failure gate.
+- `python3 -B scripts/resolver_pins.py 0.13.5 --stage-only --smoke-target
+  aarch64-apple-darwin --staging ... --gh ...` passed end to end: upstream archive
+  attestation, native execution, output validation, report emission. Output has
+  7 packages, 23 distinct pydantic-core wheel hashes plus its sdist. It generated
+  only the report in temporary storage; no pin files or S3 objects were changed.
+- Full offline Rust workspace suite: **1,127 passed** (1,084 CLI unit, 29 CLI
+  integration, 14 SDK). Formatter checks, Clippy `-D warnings`, pinned Black
+  23.9.1 and Bandit 1.7.5 passed. Workflow YAML parsed successfully; GitHub-hosted
+  execution is not claimed. The remaining native Intel Mac/Linux/Windows runs
+  must pass before full ingestion; no foreign-platform evidence was fabricated.
+
+Follow-up review evidence:
+
+- Release-time drift prevention checks **deployed** state, not just working-tree
+  equality: `check_resolver_mirror.py` requests every pinned version/target from
+  the production Registry and streams each presigned object to verify its exact
+  compiled-in digest. `release.yml` runs it before builds/assets. Missing
+  inventories, missing/inaccessible objects, wrong bytes, empty/oversized objects
+  and HTTP/transport errors fail the gate. No private-repo token is required.
+  The real production probe has not been claimed successful: deployment and
+  mirror upload remain open operator gates, and CLI releases intentionally block
+  until those are satisfied.
+- Both CLI acquisition GETs distinguish 403/404 (not mirrored/inaccessible),
+  other HTTP service failures and transport/proxy failures. A local HTTP fixture
+  exercises 403/404/500 at each hop, checks no failed download is cached and
+  checks signed URL query secrets are not exposed in diagnostics.
+- `PythonResolution` v1 remains graph-free. Its type docs and spec explicitly
+  distinguish root coverage from unprovable general transitive closure. An SDK
+  regression records that limitation; a parser regression checks retention of a
+  Windows-only transitive's version, marker and hashes. The known real-resolver
+  smoke fixture rejects removal of Colorama, not only an incorrect marker.
+- A cold-cache real CLI subprocess rejects plain dependency-bearing `publish`
+  at the 11B gate with and without an override, including `--refresh-python`.
+  It asserts zero registry connections and no author-resolution state/lockfile.
+  The gate runs after manifest validation but before acquisition or resolution.
+- Full Rust workspace suite: **1,131 passed** (1,086 CLI unit, 30 integration,
+  15 SDK); maintainer Python suite: **26 passed**. Formatting, Clippy and pinned
+  Bandit passed. Release/resolver workflow YAML parses; GitHub-hosted execution
+  and live production mirror availability remain unverified, not inferred from
+  mocked tests. Backend runtime code was unchanged by these follow-up fixes.
+
+Python compatibility follow-up: read-only target/mirror checks no longer import
+the Python 3.11+ smoke machinery; ingestion rejects older Python explicitly
+before work. CI/release check jobs pin Python 3.11. **28 maintainer tests passed**;
+the target/inventory check and mirror CLI `--help` also passed under the Mac's
+system Python 3.9.6. No Rust code changed or Rust suite rerun for this narrow fix.
+
+Operator-diagnostics follow-up: **31 maintainer tests** and the focused Rust HTTP
+status regression passed. Linux libc fallback and unknown/musl rejection are
+covered. Both download diagnostics name API route deployment as a possible 404
+cause; the mirror CLI exits with a concise error (also checked under Python
+3.9.6), without a traceback. Formatters and applicable docs hooks passed.
+
+Open operator/integration acceptance:
+
+- Execute the Resolver Contract workflow on GitHub before the initial upload and
+  record its run URL/all four native results. Dispatch was not possible locally:
+  the workflow is still untracked/unpublished in this worktree and the available
+  GitHub CLI has no authentication. No commit/push/upload was performed to work
+  around this. Linux detection now falls back from CPython's libc heuristic to
+  `CS_GNU_LIBC_VERSION`, retaining fail-closed behavior on unknown/musl systems;
+  mocked fallback coverage does not establish GitHub-hosted runner success.
+- Upload the verified raw binaries to each deployment's existing registry
+  bucket/prefix, exercise live presigned delivery/cache reuse, and confirm the
+  real AWS lifecycle/IAM retention policy. Operational instructions and the
+  append-only rule are beside the S3 integration in
+  `agentpm-api/app/tools/domain/tools/RESOLVER_STORAGE.md`. No bucket policy,
+  live object, deployment, release tag or version bump was changed here.
+- Portable lock persistence, resolved-state publication and install regeneration
+  remain 11B work; actual managed environment provisioning and the resolve-on-one/
+  install-on-another proof remain the 11A-11C integration gate. Release manifest
+  and artifact inspection consumers use the same type in their owning milestones.
+- Stage 2 M1B has a working-tree schema handoff note, not merge/freeze evidence.
 
 ### Payload compatibility
 

@@ -81,6 +81,10 @@ pub struct PublishArgs {
     /// Namespace handle to publish into
     #[arg(long, value_name = "HANDLE")]
     pub namespace: Option<String>,
+
+    /// Refresh author-side Python dependency resolution (M11A dry-run preparation)
+    #[arg(long)]
+    pub refresh_python: bool,
 }
 
 impl PublishArgs {
@@ -139,6 +143,44 @@ impl PublishArgs {
             ));
         }
         s.ok("schema + semantics");
+
+        if !self.dry_run
+            && manifest_value
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("tool")
+            && manifest_value
+                .pointer("/runtime/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("python")
+            && manifest_value
+                .pointer("/runtime/dependencies")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|requirements| !requirements.is_empty())
+        {
+            bail!(
+                "Publishing dependency-bearing Tools requires the lock/release integration in Milestone 11B. Use --dry-run to prepare and inspect the resolution; no resolver acquisition or upload was attempted."
+            );
+        }
+
+        let directory = manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let input = manifest_value.clone();
+        let registry = cfg.base_url.clone();
+        let refresh = self.refresh_python;
+        let resolution = tokio::task::spawn_blocking(move || {
+            crate::python_resolver::prepare(&input, &directory, &registry, refresh)
+        })
+        .await??;
+        if let Some(resolution) = resolution {
+            eprintln!(
+                "Python dependencies resolved: {} distributions, sha256:{}",
+                resolution.packages().len(),
+                resolution.digest()?
+            );
+        }
 
         // 3) Strongly typed manifest split
         let publish_manifest = parse_publish_manifest(&manifest_value)?;
@@ -2165,6 +2207,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         }
     }
 
@@ -2471,6 +2514,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -2524,6 +2568,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -2975,6 +3020,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -3807,6 +3853,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -3872,6 +3919,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -3934,6 +3982,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -3993,6 +4042,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -4039,6 +4089,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         let err = args.run("https://example.com".into()).await.unwrap_err();
@@ -4086,6 +4137,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         let err = args.run("https://example.com".into()).await.unwrap_err();

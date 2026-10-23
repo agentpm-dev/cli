@@ -806,98 +806,144 @@ This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a st
 > - **The `uv` acquisition strategy is decided, not open.** See spec §19 "AgentPM-managed `uv` acquisition". Pinned standalone binary, AgentPM-controlled immutable storage, compiled-in SHA-256, `AGENTPM_UV_PATH` override at exact pinned version, no PATH `uv`, no bundling. Do not implement a second architecture or a PATH-discovery fallback.
 > - **`PythonResolution` v1 records distribution digests.** This is fixed in v1 because the contract is frozen here and Stage 2's APDS v1.0.0 freeze is gated on it; digests cannot be added additively later.
 
-- [ ] Define canonical AgentPM target identifier representation, including:
-  - [ ] `any`;
-  - [ ] `aarch64-apple-darwin`;
-  - [ ] `x86_64-apple-darwin`;
-  - [ ] `x86_64-unknown-linux-gnu`;
-  - [ ] `x86_64-pc-windows-msvc`;
-  - [ ] room for future supported targets/ABI variants.
-- [ ] Give the supported-target list **one checked-in machine-readable source of truth**. Today it exists only as the four-entry YAML matrix in `agentpm/.github/workflows/release.yml`, which is not readable by the CLI, by tests, or by the resolver pin-table generator:
-  - [ ] define the canonical list in one checked-in location;
-  - [ ] have the canonical target enum, the resolver pin table, and `release.yml`'s matrix derive from it or validate against it;
-  - [ ] add a check that **fails** when the release matrix and the resolver pin table disagree, so adding a CLI target cannot silently ship a platform whose Python provisioning is impossible.
-- [ ] Add deterministic current-target detection/mapping rather than treating raw `std::env::consts::{OS,ARCH}` as the compatibility ID.
-- [ ] Extend Tool runtime schema with optional Python `dependencies` when `runtime.type == "python"`. **Cross-stage note:** `$defs/runtime` is `additionalProperties: false, required: [type, version]`, so this is a conformance-affecting change and Stage 2's APDS v1.0.0 freeze (Stage 2 M1B) is gated on it. Flag the merge to the Stage 2 track.
-- [ ] Extend all relevant typed runtime representations, including runner-side `RuntimeDecl`, so the new field is understood consistently.
-- [ ] Reject `dependencies` for Node Tools.
-- [ ] Add Python requirement syntax validation.
-- [ ] Add deterministic duplicate/conflict validation.
-- [ ] Implement the fixed `PythonResolution` v1 contract:
-  - [ ] `type` exactly `agentpm.python-resolution.v1`;
-  - [ ] `python.requires` as the normalized runtime Python constraint;
-  - [ ] `requirements: string[]` containing normalized authored root requirements;
-  - [ ] `packages[]` containing normalized distribution `name`, exact `version`, required non-empty `hashes[]`, and optional normalized PEP 508 `marker`;
-  - [ ] allow repeated normalized package names only when distinguished by mutually exclusive marker conditions needed for portable resolution;
-  - [ ] normalize distribution names deterministically (PEP 503-style lowercase/hyphen normalization preferred);
-  - [ ] sort `requirements` deterministically;
-  - [ ] sort `packages` by normalized `(name, marker-or-empty, version)`;
-  - [ ] sort `hashes` lexicographically within each package entry;
-  - [ ] do not include wheel filenames/tags, publisher target/architecture, interpreter path, local paths, or environment IDs;
-  - [ ] do not require a full parent/child dependency graph in v1;
-  - [ ] digest canonical `PythonResolution` bytes with RFC 8785/JCS when producing `pythonResolutionDigest`.
-- [ ] Record distribution digests for every locked version:
-  - [ ] each digest is `sha256:` plus 64 lowercase hex characters, never truncated;
-  - [ ] `hashes[]` covers **every published distribution of that exact version any supported AgentPM target could install** — applicable wheels plus the sdist where one exists — not the publisher's selected wheel;
-  - [ ] do **not** key digests by target, filename, or wheel tag; any one listed digest matching is acceptance, which is what keeps the object target-independent;
-  - [ ] enumerate distributions across the full supported-target set, not only the publishing machine's — under-enumeration produces a lock that installs locally and fails on other platforms;
-  - [ ] **fail resolution** if any resolved version has no retrievable digest rather than emitting an empty/omitted `hashes` array;
-  - [ ] add a lint/validation rule rejecting a `PythonResolution` with any package entry lacking digests, so an unverifiable resolution cannot reach `agent.lock` or a release.
-- [ ] Use this exact typed object consistently in:
-  - [ ] `LockedPackage`;
-  - [ ] resolve/install DTOs and `ResolvePlan`;
-  - [ ] publish/build descriptor;
-  - [ ] artifact inspection metadata;
-  - [ ] release-manifest digest input.
-- [ ] Do not lock publisher-selected wheel filenames or publisher architecture in `PythonResolution`.
-- [ ] Integrate AgentPM-managed `uv` as the pinned internal Python dependency engine:
-  - [ ] pin one exact `uv` version as a compiled-in constant;
-  - [ ] version-check the binary before every execution, not only at download;
-  - [ ] never discover or fall back to a PATH-installed `uv`;
-  - [ ] acquire lazily — nothing downloads until the first operation that actually needs the dependency engine.
-- [ ] Implement acquisition in this exact resolution order:
-  - [ ] `AGENTPM_UV_PATH` set → validate the binary reports the pinned version, then use it;
-  - [ ] managed binary present in cache → validate digest/version, then use it;
-  - [ ] target not in the pin table → fail with the unsupported-target error **before any network access**;
-  - [ ] otherwise download from AgentPM storage → verify SHA-256 against the compiled-in pin → cache → use.
-- [ ] Cache the binary per user, per `uv` version, per target, outside any project directory (for example `~/.cache/agentpm/runtimes/uv/<version>/<target>/uv`) so one download serves every project and a version bump cannot overwrite a binary an older CLI still pins.
+- [x] Define canonical AgentPM target identifier representation, including:
+  - [x] `any`;
+  - [x] `aarch64-apple-darwin`;
+  - [x] `x86_64-apple-darwin`;
+  - [x] `x86_64-unknown-linux-gnu`;
+  - [x] `x86_64-pc-windows-msvc`;
+  - [x] room for future supported targets/ABI variants.
+- [x] Give the supported-target list **one checked-in machine-readable source of truth**. Today it exists only as the four-entry YAML matrix in `agentpm/.github/workflows/release.yml`, which is not readable by the CLI, by tests, or by the resolver pin-table generator:
+  - [x] define the canonical list in one checked-in location;
+  - [x] have the canonical target enum, the resolver pin table, and `release.yml`'s matrix derive from it or validate against it;
+  - [x] add a check that **fails** when the release matrix and the resolver pin table disagree, so adding a CLI target cannot silently ship a platform whose Python provisioning is impossible.
+- [x] Add deterministic current-target detection/mapping rather than treating raw `std::env::consts::{OS,ARCH}` as the compatibility ID.
+- [x] Extend Tool runtime schema with optional Python `dependencies` when `runtime.type == "python"`. **Cross-stage note:** `$defs/runtime` is `additionalProperties: false, required: [type, version]`, so this is a conformance-affecting change and Stage 2's APDS v1.0.0 freeze (Stage 2 M1B) is gated on it. Flag the merge to the Stage 2 track.
+- [x] Extend all relevant typed runtime representations, including runner-side `RuntimeDecl`, so the new field is understood consistently.
+- [x] Reject `dependencies` for Node Tools.
+- [x] Add Python requirement syntax validation.
+- [x] Add deterministic duplicate/conflict validation.
+- [x] Implement the fixed `PythonResolution` v1 contract:
+  - [x] `type` exactly `agentpm.python-resolution.v1`;
+  - [x] `python.requires` as the normalized runtime Python constraint;
+  - [x] `requirements: string[]` containing normalized authored root requirements;
+  - [x] `packages[]` containing normalized distribution `name`, exact `version`, required non-empty `hashes[]`, and optional normalized PEP 508 `marker`;
+  - [x] allow repeated normalized package names only when distinguished by mutually exclusive marker conditions needed for portable resolution;
+  - [x] normalize distribution names deterministically (PEP 503-style lowercase/hyphen normalization preferred);
+  - [x] sort `requirements` deterministically;
+  - [x] sort `packages` by normalized `(name, marker-or-empty, version)`;
+  - [x] sort `hashes` lexicographically within each package entry;
+  - [x] do not include wheel filenames/tags, publisher target/architecture, interpreter path, local paths, or environment IDs;
+  - [x] do not require a full parent/child dependency graph in v1;
+  - [x] digest canonical `PythonResolution` bytes with RFC 8785/JCS when producing `pythonResolutionDigest`.
+- [x] Record distribution digests for every locked version:
+  - [x] each digest is `sha256:` plus 64 lowercase hex characters, never truncated;
+  - [x] `hashes[]` covers **every published distribution of that exact version any supported AgentPM target could install** — applicable wheels plus the sdist where one exists — not the publisher's selected wheel;
+  - [x] do **not** key digests by target, filename, or wheel tag; any one listed digest matching is acceptance, which is what keeps the object target-independent;
+  - [x] enumerate distributions across the full supported-target set, not only the publishing machine's — under-enumeration produces a lock that installs locally and fails on other platforms;
+  - [x] **fail resolution** if any resolved version has no retrievable digest rather than emitting an empty/omitted `hashes` array;
+  - [x] add a lint/validation rule rejecting a `PythonResolution` with any package entry lacking digests, so an unverifiable resolution cannot reach `agent.lock` or a release.
+- [x] Define the object once as the single shared type, so every later consumer reuses it rather than restating its shape. **Propagating it into `LockedPackage`, resolve/install DTOs, the publish descriptor, artifact metadata, and the release-manifest digest input moved to Milestone 11B**, matching this milestone's scope note that 11A produces resolution state without persisting it. Band 8 acceptance for those surfaces is judged in 11B, not here.
+- [x] Do not lock publisher-selected wheel filenames or publisher architecture in `PythonResolution`.
+- [x] Integrate AgentPM-managed `uv` as the pinned internal Python dependency engine:
+  - [x] pin one exact `uv` version as a compiled-in constant;
+  - [x] version-check the binary before every execution, not only at download;
+  - [x] never discover or fall back to a PATH-installed `uv`;
+  - [x] acquire lazily — nothing downloads until the first operation that actually needs the dependency engine.
+- [x] Implement acquisition in this exact resolution order:
+  - [x] `AGENTPM_UV_PATH` set → validate the binary reports the pinned version, then use it;
+  - [x] managed binary present in cache → validate digest/version, then use it;
+  - [x] target not in the pin table → fail with the unsupported-target error **before any network access**;
+  - [x] otherwise download from AgentPM storage → verify SHA-256 against the compiled-in pin → cache → use.
+- [x] Cache the binary per user, per `uv` version, per target, outside any project directory (for example `~/.cache/agentpm/runtimes/uv/<version>/<target>/uv`) so one download serves every project and a version bump cannot overwrite a binary an older CLI still pins.
 - [ ] Serve mirrored binaries from AgentPM's **existing** registry object storage / presigned-URL distribution path:
-  - [ ] do not teach the CLI to parse GitHub Releases;
-  - [ ] do not stand up a new CDN hostname or separate download service for this;
-  - [ ] honor standard proxy environment variables on this download. **Note the deliberate contrast with telemetry**, which uses a no-proxy client: telemetry must not depend on corporate network config, whereas resolver acquisition must work *through* it;
-  - [ ] set explicit connect/idle timeouts rather than inheriting `reqwest` defaults.
+  - [x] do not teach the CLI to parse GitHub Releases;
+  - [x] do not stand up a new CDN hostname or separate download service for this;
+  - [x] honor standard proxy environment variables on this download. **Note the deliberate contrast with telemetry**, which uses a no-proxy client: telemetry must not depend on corporate network config, whereas resolver acquisition must work *through* it;
+  - [x] set explicit connect/idle timeouts rather than inheriting `reqwest` defaults.
+  - [x] Gate CLI release on the deployed Registry's version/target download routes and SHA-256 verification of every mirrored binary, rather than relying on a manual cross-repo inventory comparison.
 - [ ] Record the **append-only retention rule** for mirrored resolver artifacts where storage lifecycle policy actually lives, not only in the spec. Published CLI versions pin older `uv` versions permanently, so deleting a mirrored binary retroactively breaks every CLI release that pinned it.
 - [ ] Add a checked-in pin-table generator (script or `xtask`) — the digest table must not be hand-maintained:
-  - [ ] accept the desired `uv` version as input;
-  - [ ] download the upstream artifacts for every supported AgentPM target;
-  - [ ] verify the upstream GitHub Artifact Attestation against repository `astral-sh/uv`;
-  - [ ] compute SHA-256 independently rather than trusting an upstream checksum file;
+  - [x] accept the desired `uv` version as input;
+  - [x] download the upstream artifacts for every supported AgentPM target;
+  - [x] verify the upstream GitHub Artifact Attestation against repository `astral-sh/uv`;
+  - [x] Gate adoption on real native execution for every supported target, checking the production lock/export commands and portable pylock output before any upload or pin-table write; keep ordinary tests offline and reject missing/stale cross-platform evidence.
+  - [x] compute SHA-256 independently rather than trusting an upstream checksum file;
   - [ ] upload the verified immutable bytes to AgentPM storage;
-  - [ ] write the generated, source-controlled pin table (version + per-target `sha256`);
-  - [ ] **fail** if any supported AgentPM target is missing, so a bump cannot ship a partial table;
-  - [ ] mark the output as generated so it is never edited by hand — its integrity rests on code review and git history.
-- [ ] Implement `AGENTPM_UV_PATH` in this milestone, not as a later advanced option — without it an airgapped install has no path forward:
-  - [ ] enforce **exact** equality with the pinned `uv` version;
-  - [ ] on mismatch, error (never warn) and name the exact required version so an operator can provision it;
-  - [ ] document it as serving airgapped environments, enterprise images, and preprovisioned CI images **that provision AgentPM's pinned version** — explicitly not as a way to adopt whatever `uv` an image already contains.
-- [ ] Make resolver failures distinguishable in error text — these are five different operator problems with five different fixes:
-  - [ ] unsupported target (names supported targets and the override, no network attempted);
-  - [ ] network/proxy failure reaching AgentPM storage;
-  - [ ] downloaded-bytes digest mismatch;
-  - [ ] `AGENTPM_UV_PATH` version mismatch;
-  - [ ] resolver executed but failed.
-- [ ] Do not make `requirements.txt`, `pyproject.toml`, Poetry, or uv project lockfiles authoritative in Stage 1.
-- [ ] Resolve declared dependencies to exact portable state before publishing:
-  - [ ] update/write AgentPM lock state;
-  - [ ] fail publish if manifest declarations and resolved state disagree/stale.
-- [ ] Implement re-resolution/staleness as a recorded input fingerprint rather than a fuzzy comparison:
-  - [ ] fingerprint covers normalized authored root requirements, normalized `python.requires`, the supported target set, and **the `uv` version that produced the resolution**;
-  - [ ] a valid matching resolution is reused — `agentpm publish` alone does not trigger re-resolution;
-  - [ ] a missing/stale fingerprint, or an explicit refresh, triggers re-resolution;
-  - [ ] a resolver pin bump therefore invalidates stored resolutions. Omitting the `uv` version from the fingerprint lets a lock mix entries produced by different resolver versions with no way to tell, which defeats the only guarantee the pin provides.
+  - [x] write the generated, source-controlled pin table (version + per-target `sha256`);
+  - [x] **fail** if any supported AgentPM target is missing, so a bump cannot ship a partial table;
+  - [x] mark the output as generated so it is never edited by hand — its integrity rests on code review and git history.
+- [x] Implement `AGENTPM_UV_PATH` in this milestone, not as a later advanced option — without it an airgapped install has no path forward:
+  - [x] enforce **exact** equality with the pinned `uv` version;
+  - [x] on mismatch, error (never warn) and name the exact required version so an operator can provision it;
+  - [x] document it as serving airgapped environments, enterprise images, and preprovisioned CI images **that provision AgentPM's pinned version** — explicitly not as a way to adopt whatever `uv` an image already contains.
+- [x] Make resolver failures distinguishable in error text — these are five different operator problems with five different fixes:
+  - [x] unsupported target (names supported targets and the override, no network attempted);
+  - [x] network/proxy failure reaching AgentPM storage;
+  - [x] downloaded-bytes digest mismatch;
+  - [x] `AGENTPM_UV_PATH` version mismatch;
+  - [x] resolver executed but failed.
+- [x] Do not make `requirements.txt`, `pyproject.toml`, Poetry, or uv project lockfiles authoritative in Stage 1.
+- [x] Resolve declared dependencies to exact portable state before publishing, and block publication that cannot yet retain it. **Writing that state into `agent.lock` and gating publish on lock freshness moved to Milestone 11B**, which owns lock persistence; 11A resolves, records the author-side input fingerprint, and refuses to publish a dependency-bearing Tool at all until 11B can persist the result.
+- [x] Implement re-resolution/staleness as a recorded input fingerprint rather than a fuzzy comparison:
+  - [x] fingerprint covers normalized authored root requirements, normalized `python.requires`, the supported target set, and **the `uv` version that produced the resolution**;
+  - [x] a valid matching resolution is reused — `agentpm publish` alone does not trigger re-resolution;
+  - [x] a missing/stale fingerprint, or an explicit refresh, triggers re-resolution;
+  - [x] a resolver pin bump therefore invalidates stored resolutions. Omitting the `uv` version from the fingerprint lets a lock mix entries produced by different resolver versions with no way to tell, which defeats the only guarantee the pin provides.
+
+M11A implementation status (2026-10-22): declaration/lint, the portable shared
+Rust type, target vocabulary, resolver acquisition, structured universal
+resolution, canonical digesting and input-fingerprint reuse/refresh are
+implemented. `uv` is pinned to **0.13.5**, generated from upstream artifacts whose
+GitHub attestations were verified for all four supported targets. Release CI and
+the target enum derive from `crates/agentpm-sdk/platforms/targets.json`; pin-table
+coverage is checked in normal CI and before release. See `test-plan.md` for
+verification evidence.
+
+Review hardening: resolver adoption now requires native execution evidence for
+every supported binary, bound to its exact SHA-256/version/target and the current
+smoke contract. `Resolver Contract` runs on relevant pin/contract PR changes or
+manual dispatch; it does not upload to S3 or update either repo. The production
+CLI and real smoke use the same checked-in command arguments, while offline
+fakes independently enforce those arguments. The macOS arm64 real ingestion
+smoke passed locally; the other three native workflow results remain to be run
+before ingestion can complete. See the storage guide for report collection.
+
+Follow-up review hardening: the CLI release workflow now checks the deployed
+Registry inventory and actual mirrored bytes before builds/assets, without
+private backend-repo access. Missing/inaccessible mirrors (HTTP 403/404), other
+HTTP service failures and transport/proxy failures have distinct diagnostics.
+Plain dependency-bearing publication fails before resolver acquisition, even on
+a cold cache or with `--refresh-python`. The graph-free v1 contract's coverage
+check is explicitly root-only; parser tests preserve conditional transitives and
+the native adoption fixture rejects a missing Windows-only transitive, without
+claiming that general transitive closure can be proved without dependency edges.
+
+Scope boundary: the unchecked lock/DTO/build/inspection/release-manifest wiring
+above belongs to 11B and later owning milestones, per this milestone's explicit
+scope note. No v4 lock writes or managed Python environment installation were
+added. `publish --dry-run` prepares/reuses a typed author-side resolution under
+`target/agentpm/python-resolutions/`; `--refresh-python` refreshes it. Live
+dependency-bearing publication is deliberately blocked before upload until
+portable lock/release integration exists, rather than publishing declarations
+whose exact resolution would be discarded. Legacy publication remains unchanged.
+
+Operator gates remain open: binaries are verified and staged locally, **not
+uploaded to S3**. The read-only presigned download route and create-only mirror
+generator are implemented, but live mirror delivery must still be exercised.
+The append-only rule is documented beside the registry S3 integration in
+`app/tools/domain/tools/RESOLVER_STORAGE.md`; the real bucket lifecycle/IAM
+configuration is managed outside these repos and still needs operator
+confirmation. Generator upload and retention checkboxes stay unchecked on that
+basis.
+
+Cross-stage handoff: optional Python `runtime.dependencies` changes the closed
+manifest schema. Stage 2 M1B now has a working-tree handoff note; its requirement
+to inspect the **merged** schema/type/tests remains unchecked. No APDS freeze,
+Tool scaffold change, Node/Python SDK change or version bump is claimed.
 
 ## Milestone 11B: Lockfile Evolution and Forward Compatibility
-> Scope note: persist Milestone 11A resolution state in `agent.lock` and make the lockfile safe to evolve. Owns the `LockedPackage` shape, content-derived version selection, the forward-version guard, resolve/install DTO plumbing so regeneration cannot erase state, and the duplicated `PackageKind` reconciliation.
+> Scope note: persist Milestone 11A resolution state in `agent.lock` and make the lockfile safe to evolve. Owns the `LockedPackage` shape, content-derived version selection, the forward-version guard, resolve/install DTO plumbing so regeneration cannot erase state, the duplicated `PackageKind` reconciliation, **propagation of the Milestone 11A `PythonResolution` type into every remaining contract surface**, and **lifting the M11A block on publishing dependency-bearing Tools**. Milestone 11A defined and validated the type and deliberately refused to publish declarations it could not retain; this milestone is where the resolution reaches the lock, the DTOs, the publish descriptor, artifact metadata, and the release-manifest digest — and therefore where dependency-bearing publication becomes legal.
 >
 > Split from 11A because the forward-version guard is a standalone correctness fix with value independent of Python work: today `lockfile_version` is not consulted before untagged deserialization, unknown fields are silently ignored, and an older CLI can read a future lock and rewrite it lossily. That is worth shipping on its own merit.
 >
@@ -905,6 +951,9 @@ This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a st
 > - Fix the forward-compatibility hazard **before** writing any v4 data.
 > - Plain `agentpm install` fully regenerates `agent.lock` from the server resolve plan. New Python resolution state must therefore flow through the resolve DTO/plan or it will be erased.
 > - Keep one logical locked package entry per `kind:name@version`; target selection is local machine state, not source-controlled lock state.
+> - The M11A publication block exists in **two** places — the CLI `bail!` in `publish.rs` and the registry's `publish:init` rejection of non-empty `runtime.dependencies`. Both must lift in this milestone, and the registry side must not lift before the lock path actually persists resolution state, or a custom client can publish a dependency-bearing Tool consumers cannot install.
+> - Reuse the Milestone 11A `PythonResolution` type verbatim on every surface. Do not restate its field shape, re-derive its ordering, or add a parallel per-surface struct — the whole point of fixing the contract in 11A is that these surfaces share one validated type whose digest is stable across all of them.
+> - **Resolutions are larger than the 11A test fixtures suggest.** Those fixtures carry 1–3 digests; real ones carry every distribution digest for all four supported targets across every Python version in range. A single `pydantic>=2.8,<3` dependency measures 5 packages / 56 digests / ~5.7 KB of canonical JSON, so a Tool with a handful of dependencies lands in the tens of KB and a multi-Tool workspace lock can reach low hundreds. This is the intended cost of the digest decision, not a defect — but size it against real dependencies before settling serialization.
 
 - [ ] Extend `LockedPackage` with optional Python resolution state. Settle the **final** field layout here so Milestone 14B extends it rather than reshaping it:
   - [ ] keep the four existing fields unchanged — `kind`, `name`, `version`, `integrity`;
@@ -912,6 +961,23 @@ This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a st
   - [ ] do **not** add any target, selected-artifact, interpreter, or environment-fingerprint field — those are machine-local `.agentpm/` state, not portable lock state;
   - [ ] note explicitly in code comments that `integrity` is the single logical package digest, and that Milestone 14B redefines what it *contains* for new-format releases (the 64-char lowercase release digest) **without changing its type or adding sibling digest fields**.
 - [ ] Confirm the `LockedPackage` layout chosen here satisfies Milestone 14B's integrity requirements before implementing, so the struct is touched once across the two milestones.
+- [ ] Propagate that same `PythonResolution` type into the remaining contract surfaces (moved here from Milestone 11A, which defined and validated the type but persisted it nowhere):
+  - [ ] resolve/install DTOs and `ResolvePlan`;
+  - [ ] publish/build descriptor;
+  - [ ] artifact inspection metadata;
+  - [ ] release-manifest digest input;
+  - [ ] reuse the 11A type itself on each surface — no parallel per-surface struct, no re-derived ordering;
+  - [ ] add a test asserting the same resolution digests identically through `agent.lock`, the resolve DTO, and the release-manifest digest input, so a divergent re-serialization on any one surface fails rather than silently producing a second digest for the same resolution.
+- [ ] Write resolved Python state into `agent.lock` at publish time and gate publication on its freshness (moved here from Milestone 11A, which resolves and fingerprints but persists nothing):
+  - [ ] update/write AgentPM lock state from the prepared resolution;
+  - [ ] fail publish if manifest declarations and resolved state disagree or the resolution is stale, reusing the 11A input fingerprint rather than inventing a second staleness rule;
+  - [ ] **lift the M11A publication block in both places at once** — the CLI `bail!` in `publish.rs` and the registry's `publish:init` rejection of non-empty `runtime.dependencies`. Leaving either in place makes dependency-bearing publish fail for a now-wrong reason; removing only the server one lets a custom client publish a Tool whose resolution never reached the lock;
+  - [ ] confirm the client-side gate still fails **before** resolver acquisition, so a publish that cannot succeed never pays for a resolver download.
+- [ ] Size the lock against real dependency sets before finalizing serialization:
+  - [ ] measure `agent.lock` with at least one realistic multi-dependency Python Tool (something like `openai` plus `pydantic`) rather than the 11A unit fixtures, and record the measured size as evidence;
+  - [ ] decide deliberately whether `agent.lock` stays pretty-printed at that scale, and write the decision down — it changes diff readability and review burden for every consumer of the lock;
+  - [ ] confirm the chosen serialization still round-trips v2/v3 locks byte-identically, so a formatting change made for v4 cannot rewrite existing locks;
+  - [ ] confirm a multi-Tool workspace lock stays within the size assumptions the resolve/install DTO path and registry request limits already impose, and state which limit was checked.
 - [ ] Evolve lockfile-version selection:
   - [ ] replace `requires_v3_lock(...)` with a `minimum_lock_version(...)`-style helper;
   - [ ] return minimum version 4 when Python resolution/new release fields are present;

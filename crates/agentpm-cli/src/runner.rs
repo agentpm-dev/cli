@@ -222,6 +222,8 @@ pub struct RuntimeDecl {
     pub runtime_type: String,
     #[serde(default)]
     pub version: Option<String>,
+    #[serde(default)]
+    pub dependencies: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]

@@ -80,6 +80,8 @@ fn mock_response(status: u16, body: Value) -> (String, std::thread::JoinHandle<(
                 Err(err) => panic!("mock request not received: {err}"),
             }
         };
+        // Accepted sockets may inherit the listener's nonblocking mode on macOS.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();

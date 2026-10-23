@@ -1,0 +1,10 @@
+{
+  "type": "agentpm.python-resolution.v1",
+  "python": {"requires": ">=3.11"},
+  "requirements": ["foo>=1"],
+  "packages": [{
+    "name": "foo",
+    "version": "1.2.0",
+    "hashes": ["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+  }]
+}

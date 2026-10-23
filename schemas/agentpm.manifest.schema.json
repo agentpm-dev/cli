@@ -55,8 +55,17 @@
           "type": "string",
           "description": "Minimum required runtime version",
           "pattern": "^\\d+(\\.\\d+){0,2}$"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Python-only distribution requirements resolved by AgentPM."
         }
-      }
+      },
+      "allOf": [{
+        "if": { "properties": { "type": { "const": "node" } }, "required": ["type"] },
+        "then": { "not": { "required": ["dependencies"] } }
+      }]
     },
     "envVar": {
       "type": "object",

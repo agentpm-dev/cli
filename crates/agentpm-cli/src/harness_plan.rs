@@ -1811,6 +1811,9 @@ struct ToolRuntimeDecl {
     runtime_type: String,
     #[serde(default)]
     version: Option<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    dependencies: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

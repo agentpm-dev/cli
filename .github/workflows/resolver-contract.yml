@@ -1,0 +1,59 @@
+name: Resolver Contract
+
+on:
+  pull_request:
+    paths:
+      - 'platforms/uv-pins.json'
+      - 'platforms/uv-resolution-commands.json'
+      - 'crates/agentpm-sdk/platforms/targets.json'
+      - 'scripts/resolver_pins.py'
+      - 'scripts/resolver_smoke.py'
+      - '.github/workflows/resolver-contract.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Candidate uv version (leave empty to test the checked-in pin)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  targets:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: targets
+        run: python3 scripts/check_resolver_targets.py --matrix >> "$GITHUB_OUTPUT"
+
+  smoke:
+    needs: targets
+    name: uv contract (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    env:
+      CANDIDATE_VERSION: ${{ inputs.version }}
+      RESOLVER_TARGET: ${{ matrix.target }}
+      UV_SMOKE_DIR: ${{ runner.temp }}/uv-contract
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify and execute candidate on its native platform
+        shell: bash
+        run: |
+          VERSION="${CANDIDATE_VERSION:-$(python -c 'import json; print(json.load(open("platforms/uv-pins.json"))["version"])')}"
+          python scripts/resolver_pins.py "$VERSION" \
+            --stage-only --staging "$UV_SMOKE_DIR" --smoke-target "$RESOLVER_TARGET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uv-smoke-${{ matrix.target }}
+          path: ${{ env.UV_SMOKE_DIR }}/smoke/*.json
+          if-no-files-found: error

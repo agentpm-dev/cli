@@ -1,0 +1,4 @@
+[
+  ["lock", "--no-build", "--no-python-downloads", "--no-sources", "--no-progress"],
+  ["export", "--locked", "--format", "pylock.toml", "--output-file", "pylock.toml", "--no-dev", "--no-emit-project", "--no-python-downloads", "--no-sources", "--no-progress"]
+]

@@ -798,6 +798,7 @@ Contract rules:
 - `requirements` and `packages` must be emitted in deterministic order; package ordering is by normalized `(name, marker-or-empty, version)`, and `hashes` is sorted lexicographically within each entry.
 - Do not record wheel filenames, wheel tags, local paths, publisher architecture, selected target, interpreter path, or a local environment identifier.
 - Stage 1 does not require preserving a full parent/child dependency graph in this object; the exact resolved set plus markers is the portable lock contract.
+- Validation of this graph-free object checks listed entries and authored root coverage, not general transitive completeness: omitted non-root dependencies cannot be inferred without dependency edges. The pinned resolver supplies the complete set; adoption smoke tests and parser preservation tests guard known conditional transitive cases without claiming a full closure proof.
 - The serialized/digested form is deterministic. When `PythonResolution` participates in the release manifest, its digest is SHA-256 over its RFC 8785/JCS canonical JSON bytes.
 
 #### Distribution digests and install-time verification

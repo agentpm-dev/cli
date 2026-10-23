@@ -123,6 +123,14 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 **Implementation checklist**
 
 - [ ] **Gate check before any other task here:** confirm Stage 1 M2 and M11A manifest-schema additions are merged, and record the exact commits/schema diff inspected. Also confirm Stage 1 M12 kept payload classification out of `agent.json`; if it did not, this gate extends to M12. If any is outstanding, stop — this milestone is blocked, not startable with a planned-field placeholder.
+
+Stage 1 M11A handoff (2026-10-22, working-tree implementation, not merge evidence):
+`$defs/runtime` now accepts optional Python `dependencies` and rejects the field
+for Node; requirement semantics are validated by the CLI. The portable
+`agentpm.python-resolution.v1` type includes non-empty SHA-256 distribution
+digest sets and conditional markers. Inspect the merged schema/type/tests before
+lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
+
 - [ ] Include Stage 1's landed schema additions in the frozen v1.0.0 structural contract: `agentpm-harness` in `$defs/templateMetadata.execution_surfaces` and optional Python `dependencies` on `$defs/runtime`. Add positive fixtures for each in M2A.
 - [ ] Create `standards/agentpm/1.0.0/` (or justified equivalent) and make the intended files independently readable.
 - [ ] Add `standard.id` and `standard.version` to the existing common schema with a fixed supported-v1 expectation.
