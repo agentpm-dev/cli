@@ -939,6 +939,12 @@ Add tests for:
 - New lock records release integrity but no local selected-artifact target/digest.
 - Stale manifest/Python resolution mismatch blocks publish, using the same input fingerprint the author-side resolution recorded rather than a second staleness rule.
 - Once the M11A publication block lifts, a dependency-bearing publish writes resolution state into `agent.lock` and the published release carries it; a publish whose lock state is missing or stale still fails.
+- A `kind: tool` project records a local **Tool** root, not `local:agent`. An existing lock holding the old `local:agent` key for a Tool project still reads, and one project never ends up with both keys.
+- The project's own resolution lives on the local root, never as a `LockedPackage`; no entry describing the project itself appears in `packages`, and no placeholder is written to `integrity`.
+- A full `agentpm install` preserves the local root's resolution and fingerprint. **Verify by mutation**: without the carry-forward, a plain install erases it — assert the post-install lock still contains it.
+- `packages` remains a pure projection: an entry absent from the resolve plan does not survive a full install, so preservation did not leak beyond the local-root lane.
+- Preserved-but-stale state fails the publish freshness check. Carry-forward must not let an out-of-date resolution publish.
+- Publish succeeds with a cold author cache and a committed lock, performing no re-resolution — the property multi-target CI depends on. Two matrix-equivalent runs from the same commit emit the same `pythonResolutionDigest`.
 - The registry no longer rejects non-empty `runtime.dependencies` at `publish:init`, **and** a direct API publish that bypasses the CLI cannot create a dependency-bearing release with no persisted resolution. Verify the server path separately from the CLI path — the CLI gate alone is not the control.
 - A publish that cannot succeed fails before resolver acquisition; assert no resolver download was attempted on a cold cache.
 - Published release/artifact contains Tool-specific Python resolution metadata.

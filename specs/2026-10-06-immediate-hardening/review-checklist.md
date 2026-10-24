@@ -200,6 +200,10 @@
 - Confirm every surface reuses the Milestone 11A `PythonResolution` type itself rather than a parallel per-surface struct, and that the lock, the resolve DTO, and the release-manifest digest input all produce the same digest for the same resolution.
 - Confirm both halves of the M11A publication block lifted together — the CLI `bail!` and the registry `publish:init` rejection — and that the registry side did not lift before lock persistence landed. A server that accepts dependency-bearing publishes while the lock path is incomplete produces releases consumers cannot install, and the CLI gate is not the control.
 - Confirm publish-time staleness reuses the 11A input fingerprint rather than a second, separately-drifting rule.
+- Confirm the author's own resolution lives on an explicit local **Tool** root, not as a synthetic `LockedPackage` and not under the `local:agent` fallback, and that `integrity` never receives a placeholder.
+- Confirm full-install carry-forward is scoped to the local-root lane and that `packages` is still a pure projection of the resolve plan.
+- Confirm carried-forward state cannot pass the publish freshness check when stale — preservation must not become a staleness bypass.
+- Confirm publish with a cold author cache and a committed lock does not re-resolve, and that the author cache moved off the publish-output directory.
 - Confirm lock size was measured against a realistic multi-dependency Python Tool and not the 11A unit fixtures, that the pretty-print decision was made deliberately with the measurement in hand, and that the v4 serialization choice still round-trips v2/v3 locks byte-identically.
 
 ## Payload compatibility
