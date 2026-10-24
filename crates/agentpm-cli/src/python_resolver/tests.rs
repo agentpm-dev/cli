@@ -502,7 +502,8 @@ fn valid_download_is_verified_cached_and_reused_offline() {
         }
     });
     let cache = workspace.0.join("cache");
-    ManagedUv::acquire_pinned(&endpoint, &cache, &target, &table).unwrap();
+    ManagedUv::acquire_pinned(&endpoint, &cache, &target, &table)
+        .unwrap_or_else(|error| panic!("managed resolver acquisition failed: {error:#}"));
     server.join().unwrap();
     // The server is gone, so successful acquisition here must use the verified cache.
     ManagedUv::acquire_pinned(&endpoint, &cache, &target, &table)

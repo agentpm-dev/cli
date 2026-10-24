@@ -1157,6 +1157,25 @@ covered. Both download diagnostics name API route deployment as a possible 404
 cause; the mirror CLI exits with a concise error (also checked under Python
 3.9.6), without a traceback. Formatters and applicable docs hooks passed.
 
+Initial hosted PR validation rejected `runner.temp` in the smoke job's `env`:
+that context is unavailable at job-env evaluation time. Moved the staging value
+to step-level `env` and used `runner.temp` directly in the artifact step's path.
+Pinned actionlint 1.7.12 now validates Resolver Contract, CI and release workflows
+with no errors (external shellcheck/pyflakes checks disabled). This is expression
+validation, not a claim that native GitHub jobs have passed; push the correction
+to the existing PR for a fresh hosted run.
+
+Initial Linux CI also exposed a real acquisition bug: the temporary executable's
+write handle remained open during `--version`, which Linux rejects with ETXTBSY.
+The writer is now explicitly closed after `sync_all`, before chmod/execution;
+digest/version checks and atomic cache publication remain unchanged. An isolated
+existing Linux container (network disabled, read-only root, executable tmpfs)
+reproduced ETXTBSY with the handle open and successful execution after close.
+The full macOS Rust suite passed **1,131 tests**, including the download/cache
+regression; Clippy, Rust formatting and actionlint passed. The test now prints
+the complete error chain on failure. This kernel reproduction is not a full
+Linux Rust-suite run; the updated PR's hosted Linux CI must still confirm it.
+
 Open operator/integration acceptance:
 
 - Execute the Resolver Contract workflow on GitHub before the initial upload and

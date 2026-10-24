@@ -205,6 +205,8 @@ impl ManagedUv {
                 .open(&temporary)?;
             file.write_all(&bytes)?;
             file.sync_all()?;
+            // Linux rejects executing a file that is still open for writing (ETXTBSY).
+            drop(file);
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
