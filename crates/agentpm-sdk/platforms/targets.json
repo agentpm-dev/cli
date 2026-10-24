@@ -1,0 +1,8 @@
+{
+  "targets": [
+    {"id": "aarch64-apple-darwin", "variant": "Aarch64AppleDarwin", "os": "macos-latest", "marker": "sys_platform == 'darwin' and platform_machine == 'arm64'", "uv_archive": "uv-aarch64-apple-darwin.tar.gz", "uv_binary": "uv-aarch64-apple-darwin/uv"},
+    {"id": "x86_64-apple-darwin", "variant": "X8664AppleDarwin", "os": "macos-15-intel", "marker": "sys_platform == 'darwin' and platform_machine == 'x86_64'", "uv_archive": "uv-x86_64-apple-darwin.tar.gz", "uv_binary": "uv-x86_64-apple-darwin/uv"},
+    {"id": "x86_64-unknown-linux-gnu", "variant": "X8664UnknownLinuxGnu", "os": "ubuntu-latest", "marker": "sys_platform == 'linux' and platform_machine == 'x86_64'", "uv_archive": "uv-x86_64-unknown-linux-gnu.tar.gz", "uv_binary": "uv-x86_64-unknown-linux-gnu/uv"},
+    {"id": "x86_64-pc-windows-msvc", "variant": "X8664PcWindowsMsvc", "os": "windows-latest", "marker": "sys_platform == 'win32' and platform_machine == 'AMD64'", "uv_archive": "uv-x86_64-pc-windows-msvc.zip", "uv_binary": "uv.exe"}
+  ]
+}

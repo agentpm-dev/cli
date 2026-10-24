@@ -8,3 +8,29 @@ behavior rather than treating analytics as a reliable run ledger. Publication
 must wait for the Privacy Policy and telemetry release; live dashboard
 acceptance is still pending. This is implementation evidence, not a content
 strategy or a draft.
+
+## Milestone 11A Evidence
+
+Potential later engineering material: separating authored Python requirements,
+portable exact resolutions and machine-local runtime environments; pinning and
+attesting the dependency engine without requiring users to adopt its project
+format; retaining distribution digests across supported targets; and refusing
+to publish dependency declarations before their exact state can be preserved.
+M11A prepares resolution only. Do not describe clean-machine dependency
+installation or execution as shipped until 11B/11C integration and its
+cross-platform tests are complete. Resolver mirror deployment and live storage
+retention confirmation remain operator gates. This is implementation evidence,
+not a content strategy or finished article.
+
+## Milestone 11B Evidence
+
+Potential engineering material: one lockfile can distinguish an author's local
+Tool resolution from installed package state without inventing a self-referential
+package digest. Committing that resolution gives local and matrix builds the same
+reviewable dependency input. Regression evidence includes real pre-11B CLI lock
+snapshots, unchanged-byte writes, monotonic format versions, future-version
+rejection, and mutation checks for frozen-plan and root-state loss. Publication
+binds the Tool's resolution to its artifact independently of the publisher's
+workspace. M11B delivers dependency metadata; managed installation/execution and
+the cross-machine guarantee still need 11C. This is evidence for a later brief,
+not a content strategy or an article draft.

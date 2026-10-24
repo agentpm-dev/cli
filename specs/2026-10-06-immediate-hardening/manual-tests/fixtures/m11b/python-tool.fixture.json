@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
+  "kind": "tool",
+  "name": "m11b-python-check",
+  "version": "0.1.0",
+  "description": "Disposable development-only Python lock and publish verification.",
+  "entrypoint": {
+    "command": "python3",
+    "args": ["tool.py"]
+  },
+  "runtime": {
+    "type": "python",
+    "version": "3.11",
+    "dependencies": ["click==8.1.8", "pydantic==2.11.7"]
+  },
+  "files": ["tool.py", "README.md"],
+  "inputs": {"type": "object"},
+  "outputs": {"type": "object"},
+  "readme": "README.md",
+  "license": {"spdx": "MIT"}
+}

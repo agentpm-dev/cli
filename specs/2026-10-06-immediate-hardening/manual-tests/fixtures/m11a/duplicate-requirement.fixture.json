@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
+  "kind": "tool",
+  "name": "m11a-python-check",
+  "version": "0.1.0",
+  "description": "Disposable M11A dependency-resolution fixture; never publish.",
+  "entrypoint": {
+    "command": "python3",
+    "args": [
+      "tool.py"
+    ]
+  },
+  "runtime": {
+    "type": "python",
+    "version": "3.11",
+    "dependencies": [
+      "click==8.1.8",
+      "CLICK>=8"
+    ]
+  },
+  "files": [
+    "tool.py",
+    "README.md"
+  ],
+  "inputs": {
+    "type": "object"
+  },
+  "outputs": {
+    "type": "object"
+  },
+  "readme": "README.md",
+  "license": {
+    "spdx": "MIT"
+  }
+}

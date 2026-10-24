@@ -7,6 +7,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       # Pin the toolchain (recommended to specify an exact version)
       - uses: dtolnay/rust-toolchain@v1
@@ -22,6 +25,11 @@ jobs:
 
       - name: fmt
         run: cargo fmt --all -- --check
+
+      - name: Resolver targets and ingestion tests
+        run: |
+          python3 scripts/check_resolver_targets.py
+          python3 -m unittest discover -s scripts -p test_resolver_pins.py -v
 
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings

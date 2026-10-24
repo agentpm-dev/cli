@@ -927,6 +927,33 @@ fn validate_manifest_value_with_manifest_path(
     }
 
     if let Some(Value::Object(runtime)) = value.get("runtime")
+        && let Some(dependencies) = runtime.get("dependencies")
+    {
+        let issue = if runtime.get("type").and_then(Value::as_str) != Some("python") {
+            Some("runtime.dependencies is only supported for Python Tools".to_owned())
+        } else if let Ok(requirements) = serde_json::from_value::<Vec<String>>(dependencies.clone())
+        {
+            agentpm_sdk::python::normalize_requirements(&requirements)
+                .err()
+                .map(|e| format!("{e:#}"))
+        } else {
+            None // The schema reports the precise type error.
+        };
+        if let Some(message) = issue {
+            issues.push(LintIssue {
+                file: file_label.into(),
+                level: "error",
+                message,
+                instance_path: "/runtime/dependencies".into(),
+                schema_path: "".into(),
+                rule_id: Some("python.dependencies".into()),
+                human_message: None,
+                details: Vec::new(),
+            });
+        }
+    }
+
+    if let Some(Value::Object(runtime)) = value.get("runtime")
         && let Some(Value::String(runtime_type)) = runtime.get("type")
         && let Some(Value::Object(entrypoint)) = value.get("entrypoint")
     {
@@ -3163,7 +3190,27 @@ pub fn parse_profile_manifest(value: &Value) -> Result<ProfileManifest> {
 /// Lock files
 pub fn write_lock<P: AsRef<Path>>(dir: P, lock: &Lock) -> Result<()> {
     let path = dir.as_ref().join("agent.lock");
-    let v: Value = serde_json::to_value(lock)?; // convert to Value
+    let v: Value = serde_json::to_value(lock)?;
+    if path.exists() {
+        let data = fs::read(&path)?;
+        let old: Lock = serde_json::from_slice(&data)?;
+        if lock.lockfile_version() < old.lockfile_version() {
+            return Err(anyhow!(
+                "Refusing to downgrade agent.lock from version {} to {}",
+                old.lockfile_version(),
+                lock.lockfile_version()
+            ));
+        }
+        let mut old_value: Value = serde_json::from_slice(&data)?;
+        let mut next_value = v.clone();
+        old_value.as_object_mut().unwrap().remove("generated");
+        next_value.as_object_mut().unwrap().remove("generated");
+        if old_value == next_value {
+            return Ok(());
+        }
+    }
+    // Apply the same compatibility checks to programmatically built locks before mutation.
+    let _: Lock = serde_json::from_value(v.clone())?;
     write_manifest_pretty_atomic(&path, &v) // reuse atomic writer
 }
 

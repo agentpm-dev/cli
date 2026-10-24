@@ -1,0 +1,18 @@
+{
+  "_generated": "scripts/resolver_pins.py; DO NOT EDIT",
+  "artifacts": {
+    "aarch64-apple-darwin": {
+      "sha256": "7dad6047467a9d6b081c033cb3efed9ba39a4799c698d09e6cd598f3a6a32338"
+    },
+    "x86_64-apple-darwin": {
+      "sha256": "7ed737e90584ec4f77edb50f64a9c420f8f878c4e3328ca9a2ba4585ca3b80f8"
+    },
+    "x86_64-pc-windows-msvc": {
+      "sha256": "f45d1cb9d9140ca6d3f4005fdfc0ebeccf849fd04d1dc85804155cb923f1597b"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "sha256": "8a70db72685b7138121bfcda71fa1a00cb709ed9f1fdc4ecf1dd871e8e167e52"
+    }
+  },
+  "version": "0.13.5"
+}

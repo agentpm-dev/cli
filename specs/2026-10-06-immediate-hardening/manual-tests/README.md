@@ -13,3 +13,12 @@ are disposable and gitignored.
 - [CLI telemetry and PostHog handoff (Milestone 10B)](CLI_M10B_MANUAL_TESTS.md):
   individual commands with isolated installation state, deterministic local
   fixtures, opt-out/exit checks, and the two deferred dashboard insights.
+- [Python dependency resolution (Milestone 11A)](CLI_M11A_MANUAL_TESTS.md):
+  individually run lint, real dev-mirror acquisition, portable resolution,
+  cache/refresh, override/failure and reserved-namespace checks. Explicit fixture
+  copies and isolated temporary HOME; no setup runner, publication or S3 writes.
+- [Python locks, publication and consumer metadata (Milestone 11B)](CLI_M11B_MANUAL_TESTS.md):
+  individual preparation, committed-lock reuse, stale/removal and compatibility
+  checks, followed by one explicit dev-only publish and normal/frozen consumer
+  installs. Includes local Registry dependency/migration prerequisites and
+  isolated per-process user state; production is not modified.

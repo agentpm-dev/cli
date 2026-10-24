@@ -17,6 +17,7 @@ mod keys;
 mod lint_output;
 mod manifest;
 mod prelude;
+mod python_resolver;
 mod runner;
 mod runtime_version;
 mod semver;
