@@ -281,6 +281,41 @@ impl InstallArgs {
         .await?;
         s.ok("");
 
+        // Provision before finalize/lock writes: a partial or unverified Python
+        // environment must never turn a failed install into a successful session.
+        let artifacts = init
+            .artifacts
+            .iter()
+            .filter(|a| a.kind == PackageKind::Tool && a.python_resolution.is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+        if !artifacts.is_empty() {
+            let mut step = Step::new("Preparing Python environments", quiet);
+            let root = project_root.clone();
+            let registry = base_url.clone();
+            let refresh = self.refresh;
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                for artifact in &artifacts {
+                    let (namespace, name) = artifact
+                        .name
+                        .strip_prefix('@')
+                        .and_then(|s| s.split_once('/'))
+                        .ok_or_else(|| anyhow!("invalid Tool identity"))?;
+                    let tool_dir = root
+                        .join(".agentpm/tools")
+                        .join(namespace)
+                        .join(name)
+                        .join(&artifact.version);
+                    crate::python_environment::provision_installed(
+                        &root, &tool_dir, artifact, &registry, refresh,
+                    )?;
+                }
+                Ok(())
+            })
+            .await??;
+            step.ok("");
+        }
+
         // 6) Finalize (report success for metrics / server-side bookkeeping)
         let mut s = Step::new("Finalizing install", quiet);
         client.install_finalize(&init.session_id).await?;

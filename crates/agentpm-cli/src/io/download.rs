@@ -69,7 +69,9 @@ pub async fn download_and_extract_all(
         let runtime_version = art.runtime.as_ref().map(|r| r.version.clone());
 
         //  warn if runtime missing or version too low (non-fatal)
-        if let Some(rt) = runtime_type.as_deref() {
+        if let Some(rt) = runtime_type.as_deref()
+            && art.python_resolution.is_none()
+        {
             warn_if_runtime_mismatch(&pkg, &ver, rt, runtime_version.as_deref(), quiet);
         }
 

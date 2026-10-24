@@ -34,3 +34,16 @@ binds the Tool's resolution to its artifact independently of the publisher's
 workspace. M11B delivers dependency metadata; managed installation/execution and
 the cross-machine guarantee still need 11C. This is evidence for a later brief,
 not a content strategy or an article draft.
+
+## Milestone 11C Evidence
+
+Potential engineering material: turning a portable dependency record into a
+verified local environment without resolving again; separating artifact bytes,
+portable lock state and machine-local interpreter identity; and making failed
+or interrupted installation refuse execution until repaired. The dependency-
+using Pydantic example connects author development with consumer install/run
+and the existing Harness ToolRuntime. Local real-uv/native-wheel tests pass;
+hosted platform/cross-machine and operator live acceptance remain open. Do not
+describe this as a released cross-platform guarantee before those gates and the
+release band are complete. This is engineering evidence for later planning,
+not an article draft or a new content strategy.

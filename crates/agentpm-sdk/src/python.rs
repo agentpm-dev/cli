@@ -1,7 +1,7 @@
 //! Portable Python dependency state. Disk/resolve DTO integration belongs to M11B.
 use anyhow::{Context, Result, ensure};
 use pep440_rs::{Version, VersionSpecifiers};
-use pep508_rs::{MarkerTree, PackageName, Requirement, VersionOrUrl};
+use pep508_rs::{MarkerEnvironment, MarkerTree, PackageName, Requirement, VersionOrUrl};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
@@ -268,6 +268,54 @@ impl PythonResolution {
     }
     pub fn digest(&self) -> Result<String> {
         Ok(format!("{:x}", Sha256::digest(self.canonical_bytes()?)))
+    }
+
+    /// Select the recorded set for an interpreter's PEP 508 environment, without solving.
+    pub fn packages_for_environment(
+        &self,
+        markers: &serde_json::Value,
+    ) -> Result<Vec<&PythonPackage>> {
+        let environment: MarkerEnvironment = serde_json::from_value(markers.clone())
+            .context("invalid Python interpreter marker environment")?;
+        let requires: VersionSpecifiers = self.requires().parse()?;
+        ensure!(
+            requires.contains(&environment.python_full_version().version),
+            "Python interpreter {} does not satisfy {}",
+            environment.python_full_version(),
+            self.requires()
+        );
+        let selected = self
+            .packages()
+            .iter()
+            .filter_map(|package| match package.marker.as_deref() {
+                None => Some(Ok(package)),
+                Some(marker) => match marker.parse::<MarkerTree>() {
+                    Ok(marker) => marker.evaluate(&environment, &[]).then_some(Ok(package)),
+                    Err(error) => Some(Err(error.into())),
+                },
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for root in self.requirements() {
+            let requirement: Requirement = root.parse()?;
+            if !requirement.evaluate_markers(&environment, &[]) {
+                continue;
+            }
+            ensure!(
+                selected.iter().any(|package| {
+                    package.name == requirement.name.as_ref()
+                        && match &requirement.version_or_url {
+                            Some(VersionOrUrl::VersionSpecifier(spec)) => package
+                                .version
+                                .parse::<Version>()
+                                .is_ok_and(|version| spec.contains(&version)),
+                            None => true,
+                            Some(VersionOrUrl::Url(_)) => false,
+                        }
+                }),
+                "no recorded Python distribution covers active requirement {root} for this interpreter/platform"
+            );
+        }
+        Ok(selected)
     }
 }
 

@@ -1077,45 +1077,56 @@ acceptance is implied.
 > - Acquisition comes from Milestone 11A. Call that component; do not re-implement discovery, download, or verification here.
 > - The closing test block covers Milestones 11A–11C together; treat it as the integration gate for the trio rather than 11C-only coverage.
 
-- [ ] Add an AgentPM-managed per-Tool Python environment under `.agentpm/`, keyed by:
-  - [ ] Tool identity/version;
-  - [ ] consumer target;
-  - [ ] resolved interpreter major/minor or equivalent ABI identity.
-- [ ] During install, resolve the interpreter using current `AGENTPM_PYTHON`/PATH family and minimum-version rules.
-- [ ] Create/reuse a managed venv-style environment with that interpreter through AgentPM-managed `uv`, not through the interpreter's own `venv`/`ensurepip`.
-- [ ] Provision by **replaying** the stored `PythonResolution`:
-  - [ ] converge the environment to the complete recorded set (a `sync`-style operation), so an interrupted provisioning run self-heals instead of accumulating partial state;
-  - [ ] do not perform a new dependency resolution at install time;
-  - [ ] ensure the install path **cannot** add a package absent from the stored resolution.
-- [ ] Verify every installed distribution against the recorded digests:
-  - [ ] run hash-verified installation;
-  - [ ] treat a digest mismatch as a fatal install error — never a warning, and never a silent retry from an alternate source;
-  - [ ] fail the install session rather than leaving a partially provisioned environment that looks complete.
-- [ ] Keep install **wheel-only — never build from source**:
-  - [ ] if no wheel compatible with the consumer target/interpreter exists for a locked version, fail with a distinct no-compatible-wheel error naming package, version, and target;
-  - [ ] the recorded sdist digest exists because it is part of the published distribution set, not as license to build it.
-- [ ] Distinguish these three install failures in error text — they look alike to users and have entirely different causes:
-  - [ ] distribution **gone** from the index;
-  - [ ] distribution present but **digest mismatch** (a supply-chain signal);
-  - [ ] distribution present and intact but **no wheel for this target**.
-- [ ] Update `agentpm run` so new-format dependency-bearing Python Tools execute with the managed environment's Python interpreter.
-- [ ] Validate the local runtime-environment fingerprint at run time; if interpreter/target changed, deterministically rebuild or fail with an actionable refresh/reinstall instruction.
-- [ ] Preserve legacy Tool execution through current PATH/`AGENTPM_PYTHON` semantics.
-- [ ] Preserve existing author-written `_vendor` imports alongside managed environments.
-- [ ] Warn when a new-format Tool both declares dependencies and vendors likely dependency trees.
-- [ ] Add tests covering:
-  - [ ] pure-Python dependency;
-  - [ ] dependency with native wheel;
-  - [ ] conditional/marker dependency;
-  - [ ] interpreter minimum/version changes;
-  - [ ] future lockfile rejection;
-  - [ ] plain install lock regeneration retaining Python resolution;
-  - [ ] digest mismatch on a fetched distribution fails the install;
-  - [ ] locked version with no target-compatible wheel fails with the no-compatible-wheel error rather than building;
-  - [ ] install does not install any package absent from the stored resolution, even if a dependency's own metadata requires one;
-  - [ ] a cached managed `uv` is reused with no network access on second install;
-  - [ ] `AGENTPM_UV_PATH` pointing at a wrong-version binary is rejected with the required version named;
-  - [ ] a PATH-installed `uv` of a different version is never selected.
+- [x] Add an AgentPM-managed per-Tool Python environment under `.agentpm/`, keyed by:
+  - [x] Tool identity/version;
+  - [x] consumer target;
+  - [x] resolved interpreter major/minor or equivalent ABI identity.
+- [x] During install, resolve the interpreter using current `AGENTPM_PYTHON`/PATH family and minimum-version rules.
+- [x] Create/reuse a managed venv-style environment with that interpreter through AgentPM-managed `uv`, not through the interpreter's own `venv`/`ensurepip`.
+- [x] Provision by **replaying** the stored `PythonResolution`:
+  - [x] converge the environment to the complete recorded set (a `sync`-style operation), so an interrupted provisioning run self-heals instead of accumulating partial state;
+  - [x] do not perform a new dependency resolution at install time;
+  - [x] ensure the install path **cannot** add a package absent from the stored resolution.
+- [x] Verify every installed distribution against the recorded digests:
+  - [x] run hash-verified installation;
+  - [x] treat a digest mismatch as a fatal install error — never a warning, and never a silent retry from an alternate source;
+  - [x] fail the install session rather than leaving a partially provisioned environment that looks complete.
+- [x] Keep install **wheel-only — never build from source**:
+  - [x] if no wheel compatible with the consumer target/interpreter exists for a locked version, fail with a distinct no-compatible-wheel error naming package, version, and target;
+  - [x] the recorded sdist digest exists because it is part of the published distribution set, not as license to build it.
+- [x] Distinguish these three install failures in error text — they look alike to users and have entirely different causes:
+  - [x] distribution **gone** from the index;
+  - [x] distribution present but **digest mismatch** (a supply-chain signal);
+  - [x] distribution present and intact but **no wheel for this target**.
+- [x] Update `agentpm run` so new-format dependency-bearing Python Tools execute with the managed environment's Python interpreter.
+- [x] Validate the local runtime-environment fingerprint at run time; if interpreter/target changed, deterministically rebuild or fail with an actionable refresh/reinstall instruction.
+- [x] Preserve legacy Tool execution through current PATH/`AGENTPM_PYTHON` semantics.
+- [x] Preserve existing author-written `_vendor` imports alongside managed environments.
+- [x] Warn when a new-format Tool both declares dependencies and vendors likely dependency trees.
+- [x] Add tests covering:
+  - [x] pure-Python dependency;
+  - [x] dependency with native wheel;
+  - [x] conditional/marker dependency;
+  - [x] interpreter minimum/version changes;
+  - [x] future lockfile rejection;
+  - [x] plain install lock regeneration retaining Python resolution;
+  - [x] digest mismatch on a fetched distribution fails the install;
+  - [x] locked version with no target-compatible wheel fails with the no-compatible-wheel error rather than building;
+  - [x] install does not install any package absent from the stored resolution, even if a dependency's own metadata requires one;
+  - [x] a cached managed `uv` is reused with no network access on second install;
+  - [x] `AGENTPM_UV_PATH` pointing at a wrong-version binary is rejected with the required version named;
+  - [x] a PATH-installed `uv` of a different version is never selected.
+
+M11C implementation/verification (2026-10-24, America/Denver): managed consumer
+environments, exact hash-verified wheel-only replay, run/Harness environment
+validation and the dependency-using `validate-order` example are implemented.
+Local tests cover real pinned uv, Pydantic/native wheels, interrupted creation
+and sync, failed-refresh invalidation, changed interpreters, no ensurepip,
+normal/frozen installs and install-finalization failure boundaries. Portable lock
+and resolution formats are unchanged. See `test-plan.md` for verification and
+limits. Hosted native matrix execution and the operator's live dev walkthrough
+remain acceptance gates; no cross-platform, production rollout or CLI release
+completion is claimed by these checked implementation tasks.
 
 ## Milestone 12: Python Tool Artifact Compatibility
 > Scope note: establish a conservative compatibility model for the Tool payload itself, distinct from Python dependency portability, so AgentPM can distinguish portable `any` artifacts from target-specific native payloads. This milestone defines package-time classification metadata on top of the canonical target vocabulary. It does not yet implement multi-artifact registry storage, target-aware install selection, CI fan-in publishing, or retroactively classify legacy releases.
@@ -1148,6 +1159,10 @@ acceptance is implied.
 ## Release Band 8: Python Tool Dependency Contract
 Covered milestones: 11A-12.
 This gives us the first-party Python dependency story working end to end for a single published artifact: declaration in `agent.json` with real lint validation, a pinned AgentPM-managed `uv` acquired from AgentPM-controlled storage and resolving to exact portable state, the fixed `PythonResolution` v1 contract with distribution digests, lockfile persistence with a forward-version guard, an AgentPM-managed per-Tool environment under `.agentpm/`, digest-verified wheel-only provisioning, dependency-bearing execution through `agentpm run`, and honest payload-compatibility classification. These four milestones are one band because any smaller cut ships a Tool that can declare dependencies it cannot install, or install dependencies it cannot verify are compatible with the consumer's target. Legacy vendored Tools keep working unchanged throughout. If schedule pressure demands an earlier partial release, the Milestone 11B lockfile forward-version guard is the only piece with standalone value — it is a correctness fix for a hazard that exists today.
+
+- [ ] After the band prerequisites and CLI release are verified, publish the prepared `agentpm-examples/tools-python/summarize-text` **0.1.9** to the production Registry as `@zack/summarize-text`, using its reviewed `agent.lock` and declared Python dependencies rather than a vendored native tree.
+- [ ] Add exact `@zack/summarize-text@0.1.9` to `devwork-copilot`, install/update its consumer lock and managed environment, and verify an actual summarization via direct run and a Harness Tool call with `OPENAI_API_KEY`. Review any required Agent version bump/publication as part of that rollout; do not silently alter an immutable Agent release.
+- [ ] Confirm the existing vendored production Tool version still works for legacy consumers. Keep `validate-order` a dev Registry/manual-test example; no production publication is required for it.
 
 ## Milestone 13A: Release and Artifact Data Model
 > Scope note: redefine what a published Tool release **is** — one immutable release composed of one or more target artifacts — and where its bytes live. Owns the canonical release-manifest contract, the three new publish/version artifact tables, the `PackageVersion` release-format discriminator, the legacy-column migration, the new immutable S3 layout, per-artifact self-description, and cross-artifact consistency validation. Does not change how uploads are performed (13B).

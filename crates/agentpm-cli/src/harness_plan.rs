@@ -1863,10 +1863,29 @@ pub(crate) fn tool_readiness_state(
     };
 
     let mut state = CapabilityState::Available;
-    if let Some(runtime) = &manifest.runtime
-        && !tool_runtime_ready(tool_name, &manifest.entrypoint, runtime, diagnostics)
-    {
-        state = CapabilityState::Unavailable;
+    if let Some(runtime) = &manifest.runtime {
+        if runtime.runtime_type == "python"
+            && runtime.dependencies.as_ref().is_some_and(|d| !d.is_empty())
+        {
+            if let Err(error) = crate::python_environment::check_tool_ready(
+                workspace_root,
+                tool_name,
+                &package.version,
+            ) {
+                push_diag(
+                    diagnostics,
+                    PreflightDiagnosticSeverity::Warning,
+                    "tool_python_environment_unavailable",
+                    format!(
+                        "Tool `{tool_name}` cannot use its managed Python environment: {error:#}"
+                    ),
+                    None::<String>,
+                );
+                state = CapabilityState::Unavailable;
+            }
+        } else if !tool_runtime_ready(tool_name, &manifest.entrypoint, runtime, diagnostics) {
+            state = CapabilityState::Unavailable;
+        }
     }
     validate_tool_required_env(tool_name, &manifest, diagnostics);
     state

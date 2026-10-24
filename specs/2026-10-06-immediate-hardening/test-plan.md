@@ -1601,6 +1601,193 @@ M11B operator manual acceptance (2026-10-24, America/Denver):
   CLI release, 11C environments and later release-format milestones remain
   separate work.
 
+#### Milestone 11C Evidence (2026-10-24, America/Denver)
+
+Implementation and choices:
+
+- Consumer Python environments live under `.agentpm/runtimes/python/`, separate
+  from extracted Tool payloads. Their key includes Tool identity/version, the
+  existing target vocabulary, resolution digest, pinned uv version and selected
+  interpreter path/major-minor version/implementation/ABI. The full live inspection
+  (including kernel and Python patch markers) is used for evaluation and runtime
+  validation, rather than serialized into the directory/readiness identity. No
+  machine-local environment fields were added to `agent.lock`, the resolution or
+  Registry DTOs.
+- Install validates artifact metadata against the Registry plan and manifest,
+  selects Python with the existing override/minimum rules, then provisions before
+  install-finalize and lock writes. Legacy Tools do not enter this path. The old
+  advisory PATH warning is retained for legacy artifacts; dependency-bearing
+  Tools receive the authoritative interpreter check during provisioning.
+- The existing verified/cached `ManagedUv` acquisition is reused. `uv venv` creates
+  scaffolding without interpreter `venv`/`ensurepip`; `uv pip sync` receives only
+  applicable exact recorded pins and all their hashes, with `--require-hashes`,
+  `--only-binary :all:`, explicit Python and no Python downloads. No solve or
+  package-set expansion occurs. The shared SDK evaluates consumer markers and
+  verifies active authored roots have coverage; uv dependency checks and exact
+  inventory checks reject an incomplete recorded set without adding packages.
+- Readiness is recorded only after sync, dependency and inventory checks pass.
+  A failed refresh removes previous readiness. Retry repairs interrupted venv
+  creation and interrupted sync, removing extra distributions. Local OS file
+  locks prevent mutation while a Tool uses the environment and release after a
+  process exits. A matching ready install validates inventory and reuses the
+  environment without index access; cached uv is still verified.
+- Run uses the managed interpreter and checks the current fingerprint/inventory
+  without provisioning/network access. The chosen stale-state policy is an
+  actionable reinstall error; run does not silently rebuild or use global Python.
+  Changing the interpreter selection may require explicit install even when its
+  major/minor matches. Windows external-path normalization is handled before
+  prefix/base-interpreter comparisons. Harness readiness and its existing
+  `agentpm run --machine` ToolRuntime share these checks.
+- Managed runs remove `PYTHONHOME` and `PYTHONPATH` after environment defaults,
+  manifest entries and invocation overrides are merged. Name comparisons are
+  case-insensitive for Windows. Legacy Tools retain their environment behavior;
+  Tool-local packages and explicit author-written `_vendor` imports still work.
+- Existing author-written `_vendor` imports continue to work. Install warns on
+  likely vendored dependency content alongside declared dependencies. If it finds
+  none before reaching the 2000-entry/depth-4 bounds or encountering unreadable
+  entries, it warns that the scan is incomplete and identifies the skipped
+  categories. No payload
+  compatibility classification, multi-artifact selection or new schema fields
+  were introduced; those remain with later milestones.
+
+Tests and example:
+
+- Full Rust workspace after identity/import-path review fixes: **1,152 passed**, with **5 native-engine tests ignored in
+  the ordinary suite**. These gated tests were run separately with the real
+  verified **uv 0.13.5** on macOS Apple Silicon. All **10 environment tests** pass,
+  including the 5 ordinary unit tests and 5 native tests. The native suite uses
+  a compiled-pin-verified cached binary; local wheel fixtures test provisioning
+  offline. Real Pydantic wheels additionally exercise public PyPI acquisition.
+- The SDK tests select Python-version/Windows marker branches, reject an
+  interpreter below the floor, and reject active roots not covered by the
+  recorded platform branches. Pure/native/conditional packages, exact hashes,
+  explicit interpreter changes, minimum-version rejection and future locks are
+  covered without adding a second resolution type.
+- Real-uv failures distinguish unavailable distributions (including HTTP 404/410),
+  wrong hashes and no compatible wheel. An sdist with a recorded valid hash is
+  rejected without executing its deliberate-failure build script. A wheel whose
+  METADATA requests an unrecorded package cannot expand the installed set; the
+  environment is not marked ready. A wrong-hash forced reinstall also invalidates
+  an existing ready environment, and recovery succeeds with restored valid bytes.
+  These categories depend on pinned uv stderr wording, not a typed error contract;
+  the source now calls out that pin adoption must rerun the real-binary tests in
+  Resolver Contract. Changing prose fixtures alone does not establish compatibility.
+- Interruption tests start from incomplete venv scaffolding and separately remove
+  the completion record after sync. Retry converges and drops an extra installed
+  distribution. A disposable base interpreter with both `ensurepip` and `venv`
+  imports deliberately unavailable still provisions successfully. This is an
+  actual interpreter test with import blocking, not a claim of a Debian run.
+- A real CLI/local HTTP Registry fixture verifies bad wheel hashes cause neither
+  install-finalize nor a new workspace lock. Successful normal and frozen installs
+  finalize and retain byte-identical lock state. Prior resolver acquisition,
+  override/PATH, legacy lock and install-regeneration regressions remain in the
+  passing workspace suite.
+- Review caught a missing blocking-mode reset on this new fixture's accepted
+  sockets: macOS/BSD can inherit the listener's nonblocking mode, so an earlier
+  successful run did not rule out intermittent `WouldBlock` reads. The helper now
+  explicitly calls `stream.set_nonblocking(false)` before setting its read timeout.
+  The initial rerun after this correction used the complete native suite with
+  verified uv 0.13.5 and Python 3.13 on macOS Apple Silicon: **8 passed, 0 failed,
+  0 ignored** (52.67 seconds), including the affected real CLI/finalization/frozen
+  lock fixture. Hosted matrix verification remains pending.
+- Identity review removed the full live interpreter snapshot from the key.
+  Regression tests simulate kernel release/build and compatible Python patch
+  updates (including relocated physical base paths behind the same selected
+  executable) and prove directory stability. Separate cases evaluate
+  `platform_release`, `platform_version`, `python_full_version` and
+  `implementation_version` changes that select an additional locked package:
+  the same directory is selected, but the old completion record is rejected.
+  ABI, implementation, selected executable and Python major/minor changes still
+  select a different identity. Full current interpreter/base-path and package
+  checks remain in force; a removed or mismatched venv binary needs same-directory
+  repair, not a new patch-version key. No live OS/Python upgrade or automatic
+  orphan pruning is claimed. The complete native suite after this change passed
+  **10 tests, 0 failed, 0 ignored** (55.91 seconds); the full workspace also passed.
+- The real-uv replay fixture now creates a shadow dependency on an external
+  `PYTHONPATH` and first proves that ordinary Python imports that shadow. Managed
+  runner invocation with explicit path/home overrides, plus actual CLI normal and
+  `--machine` runs with ambient `PYTHONPATH`, all import the locked wheel instead.
+  The explicit authored vendor helper keeps working. A separate ordinary runner
+  test confirms a dependency-free legacy Tool still imports from its declared
+  `PYTHONPATH`. After this change, **10 native environment tests passed** on
+  macOS Apple Silicon (57.09 seconds), **1,152 workspace tests passed** with the
+  5 native tests intentionally ignored there, and workspace Clippy/formatting,
+  docs text checks and diff checks passed. Hosted matrix execution remains pending.
+- Bounded-scan warning follow-up: disposable local Registry fixtures extended the
+  actual summarize-text archive with 2005 extra entries, or a hidden `_vendor`
+  directory below depth 4. Normal and fresh frozen installs for both variants
+  emitted the corresponding incomplete-scan warning, completed provisioning and
+  ran successfully against a local mock OpenAI endpoint, preserving frozen locks
+  and importing native dependencies. No live publication or paid model calls
+  occurred. The focused environment suite passed its 5 ordinary tests (5 native
+  cases intentionally ignored in that invocation); workspace Clippy, formatting,
+  docs text and diff checks also passed. Full workspace/native totals above are
+  from the preceding identity/import-path verification, not reruns for this
+  advisory-only change. The readable version/target directory layout is unchanged.
+- `python-resolution-pydantic-v1.json` is a frozen 5-distribution/32-hash fixture
+  taken from the earlier macOS author resolution, restricted to the Pydantic
+  root/closure. It is replayed unchanged by native tests. Real `pydantic-core`
+  imports work through direct run and the actual Harness ToolRuntime subprocess,
+  with the reported Python prefix checked against the managed environment.
+- `agentpm-examples/tools-python/validate-order` includes real Pydantic code,
+  3 passing development tests, manifest, pyproject, prepared author `agent.lock`
+  and author/consumer/Harness instructions. Strict `agentpm lint` passes. Its
+  documented uv development invocation returns `{"total":9.0}`. A real dry-run
+  preparation produced a Tool archive; a separate local mock Registry served
+  that actual archive to normal and fresh frozen consumers. Both installs/run
+  paths return the same result, preserve frozen lock bytes and finalize only
+  after provisioning. This did not publish a live package or write S3 objects.
+- `summarize-text` is prepared as version **0.1.9**, with declared OpenAI 1.x
+  dependencies and a real pinned-uv author lock containing 17 distributions,
+  including native `jiter` and `pydantic-core` wheels. Its five development tests
+  exercise the actual OpenAI client with a local mock transport, a native import,
+  and the existing success/error JSON interface. The archive explicitly includes
+  source files rather than an entire directory, excluding old ignored `_vendor`
+  trees and development bytecode. Strict manifest lint and dry-run lock reuse
+  with an absent uv override/closed Registry pass. A local HTTP Registry served
+  the final archive to normal and fresh frozen consumers; both ran the Tool
+  through its real OpenAI client against a local mock endpoint, returned the
+  expected summary, imported `jiter`/`pydantic-core` from the managed environment,
+  and preserved frozen lock bytes. This made no paid model calls.
+  No production publication or
+  `devwork-copilot` dependency update is claimed; these are unchecked Release
+  Band 8 rollout steps. `validate-order` remains dev/manual-test only.
+
+Reproduce the native tests after building the CLI (use the exact pinned binary):
+
+```sh
+cargo build -p agentpm-cli
+AGENTPM_TEST_UV=/absolute/path/to/verified/uv cargo test -p agentpm-cli --bin agentpm python_environment::tests -- --include-ignored --test-threads=1
+```
+
+`AGENTPM_TEST_PYTHON` can select the test interpreter explicitly; set
+`AGENTPM_PYTHON` to that same path for public CLI/Harness subprocesses. The existing
+Resolver Contract workflow now triggers for the runtime changes and runs this
+suite on all four native targets after attested staging of the checked-in pin.
+Candidate-version dispatches that differ from the compiled pin retain their
+resolution smoke; Rust provisioning checks run when the checked-in pin matches.
+Actionlint, resolver target checks, **34 maintainer tests**, workspace Clippy,
+Rust formatting, example Black/JSON validation, docs text checks and
+`git diff --check` pass. No API backend code changed; the API edit is user docs.
+
+Remaining acceptance/risk boundaries:
+
+- Hosted execution of the updated native workflow is not claimed. Linux, Intel
+  macOS and Windows provisioning, and the cross-machine replay proof using the
+  committed macOS resolution, need the corresponding hosted results. The fixture
+  and native jobs implement this test rather than substituting a simulated OS.
+- The operator's live dev Registry publish/install/run/Harness walkthrough is
+  still pending. Local HTTP fixtures and real PyPI wheels validate the code but
+  are not a real Registry/S3 deployment or live package publication.
+- A compatible local Python and compatible wheel must exist. New interpreter/ABI
+  selection requires reinstall; source-build fallback and automatic Python
+  downloads are deliberately unavailable. Old environment directories are local
+  retained state, not a new garbage-collection feature.
+- No production deployment, CLI release/version bump, schema change, SDK wire
+  format change, M12 classification or later multi-artifact release work is
+  included. Implementation checkboxes reflect code/local evidence, not closure
+  of the remaining operator/native acceptance gates.
+
 ### Payload compatibility
 
 Fixtures:

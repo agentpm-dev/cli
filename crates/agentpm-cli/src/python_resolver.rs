@@ -103,7 +103,7 @@ impl ManagedUv {
         )
     }
 
-    fn acquire_at(
+    pub(crate) fn acquire_at(
         base_url: &str,
         cache: &Path,
         target: &str,

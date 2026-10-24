@@ -1,6 +1,66 @@
 use super::*;
 use serde_json::json;
 
+#[test]
+fn recorded_set_is_selected_by_consumer_markers_without_solving() {
+    let resolution = PythonResolution::new(
+        ">=3.11".into(),
+        vec!["foo>=1".into()],
+        vec![
+            package("foo", "1.0", Some("python_version < '3.12'")),
+            package("foo", "2.0", Some("python_version >= '3.12'")),
+            package("colorama", "0.4.6", Some("sys_platform == 'win32'")),
+        ],
+    )
+    .unwrap();
+    let mut markers = json!({"implementation_name":"cpython", "implementation_version":"3.11.9",
+        "os_name":"posix", "platform_machine":"arm64", "platform_python_implementation":"CPython",
+        "platform_release":"", "platform_system":"Darwin", "platform_version":"",
+        "python_full_version":"3.11.9", "python_version":"3.11", "sys_platform":"darwin"});
+    let selected = resolution.packages_for_environment(&markers).unwrap();
+    assert_eq!(
+        selected
+            .iter()
+            .map(|p| (p.name.as_str(), p.version.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("foo", "1.0")]
+    );
+    markers["python_version"] = json!("3.12");
+    markers["python_full_version"] = json!("3.12.1");
+    markers["sys_platform"] = json!("win32");
+    let selected = resolution.packages_for_environment(&markers).unwrap();
+    assert_eq!(
+        selected
+            .iter()
+            .map(|p| (p.name.as_str(), p.version.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("colorama", "0.4.6"), ("foo", "2.0")]
+    );
+    markers["python_full_version"] = json!("3.10.9");
+    assert!(resolution.packages_for_environment(&markers).is_err());
+    markers["python_full_version"] = json!("3.12.1");
+    markers["sys_platform"] = json!("linux");
+    markers["platform_machine"] = json!("aarch64");
+    let supported = crate::target::Target::SUPPORTED
+        .iter()
+        .map(|target| format!("({})", target.marker()))
+        .collect::<Vec<_>>()
+        .join(" or ");
+    let resolution = PythonResolution::new(
+        ">=3.11".into(),
+        vec!["foo>=1".into()],
+        vec![package("foo", "1.0", Some(&supported))],
+    )
+    .unwrap();
+    assert!(
+        resolution
+            .packages_for_environment(&markers)
+            .unwrap_err()
+            .to_string()
+            .contains("active requirement")
+    );
+}
+
 fn package(name: &str, version: &str, marker: Option<&str>) -> PythonPackage {
     PythonPackage {
         name: name.into(),
