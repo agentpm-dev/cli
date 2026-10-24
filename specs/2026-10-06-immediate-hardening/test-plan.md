@@ -1176,21 +1176,109 @@ regression; Clippy, Rust formatting and actionlint passed. The test now prints
 the complete error chain on failure. This kernel reproduction is not a full
 Linux Rust-suite run; the updated PR's hosted Linux CI must still confirm it.
 
+Hosted verification completed (2026-10-23):
+
+- The user reported successful CI and all four native Resolver Contract jobs on
+  the opened PR. Resolver Contract run:
+  https://github.com/agentpm-dev/cli/actions/runs/40043503095
+- Inspected the four extracted JSON reports in
+  `/Users/zackhine/Downloads/uv-smoke-artifacts`. Each canonical target appears
+  exactly once. All reports match uv **0.13.5**, their checked-in executable
+  SHA-256 pins and the current smoke-contract fingerprint
+  `f0391b81f3feecde609595eaa53c89ecdee228993f9c9d513b679ef6da123f14`.
+- Each embedded pylock passes the production smoke validator: version `1.0`,
+  seven packages, 23 distinct pydantic-core wheel hashes plus its sdist,
+  native Python 3.11 wheel coverage for all four targets, valid distribution
+  digests and the Windows-only Colorama marker. Validation was read-only; no
+  uv execution, downloads, pin changes, storage writes or deployments occurred.
+- GitHub run status is user-confirmed; the extracted report contents and their
+  compatibility with the current worktree were independently checked locally.
+  This closes the hosted native-verification gate, not live mirror delivery.
+
+Namespace guard verification:
+
+- The operator confirmed the dev/prod namespace audit complete before proceeding
+  to manual-test preparation. No automatic rename, deletion or migration is
+  included. New creation is blocked before entitlement
+  checks or writes. Creation has one service path; metadata PATCH does not rename
+  handles. Unit coverage includes case/whitespace variants, both namespace kinds
+  and visibility modes, unchanged `agentpm`/missing-handle behavior, and allowed
+  similar names. A JWT-authenticated HTTP regression asserts 400 and no write.
+  API full suite: **441 passed, 7 existing optional PostgreSQL cases skipped,
+  129 subtests passed**; focused namespace suites: **64 passed, 45 subtests**.
+  Native Black/isort/flake8/pyupgrade/text checks and isolated pinned Bandit with
+  `pbr` pass. Full hooks were attempted: existing mypy `search.py:1486,1856`,
+  Pylint findings in unchanged `get_pins` and the existing PAT mock's return,
+  and the Bandit hook's missing `pbr` remain. No baseline suppression/config
+  changes were introduced. Namespace behavior is documented in API security docs.
+
+Storage operator progress (2026-10-23):
+
+- Operator ran the generator with validated native reports and received
+  `; mirrored` for both `agentpm-dev-tools` and `agentpm-tools`, using prefix
+  `tools/runtimes/uv`. All four binaries subsequently passed the mirror probe
+  through the real local Registry. The production probe stopped at HTTP 404;
+  the operator confirmed the M11A API was not yet deployed. No re-upload is
+  required merely to deploy the missing route/inventory.
+- Both bucket policies were supplied and confirmed saved by the operator. They
+  deny insecure transport, deny `DeleteObject`/`DeleteObjectVersion` on the
+  resolver prefix and require conditional create-only object writes there.
+  The supplied `tools/` lifecycle rules do not expire/transition current objects;
+  multipart-abort and noncurrent-version cleanup remain. New uv version keys do
+  not supersede older keys. Policies do not override lifecycle actions: future
+  lifecycle changes must preserve resolver availability. See the Registry storage
+  guide for the deployment mapping. These are operator confirmations and config
+  review, not independently executed overwrite/delete tests.
+
+M11A manual walkthrough prepared:
+
+- `manual-tests/CLI_M11A_MANUAL_TESTS.md` and `fixtures/m11a/` provide individual
+  visible commands; setup creates only a temporary root/empty HOME, and each
+  section copies its own fixtures. A just-built CLI and local schema are explicit.
+  The backend's existing Python supplies a compatible interpreter, not a new Tool
+  environment. No real PAT/AWS keys, successful namespace creation or publication
+  are needed. Negative shell fixtures are separate from real-mirror checks.
+- All ten manifest fixtures were checked through real `lint --strict`, including
+  expected dependency-field failures. In a different disposable verification
+  workspace, the builder exercised the real dev Registry/S3 download, PATH
+  exclusion, portable resolution, cold publish gate/transport failure, author
+  record reuse/refresh/changed roots, second-project executable reuse, marker
+  branch selection, exact/wrong overrides, cached-binary tampering, engine errors
+  and recovery. All expected outcomes passed. Marker branches were checked by
+  semantics, not a literal marker string. No user manual-test state was created.
+- Existing CLI resolution integration suite: **5 passed**. The Python fixture
+  passed pinned Black; shell fixtures passed `sh -n`; the Node fixture passed
+  `node --check`. This is builder preparation evidence, not completion of the
+  user's walkthrough or its browser namespace test. Completion boxes were left
+  open during preparation; the later operator confirmation is recorded below.
+
+M11A operator manual acceptance (2026-10-23, America/Denver):
+
+- The operator confirmed the remaining manual tests passed after stepping through
+  the guide. All eleven completion items, including local website rejection of
+  the reserved `runtimes` namespace, are marked complete on that confirmation.
+  This is local acceptance, not a production deployment or cross-machine install.
+- Shared resolution output shows both roots (`click==8.1.8`,
+  `pydantic==2.11.7`), Python `>=3.11`, seven distributions, all four supported
+  platform markers, Windows-only Colorama, 24 pydantic-core artifact hashes,
+  and passing full-lowercase/sorted-unique hash checks. Its digest matches the
+  CLI summary: `ac4666eda2701aec443fcd31f6972fd94a7467a1a410c50a24c7d7f600775ef1`.
+- Shared changed-root output shows the missing override rejected with exit 1,
+  then successful real resolution with a new digest and two distinct input-
+  fingerprint records. Forced refresh also rejects a missing override.
+- Shared deliberate-engine-failure output shows the expected resolver diagnostic
+  and exit 1, silent `cmp` preserving the valid record, then successful real-
+  resolver refresh and archive creation. The fixture's `M11A` message is test
+  output; it is not hardcoded in the shipped CLI diagnostic.
+- The resolution summary now starts with a checkmark while retaining its count
+  and full digest on stderr, including quiet/captured output. The existing
+  integration test checks this; workspace tests, Clippy and formatting passed.
+
 Open operator/integration acceptance:
 
-- Execute the Resolver Contract workflow on GitHub before the initial upload and
-  record its run URL/all four native results. Dispatch was not possible locally:
-  the workflow is still untracked/unpublished in this worktree and the available
-  GitHub CLI has no authentication. No commit/push/upload was performed to work
-  around this. Linux detection now falls back from CPython's libc heuristic to
-  `CS_GNU_LIBC_VERSION`, retaining fail-closed behavior on unknown/musl systems;
-  mocked fallback coverage does not establish GitHub-hosted runner success.
-- Upload the verified raw binaries to each deployment's existing registry
-  bucket/prefix, exercise live presigned delivery/cache reuse, and confirm the
-  real AWS lifecycle/IAM retention policy. Operational instructions and the
-  append-only rule are beside the S3 integration in
-  `agentpm-api/app/tools/domain/tools/RESOLVER_STORAGE.md`. No bucket policy,
-  live object, deployment, release tag or version bump was changed here.
+- Deploy the M11A Registry route/inventory and namespace guard through the normal
+  process, then verify all four production mirror downloads. No production
+  deployment, release tag or version bump is claimed here.
 - Portable lock persistence, resolved-state publication and install regeneration
   remain 11B work; actual managed environment provisioning and the resolve-on-one/
   install-on-another proof remain the 11A-11C integration gate. Release manifest

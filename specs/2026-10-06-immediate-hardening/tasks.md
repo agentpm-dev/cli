@@ -857,19 +857,21 @@ This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a st
   - [x] otherwise download from AgentPM storage → verify SHA-256 against the compiled-in pin → cache → use.
 - [x] Cache the binary per user, per `uv` version, per target, outside any project directory (for example `~/.cache/agentpm/runtimes/uv/<version>/<target>/uv`) so one download serves every project and a version bump cannot overwrite a binary an older CLI still pins.
 - [ ] Serve mirrored binaries from AgentPM's **existing** registry object storage / presigned-URL distribution path:
+  - [x] Reserve the `runtimes` namespace/storage-key segment server-side before namespace creation; reject case/whitespace and path-style bypasses without changing existing `agentpm` rejection behavior.
   - [x] do not teach the CLI to parse GitHub Releases;
   - [x] do not stand up a new CDN hostname or separate download service for this;
   - [x] honor standard proxy environment variables on this download. **Note the deliberate contrast with telemetry**, which uses a no-proxy client: telemetry must not depend on corporate network config, whereas resolver acquisition must work *through* it;
   - [x] set explicit connect/idle timeouts rather than inheriting `reqwest` defaults.
   - [x] Gate CLI release on the deployed Registry's version/target download routes and SHA-256 verification of every mirrored binary, rather than relying on a manual cross-repo inventory comparison.
-- [ ] Record the **append-only retention rule** for mirrored resolver artifacts where storage lifecycle policy actually lives, not only in the spec. Published CLI versions pin older `uv` versions permanently, so deleting a mirrored binary retroactively breaks every CLI release that pinned it.
-- [ ] Add a checked-in pin-table generator (script or `xtask`) — the digest table must not be hand-maintained:
+- [x] Record the **append-only retention rule** for mirrored resolver artifacts where storage lifecycle policy actually lives, not only in the spec. Published CLI versions pin older `uv` versions permanently, so deleting a mirrored binary retroactively breaks every CLI release that pinned it. Operator confirmed the scoped delete/conditional-write policies in both real buckets; lifecycle review and deployment mapping are recorded beside the Registry S3 integration.
+- [x] Add a checked-in pin-table generator (script or `xtask`) — the digest table must not be hand-maintained:
   - [x] accept the desired `uv` version as input;
   - [x] download the upstream artifacts for every supported AgentPM target;
   - [x] verify the upstream GitHub Artifact Attestation against repository `astral-sh/uv`;
   - [x] Gate adoption on real native execution for every supported target, checking the production lock/export commands and portable pylock output before any upload or pin-table write; keep ordinary tests offline and reject missing/stale cross-platform evidence.
+  - [x] Execute the hosted native workflow and validate all four downloaded reports against the current pin and smoke contract (run `40043503095`, 2026-10-23).
   - [x] compute SHA-256 independently rather than trusting an upstream checksum file;
-  - [ ] upload the verified immutable bytes to AgentPM storage;
+  - [x] upload the verified immutable bytes to AgentPM storage (operator completed dev and production uv 0.13.5 ingestion);
   - [x] write the generated, source-controlled pin table (version + per-target `sha256`);
   - [x] **fail** if any supported AgentPM target is missing, so a bump cannot ship a partial table;
   - [x] mark the output as generated so it is never edited by hand — its integrity rests on code review and git history.
@@ -906,8 +908,12 @@ smoke contract. `Resolver Contract` runs on relevant pin/contract PR changes or
 manual dispatch; it does not upload to S3 or update either repo. The production
 CLI and real smoke use the same checked-in command arguments, while offline
 fakes independently enforce those arguments. The macOS arm64 real ingestion
-smoke passed locally; the other three native workflow results remain to be run
-before ingestion can complete. See the storage guide for report collection.
+smoke passed locally. Subsequently, the user reported successful CI and Resolver
+Contract runs on the PR; all four downloaded native reports from run
+`40043503095` were locally validated against uv 0.13.5, every executable pin,
+the current smoke contract and portable output checks on 2026-10-23. The hosted
+native-verification gate is satisfied; the later storage progress is recorded below.
+See `test-plan.md` for the run link and evidence.
 
 Follow-up review hardening: the CLI release workflow now checks the deployed
 Registry inventory and actual mirrored bytes before builds/assets, without
@@ -928,14 +934,23 @@ dependency-bearing publication is deliberately blocked before upload until
 portable lock/release integration exists, rather than publishing declarations
 whose exact resolution would be discarded. Legacy publication remains unchanged.
 
-Operator gates remain open: binaries are verified and staged locally, **not
-uploaded to S3**. The read-only presigned download route and create-only mirror
-generator are implemented, but live mirror delivery must still be exercised.
-The append-only rule is documented beside the registry S3 integration in
-`app/tools/domain/tools/RESOLVER_STORAGE.md`; the real bucket lifecycle/IAM
-configuration is managed outside these repos and still needs operator
-confirmation. Generator upload and retention checkboxes stay unchecked on that
-basis.
+Operator progress (2026-10-23): uv 0.13.5 ingestion completed in both
+`agentpm-dev-tools` and `agentpm-tools` under `tools/runtimes/uv/`. The operator
+saved scoped delete protection and create-only write requirements in both bucket
+policies, and supplied matching lifecycle rules with no current-object expiration
+or archival transitions under `tools/`. The local Registry mirror check verified
+all four binaries. Production verification returned 404 before the M11A Registry
+deployment, so production delivery remains open; neither a CLI release nor a
+production deployment is claimed. Namespace auditing was confirmed by the user.
+The deployment/retention mapping is recorded in
+`agentpm-api/app/tools/domain/tools/RESOLVER_STORAGE.md`.
+
+The operator confirmed the individual-command manual walkthrough in
+`manual-tests/CLI_M11A_MANUAL_TESTS.md` passed on 2026-10-23, including the local
+reserved-namespace check. Its completion record is checked on that confirmation.
+Pasted CLI output additionally verifies portable resolution, changed-input cache
+invalidation, deliberate engine failure without overwriting the valid record,
+and successful recovery. Production delivery remains open as described above.
 
 Cross-stage handoff: optional Python `runtime.dependencies` changes the closed
 manifest schema. Stage 2 M1B now has a working-tree handoff note; its requirement

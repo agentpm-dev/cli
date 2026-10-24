@@ -176,7 +176,7 @@ impl PublishArgs {
         .await??;
         if let Some(resolution) = resolution {
             eprintln!(
-                "Python dependencies resolved: {} distributions, sha256:{}",
+                "✓ Python dependencies resolved: {} distributions, sha256:{}",
                 resolution.packages().len(),
                 resolution.digest()?
             );

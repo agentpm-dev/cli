@@ -137,6 +137,18 @@ fn publish_prepares_resolution_but_cannot_upload_before_lock_integration() {
         .unwrap();
     assert!(dry.status.success(), "{}", text(&dry));
     assert!(text(&dry).contains("Python dependencies resolved: 1"));
+    let stderr = String::from_utf8_lossy(&dry.stderr);
+    let summary = stderr
+        .lines()
+        .find(|line| line.starts_with("✓ Python dependencies resolved: 1 distributions, sha256:"))
+        .expect("quiet/captured output must retain the checkmarked resolution summary");
+    let digest = summary.split_once("sha256:").unwrap().1;
+    assert_eq!(digest.len(), 64);
+    assert!(
+        digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
     let live = fixture
         .command("publish")
         .env("AGENTPM_UV_PATH", "/must-not-execute-on-cache-reuse")
