@@ -1059,6 +1059,12 @@ Pretty printing is retained deliberately. See `test-plan.md` for tests, limits,
 known baseline tooling failures and operator/deployment boundaries. No version
 bump, CLI release, production deployment or 11C environment provisioning is claimed.
 
+M11B operator acceptance (2026-10-24, America/Denver): the operator confirmed
+hosted CLI CI is green and all local/dev manual tests pass. The runbook completion
+record and `test-plan.md` contain the acceptance evidence and the duplicate
+file-list fixture note. Milestone 11B is complete; no 11C environment or execution
+acceptance is implied.
+
 ## Milestone 11C: AgentPM-Managed Python Runtime Environment
 > Scope note: give new-format Python Tools somewhere for their dependencies to live and execute. Owns the AgentPM-managed per-Tool environment under `.agentpm/`, eager provisioning during install, execution of dependency-bearing Tools through the managed interpreter, and runtime fingerprint validation. Preserves legacy vendored Tool behavior unchanged.
 >

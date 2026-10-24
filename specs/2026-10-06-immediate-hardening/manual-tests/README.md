@@ -17,3 +17,8 @@ are disposable and gitignored.
   individually run lint, real dev-mirror acquisition, portable resolution,
   cache/refresh, override/failure and reserved-namespace checks. Explicit fixture
   copies and isolated temporary HOME; no setup runner, publication or S3 writes.
+- [Python locks, publication and consumer metadata (Milestone 11B)](CLI_M11B_MANUAL_TESTS.md):
+  individual preparation, committed-lock reuse, stale/removal and compatibility
+  checks, followed by one explicit dev-only publish and normal/frozen consumer
+  installs. Includes local Registry dependency/migration prerequisites and
+  isolated per-process user state; production is not modified.

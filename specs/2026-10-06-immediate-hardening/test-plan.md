@@ -1446,11 +1446,14 @@ Validation and boundaries:
   passes without findings. No unrelated baseline code or hook policy was changed.
 - User-facing workflow and migration guidance are updated in
   `agentpm-api/docs/v0.1/advanced/python-dependencies.mdx`. Implementation tasks
-  are checked off on this evidence. No production deployment, published CLI,
-  version bump or operator manual acceptance of 11B is claimed. Install the new
-  Registry dependency and apply V1.97 through normal deployment before live use.
-- Remaining operator evidence: a user-run local/deployed Registry walkthrough
-  and hosted CI on these changes. Managed Python installation/execution and the
+  are checked off on this evidence. No production deployment, published CLI or
+  version bump is claimed. Operator manual acceptance on 2026-10-24 is recorded
+  below; other environments still need the new Registry dependency and V1.97
+  through normal deployment before live use.
+- The operator confirmed CLI hosted CI passed after the cold-cache fixture
+  cleanup fix and confirmed the local/dev Registry walkthrough passed on
+  2026-10-24. No M11B operator acceptance remains pending on this evidence.
+  Managed Python installation/execution and the
   resolve-on-one/install-on-another proof remain 11C; they are not closed by
   metadata-only tests. Full multi-artifact release assembly remains M12/M14.
 
@@ -1553,9 +1556,50 @@ M11B CI follow-up: portable cold-cache test cleanup.
   The subsequent cold-cache publication also asserts byte-identical committed
   lock state, preserving the original regression's purpose.
 - Verification: **all 10 Python CLI integration tests passed locally on macOS**;
-  workspace Clippy, Rust formatting and `git diff --check` passed. Hosted Linux
-  execution still requires a CI rerun after this fix is pushed; no Linux runner
-  success is claimed from the local run. Production code was unchanged.
+  workspace Clippy, Rust formatting and `git diff --check` passed. The operator
+  subsequently confirmed the hosted CI rerun passed; this is separate from the
+  local macOS evidence. Production code was unchanged.
+
+M11B manual walkthrough prepared (2026-10-24, America/Denver):
+
+- [The M11B runbook](manual-tests/CLI_M11B_MANUAL_TESTS.md) and `fixtures/m11b/`
+  provide individual commands and expected outcomes for the author lock,
+  reviewed local commit, fresh checkout/cold cache, preservation/removal,
+  freshness and compatibility cases. Setup changes user state only for launched
+  CLI processes; the operator's shell HOME and normal credentials stay intact.
+- The live portion is explicit: verify API requirements, normal Pyway V1.97
+  startup and dev bucket, authenticate with a private dev PAT, exercise two
+  rejected API requests, then publish one uniquely named Tool to dev and inspect
+  reservation/version persistence. Normal, regenerated, fresh frozen and legacy
+  consumer flows compare the exact shared resolution/artifact metadata.
+- Shell blocks parse under both bash and zsh; embedded Python blocks parse, the
+  fixture JSON parses, and the fixture Python passes Black. The offline sections
+  (2–6 and 11) were executed in disposable directories using a controlled uv
+  fixture and the real built CLI, including strict lint, lock writes, archive
+  inspection, local Git/clone, cold-state reuse and negative/compatibility checks.
+  This validates the command sequence, not a new real-uv or live Registry run.
+- No real PAT, Registry publication, S3 write, migration or production change was
+  performed while preparing the guide. Operator-run manual acceptance is recorded
+  below. No 11C provisioning, runtime-import or cross-machine execution acceptance
+  is claimed.
+
+M11B operator manual acceptance (2026-10-24, America/Denver):
+
+- The operator confirmed all manual tests passed after working through the
+  local/dev runbook. Its 12 completion items are checked on that confirmation,
+  covering author lock preparation, cold-checkout reuse, stale/removal behavior,
+  API rejection, real dev publication/persistence, normal/regenerated/frozen
+  consumers, legacy recovery and local compatibility guards.
+- Repeating the original file-list append step left three `agent.lock` entries
+  in the fixture manifest before publication. The runbook now deduplicates this
+  operation. The published fixture was retained: repeated declarations do not
+  change the resolution and the root lock is excluded from the artifact. The
+  operator's passing consumer checks complete the metadata acceptance.
+- This is operator-reported manual evidence, not an agent-executed live publish
+  or independently captured CLI/package digest. With review fixes verified and
+  CLI hosted CI confirmed green, M11B acceptance is complete. Production rollout,
+  CLI release, 11C environments and later release-format milestones remain
+  separate work.
 
 ### Payload compatibility
 
