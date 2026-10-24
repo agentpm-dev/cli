@@ -1770,9 +1770,24 @@ Actionlint, resolver target checks, **34 maintainer tests**, workspace Clippy,
 Rust formatting, example Black/JSON validation, docs text checks and
 `git diff --check` pass. No API backend code changed; the API edit is user docs.
 
+Hosted Windows compilation follow-up:
+
+- The operator reported Resolver Contract failed while compiling the CLI test
+  binary on Windows: the TUI's `process_is_alive` helper called Unix-only
+  `libc::kill` without a platform guard, although its only caller was already
+  Unix-only. The helper and its associated TUI test imports now use `cfg(unix)`.
+  Unix-only test imports in Harness ToolRuntime and runner tests are guarded too,
+  addressing the warnings reported in the same build. Managed Python tests remain
+  enabled on Windows; no test was disabled to bypass the native provisioning gate.
+- After the guard fixes, macOS workspace tests passed **1,152 tests** (5 native
+  tests intentionally ignored in that invocation), and workspace Clippy,
+  formatting and diff checks passed. Windows compilation/execution was not
+  reproduced locally: this machine has only the macOS Rust target. A fresh hosted
+  Windows run must confirm the fix and complete its native tests.
+
 Remaining acceptance/risk boundaries:
 
-- Hosted execution of the updated native workflow is not claimed. Linux, Intel
+- Successful hosted execution of the updated native workflow is not claimed. Linux, Intel
   macOS and Windows provisioning, and the cross-machine replay proof using the
   committed macOS resolution, need the corresponding hosted results. The fixture
   and native jobs implement this test rather than substituting a simulated OS.

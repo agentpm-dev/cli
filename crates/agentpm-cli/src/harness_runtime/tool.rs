@@ -340,11 +340,12 @@ struct MachineRunError {
 mod tests {
     use super::*;
     use crate::harness_runtime::model::{RuntimeSnapshot, SkillResourceSnapshot};
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    };
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    #[cfg(unix)]
+    use std::sync::{Arc, atomic::AtomicBool};
+    #[cfg(unix)]
+    use std::time::Duration;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
