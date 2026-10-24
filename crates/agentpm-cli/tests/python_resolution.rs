@@ -30,6 +30,8 @@ impl Fixture {
             .current_dir(&self.0)
             .env("HOME", self.0.join("home"))
             .env("USERPROFILE", self.0.join("home"))
+            .env("XDG_CONFIG_HOME", self.0.join("home/config"))
+            .env("XDG_DATA_HOME", self.0.join("home/data"))
             .env("XDG_CACHE_HOME", self.0.join("cache"))
             .env("AGENTPM_TELEMETRY", "0")
             .arg(verb);
@@ -244,9 +246,16 @@ fn publish_prepares_committed_resolution_and_reuses_it_with_a_cold_cache() {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     );
     // A fresh machine has the committed lock but no author cache or resolver.
-    fs::remove_dir_all(fixture.0.join("home")).unwrap();
-    if fixture.0.join("cache").exists() {
-        fs::remove_dir_all(fixture.0.join("cache")).unwrap();
+    let lock_path = fixture.0.join("agent.lock");
+    let prepared_lock = fs::read(&lock_path).unwrap();
+    for path in [fixture.0.join("home"), fixture.0.join("cache")] {
+        // Which directories get created depends on the OS's config/cache layout.
+        match fs::remove_dir_all(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("could not clear {}: {error}", path.display()),
+        }
+        assert!(!path.exists(), "{} must be cold", path.display());
     }
     fs::remove_file(&uv).unwrap();
     let cold = fixture
@@ -256,6 +265,7 @@ fn publish_prepares_committed_resolution_and_reuses_it_with_a_cold_cache() {
         .output()
         .unwrap();
     assert!(cold.status.success(), "{}", text(&cold));
+    assert_eq!(fs::read(&lock_path).unwrap(), prepared_lock);
     let lock: Value =
         serde_json::from_slice(&fs::read(fixture.0.join("agent.lock")).unwrap()).unwrap();
     assert_eq!(lock["lockfile_version"], 4);

@@ -1540,6 +1540,23 @@ M11B non-blocking review notes:
   This follow-up changes documentation only; documentation text checks and
   `git diff --check` passed.
 
+M11B CI follow-up: portable cold-cache test cleanup.
+
+- Hosted Linux CI reached successful dry-run preparation, then failed because
+  the test unconditionally removed a temporary HOME directory that did not
+  exist. Its existence is not a portable proxy for config/cache creation;
+  inherited XDG settings can place Linux configuration outside HOME.
+- The Python CLI fixture now isolates `XDG_CONFIG_HOME` and `XDG_DATA_HOME`
+  beneath its temporary home, alongside its existing isolated cache. Cold-state
+  cleanup tolerates only `NotFound`, retains errors for other filesystem failures,
+  and asserts both directories are absent before removing the fixture resolver.
+  The subsequent cold-cache publication also asserts byte-identical committed
+  lock state, preserving the original regression's purpose.
+- Verification: **all 10 Python CLI integration tests passed locally on macOS**;
+  workspace Clippy, Rust formatting and `git diff --check` passed. Hosted Linux
+  execution still requires a CI rerun after this fix is pushed; no Linux runner
+  success is claimed from the local run. Production code was unchanged.
+
 ### Payload compatibility
 
 Fixtures:
