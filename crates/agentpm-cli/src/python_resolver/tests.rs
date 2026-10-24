@@ -163,6 +163,48 @@ fn no_dependency_path_is_lazy_and_does_not_acquire_any_resolver() {
         );
     }
     assert!(!workspace.0.join(".agentpm").exists());
+    fs::write(
+        workspace.0.join("agent.lock"),
+        serde_json::to_vec(
+            &json!({"lockfile_version":2,"generated":"2026-10-23T00:00:00Z","dependencies":{}}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let manifest = json!({"kind":"tool","name":"fixture","version":"1.0.0","runtime":{"type":"python","version":"3.11","dependencies":["foo"]}});
+    let error = prepare_with(&manifest, &workspace.0, false, || {
+        panic!("legacy lock must fail before acquisition")
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("modern agent.lock"));
+}
+
+#[test]
+fn non_tool_publication_ignores_unrelated_invalid_locks() {
+    let workspace = Workspace::new();
+    let lock_path = workspace.0.join("agent.lock");
+    for kind in ["agent", "skill"] {
+        let manifest = json!({"kind":kind});
+        for bytes in [
+            "not valid JSON",
+            r#"{"lockfile_version":99,"packages":{},"roots":{}}"#,
+            r#"{"lockfile_version":2,"generated":"2026-10-23T00:00:00Z","packages":{},"roots":{},"unknown_field":true}"#,
+        ] {
+            fs::write(&lock_path, bytes).unwrap();
+            for refresh in [false, true] {
+                assert!(
+                    prepare_with(&manifest, &workspace.0, refresh, || panic!(
+                        "non-Tool publication must not acquire uv"
+                    ))
+                    .unwrap()
+                    .is_none()
+                );
+            }
+            require_publish_resolution(&manifest, &workspace.0).unwrap();
+            assert_eq!(fs::read(&lock_path).unwrap(), bytes.as_bytes());
+            assert!(!workspace.0.join("cache").exists());
+        }
+    }
 }
 
 #[test]
@@ -300,11 +342,10 @@ fn cached_binary_reuses_without_network_and_tampering_fails() {
 
 #[cfg(unix)]
 #[test]
-fn author_cache_reuses_exact_inputs_and_refresh_reexecutes_without_touching_lock() {
+fn committed_author_lock_reuses_exact_inputs_without_cache_and_refresh_reexecutes() {
     let workspace = Workspace::new();
     let path = fake_uv(&workspace.0, UV_VERSION);
-    let manifest = json!({"kind":"tool","runtime":{"type":"python","version":"3.11","dependencies":["foo>=1"]}});
-    fs::write(workspace.0.join("agent.lock"), "LEGACY LOCK UNCHANGED").unwrap();
+    let manifest = json!({"kind":"tool","name":"fixture","version":"0.1.0","runtime":{"type":"python","version":"3.11","dependencies":["foo>=1"]}});
     let first = prepare_with(&manifest, &workspace.0, false, || {
         Ok(ManagedUv {
             path: path.clone(),
@@ -313,6 +354,7 @@ fn author_cache_reuses_exact_inputs_and_refresh_reexecutes_without_touching_lock
     })
     .unwrap()
     .unwrap();
+    fs::remove_dir_all(workspace.0.join("cache")).unwrap();
     let second = prepare_with(&manifest, &workspace.0, false, || {
         panic!("must reuse matching state")
     })
@@ -333,9 +375,15 @@ fn author_cache_reuses_exact_inputs_and_refresh_reexecutes_without_touching_lock
             .count(),
         2
     );
+    let lock = crate::manifest::read_lock_or_default(&workspace.0).unwrap();
+    assert_eq!(lock.lockfile_version(), 4);
+    let crate::semver::types::Lock::V2(lock) = lock else {
+        panic!()
+    };
+    assert!(lock.packages.is_empty());
     assert_eq!(
-        fs::read_to_string(workspace.0.join("agent.lock")).unwrap(),
-        "LEGACY LOCK UNCHANGED"
+        lock.roots["local:tool"].python_resolution.as_ref(),
+        Some(&first)
     );
     let mut changed = manifest.clone();
     changed["runtime"]["dependencies"] = json!(["foo>=1.1"]);
@@ -354,10 +402,10 @@ fn author_cache_reuses_exact_inputs_and_refresh_reexecutes_without_touching_lock
 
 #[cfg(unix)]
 #[test]
-fn missing_or_stale_fingerprint_reresolves_and_corrupt_digest_fails_closed() {
+fn stale_author_lock_cannot_publish_and_corrupt_disposable_cache_fails_closed() {
     let workspace = Workspace::new();
     let path = fake_uv(&workspace.0, UV_VERSION);
-    let manifest = json!({"kind":"tool","runtime":{"type":"python","version":"3.11","dependencies":["foo>=1"]}});
+    let manifest = json!({"kind":"tool","name":"fixture","version":"0.1.0","runtime":{"type":"python","version":"3.11","dependencies":["foo>=1"]}});
     let acquire = || {
         Ok(ManagedUv {
             path: path.clone(),
@@ -365,18 +413,25 @@ fn missing_or_stale_fingerprint_reresolves_and_corrupt_digest_fails_closed() {
         })
     };
     prepare_with(&manifest, &workspace.0, false, acquire).unwrap();
-    let cache = fs::read_dir(workspace.0.join("target/agentpm/python-resolutions"))
+    let cache = fs::read_dir(workspace.0.join("cache/python-resolutions"))
         .unwrap()
         .next()
         .unwrap()
         .unwrap()
         .path();
     for fingerprint in [json!(null), json!("old-fingerprint")] {
-        let mut record: serde_json::Value =
-            serde_json::from_slice(&fs::read(&cache).unwrap()).unwrap();
-        record["input_fingerprint"] = fingerprint;
-        fs::write(&cache, serde_json::to_vec(&record).unwrap()).unwrap();
-        prepare_with(&manifest, &workspace.0, false, acquire).unwrap();
+        let path = workspace.0.join("agent.lock");
+        let mut lock: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        lock["roots"]["local:tool"]["python_input_fingerprint"] = fingerprint;
+        fs::write(path, serde_json::to_vec(&lock).unwrap()).unwrap();
+        assert!(
+            require_publish_resolution(&manifest, &workspace.0)
+                .unwrap_err()
+                .to_string()
+                .contains("missing or stale")
+        );
+        prepare_with(&manifest, &workspace.0, true, acquire).unwrap();
     }
     assert_eq!(
         fs::read_to_string(workspace.0.join("calls"))
@@ -388,6 +443,9 @@ fn missing_or_stale_fingerprint_reresolves_and_corrupt_digest_fails_closed() {
     let mut record: serde_json::Value = serde_json::from_slice(&fs::read(&cache).unwrap()).unwrap();
     record["resolution_digest"] = json!("tampered");
     fs::write(&cache, serde_json::to_vec(&record).unwrap()).unwrap();
+    // The committed lock is authoritative even if a disposable cache is corrupt.
+    prepare_with(&manifest, &workspace.0, false, || panic!("must reuse lock")).unwrap();
+    fs::remove_file(workspace.0.join("agent.lock")).unwrap();
     assert!(
         prepare_with(&manifest, &workspace.0, false, || panic!(
             "corrupt state must fail before acquisition"

@@ -682,6 +682,7 @@ mod tests {
     #[test]
     fn cache_filename_stays_package_name_based() {
         let art = PackageArtifact {
+            python_resolution: None,
             kind: PackageKind::Agent,
             name: "@zack/support-agent".to_string(),
             version: "0.1.0".to_string(),

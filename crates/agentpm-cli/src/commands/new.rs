@@ -829,15 +829,7 @@ fn local_manifest_dependency_items(
             crate::semver::types::DesiredSet::from_cli_or_agent_json(&manifest_value, None, false)?;
         for item in desired.items {
             items.push(agentpm_sdk::models::install::PackageRequirement {
-                kind: match item.kind {
-                    PackageKind::Tool => agentpm_sdk::models::install::PackageKind::Tool,
-                    PackageKind::Agent => agentpm_sdk::models::install::PackageKind::Agent,
-                    PackageKind::Skill => agentpm_sdk::models::install::PackageKind::Skill,
-                    PackageKind::Knowledge => agentpm_sdk::models::install::PackageKind::Knowledge,
-                    PackageKind::Memory => agentpm_sdk::models::install::PackageKind::Memory,
-                    PackageKind::Profile => agentpm_sdk::models::install::PackageKind::Profile,
-                    PackageKind::Loop => agentpm_sdk::models::install::PackageKind::Loop,
-                },
+                kind: item.kind,
                 name: item.name,
                 range: item.range,
             });
@@ -1747,12 +1739,14 @@ mod tests {
     #[test]
     fn resolve_matching_plan_item_uses_semver_ordering_for_wildcards_and_ranges() {
         let older = crate::semver::types::ResolvedPackage {
+            python_resolution: None,
             kind: PackageKind::Tool,
             name: "@zack/echo".to_string(),
             version: "0.2.0".to_string(),
             integrity: "sha256-older".to_string(),
         };
         let newer = crate::semver::types::ResolvedPackage {
+            python_resolution: None,
             kind: PackageKind::Tool,
             name: "@zack/echo".to_string(),
             version: "0.10.0".to_string(),

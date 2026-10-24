@@ -1083,6 +1083,15 @@ Python resolution and new release integrity, and fixes forward-version rejection
 extending v4** with an effective standard identity plus origin rather than introducing a new lockfile major
 version as a reflex.
 
+**Stage 1 reader constraint:** M11B's v4 readers reject unknown structural fields,
+including optional additions to locked package/root entries. Retaining v4 under
+D06 does not by itself make these readers compatible with standard/origin fields.
+Before the APDS freeze, M5A must settle safe extension preservation versus an
+explicit minimum-CLI rollout, or justify a format bump under D06. See the
+[Stage 1 lockfile compatibility note](../2026-10-06-immediate-hardening/spec.md#21-lockfile-evolution).
+Do not remove strict field rejection without protecting read-modify-write and
+resolve-plan regeneration from losing unknown state or ignoring required semantics.
+
 Recommended conceptual locked entry (field names/placement flexible, not a guaranteed current serializer):
 
 ```json

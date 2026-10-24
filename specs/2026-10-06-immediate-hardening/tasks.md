@@ -982,60 +982,82 @@ Tool scaffold change, Node/Python SDK change or version bump is claimed.
 > - Reuse the Milestone 11A `PythonResolution` type verbatim on every surface. Do not restate its field shape, re-derive its ordering, or add a parallel per-surface struct — the whole point of fixing the contract in 11A is that these surfaces share one validated type whose digest is stable across all of them.
 > - **Resolutions are larger than the 11A test fixtures suggest.** Those fixtures carry 1–3 digests; real ones carry every distribution digest for all four supported targets across every Python version in range. A single `pydantic>=2.8,<3` dependency measures 5 packages / 56 digests / ~5.7 KB of canonical JSON, so a Tool with a handful of dependencies lands in the tens of KB and a multi-Tool workspace lock can reach low hundreds. This is the intended cost of the digest decision, not a defect — but size it against real dependencies before settling serialization.
 
-- [ ] Extend `LockedPackage` with optional Python resolution state. Settle the **final** field layout here so Milestone 14B extends it rather than reshaping it:
-  - [ ] keep the four existing fields unchanged — `kind`, `name`, `version`, `integrity`;
-  - [ ] add one optional typed field for Python resolution (for example `python_resolution: Option<PythonResolution>`), `#[serde(default, skip_serializing_if = "Option::is_none")]` so v2/v3 locks round-trip byte-identically;
-  - [ ] do **not** add any target, selected-artifact, interpreter, or environment-fingerprint field — those are machine-local `.agentpm/` state, not portable lock state;
-  - [ ] note explicitly in code comments that `integrity` is the single logical package digest, and that Milestone 14B redefines what it *contains* for new-format releases (the 64-char lowercase release digest) **without changing its type or adding sibling digest fields**.
-- [ ] Confirm the `LockedPackage` layout chosen here satisfies Milestone 14B's integrity requirements before implementing, so the struct is touched once across the two milestones.
-- [ ] Propagate that same `PythonResolution` type into the remaining contract surfaces (moved here from Milestone 11A, which defined and validated the type but persisted it nowhere):
-  - [ ] resolve/install DTOs and `ResolvePlan`;
-  - [ ] publish/build descriptor;
-  - [ ] artifact inspection metadata;
-  - [ ] release-manifest digest input;
-  - [ ] reuse the 11A type itself on each surface — no parallel per-surface struct, no re-derived ordering;
-  - [ ] add a test asserting the same resolution digests identically through `agent.lock`, the resolve DTO, and the release-manifest digest input, so a divergent re-serialization on any one surface fails rather than silently producing a second digest for the same resolution.
-- [ ] Add an explicit **local Tool root** representation, and stop routing `kind: tool` into `LockRoot::LocalAgent`:
-  - [ ] add the variant and its `local:tool`-style key rather than reusing the `_ =>` fallback in `build_lock_roots`;
-  - [ ] carry the project's own `PythonResolution` and the 11A input fingerprint on that root;
-  - [ ] do not add a synthetic `LockedPackage` for the project itself, and do not place a placeholder in `integrity`;
-  - [ ] confirm an existing lock that recorded a Tool project as `local:agent` still reads, and decide explicitly whether it is rewritten to `local:tool` or left alone — either is acceptable, silently producing both keys for one project is not.
-- [ ] Preserve the local project's resolution across full lock regeneration:
-  - [ ] carry the matching local root's resolution and fingerprint forward in the `spec.is_none()` branch of `build_updated_lock`, which currently discards them;
-  - [ ] keep `packages` a pure projection of the resolve plan — preservation applies to the local-root lane only;
-  - [ ] ensure carried-forward state **cannot** satisfy the publish freshness check when it is stale; preservation must not become a way for an out-of-date resolution to pass.
-- [ ] Write resolved Python state into `agent.lock` at publish time and gate publication on its freshness (moved here from Milestone 11A, which resolves and fingerprints but persists nothing):
-  - [ ] update/write the local-root resolution from the prepared resolution;
-  - [ ] fail publish if manifest declarations and resolved state disagree or the resolution is stale, reusing the 11A input fingerprint rather than inventing a second staleness rule;
-  - [ ] treat the committed lock as the authoritative shared input for multi-target builds, so every matrix job emits the same `pythonResolutionDigest` rather than resolving independently;
-  - [ ] **lift the M11A publication block in both places at once** — the CLI `bail!` in `publish.rs` and the registry's `publish:init` rejection of non-empty `runtime.dependencies`. Leaving either in place makes dependency-bearing publish fail for a now-wrong reason; removing only the server one lets a custom client publish a Tool whose resolution never reached the lock;
-  - [ ] confirm the client-side gate still fails **before** resolver acquisition, so a publish that cannot succeed never pays for a resolver download.
-- [ ] Relocate the Milestone 11A author-side resolution cache now that the committed lock is authoritative:
-  - [ ] the committed local-root resolution is the source of truth; any remaining cache is disposable acceleration only, and publish must behave identically with it absent;
-  - [ ] move it off `<project>/target/agentpm/python-resolutions/`. `target/agentpm/` is the pre-existing publish-output directory (`commands/publish.rs:501`, excluded from the tarball at `:562`), so it predates this cache — but it is build output, which is the wrong home for dependency preparation state;
-  - [ ] prefer the per-user cache directory already used for the managed resolver binary, so one cache serves every project and nothing unexpected appears beside an author's source;
-  - [ ] confirm a cold cache plus a committed lock publishes without re-resolving, which is the property CI depends on.
-- [ ] Size the lock against real dependency sets before finalizing serialization:
-  - [ ] measure `agent.lock` with at least one realistic multi-dependency Python Tool (something like `openai` plus `pydantic`) rather than the 11A unit fixtures, and record the measured size as evidence;
-  - [ ] decide deliberately whether `agent.lock` stays pretty-printed at that scale, and write the decision down — it changes diff readability and review burden for every consumer of the lock;
-  - [ ] confirm the chosen serialization still round-trips v2/v3 locks byte-identically, so a formatting change made for v4 cannot rewrite existing locks;
-  - [ ] confirm a multi-Tool workspace lock stays within the size assumptions the resolve/install DTO path and registry request limits already impose, and state which limit was checked.
-- [ ] Evolve lockfile-version selection:
-  - [ ] replace `requires_v3_lock(...)` with a `minimum_lock_version(...)`-style helper;
-  - [ ] return minimum version 4 when Python resolution/new release fields are present;
-  - [ ] retain versions 2/3 for locks that do not need v4 capabilities unless a broader migration is intentionally chosen.
-- [ ] Add a **forward-version guard before normal lock deserialization/mutation**:
-  - [ ] reject `lockfile_version` newer than the CLI supports;
-  - [ ] prevent older CLIs from silently dropping future fields on rewrite;
-  - [ ] audit `Lock::empty_v2()` and Harness `>=2` checks for correct max-version behavior.
-- [ ] Preserve current V1/V2-shape and on-disk v2/v3 reads.
-- [ ] Keep package keys target-independent (`kind:name@version`).
-- [ ] Update registry resolve/install DTOs and `ResolvePlan` so Python resolution state reaches `lock_from_plan` and survives a plain full-regeneration install.
-- [ ] Reconcile the duplicated `PackageKind` enumerations while both sides are being modified:
-  - [ ] the CLI lockfile/semver types define seven variants; the SDK install DTOs define eight, and only the SDK has `Template`;
-  - [ ] either share one definition across the crates, or keep two with an explicit total-coverage conversion;
-  - [ ] add a test that fails when one side gains a variant the other lacks, so the drift cannot be reintroduced silently.
-- [ ] Ensure published Tool release metadata/artifact contains the Tool-specific Python resolution independently of the publisher's broader workspace lock.
+- [x] Extend `LockedPackage` with optional Python resolution state. Settle the **final** field layout here so Milestone 14B extends it rather than reshaping it:
+  - [x] keep the four existing fields unchanged — `kind`, `name`, `version`, `integrity`;
+  - [x] add one optional typed field for Python resolution (for example `python_resolution: Option<PythonResolution>`), `#[serde(default, skip_serializing_if = "Option::is_none")]` so v2/v3 locks round-trip byte-identically;
+  - [x] do **not** add any target, selected-artifact, interpreter, or environment-fingerprint field — those are machine-local `.agentpm/` state, not portable lock state;
+  - [x] note explicitly in code comments that `integrity` is the single logical package digest, and that Milestone 14B redefines what it *contains* for new-format releases (the 64-char lowercase release digest) **without changing its type or adding sibling digest fields**.
+- [x] Confirm the `LockedPackage` layout chosen here satisfies Milestone 14B's integrity requirements before implementing, so the struct is touched once across the two milestones.
+- [x] Propagate that same `PythonResolution` type into the remaining contract surfaces (moved here from Milestone 11A, which defined and validated the type but persisted it nowhere):
+  - [x] resolve/install DTOs and `ResolvePlan`;
+  - [x] publish/build descriptor;
+  - [x] artifact inspection metadata;
+  - [x] release-manifest digest input;
+  - [x] reuse the 11A type itself on each surface — no parallel per-surface struct, no re-derived ordering;
+  - [x] add a test asserting the same resolution digests identically through `agent.lock`, the resolve DTO, and the release-manifest digest input, so a divergent re-serialization on any one surface fails rather than silently producing a second digest for the same resolution.
+- [x] Add an explicit **local Tool root** representation, and stop routing `kind: tool` into `LockRoot::LocalAgent`:
+  - [x] add the variant and its `local:tool`-style key rather than reusing the `_ =>` fallback in `build_lock_roots`;
+  - [x] carry the project's own `PythonResolution` and the 11A input fingerprint on that root;
+  - [x] do not add a synthetic `LockedPackage` for the project itself, and do not place a placeholder in `integrity`;
+  - [x] confirm an existing lock that recorded a Tool project as `local:agent` still reads, and decide explicitly whether it is rewritten to `local:tool` or left alone — either is acceptable, silently producing both keys for one project is not.
+- [x] Preserve the local project's resolution across full lock regeneration:
+  - [x] carry the matching local root's resolution and fingerprint forward in the `spec.is_none()` branch of `build_updated_lock`, which currently discards them;
+  - [x] keep `packages` a pure projection of the resolve plan — preservation applies to the local-root lane only;
+  - [x] ensure carried-forward state **cannot** satisfy the publish freshness check when it is stale; preservation must not become a way for an out-of-date resolution to pass.
+- [x] Write resolved Python state into `agent.lock` at publish time and gate publication on its freshness (moved here from Milestone 11A, which resolves and fingerprints but persists nothing):
+  - [x] update/write the local-root resolution from the prepared resolution;
+  - [x] fail publish if manifest declarations and resolved state disagree or the resolution is stale, reusing the 11A input fingerprint rather than inventing a second staleness rule;
+  - [x] treat the committed lock as the authoritative shared input for multi-target builds, so every matrix job emits the same `pythonResolutionDigest` rather than resolving independently;
+  - [x] **lift the M11A publication block in both places at once** — the CLI `bail!` in `publish.rs` and the registry's `publish:init` rejection of non-empty `runtime.dependencies`. Leaving either in place makes dependency-bearing publish fail for a now-wrong reason; removing only the server one lets a custom client publish a Tool whose resolution never reached the lock;
+  - [x] confirm the client-side gate still fails **before** resolver acquisition, so a publish that cannot succeed never pays for a resolver download.
+- [x] Relocate the Milestone 11A author-side resolution cache now that the committed lock is authoritative:
+  - [x] the committed local-root resolution is the source of truth; any remaining cache is disposable acceleration only, and publish must behave identically with it absent;
+  - [x] move it off `<project>/target/agentpm/python-resolutions/`. `target/agentpm/` is the pre-existing publish-output directory (`commands/publish.rs:501`, excluded from the tarball at `:562`), so it predates this cache — but it is build output, which is the wrong home for dependency preparation state;
+  - [x] prefer the per-user cache directory already used for the managed resolver binary, so one cache serves every project and nothing unexpected appears beside an author's source;
+  - [x] confirm a cold cache plus a committed lock publishes without re-resolving, which is the property CI depends on.
+- [x] Size the lock against real dependency sets before finalizing serialization:
+  - [x] measure `agent.lock` with at least one realistic multi-dependency Python Tool (something like `openai` plus `pydantic`) rather than the 11A unit fixtures, and record the measured size as evidence;
+  - [x] decide deliberately whether `agent.lock` stays pretty-printed at that scale, and write the decision down — it changes diff readability and review burden for every consumer of the lock;
+  - [x] confirm the chosen serialization still round-trips v2/v3 locks byte-identically, so a formatting change made for v4 cannot rewrite existing locks;
+  - [x] confirm a multi-Tool workspace lock stays within the size assumptions the resolve/install DTO path and registry request limits already impose, and state which limit was checked.
+- [x] Evolve lockfile-version selection:
+  - [x] replace `requires_v3_lock(...)` with a `minimum_lock_version(...)`-style helper;
+  - [x] return minimum version 4 when Python resolution/new release fields are present;
+  - [x] retain versions 2/3 for locks that do not need v4 capabilities unless a broader migration is intentionally chosen.
+- [x] Add a **forward-version guard before normal lock deserialization/mutation**:
+  - [x] reject `lockfile_version` newer than the CLI supports;
+  - [x] prevent older CLIs from silently dropping future fields on rewrite;
+  - [x] audit `Lock::empty_v2()` and Harness `>=2` checks for correct max-version behavior.
+- [x] Preserve current V1/V2-shape and on-disk v2/v3 reads.
+- [x] Keep package keys target-independent (`kind:name@version`).
+- [x] Update registry resolve/install DTOs and `ResolvePlan` so Python resolution state reaches `lock_from_plan` and survives a plain full-regeneration install.
+- [x] Reconcile the duplicated `PackageKind` enumerations while both sides are being modified:
+  - [x] the CLI lockfile/semver types define seven variants; the SDK install DTOs define eight, and only the SDK has `Template`;
+  - [x] either share one definition across the crates, or keep two with an explicit total-coverage conversion;
+  - [x] add a test that fails when one side gains a variant the other lacks, so the drift cannot be reintroduced silently.
+- [x] Ensure published Tool release metadata/artifact contains the Tool-specific Python resolution independently of the publisher's broader workspace lock.
+
+M11B implementation/verification (2026-10-23, America/Denver): complete within
+this milestone's scope. Author state is stored on `local:tool`; installed Tool
+state comes from the Registry plan on `LockedPackage`. Live publication requires
+a matching committed lock; dry-run preparation/refresh writes it. Disposable
+preparation cache moved to the OS per-user cache. Tool archives carry only their
+own typed `agentpm-python.json` metadata, bound to the publish reservation.
+
+Lock version selection is content-based with a monotonic existing-version floor:
+no Python state means no forced v4 upgrade, and regeneration never downgrades an
+existing lock. Unchanged logical state preserves existing bytes and `generated`.
+Removing declarations drops local Python state on normal install. Genuine v2/v3
+fixtures produced by the installed pre-11B CLI verify byte compatibility; frozen
+and carry-forward regression checks were also verified with deliberate mutations.
+
+Registry persistence uses additive migration `V1.97__Persist_Python_Resolution.sql`
+and pinned symbolic marker validation (`dep-logic==0.7.2`). The realistic committed
+fixture covers 14 distributions / 113 hashes: 16,213-byte author lock, 15,104-byte
+Tool metadata, 322,233-byte serialized 20-Tool lock and 259,001-byte resolve DTO.
+Pretty printing is retained deliberately. See `test-plan.md` for tests, limits,
+known baseline tooling failures and operator/deployment boundaries. No version
+bump, CLI release, production deployment or 11C environment provisioning is claimed.
 
 ## Milestone 11C: AgentPM-Managed Python Runtime Environment
 > Scope note: give new-format Python Tools somewhere for their dependencies to live and execute. Owns the AgentPM-managed per-Tool environment under `.agentpm/`, eager provisioning during install, execution of dependency-bearing Tools through the managed interpreter, and runtime fingerprint validation. Preserves legacy vendored Tool behavior unchanged.

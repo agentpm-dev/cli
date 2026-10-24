@@ -602,7 +602,11 @@ fn read_required_lock(
 
 fn lock_v2(lock: Lock, diagnostics: &mut Vec<PreflightDiagnostic>) -> Option<LockV2> {
     match lock {
-        Lock::V2(lock) if lock.lockfile_version >= 2 => Some(lock),
+        Lock::V2(lock)
+            if (2..=crate::semver::types::MAX_LOCK_VERSION).contains(&lock.lockfile_version) =>
+        {
+            Some(lock)
+        }
         Lock::V2(lock) => {
             push_diag(
                 diagnostics,
@@ -2816,6 +2820,7 @@ fn package_dir(kind: PackageKind) -> &'static str {
         PackageKind::Memory => "memory",
         PackageKind::Profile => "profiles",
         PackageKind::Loop => "loops",
+        PackageKind::Template => "templates",
     }
 }
 
@@ -2944,6 +2949,7 @@ mod tests {
         packages.insert(
             package_key(kind, name, version),
             LockedPackage {
+                python_resolution: None,
                 kind,
                 name: name.to_string(),
                 version: version.to_string(),
@@ -2954,6 +2960,8 @@ mod tests {
 
     fn base_root() -> LockedRoot {
         LockedRoot {
+            python_input_fingerprint: None,
+            python_resolution: None,
             name: Some("@zack/local-agent".to_string()),
             version: Some("0.1.0".to_string()),
             tools: vec![

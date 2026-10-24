@@ -1,4 +1,4 @@
-//! M11A author-side resolution and resolver acquisition; no lock v4 or environment provisioning.
+//! Portable author resolution, committed local Tool lock state and managed resolver acquisition.
 use agentpm_sdk::{
     python::{PythonPackage, PythonResolution, ResolutionInputs},
     target::Target,
@@ -408,20 +408,42 @@ pub(crate) fn prepare(
     base_url: &str,
     refresh: bool,
 ) -> Result<Option<PythonResolution>> {
-    prepare_with(manifest, directory, refresh, || {
+    let cache_dir = crate::config::project_dirs()
+        .context("cannot locate Python resolution cache")?
+        .cache_dir()
+        .join("python-resolutions");
+    prepare_with_cache(manifest, directory, &cache_dir, refresh, || {
         ManagedUv::acquire(base_url)
     })
 }
 
+#[cfg(test)]
 fn prepare_with(
     manifest: &serde_json::Value,
     directory: &Path,
     refresh: bool,
     acquire: impl FnOnce() -> Result<ManagedUv>,
 ) -> Result<Option<PythonResolution>> {
+    prepare_with_cache(
+        manifest,
+        directory,
+        &directory.join("cache/python-resolutions"),
+        refresh,
+        acquire,
+    )
+}
+
+fn prepare_with_cache(
+    manifest: &serde_json::Value,
+    directory: &Path,
+    cache_dir: &Path,
+    refresh: bool,
+    acquire: impl FnOnce() -> Result<ManagedUv>,
+) -> Result<Option<PythonResolution>> {
     if manifest.get("kind").and_then(serde_json::Value::as_str) != Some("tool") {
         return Ok(None);
     }
+    let mut lock = crate::manifest::read_lock_or_default(directory)?;
     let Some(runtime) = manifest.get("runtime") else {
         return Ok(None);
     };
@@ -436,15 +458,20 @@ fn prepare_with(
     if requirements.is_empty() {
         return Ok(None);
     }
+    ensure!(
+        !lock.is_v1(),
+        "Preparing Python dependencies requires a modern agent.lock; run agentpm install to migrate the legacy lock first; no resolver acquisition was attempted"
+    );
     let version = runtime
         .get("version")
         .and_then(serde_json::Value::as_str)
         .context("Python runtime.version is required")?;
     let inputs = ResolutionInputs::new(&requirements, version, UV_VERSION)?;
     let fingerprint = inputs.fingerprint()?;
-    // Author-side cache only. Portable agent.lock persistence is owned by M11B.
-    // The existing packager excludes this directory even when files includes the project root.
-    let cache_dir = directory.join("target/agentpm/python-resolutions");
+    if !refresh && let Some(resolution) = current_locked_resolution(manifest, &lock, &inputs)? {
+        return Ok(Some(resolution));
+    }
+    // This is disposable acceleration only; a committed lock never needs this cache.
     let path = cache_dir.join(format!("{fingerprint}.json"));
     if !refresh && path.try_exists()? {
         let cached: AuthorResolution = serde_json::from_slice(&fs::read(&path)?)
@@ -456,6 +483,13 @@ fn prepare_with(
         if cached.input_fingerprint.as_deref() == Some(&fingerprint)
             && inputs.matches(&cached.resolution)
         {
+            save_author_resolution(
+                manifest,
+                directory,
+                &mut lock,
+                &cached.resolution,
+                &fingerprint,
+            )?;
             return Ok(Some(cached.resolution));
         }
     }
@@ -466,11 +500,120 @@ fn prepare_with(
         resolution_digest: resolution.digest()?,
         resolution: resolution.clone(),
     };
-    fs::create_dir_all(&cache_dir)?;
+    fs::create_dir_all(cache_dir)?;
     let temporary = cache_dir.join(format!(".{:032x}.tmp", rand::random::<u128>()));
     fs::write(&temporary, serde_json::to_vec_pretty(&record)?)?;
     fs::rename(&temporary, &path)?;
+    save_author_resolution(
+        manifest,
+        directory,
+        &mut lock,
+        &resolution,
+        record.input_fingerprint.as_deref().unwrap(),
+    )?;
     Ok(Some(resolution))
+}
+
+fn current_locked_resolution(
+    manifest: &serde_json::Value,
+    lock: &crate::semver::types::Lock,
+    inputs: &ResolutionInputs,
+) -> Result<Option<PythonResolution>> {
+    let crate::semver::types::Lock::V2(lock) = lock else {
+        return Ok(None);
+    };
+    let Some(root) = lock.roots.get("local:tool") else {
+        return Ok(None);
+    };
+    if root.name.as_deref() != manifest.get("name").and_then(serde_json::Value::as_str)
+        || root.version.as_deref() != manifest.get("version").and_then(serde_json::Value::as_str)
+    {
+        return Ok(None);
+    }
+    if root.python_input_fingerprint.as_deref() != Some(inputs.fingerprint()?.as_str()) {
+        return Ok(None);
+    }
+    Ok(root
+        .python_resolution
+        .as_ref()
+        .filter(|r| inputs.matches(r))
+        .cloned())
+}
+
+fn save_author_resolution(
+    manifest: &serde_json::Value,
+    directory: &Path,
+    lock: &mut crate::semver::types::Lock,
+    resolution: &PythonResolution,
+    fingerprint: &str,
+) -> Result<()> {
+    use crate::semver::types::{Lock, LockedRoot, minimum_lock_version};
+    if lock.is_v1() {
+        anyhow::bail!(
+            "Preparing Python dependencies requires a modern agent.lock; run agentpm install to migrate the legacy lock first"
+        );
+    }
+    let Lock::V2(value) = lock else {
+        unreachable!()
+    };
+    let name = manifest
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .context("Tool name is required")?;
+    let version = manifest
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .context("Tool version is required")?;
+    if value
+        .roots
+        .get("local:agent")
+        .is_some_and(|r| r.name.as_deref() == Some(name) && r.version.as_deref() == Some(version))
+    {
+        value.roots.remove("local:agent");
+    }
+    value.roots.insert(
+        "local:tool".into(),
+        LockedRoot {
+            name: Some(name.into()),
+            version: Some(version.into()),
+            python_resolution: Some(resolution.clone()),
+            python_input_fingerprint: Some(fingerprint.into()),
+            ..Default::default()
+        },
+    );
+    value.lockfile_version = value
+        .lockfile_version
+        .max(minimum_lock_version(&value.packages, &value.roots));
+    value.generated = chrono::Utc::now();
+    crate::manifest::write_lock(directory, lock)
+}
+
+/// Live publication must have reviewed, current portable state before any resolver acquisition.
+pub(crate) fn require_publish_resolution(
+    manifest: &serde_json::Value,
+    directory: &Path,
+) -> Result<()> {
+    if manifest.get("kind").and_then(serde_json::Value::as_str) != Some("tool") {
+        return Ok(());
+    }
+    let lock = crate::manifest::read_lock_or_default(directory)?;
+    let Some(roots) = manifest.pointer("/runtime/dependencies") else {
+        return Ok(());
+    };
+    let requirements: Vec<String> = serde_json::from_value(roots.clone())?;
+    if requirements.is_empty() {
+        return Ok(());
+    }
+    let version = manifest
+        .pointer("/runtime/version")
+        .and_then(serde_json::Value::as_str)
+        .context("Python runtime.version is required")?;
+    let inputs = ResolutionInputs::new(&requirements, version, UV_VERSION)?;
+    ensure!(
+        current_locked_resolution(manifest, &lock, &inputs)?.is_some(),
+        "Python resolution in agent.lock is missing or stale. Run agentpm publish --dry-run --refresh-python, review and commit agent.lock, then publish again; no resolver acquisition or upload was attempted."
+    );
+    Ok(())
 }
 
 #[cfg(test)]

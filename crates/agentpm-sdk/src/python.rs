@@ -7,6 +7,38 @@ use sha2::{Digest, Sha256};
 use std::str::FromStr;
 
 pub const RESOLUTION_TYPE: &str = "agentpm.python-resolution.v1";
+pub const RESOLUTION_METADATA_FILE: &str = "agentpm-python.json";
+pub const MAX_RESOLUTION_METADATA_BYTES: usize = 2 * 1024 * 1024;
+
+/// Tool-specific build/artifact metadata; the same digest is the release-manifest input.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PythonReleaseMetadata {
+    pub python_resolution: PythonResolution,
+    pub python_resolution_digest: String,
+}
+
+impl PythonReleaseMetadata {
+    pub fn new(python_resolution: PythonResolution) -> Result<Self> {
+        Ok(Self {
+            python_resolution_digest: python_resolution.digest()?,
+            python_resolution,
+        })
+    }
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.python_resolution_digest == self.python_resolution.digest()?,
+            "Python resolution metadata digest mismatch"
+        );
+        Ok(())
+    }
+
+    /// Digest input for agentpm.package.release.v1; full release assembly belongs to M12/M14.
+    pub fn release_manifest_digest(&self) -> Result<String> {
+        self.validate()?;
+        Ok(format!("sha256:{}", self.python_resolution_digest))
+    }
+}
 
 pub fn normalize_requirements(values: &[String]) -> Result<Vec<String>> {
     let mut parsed: Vec<Requirement> = Vec::new();

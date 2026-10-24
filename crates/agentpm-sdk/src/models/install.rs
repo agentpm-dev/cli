@@ -14,6 +14,21 @@ pub enum PackageKind {
     Template,
 }
 
+impl PackageKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tool => "tool",
+            Self::Agent => "agent",
+            Self::Skill => "skill",
+            Self::Knowledge => "knowledge",
+            Self::Memory => "memory",
+            Self::Profile => "profile",
+            Self::Loop => "loop",
+            Self::Template => "template",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageRequirement {
     #[serde(default)]
@@ -30,6 +45,8 @@ pub struct ResolvedPackage {
     pub version: String,
     /// 64-char lowercase hex SHA-256
     pub integrity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_resolution: Option<crate::python::PythonResolution>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +89,8 @@ pub struct PackageArtifact {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<Runtime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_resolution: Option<crate::python::PythonResolution>,
 }
 
 pub type ResolveReqItem = PackageRequirement;

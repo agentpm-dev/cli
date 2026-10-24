@@ -381,6 +381,7 @@ fn plan_to_locked_packages(
         packages.insert(
             package_key(item.kind, &item.name, &item.version),
             crate::semver::types::LockedPackage {
+                python_resolution: item.python_resolution.clone(),
                 kind: item.kind,
                 name: item.name.clone(),
                 version: item.version.clone(),
@@ -642,12 +643,14 @@ mod tests {
             &ResolvePlan {
                 items: vec![
                     crate::semver::types::ResolvedPackage {
+                        python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
                         version: "0.1.0".to_string(),
                         integrity: "sha256-echo".to_string(),
                     },
                     crate::semver::types::ResolvedPackage {
+                        python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/summarize".to_string(),
                         version: "0.2.0".to_string(),
@@ -687,6 +690,7 @@ mod tests {
             &WorkspacePackageRoots::default(),
             &ResolvePlan {
                 items: vec![crate::semver::types::ResolvedPackage {
+                    python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/echo".to_string(),
                     version: "0.1.0".to_string(),
@@ -800,12 +804,14 @@ mod tests {
             &ResolvePlan {
                 items: vec![
                     crate::semver::types::ResolvedPackage {
+                        python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
                         version: "0.1.0".to_string(),
                         integrity: "sha256-echo".to_string(),
                     },
                     crate::semver::types::ResolvedPackage {
+                        python_resolution: None,
                         kind: PackageKind::Skill,
                         name: "@zack/triage-skill".to_string(),
                         version: "0.2.0".to_string(),
@@ -853,12 +859,14 @@ mod tests {
             &ResolvePlan {
                 items: vec![
                     crate::semver::types::ResolvedPackage {
+                        python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
                         version: "0.1.0".to_string(),
                         integrity: "sha256-echo".to_string(),
                     },
                     crate::semver::types::ResolvedPackage {
+                        python_resolution: None,
                         kind: PackageKind::Knowledge,
                         name: "@zack/python-docs".to_string(),
                         version: "0.1.0".to_string(),

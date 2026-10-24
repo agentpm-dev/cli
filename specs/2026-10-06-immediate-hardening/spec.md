@@ -876,6 +876,23 @@ Requirements:
 - unknown future fields must never be silently discarded through a read-modify-write cycle;
 - `Lock::empty_v2()` and Harness/preflight version checks must be audited so they do not accidentally accept unsupported future locks merely because the version is `>= 2`.
 
+**M11B implementation compatibility note:** The implemented readers reject unknown
+fields on `LockV1`, `LockV2`, `LockedPackage` and `LockedRoot`, including fields in
+an otherwise supported v4 lock. The version guard is therefore a ceiling, not a
+promise that this CLI accepts every future additive v4 extension. Such a lock
+fails parsing without being rewritten; there is currently no general extension
+lane that tolerates and preserves unknown fields through lock regeneration.
+
+This constrains Stage 2 D06 and M5A's preference to retain v4 when adding standard
+identity and origin. Before the Stage 2 APDS freeze, explicitly settle whether
+to introduce a safe preservation/extension contract, retain v4 with a documented
+minimum-CLI rollout that requires these strict readers to upgrade, or justify a
+new lock version under D06. Simply removing `deny_unknown_fields` is insufficient:
+unknown state must survive ordinary resolve-plan regeneration and writers, and
+clients must not proceed when they cannot interpret required semantics. This
+note records the compatibility limitation; it does not choose a Stage 2 format
+or claim transparent forward compatibility for v4.
+
 Keep one logical lock entry per AgentPM package key:
 
 ```text
