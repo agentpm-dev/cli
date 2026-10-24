@@ -1124,9 +1124,11 @@ Local tests cover real pinned uv, Pydantic/native wheels, interrupted creation
 and sync, failed-refresh invalidation, changed interpreters, no ensurepip,
 normal/frozen installs and install-finalization failure boundaries. Portable lock
 and resolution formats are unchanged. See `test-plan.md` for verification and
-limits. Hosted native matrix execution and the operator's live dev walkthrough
-remain acceptance gates; no cross-platform, production rollout or CLI release
-completion is claimed by these checked implementation tasks.
+limits. The operator has confirmed all four updated Resolver Contract jobs pass,
+closing the hosted native verification gate. Review is complete, and the operator
+confirmed all cases in `manual-tests/CLI_M11C_MANUAL_TESTS.md` passed on
+2026-10-24. **M11C acceptance is complete.** Production rollout, CLI release and
+the `summarize-text`/`devwork-copilot` rollout remain Release Band 8 work.
 
 ## Milestone 12: Python Tool Artifact Compatibility
 > Scope note: establish a conservative compatibility model for the Tool payload itself, distinct from Python dependency portability, so AgentPM can distinguish portable `any` artifacts from target-specific native payloads. This milestone defines package-time classification metadata on top of the canonical target vocabulary. It does not yet implement multi-artifact registry storage, target-aware install selection, CI fan-in publishing, or retroactively classify legacy releases.

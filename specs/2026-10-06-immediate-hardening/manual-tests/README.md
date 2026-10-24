@@ -22,3 +22,9 @@ are disposable and gitignored.
   checks, followed by one explicit dev-only publish and normal/frozen consumer
   installs. Includes local Registry dependency/migration prerequisites and
   isolated per-process user state; production is not modified.
+- [Managed Python Tool environments (Milestone 11C)](CLI_M11C_MANUAL_TESTS.md):
+  develop and publish a dev-only `validate-order`, inspect native dependencies
+  in managed environments, exercise normal/frozen installs, repair, interpreter
+  changes and import-path isolation, then call the real Tool through Harness
+  using a local scripted model. Includes an unpublished legacy vendoring probe;
+  production and paid model services are not used.

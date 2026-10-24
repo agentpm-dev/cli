@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "model": { "provider": "openai", "model": "m11c-local-fixture" },
+  "trace": { "enabled": false },
+  "runtime": { "limits": { "max_steps": 4 } }
+}

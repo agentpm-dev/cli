@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
+  "kind": "tool",
+  "name": "m11c-legacy",
+  "version": "0.1.0",
+  "description": "Local legacy vendoring probe without declared Python dependencies.",
+  "files": ["legacy_tool.py", "_vendor/legacy_helper.py"],
+  "entrypoint": { "command": "python", "args": ["-u", "legacy_tool.py"] },
+  "runtime": { "type": "python", "version": "3.11" },
+  "inputs": { "type": "object", "additionalProperties": false },
+  "outputs": {
+    "type": "object",
+    "properties": { "legacy": { "type": "string" }, "prefix": { "type": "string" } },
+    "required": ["legacy", "prefix"],
+    "additionalProperties": false
+  }
+}

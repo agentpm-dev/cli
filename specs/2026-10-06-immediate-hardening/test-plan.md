@@ -1768,7 +1768,8 @@ Candidate-version dispatches that differ from the compiled pin retain their
 resolution smoke; Rust provisioning checks run when the checked-in pin matches.
 Actionlint, resolver target checks, **34 maintainer tests**, workspace Clippy,
 Rust formatting, example Black/JSON validation, docs text checks and
-`git diff --check` pass. No API backend code changed; the API edit is user docs.
+`git diff --check` pass. The initial 11C API edit was user docs only; the
+manual-discovered Registry SemVer read-path correction is recorded below.
 
 Hosted Windows compilation follow-up:
 
@@ -1782,26 +1783,153 @@ Hosted Windows compilation follow-up:
 - After the guard fixes, macOS workspace tests passed **1,152 tests** (5 native
   tests intentionally ignored in that invocation), and workspace Clippy,
   formatting and diff checks passed. Windows compilation/execution was not
-  reproduced locally: this machine has only the macOS Rust target. A fresh hosted
-  Windows run must confirm the fix and complete its native tests.
+  reproduced locally: this machine has only the macOS Rust target. The required
+  hosted rerun was subsequently confirmed green by the operator below.
 
-Remaining acceptance/risk boundaries:
+M11C operator-reported hosted acceptance:
 
-- Successful hosted execution of the updated native workflow is not claimed. Linux, Intel
-  macOS and Windows provisioning, and the cross-machine replay proof using the
-  committed macOS resolution, need the corresponding hosted results. The fixture
-  and native jobs implement this test rather than substituting a simulated OS.
-- The operator's live dev Registry publish/install/run/Harness walkthrough is
-  still pending. Local HTTP fixtures and real PyPI wheels validate the code but
-  are not a real Registry/S3 deployment or live package publication.
+- After the Windows guards were pushed, the operator confirmed **all four
+  Resolver Contract jobs pass**: macOS ARM64, macOS x86_64, Linux x86_64 glibc,
+  and Windows x86_64 MSVC. This closes the hosted native provisioning/replay gate,
+  including the committed macOS-authored resolution replay on the other targets.
+  This is operator-reported CI evidence, not a claim of local Windows execution
+  or independent retrieval of the hosted logs.
+- Earlier pending-hosted notes above describe prior verification states and are
+  superseded by this confirmation. Operator manual acceptance is recorded below.
+
+M11C manual walkthrough prepared:
+
+- [The 11C runbook](manual-tests/CLI_M11C_MANUAL_TESTS.md) uses the real
+  `agentpm-examples/tools-python/validate-order` source in a disposable author
+  copy, a unique dev-only prerelease version, isolated per-process user state,
+  and one explicitly identified dev publication. It covers author development,
+  lock/metadata preparation, native imports from the managed environment,
+  normal/frozen consumers, ready reuse, interrupted/unrecorded state repair,
+  alternate interpreter selection, ambient import-path isolation, real headless
+  Harness dispatch and a dependency-free legacy vendoring probe.
+- `fixtures/m11c/` supplies a local-only Loop/config, scripted model and legacy
+  Tool/helper. The model requests the advertised AgentPM Tool alias and completes
+  only after observing total 9 in the actual Tool result. The guide prints one
+  complete server command for a second terminal, with no dependence on that
+  terminal inheriting setup variables. Local fixture Loop/legacy lock entries
+  are explicitly identified as staged probes, not downloaded/published packages.
+- Rehearsed the shell blocks with zsh against a disposable mock Registry serving
+  the actual prepared archive and the real pinned uv binary. Six normal/frozen/
+  repair/interpreter installs finalized, native Pydantic imports and direct/
+  machine runs succeeded, frozen locks were unchanged, and the shadow control
+  failed while managed runs succeeded. The Harness/legacy sections then passed
+  using the same disposable consumer and the checked-in local model fixture;
+  the run report recorded an ended run and at least one real Tool call.
+  Rehearsal corrected the copied consumer's required description/schema fields
+  and kept its development pyproject on a valid Python package version while
+  the AgentPM manifest uses a unique SemVer prerelease.
+- Live login/publication were deliberately excluded from rehearsal. No real
+  dev/prod Registry rows or S3 objects were created, no production rollout or
+  `summarize-text` publication was performed, and no paid model was called.
+  This verifies the guide/fixtures, not operator manual acceptance.
+
+Manual-discovered Registry SemVer correction:
+
+- The operator published the runbook's valid SemVer prerelease and reported
+  `packaging.version.InvalidVersion` while viewing it. The package detail/latest
+  helpers in `app/tools/application/tools.py` were incorrectly comparing AgentPM
+  versions with the PEP 440 Python-distribution parser. They now use the existing
+  `semantic_version.Version` dependency, consistent with Registry install/publish
+  version semantics. The exact published version remains valid; restarting the
+  local backend is sufficient to load the fix. No republish, migration or data
+  rewrite is required, and Python dependency version parsing remains PEP 440.
+- Follow-up review identified that detail/latest parsing is unguarded, unlike
+  `pick_semver`, which skips invalid rows. The operator verified both dev and
+  production `tool_versions` contain no versions outside strict three-component
+  SemVer. This is operator-reported database verification; the agent did not
+  independently query either database. With existing rows verified and new
+  publication constrained by the strict manifest schema, no tolerant parsing
+  fallback or data migration was added in that parser-only fix. The subsequent
+  approved latest-policy alignment below now reuses the resolver's guarded
+  selection instead of an unguarded `max()` parse.
+- Regression tests cover `0.1.0-m11c.20261024200841`, numeric prerelease ordering,
+  stable-vs-prerelease precedence, build metadata and explicit/latest lookups.
+  The Tool helper suite passed **32 tests and 8 subtests**. Black, isort, Flake8,
+  Pylint, pyupgrade and text/diff checks passed. The configured Bandit environment
+  lacked `pbr`; equivalent Bandit 1.7.5 checks with that prerequisite supplied
+  passed without application dependency changes. Mypy remains blocked by two
+  existing assignments in unchanged `search.py` (1486/1856); the identical errors
+  were reproduced with both modified Python files shadowed by their HEAD versions.
+  The operator subsequently confirmed the complete manual walkthrough passed,
+  as recorded below.
+
+Post-acceptance latest-version policy alignment:
+
+- The operator approved one default policy for package pages and installation:
+  highest non-yanked stable SemVer version. Prereleases require an explicit
+  version or prerelease range; yanked versions remain viewable by exact version
+  but are not install candidates. Selection derives prerelease status from the
+  parsed version, fixing the callers' previous hardcoded-false hint.
+- Detail reads and dependency links reuse the guarded resolver. Higher
+  prereleases/yanked releases no longer replace the stable default. Prerelease-
+  only/all-yanked packages have no default candidate. Explicit detail reads
+  still succeed, with nullable `latest_version`/`latest_published_ts` instead of
+  falsely labeling the selected version as a stable default.
+- All eight web package kinds accept that nullable metadata. Their `/latest`
+  routes show an informative no-stable-release state linking to published
+  version pages; inaccessible/missing packages retain 404 behavior. Upstream
+  failures are not mistaken for absent stable releases. The shared stats panel
+  is labeled Latest stable, and empty-state metadata remains no-index.
+- Caret/tilde lower bounds discard build metadata while retaining prerelease
+  identifiers. Regression cases cover stable/prerelease bounds with metadata,
+  including metadata hyphens that must not opt stable ranges into prereleases.
+- Verification after that follow-up: **482 API tests passed, 7 skipped, 165 subtests passed**;
+  **243 web tests passed**. Web typecheck, ESLint (baseline warnings only) and
+  Prettier passed. API formatting/lint/security checks passed using the previously
+  documented Bandit prerequisite workaround. Mypy reports only the same two
+  unchanged `search.py` baseline errors. Regression coverage includes policy
+  parity with actual install resolution, explicit prereleases/ranges, yanked and
+  invalid rows, nullable detail JSON, empty `/latest` states and explicit
+  prerelease pages across all package kinds, and private/missing-page handling.
+- Deployment needs the updated web first, then API: the web parser must accept
+  null latest-stable metadata before the API begins returning it. No deployment,
+  database migration, package republish or SDK release was performed here.
+  This is the approved follow-up policy fix, not a claim of new live operator
+  acceptance or a reopening of the completed 11C walkthrough.
+
+M11C operator manual acceptance (2026-10-24, America/Denver):
+
+- The operator confirmed **all manual tests pass** after completing the 11C
+  runbook. The published dev reference shown in the operator's output is
+  `@zack/validate-order@0.1.0-m11c.20261024200841`.
+- Accepted coverage includes author development/preparation, real dev
+  publication, native imports from a separate managed environment, direct and
+  machine execution, ready reuse, a fresh-user frozen install with an unchanged
+  lock, interrupted/inventory repair, alternate Python selection, real Harness
+  Tool execution through the local scripted model, and legacy author vendoring.
+- The operator supplied explicit step 8 output: ordinary Python deliberately
+  failed on the ambient shadow module with exit 1, while both managed run modes
+  returned total 9 and machine mode reported success. The later all-tests-pass
+  confirmation covers the rest of the walkthrough.
+- This is operator-reported live dev acceptance, distinct from the agent's
+  earlier mock Registry rehearsals. No production publication, CLI release or
+  paid model call is implied. The production `summarize-text` publication and
+  `devwork-copilot` rollout remain unchecked Release Band 8 tasks.
+- Independent review, all four hosted Resolver Contract jobs and the manual
+  walkthrough are complete. **M11C acceptance is complete; no milestone
+  acceptance criteria remain open.** The unrelated baseline mypy findings
+  recorded above remain outside this milestone's fix.
+
+Acceptance status and remaining limitations:
+
+- All four hosted target jobs are operator-confirmed green as recorded above;
+  no additional simulated-OS substitute is needed for the native gate.
+- The live dev Registry publish/install/run/Harness walkthrough is operator-
+  confirmed complete as recorded above. Earlier pending-manual notes are
+  superseded by this confirmation.
 - A compatible local Python and compatible wheel must exist. New interpreter/ABI
   selection requires reinstall; source-build fallback and automatic Python
   downloads are deliberately unavailable. Old environment directories are local
   retained state, not a new garbage-collection feature.
 - No production deployment, CLI release/version bump, schema change, SDK wire
   format change, M12 classification or later multi-artifact release work is
-  included. Implementation checkboxes reflect code/local evidence, not closure
-  of the remaining operator/native acceptance gates.
+  included. These remain later rollout/milestone work rather than open 11C
+  acceptance gates.
 
 ### Payload compatibility
 

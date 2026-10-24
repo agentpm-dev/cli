@@ -17,6 +17,7 @@ use crate::manifest::{
     parse_publish_manifest, resolve_schema_source, validate_manifest_value,
 };
 use crate::prelude::*;
+use crate::semver::types::declares_python_dependencies;
 use crate::ui::Step;
 use anyhow::{anyhow, bail};
 use base64::Engine;
@@ -156,6 +157,9 @@ impl PublishArgs {
             .to_path_buf();
         if !self.dry_run {
             crate::python_resolver::require_publish_resolution(&manifest_value, &directory)?;
+        }
+        if declares_python_dependencies(&manifest_value) {
+            Step::final_msg("• Preparing Python dependencies…", quiet);
         }
         let input = manifest_value.clone();
         let registry = cfg.base_url.clone();

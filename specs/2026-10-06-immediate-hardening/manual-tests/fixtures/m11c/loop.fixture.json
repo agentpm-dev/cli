@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
+  "kind": "loop",
+  "name": "m11c-order-loop",
+  "version": "0.1.0",
+  "description": "Local manual-test loop: call the installed order Tool, then finish.",
+  "loop": {
+    "entry_phase": "validate",
+    "phases": [
+      {
+        "id": "validate",
+        "objective": "Use the order Tool to validate two units at 4.5 each, then return its total.",
+        "outcomes": [{ "id": "complete", "description": "The Tool result was observed." }]
+      }
+    ],
+    "transitions": [{ "from": "validate", "on": "complete", "to": "$end" }]
+  }
+}
