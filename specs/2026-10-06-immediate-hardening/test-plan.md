@@ -1286,6 +1286,22 @@ M11A production mirror acceptance (2026-10-23, America/Denver):
   M11A operator acceptance item. No CLI release/tag/version bump, independent
   build audit or production namespace-creation test is inferred from this probe.
 
+Resolver Contract rate-limit follow-up (2026-10-23):
+
+- A subsequent PR native job failed before uv execution: GitHub's attestation
+  API returned HTTP 403 `rate limit exceeded`. The Python request did not use
+  workflow authentication. The native step now supplies the built-in
+  `github.token` as `GH_TOKEN`; the fixed GitHub attestation API request uses
+  `GH_TOKEN`, falling back to `GITHUB_TOKEN`, when available. Anonymous local
+  operation remains supported. No PAT, new secret or permission increase is needed.
+- Authentication is not attached to release-asset downloads. Signature/repository
+  verification and failure-before-upload behavior are unchanged. Failed
+  authenticated requests do not fall back to anonymous verification.
+- All **34** resolver ingestion/mirror/smoke tests pass, including authentication
+  precedence, anonymous use, failure handling and release-download isolation.
+  Actionlint passes for all three workflows. Hosted execution of this follow-up
+  remains pending the next PR run; no S3 objects or pins changed.
+
 Later integration/handoff boundaries (outside M11A acceptance):
 
 - Portable lock persistence, resolved-state publication and install regeneration

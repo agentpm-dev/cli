@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import os
 
 # Only the exception type is real; process execution is mocked.
 import subprocess  # nosec B404
@@ -103,6 +104,86 @@ class ResolverPinsTests(unittest.TestCase):
                 self.assertEqual(command[command.index("--repo") + 1], "astral-sh/uv")
                 self.assertIn("--bundle", command)
                 self.assertTrue(verify.call_args.kwargs["check"])
+
+    def test_attestation_request_uses_available_token_and_allows_anonymous_use(self):
+        cases = [
+            (
+                {"GH_TOKEN": "fixture-gh", "GITHUB_TOKEN": "fixture-actions"},
+                "fixture-gh",
+            ),
+            ({"GITHUB_TOKEN": "fixture-actions"}, "fixture-actions"),
+            ({"GH_TOKEN": "", "GITHUB_TOKEN": "fixture-actions"}, "fixture-actions"),
+            ({}, None),
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            archive = Path(root) / "uv.tar.gz"
+            archive.write_bytes(b"archive bytes")
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            for environment, expected in cases:
+                with self.subTest(environment=environment), patch.dict(
+                    os.environ, environment, clear=True
+                ), patch.object(
+                    resolver_pins.urllib.request,
+                    "urlopen",
+                    return_value=io.BytesIO(
+                        json.dumps(
+                            {"attestations": [{"bundle": {"fixture": True}}]}
+                        ).encode()
+                    ),
+                ) as download, patch.object(
+                    resolver_pins.subprocess, "run"
+                ) as verify:
+                    resolver_pins.verify_archive(archive, "gh")
+                    request = download.call_args.args[0]
+                    self.assertEqual(
+                        request.full_url,
+                        f"https://api.github.com/repos/astral-sh/uv/attestations/sha256:{digest}",
+                    )
+                    self.assertEqual(
+                        request.get_header("Authorization"),
+                        f"Bearer {expected}" if expected else None,
+                    )
+                    self.assertEqual(
+                        request.get_header("Accept"), "application/vnd.github+json"
+                    )
+                    self.assertTrue(verify.call_args.kwargs["check"])
+
+    def test_authenticated_attestation_failure_is_not_retried_anonymously(self):
+        with tempfile.TemporaryDirectory() as root:
+            archive = Path(root) / "uv.tar.gz"
+            archive.write_bytes(b"archive bytes")
+            with patch.dict(
+                os.environ, {"GH_TOKEN": "fixture-gh"}, clear=True
+            ), patch.object(
+                resolver_pins.urllib.request,
+                "urlopen",
+                side_effect=urllib.error.HTTPError(
+                    "https://api.github.com", 403, "rate limit exceeded", {}, None
+                ),
+            ) as download, patch.object(
+                resolver_pins.subprocess, "run"
+            ) as verify:
+                with self.assertRaises(urllib.error.HTTPError):
+                    resolver_pins.verify_archive(archive, "gh")
+                download.assert_called_once()
+                verify.assert_not_called()
+
+    def test_github_token_is_not_sent_to_release_asset_download(self):
+        target = resolver_pins.read_targets()[0]
+        with tempfile.TemporaryDirectory() as root, patch.dict(
+            os.environ, {"GH_TOKEN": "fixture-gh"}, clear=True
+        ), patch.object(
+            resolver_pins.urllib.request, "urlopen", return_value=io.BytesIO(b"archive")
+        ) as download, patch.object(
+            resolver_pins, "verify_archive"
+        ), patch.object(
+            resolver_pins, "binary_from_archive", return_value=b"verified binary"
+        ):
+            resolver_pins.stage_binary("0.13.5", Path(root), target, "gh")
+            self.assertEqual(
+                download.call_args.args[0],
+                f"https://github.com/astral-sh/uv/releases/download/0.13.5/{target['uv_archive']}",
+            )
 
     def test_inventory_cannot_change_before_uploading_new_bytes(self):
         target = resolver_pins.read_targets()[0]

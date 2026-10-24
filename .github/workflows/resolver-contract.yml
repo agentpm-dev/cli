@@ -48,6 +48,7 @@ jobs:
       - name: Verify and execute candidate on its native platform
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           UV_SMOKE_DIR: ${{ runner.temp }}/uv-contract
         run: |
           VERSION="${CANDIDATE_VERSION:-$(python -c 'import json; print(json.load(open("platforms/uv-pins.json"))["version"])')}"

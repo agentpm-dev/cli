@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 import re
 
 # The maintainer-selected attestation verifier is trusted; no shell is invoked.
@@ -28,8 +29,14 @@ def read_targets(path=TARGETS):
 def verify_archive(path, gh):
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     url = f"https://api.github.com/repos/astral-sh/uv/attestations/sha256:{digest}"
+    headers = {"Accept": "application/vnd.github+json"}
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    # Authenticate only the fixed API endpoint, never release-asset downloads.
+    request = urllib.request.Request(url, headers=headers)
     # Fixed HTTPS GitHub host; the only interpolated path value is a SHA-256 digest.
-    with urllib.request.urlopen(url, timeout=60) as response:  # nosec B310
+    with urllib.request.urlopen(request, timeout=60) as response:  # nosec B310
         attestations = json.load(response)["attestations"]
     if not attestations:
         raise ValueError("upstream artifact has no attestation")
