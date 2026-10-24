@@ -856,7 +856,7 @@ This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a st
   - [x] target not in the pin table → fail with the unsupported-target error **before any network access**;
   - [x] otherwise download from AgentPM storage → verify SHA-256 against the compiled-in pin → cache → use.
 - [x] Cache the binary per user, per `uv` version, per target, outside any project directory (for example `~/.cache/agentpm/runtimes/uv/<version>/<target>/uv`) so one download serves every project and a version bump cannot overwrite a binary an older CLI still pins.
-- [ ] Serve mirrored binaries from AgentPM's **existing** registry object storage / presigned-URL distribution path:
+- [x] Serve mirrored binaries from AgentPM's **existing** registry object storage / presigned-URL distribution path:
   - [x] Reserve the `runtimes` namespace/storage-key segment server-side before namespace creation; reject case/whitespace and path-style bypasses without changing existing `agentpm` rejection behavior.
   - [x] do not teach the CLI to parse GitHub Releases;
   - [x] do not stand up a new CDN hostname or separate download service for this;
@@ -939,9 +939,12 @@ Operator progress (2026-10-23): uv 0.13.5 ingestion completed in both
 saved scoped delete protection and create-only write requirements in both bucket
 policies, and supplied matching lifecycle rules with no current-object expiration
 or archival transitions under `tools/`. The local Registry mirror check verified
-all four binaries. Production verification returned 404 before the M11A Registry
-deployment, so production delivery remains open; neither a CLI release nor a
-production deployment is claimed. Namespace auditing was confirmed by the user.
+all four binaries. An initial production probe returned 404 before deployment;
+the operator subsequently shared a successful probe against
+`https://api.agentpackagemanager.com`, verifying uv 0.13.5 downloads and pinned
+digests for all four targets. Production mirror delivery is accepted. This is
+not a CLI release or an independent deployment/build audit. Namespace auditing
+was confirmed by the user.
 The deployment/retention mapping is recorded in
 `agentpm-api/app/tools/domain/tools/RESOLVER_STORAGE.md`.
 
@@ -950,7 +953,9 @@ The operator confirmed the individual-command manual walkthrough in
 reserved-namespace check. Its completion record is checked on that confirmation.
 Pasted CLI output additionally verifies portable resolution, changed-input cache
 invalidation, deliberate engine failure without overwriting the valid record,
-and successful recovery. Production delivery remains open as described above.
+and successful recovery. With production mirror delivery also verified, M11A
+acceptance is complete; lock persistence/publication and managed environments
+remain in their later owning milestones.
 
 Cross-stage handoff: optional Python `runtime.dependencies` changes the closed
 manifest schema. Stage 2 M1B now has a working-tree handoff note; its requirement

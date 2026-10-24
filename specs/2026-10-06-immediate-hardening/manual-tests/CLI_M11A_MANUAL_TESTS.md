@@ -460,8 +460,9 @@ that confirmation; when repeating the guide, verify each result again.
 
 Record the workspace path, CLI digest, results and any failures in your notes or
 the milestone test-plan evidence. Do not mark the milestone complete merely
-because this guide exists. Production route delivery still needs the Registry
-deployment and separate production mirror probe. Cross-machine installation,
+because this guide exists. The operator separately confirmed the production
+mirror probe passed for all four uv 0.13.5 targets on 2026-10-23; that evidence is
+recorded in `../test-plan.md`. Cross-machine installation,
 managed environments and dependency-bearing publication are not claimed here.
 Unsupported-target, tampered-download, HTTP/proxy and canonical-digest cases also
 retain their automated coverage; this guide does not fabricate another platform.

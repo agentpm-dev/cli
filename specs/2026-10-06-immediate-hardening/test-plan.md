@@ -1274,11 +1274,20 @@ M11A operator manual acceptance (2026-10-23, America/Denver):
   and full digest on stderr, including quiet/captured output. The existing
   integration test checks this; workspace tests, Clippy and formatting passed.
 
-Open operator/integration acceptance:
+M11A production mirror acceptance (2026-10-23, America/Denver):
 
-- Deploy the M11A Registry route/inventory and namespace guard through the normal
-  process, then verify all four production mirror downloads. No production
-  deployment, release tag or version bump is claimed here.
+- The operator shared successful output from
+  `../agentpm-api/.venv/bin/python -B scripts/check_resolver_mirror.py --base-url https://api.agentpackagemanager.com`.
+  All four targets passed for uv 0.13.5: `aarch64-apple-darwin`,
+  `x86_64-apple-darwin`, `x86_64-pc-windows-msvc` and
+  `x86_64-unknown-linux-gnu`. The checker obtains each presigned URL from the
+  deployed Registry, downloads its binary and verifies the compiled pin-table
+  SHA-256. This supersedes the earlier pre-deployment 404 and closes the final
+  M11A operator acceptance item. No CLI release/tag/version bump, independent
+  build audit or production namespace-creation test is inferred from this probe.
+
+Later integration/handoff boundaries (outside M11A acceptance):
+
 - Portable lock persistence, resolved-state publication and install regeneration
   remain 11B work; actual managed environment provisioning and the resolve-on-one/
   install-on-another proof remain the 11A-11C integration gate. Release manifest
