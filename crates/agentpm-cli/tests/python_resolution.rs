@@ -331,6 +331,13 @@ fn publish_prepares_committed_resolution_and_reuses_it_with_a_cold_cache() {
                     assert!(headers.starts_with("POST /v1/tools/publish/init "));
                     let metadata: Value = serde_json::from_slice(&bytes[header_end..]).unwrap();
                     assert_eq!(metadata["python_resolution_digest"], expected_digest);
+                    assert_eq!(
+                        metadata["artifact"],
+                        json!({"target":"any","format":"tar.gz","diagnostics":[]})
+                    );
+                    // Publisher-machine telemetry is not payload compatibility.
+                    assert_eq!(metadata["client"]["os"], std::env::consts::OS);
+                    assert_eq!(metadata["client"]["arch"], std::env::consts::ARCH);
                     digests.push(metadata["python_resolution_digest"].clone());
                     json!({"upload_id":"fixture-upload","put_url":format!("{endpoint}/object"),"headers":{},"final_key":"tool.tar.gz","expires_in":900}).to_string()
                 }

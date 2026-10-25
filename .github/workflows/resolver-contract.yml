@@ -11,8 +11,19 @@ on:
       - 'crates/agentpm-cli/src/runner.rs'
       - 'crates/agentpm-cli/src/harness_plan.rs'
       - 'crates/agentpm-cli/src/commands/install.rs'
+      - 'crates/agentpm-cli/src/commands/publish.rs'
+      - 'crates/agentpm-cli/src/commands/publish/**'
+      - 'crates/agentpm-cli/tests/python_resolution.rs'
+      - 'crates/agentpm-cli/tests/payload_compatibility.rs'
       - 'crates/agentpm-cli/src/io/download.rs'
       - 'crates/agentpm-sdk/src/python.rs'
+      - 'crates/agentpm-sdk/src/artifact.rs'
+      - 'crates/agentpm-sdk/src/artifact/**'
+      - 'crates/agentpm-sdk/contracts/tool-payload-formats-v1.json'
+      - 'scripts/check_payload_formats.py'
+      - 'scripts/test_payload_formats.py'
+      - 'crates/agentpm-sdk/src/target.rs'
+      - 'crates/agentpm-sdk/src/lib.rs'
       - 'crates/agentpm-sdk/src/python/tests.rs'
       - 'crates/agentpm-sdk/contracts/python-resolution-pydantic-v1.json'
       - 'crates/agentpm-sdk/platforms/targets.json'
@@ -73,6 +84,14 @@ jobs:
         with:
           toolchain: 1.89.0
       - uses: Swatinem/rust-cache@v2
+      - name: Verify payload compatibility and canonical targets
+        shell: bash
+        run: |
+          cargo test -p agentpm-sdk target::tests
+          cargo test -p agentpm-sdk artifact::
+          cargo test -p agentpm-cli --bin agentpm commands::publish::payload
+          cargo test -p agentpm-cli --bin agentpm commands::publish::collection
+          cargo test -p agentpm-cli --test payload_compatibility
       - name: Verify native managed Python environments
         shell: bash
         env:

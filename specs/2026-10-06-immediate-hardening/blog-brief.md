@@ -47,3 +47,36 @@ hosted platform/cross-machine and operator live acceptance remain open. Do not
 describe this as a released cross-platform guarantee before those gates and the
 release band are complete. This is engineering evidence for later planning,
 not an article draft or a new content strategy.
+
+## Milestone 12 Evidence
+
+Potential engineering material: keeping dependency portability distinct from
+the files in a Tool archive. A Tool can declare native-wheel dependencies while
+shipping portable Python source; bundling a native library changes that payload
+claim. Classification inspects completed archive bytes, including disguised
+binaries and binary suffixes after text, and deliberately chooses the current
+target when uncertain. This is package-time metadata only: do not describe
+Registry target selection, multi-artifact publication or cross-platform hosted
+verification as delivered by this change. Those rollout and acceptance gates
+remain separate. This is implementation evidence for later planning, not an
+article draft.
+
+M12 format-policy follow-up evidence: the portable inventory is now one
+embedded JSON contract, with generated/CI-checked spec tables and data-driven
+tests plus independent binary fixtures. A mismatch fails on the temporary
+artifact before replacement/upload, while typed diagnostics preserve the
+specific file/reason for future CI consumers. Dotenv prefix matching and
+intentional egg metadata are distinct from environment snapshots and native
+payloads. Directory exclusions remain a separate policy decision; do not claim
+automatic project-clutter removal or hosted acceptance from local tests.
+
+M12 collection follow-up evidence: explicit file/directory intent is resolved
+before incidental traversal, with a deliberately small shared policy, no Git
+ignore interpretation and no symlink-target traversal. Marker-based environment
+pruning avoids copying custom-named environments; explicit roots can preserve
+them deliberately. Informational omission/override records remain distinct from
+compatibility warnings, including an `any` artifact carrying collection records.
+Real archive/CLI tests cover a 15,001-file environment and publication metadata;
+fresh hosted/operator acceptance remains open. This supersedes the earlier
+statement about collection remaining deferred, without claiming release or
+production deployment.

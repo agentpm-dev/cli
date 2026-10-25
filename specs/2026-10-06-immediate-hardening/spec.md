@@ -946,7 +946,481 @@ Declared dependencies do not affect payload classification.
 
 Do not unblock `.whl` as a normal embedded Tool payload merely to support dependency resolution. Wheels should be acquired by AgentPM/uv at consumer install time rather than bundled into the release payload.
 
-Current Tool packaging treats `manifest.files` entries as literal paths and only warns if a declared path does not exist. Stage 1 should harden this: a declared `files` path that is missing at package/publish time is a fatal packaging error rather than a silently omitted artifact input.
+Tool packaging treats `manifest.files` entries as literal paths. A declared
+`files` path that is missing at package/publish time is a fatal packaging error
+rather than a silently omitted artifact input.
+
+#### M12 portable format policy
+
+This section records the reviewed format-policy follow-up authorized for
+implementation. The expanded inventory, binary recognition, metadata exceptions
+and diagnostics are implemented; fresh local evidence and remaining hosted/
+manual acceptance gates are recorded in `test-plan.md`. Initial-classifier test
+results alone do not verify this expanded policy. The separate collection-policy
+policy below is implemented separately and has its own verification record.
+
+**One checked-in source for the format inventory**
+
+`crates/agentpm-sdk/contracts/tool-payload-formats-v1.json` is the authoritative
+portable-format inventory. It contains the text/source suffix groups, exact
+basenames, basename-prefix candidates, named text-configuration/metadata
+exceptions and recognized binary formats with their suffix aliases and required
+signature/header definitions. Native filename suffixes and literal versioned-name
+fragments also belong to this inventory, not a separate Rust/test vocabulary.
+Represent signatures as byte sequences at explicit offsets, with the minimum
+header length and all required checks expressed in data; WebP must require
+both RIFF and WebP identifiers, not either one. Keep this a small typed data
+contract, not a general-purpose rules engine.
+
+Rust must embed this checked-in file (for example with `include_str!`) and use
+its parsed definitions directly. Tests enumerate that same data; do not maintain
+another exhaustive suffix/basename/signature list in a `matches!` arm or a test
+parameter array. The file is build input, not user-editable runtime configuration
+or remotely fetched policy. Existing content/executable/path precedence remains
+explicit Rust behavior governed by the rules below.
+
+The candidate tables and special-name inventories below are generated from that
+file by `python3 scripts/check_payload_formats.py --write`. Its read-only
+`--check` mode runs in normal CI; a mismatch must fail rather
+than leave the spec and implementation independently maintained. Use the same
+approach for any product documentation that repeats the exhaustive inventory.
+Format additions should change the data file and its derived documentation,
+not require synchronized manual edits to multiple allowlists.
+
+Validate the policy's version/type and shape, normalized aliases, uniqueness,
+conflicting text/binary registrations, required signature bytes/offsets and
+header-length bounds. Invalid inventory must fail verification and cannot
+silently produce an `any` classification. Keep independent representative
+positive/negative asset fixtures and expected outcomes: enumerating the data
+does not replace testing the correctness of the signature matcher or the
+classifier's precedence. Product docs link the authoritative inventory rather
+than maintain an exhaustive copy in another repository.
+
+**Scope and meaning of `any`**
+
+These rules apply only to Tools with `runtime.type: "python"`. Classify the
+completed, collected archive, not every file in the author's workspace. Every
+shipped member must qualify before the whole payload can claim `any`.
+Dependencies installed separately from the recorded Python resolution do not
+participate in payload classification.
+
+`any` is a claim about recognized payload formats, together with the author's
+responsibility for the behavior of their code. It is not proof that Python code
+has no OS-specific assumptions, invokes no system programs, or never loads an
+external native library. It does not provision additional runtimes or guarantee
+dependency-wheel availability on every consumer platform.
+
+Compare suffixes and special filenames case-insensitively, without changing the
+actual archive paths. Preserve the executable-bit rule: an executable member
+prevents `any` unless it is recognized Python `.py` source that passes the text
+checks. Symlinks and other unusual member types remain conservative concrete-
+target classifications. A concrete target is the detected **publisher/build
+target**, including OS/CPU/ABI as applicable, not the consumer's architecture.
+
+**Publisher-platform permission limitation (accepted for M12)**
+
+Classification consumes the modes in the completed archive. Existing packaging
+preserves whether a regular file has any executable bit on Unix (`0755` versus
+`0644`); Windows instead derives executable modes from filename extensions and
+defaults ordinary text/data files to `0644`. Consequently, the same recognized
+text/data file, such as `assets/example.csv`, can narrow a Unix build through
+`executable_member` while qualifying for `any` in a Windows build. Equal content
+bytes do not imply equal archive modes or compatibility claims. The Windows
+`any` result has no executable-member warning because the archive contains no
+executable mode to report.
+
+Keep this behavior in M12. Do not normalize away executable permission merely
+because contents look like portable text: a deliberately executable helper may
+depend on that permission. This limitation does not establish that the text
+format itself is platform-specific, and the `.py` exception remains unchanged.
+M16 must check mixed portable/concrete claims across collected matrix build
+descriptors before automatic publication, as specified in the CI section below.
+No permission normalization or cross-build reconciliation is implemented in M12.
+
+**Portable text/source candidates**
+
+Every candidate below must pass the existing full-file UTF-8, binary-control and
+native-signature checks; an extension alone never earns `any`. These are payload
+format classifications, not promises that AgentPM can directly execute each
+format. Do not add warnings merely because `.pyx`, `.pxd` or `.ipynb` exists.
+
+<!-- BEGIN tool-payload-formats:text -->
+| Group | Candidate suffixes |
+| --- | --- |
+| Python source and notebook data | `.py`, `.pyi`, `.pyx`, `.pxd`, `.ipynb` |
+| Structured data and configuration | `.json`, `.jsonl`, `.ndjson`, `.toml`, `.yaml`, `.yml`, `.csv`, `.tsv`, `.ini`, `.cfg`, `.conf`, `.properties`, `.xml`, `.in` |
+| Documentation and text | `.txt`, `.md`, `.markdown`, `.mdx`, `.rst`, `.adoc`, `.tex`, `.bib` |
+| Web markup/styles and text templates | `.html`, `.htm`, `.css`, `.scss`, `.sass`, `.less`, `.svg`, `.j2`, `.jinja`, `.jinja2`, `.mustache`, `.hbs` |
+| Queries and interface definitions | `.sql`, `.graphql`, `.gql`, `.proto` |
+
+Exact text basenames: `README`, `LICENSE`, `LICENCE`, `NOTICE`, `AUTHORS`, `COPYRIGHT`, `CHANGELOG`, `HISTORY`, `py.typed`, `.env`.
+
+Text basename prefixes: `.env.`.
+
+Single-file text metadata suffixes: `.egg-info`.
+
+Scoped text metadata basenames: `PKG-INFO` inside directory suffixes `.egg-info`.
+<!-- END tool-payload-formats:text -->
+
+Include `.in` for Python project inputs such as `MANIFEST.in` and
+`requirements.in`. These are text candidates under the same content and
+executable checks, not files AgentPM executes or additional dependency sources
+that it resolves. This explicit format addition does not settle general dotfile,
+extensionless build-file or directory-exclusion policy.
+
+JavaScript/TypeScript suffixes (`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`) and
+`.rtf` are outside this initial expanded list. Their presence does not establish
+an undeclared runtime requirement; they follow the ordinary unknown-format
+classification and path-specific diagnostic below. Other unfamiliar formats
+remain conservative rather than being inferred portable merely from text-like
+contents.
+
+**Named configuration and metadata decisions**
+
+- A regular file named `.env` or `.env.*` is a text-configuration candidate,
+  including `.env.example`. Dotenv matching uses the case-normalized **basename**:
+  exact equality with `.env`, or a prefix match on `.env.`. It does not use
+  extension extraction or a suffix match; `.env.local` qualifies by its basename
+  prefix, not because `local` is an allowed extension. Record exact-basename and
+  basename-prefix matching as distinct modes in the shared policy inventory.
+  Match the member's own basename, not a parent directory or an arbitrary
+  substring: `config/.env.local` matches, while `config.env.local`, `.envrc`,
+  `.environment` and `.gitignore` do not match this rule. It must pass the text
+  checks and cannot bypass known native suffixes, recognized binary-format
+  checks, executable-bit rules or
+  environment-snapshot rules. This is classification only; do not introduce
+  secrets scanning or a blanket dotenv publishing prohibition in this change.
+- Remove the blanket concrete-target classification for `.egg-info`. A
+  single-file `*.egg-info` and `PKG-INFO` inside a `*.egg-info/` directory are
+  text-metadata candidates. Other files within that directory follow the same
+  normal format/content rules as other payload members; this is not a blanket
+  portability exemption for everything underneath it. For example,
+  `SOURCES.txt` can qualify, while a bundled native library still narrows the
+  archive. Preserve intentionally shipped metadata; do not strip it.
+- Keep conservative concrete-target handling for `.dist-info` paths and known
+  installed-environment state (`.venv`, `venv`, `site-packages`, `dist-packages`,
+  `__pycache__`, and `pyvenv.cfg`). This is an explicit installed-state policy,
+  not an assertion that all `.dist-info` metadata itself is native code.
+  Source this vocabulary from the shared inventory, not a second Rust constant;
+  see the collection policy below for the shared definitions and their
+  distinct classification versus traversal uses.
+- Do not add a blanket `.pth` prohibition. It remains outside the portable
+  allowlist and receives the ordinary unknown-format diagnostic if shipped.
+  This follow-up does not add a site-directory installation mechanism.
+
+**Native filename inventory**
+
+Native filename matching consumes `native_filenames` from the same embedded
+contract and generated-document check as portable formats. Compare only the
+basename, case-insensitively. These matches prevent `any` regardless of text-like
+contents or executable permissions; diagnostic code remains `native_content`.
+The literal contains mode preserves current `.so.N` behavior, including
+`libfoo.so.1.2.3` and a fragment before a portable-looking final suffix. It is
+not restricted to numeric trailing components and never matches a parent
+directory in place of a basename. This inventory records existing behavior;
+moving it into data does not add new native suffixes.
+
+<!-- BEGIN tool-payload-formats:native -->
+| Native filename match (basename only, case-insensitive) | Values |
+| --- | --- |
+| Ends with a suffix | `.so`, `.dylib`, `.pyd`, `.dll`, `.exe`, `.node`, `.a`, `.o`, `.obj`, `.lib`, `.pyc`, `.pyo` |
+| Contains a literal versioned-name fragment | `.so.` |
+<!-- END tool-payload-formats:native -->
+
+Validate normalized, nonempty, unique native entries. Reject native suffixes
+that conflict/overlap with portable text/binary suffixes or exact text basenames;
+a versioned-name fragment must reference a declared native suffix followed by
+a dot. Tests enumerate the inventory and assert the native diagnostic rather
+than merely a concrete target, since unknown-format fallback would conceal a
+missing native rule. Mutation checks cover both documented and data-only
+suffix/fragment edits. Native-content signature checks remain an independent
+defense for renamed binaries.
+
+**Portable binary candidates and signature agreement**
+
+Recognize only the following binary formats in this follow-up. They must use
+dedicated bounded header/signature checks rather than `portable_text`, and must
+still satisfy the other member/path/executable rules.
+
+<!-- BEGIN tool-payload-formats:binary -->
+| Suffix | Required format recognition |
+| --- | --- |
+| `.png` | PNG: at least 8 bytes; bytes `89 50 4e 47 0d 0a 1a 0a` at offset 0 (all required) |
+| `.jpg`, `.jpeg` | JPEG: at least 3 bytes; bytes `ff d8 ff` at offset 0 (all required) |
+| `.webp` | WebP: at least 12 bytes; bytes `52 49 46 46` at offset 0; bytes `57 45 42 50` at offset 8 (all required) |
+| `.pdf` | PDF: at least 5 bytes; bytes `25 50 44 46 2d` at offset 0 (all required) |
+| `.woff2` | WOFF2: at least 4 bytes; bytes `77 4f 46 32` at offset 0 (all required) |
+<!-- END tool-payload-formats:binary -->
+
+These checks recognize the format; they are not full structural validation,
+decoding, malware scanning or a guarantee that another application's parser
+will accept the asset. A truncated required signature/header is a mismatch.
+Do not add image/font/document parsers or decoding dependencies just to perform
+these checks.
+
+For a recognized portable binary suffix, missing or disagreeing recognition is
+a **fatal packaging error**, not a concrete-target fallback. In particular, a
+native executable/library renamed to `.png` must fail rather than earn `any` or
+silently narrow the target. Check this even if an earlier archive member already
+made the payload target-specific; member iteration order must not hide a fatal
+format mismatch. A signature match alone does not override the executable-bit
+or installed-environment rules.
+
+This is an intentional publish-time compatibility change for authors using the
+updated packager. A previously accepted Tool that shipped mislabeled binary
+data must correct that data or its filename before its next publication,
+including publication of a new version of the same Tool. Prior acceptance does
+not grandfather subsequent packaging attempts. For example, GIF bytes in
+`assets/icon.png` block the next publish even if an earlier version containing
+that file was accepted. This does not permit overwriting an immutable published
+version, and does not revalidate, rewrite or block reads/installs of previously
+published legacy releases.
+
+Other binary assets, including media/fonts not listed above, remain unrecognized
+and therefore concrete-target specific, with a diagnostic. Native libraries,
+executables and Python bytecode remain target-specific. Embedded archives and
+wheels remain subject to the existing fatal packaging prohibition. Preserve
+explicit versioned-native recognition such as `libfoo.so.1` and `libfoo.so.1.2.3`.
+
+**Narrowing and mismatch diagnostics**
+
+Never silently narrow a Python Tool to a concrete target because of a shipped
+member. Report the relative archive path, the actual reason and the resulting
+canonical target. Distinguish at least known native content, installed-environment
+state, unknown format, executable member and unsupported member type. Report
+contributing members in stable path order, deduplicating identical path/reason
+diagnostics. Do not describe an unrecognized format as proven native code.
+
+Severity and output surfaces are explicit:
+
+- Concrete-target narrowing is a **warning**, not informational progress and
+  not a packaging failure by itself. An otherwise valid native/unknown-format
+  payload can still publish. Preserve the current meaning of publish `--strict`
+  for manifest lint; do not implicitly promote these packaging warnings to
+  errors under that flag.
+- A recognized binary suffix/signature mismatch is an **error** and produces a
+  nonzero command exit before publish-init/upload, with the corrective guidance
+  below. `--quiet` does not hide warnings or errors, and non-TTY/CI invocation
+  does not suppress them.
+- Current human `publish` and `publish --dry-run` commands render warnings and
+  errors to **stderr**, using path, reason, target where applicable, and help.
+  The successful payload classification summary is separate from warnings;
+  an `any` result need not produce a narrowing warning.
+- Produce diagnostics as typed structured build data, not only rendered text.
+  A diagnostic carries a stable code, severity (`info`, `warning` or `error`), relative
+  archive path, message and corrective help when relevant. A narrowing warning
+  also carries the resulting canonical target; a mismatch error identifies
+  the expected format without implying that a valid artifact was produced.
+  Preserve distinct codes for native content, installed state, unknown format,
+  executable member, unsupported member type and format mismatch.
+- Successful build descriptors carry their structured `diagnostics` array
+  alongside `target` and `format`, including warnings when narrowed and an empty
+  array when none apply. Preserve these diagnostics in the existing publish
+  request's `artifact` metadata. A failing build retains its structured errors
+  on the error result but must not emit a usable successful artifact descriptor
+  or submit a publication request. These diagnostics are transient build output,
+  not new canonical release-manifest fields or Tool archive members.
+- Today's publish command has no `--machine` flag; this policy does not add one.
+  M12 owns the structured diagnostics and current stderr rendering. M16's
+  provider-neutral machine-readable build output must expose the same typed
+  diagnostics in its success/error result, with no human progress text mixed
+  into machine stdout. CI must consume/carry the diagnostics with the build
+  descriptor rather than scrape terminal strings. When fan-in reports a target
+  disagreement, it must surface each affected build's target and contributing
+  paths/reasons. No fan-in implementation is moved into M12.
+
+Example narrowing diagnostic:
+
+```text
+Warning: assets/logo.tiff is not a recognized portable format.
+Tool payload classified as aarch64-apple-darwin.
+```
+
+Example fatal mismatch diagnostic:
+
+```text
+Error: assets/logo.png does not match the required PNG signature; packaging failed.
+Rename the file to match its actual format, or replace it with valid PNG data.
+If renamed, update manifest.files and any code/template references, then publish again.
+```
+
+Mismatch errors must provide that corrective guidance, not just announce a
+failure. Do not claim to know the actual format unless it was recognized;
+detecting GIF or other unlisted formats is not required to explain a PNG
+mismatch. Renaming fixes the extension/content disagreement but does not
+automatically make the actual format portable: a correctly named format outside
+the portable inventory still receives the unknown-format narrowing diagnostic.
+
+Apply diagnostics to dry-run and live packaging. Mismatch failure must happen
+before any publish-init/upload request. Preserve an existing valid archive on
+failure; do not replace it with a candidate that fails these checks. Use the
+existing atomic packaging pattern rather than adding another persistence model.
+
+The current Registry still uses its existing single-archive release model and
+does not enforce these target labels. Later target-aware installation can make
+a false concrete-target classification exclude otherwise compatible consumers;
+that is why ordinary portable formats need deliberate recognition and narrowing
+must be visible now. Previously published releases remain compatibility unknown.
+
+#### M12 collection policy
+
+This is the reviewed step 3 collection policy, authorized for implementation.
+The collector, shared policy data and reporting are implemented; fresh local
+results and remaining hosted/manual acceptance gates are in `test-plan.md`.
+Earlier format-policy results alone do not verify collection behavior. Retain
+the existing reserved/generated-output exclusions. The rules below apply only
+to Python Tool collection, before completed-archive format classification.
+No other package kind gains collection exclusions here.
+
+**One data contract and a minimal exclusion vocabulary**
+
+`crates/agentpm-sdk/contracts/tool-payload-formats-v1.json` contains collection
+rules and shared installed-state definitions. Source the classifier's environment
+vocabulary from that same typed data rather than maintaining Rust constants or
+a second exclusion list. The classifier and collector must derive
+their applicable rules from the shared definitions. Extend inventory validation,
+generated documentation checks and CI tests accordingly; do not add a general
+ignore-pattern engine or user-configurable ignore file.
+
+All rules compare **basenames case-insensitively**, preserving actual archive
+paths and spelling. This is deliberate: incidental `.ENV` should be omitted
+rather than published because of casing. It can also omit intentionally named
+`.ENV` or `.DS_STORE`; explicit inclusion is the recovery mechanism.
+
+<!-- BEGIN tool-payload-formats:collection -->
+| Incidental traversal match, at any depth | Action |
+| --- | --- |
+| Basenames `.git` (file, link or directory) | Omit entry or prune directory |
+| Environment/state directory basenames `.venv`, `venv`, `site-packages`, `dist-packages`, `__pycache__` | Prune directory; omit same-named links without following |
+| A discovered directory with a direct regular-file marker `pyvenv.cfg` | Prune the whole detected environment root |
+| File/link basenames `pyvenv.cfg` | Omit incidental marker |
+| OS file/link basenames `.ds_store`, `thumbs.db`, `desktop.ini` | Omit entry |
+| File/link basename `.env` or prefix `.env.` | Omit except exact basenames `.env.example` |
+
+Classification-only metadata directory suffixes: `.dist-info`; not automatic traversal exclusions.
+<!-- END tool-payload-formats:collection -->
+
+Directory-name rules do not exclude an ordinary regular file solely because it
+is named `venv` or `site-packages`. Do not follow symlinks to classify/traverse
+their targets; omit a same-named environment-directory symlink as an incidental
+entry without descending through it. File-name rules also cover symlink entries
+of those names, and `.git` covers either kind. Explicit inclusion still uses the
+existing symlink, archive-path and classification protections.
+
+Marker detection uses case-insensitive immediate-child basename matching,
+without executing Python, reading marker contents or recursively walking the
+environment. A custom-named environment such as `dev-python/pyvenv.cfg` must
+cause `dev-python/` to be pruned; dropping only the marker would leave most of
+the environment in the artifact. Do not use a silent scan cap. A directory
+inspection failure must produce a path-specific collection error, not silently
+skip checks or treat an unreadable environment as ordinary portable source.
+
+Share the named environment directories and marker vocabulary with installed-
+state classification and verify that relationship in CI. Keep `.dist-info`
+separate as classification-only installed-distribution metadata: do not turn
+every installed-state classification into a traversal exclusion. Preserve
+`_vendor`, `.egg-info`, `.dist-info`, native libraries and other intentionally
+shipped runtime content unless a specific collection rule above applies.
+The `.egg-info` text exception remains unchanged.
+
+`.dist-info` therefore has two outcomes, deliberately. Inside an excluded
+environment such as `.venv/`, a `.dist-info/` directory is omitted along with
+that environment. Elsewhere in the selected payload it is preserved and reported
+as `installed_state`, narrowing the artifact to the current target. An author who
+does not want a standalone `.dist-info/` should remove it or narrow
+`manifest.files`; keeping it avoids silently discarding metadata a vendored
+distribution may require. This asymmetry against the pruned environment
+directories is intentional, not a missing exclusion entry.
+
+The dotenv exception is deliberately **only** `.env.example`, case-insensitively.
+`.env.sample`, `.env.template`, `.env.dist` and other `.env.*` names are omitted
+when incidental and can be explicitly included. This is a narrow filename
+convention, not a claim that example files contain no secrets. Do not scan
+contents for credentials or prohibit explicitly requested dotenv files. Their
+portable-text classification remains the separate existing policy.
+
+Do not expand this initial omission list to every development tool's caches,
+build outputs or configuration. In particular, do not automatically omit
+Makefile, Dockerfile, CODEOWNERS, `.gitignore`, `.editorconfig` or `.dockerignore`;
+these may be intentional templates/fixtures. This collection change does not
+add them to the portable-format inventory either: surviving unrecognized
+members retain the existing visible narrowing behavior. A missed incidental
+format is diagnosable; automatically removing legitimate payload data is not an
+acceptable substitute for a deliberately small policy.
+
+**Explicit inclusion, required inputs and traversal precedence**
+
+An explicit `manifest.files` entry is a literal file or directory request.
+Ordinary traversal below that root applies the exclusions above. Explicitly
+requesting the excluded object itself overrides its incidental exclusion:
+
+- `files: ["mypkg/"]` still omits discovered `mypkg/__pycache__/`.
+- `files: ["mypkg/__pycache__/"]` preserves that requested directory's **entire
+  subtree**, including descendants that would otherwise match incidental
+  exclusions, and reports the deliberate override.
+- An explicitly listed `.env` or `.env.local` is preserved, subject to normal
+  content/classification checks. Explicitly listing a detected custom-named
+  environment root also preserves that root and its subtree, with a diagnostic.
+- Explicit entries inside an otherwise excluded directory must still be
+  collected independently. `files: [".", ".git/config"]` prunes incidental
+  `.git/` traversal but includes the separately requested `.git/config` file.
+  A report that traversal was skipped must not falsely claim all contents of
+  that directory are absent when explicit descendants were collected.
+
+Resolve explicit roots and overrides independently of manifest entry order;
+overlapping requests produce the same deduplicated member set and decision
+diagnostics in either order. Do not broaden a root's override merely because it
+contains an excluded descendant: listing `mypkg/` is not an override for a
+nested environment, cache or dotenv file. The whole-subtree override applies
+only when the explicitly requested root itself matches an exclusion rule.
+
+Keep required package inputs: the manifest, resolved entrypoint and AgentPM's
+generated metadata must not be silently removed by incidental filtering. An
+entrypoint inside an excluded location is an explicit authored requirement;
+preserve the required entrypoint file and report that override, without
+implicitly preserving all of its sibling files or enclosing environment.
+Missing explicit paths remain fatal even if their names match an exclusion.
+Overrides do not bypass embedded wheel/archive prohibitions, safe-path checks,
+reserved metadata rules, entry limits, signature checks or classification.
+Collection decisions do not rewrite `agent.json` or `agent.lock`.
+
+**Omission reporting and compatibility**
+
+Report skipped traversal paths and explicit overrides with actual relative
+paths and policy reasons, in stable order with duplicates removed. Report an
+omitted directory as a skipped/pruned directory, not as an invented count of
+files inside a subtree that was never visited. Do not descend into an excluded
+tree merely to count it. Any summary counts must identify their unit (for
+example, skipped traversal roots versus individually omitted files).
+
+These are **informational collection diagnostics**, not compatibility warnings.
+Extend typed diagnostic severity with `info` and stable collection omission/
+explicit-override codes. Carry the relative path, matching rule/reason and help
+for explicit inclusion where appropriate. Render them to stderr for both dry
+and live packaging, including quiet/non-TTY use, and preserve them in the build
+descriptor's `diagnostics` for later CI output. Do not add a verbosity or machine
+flag. They do not fail a build, change `--strict`, or make an otherwise portable
+payload target-specific. An `any` descriptor may therefore contain informational
+diagnostics; only surviving member compatibility determines its target. Existing
+warning/error behavior remains unchanged.
+
+Do **not** interpret `.gitignore` or other ecosystem ignore files. Their nested
+negation/precedence rules would add a second author-controlled selection input
+outside this deliberately manifest-and-policy collection model. An unrelated
+ignore-file edit must not silently change artifact selection. These rules are
+simple AgentPM policy, not Git/npm ignore compatibility.
+
+Omitting incidental files changes archive bytes for subsequent builds and is an
+intentional packaging behavior change. Record policy changes in the reviewed
+data diff and explain omissions to authors. Checked-in data makes changes
+visible; it does not by itself guarantee identical archives across CLI upgrades.
+Byte reproducibility requires the same source, manifest, collection policy and
+build tooling. M16 permits different target artifact digests and requires shared
+logical identity/manifest/Python-resolution inputs; this does not add a new
+cross-target byte-equality rule, release-manifest field or publishing protocol.
+Previously published artifacts remain immutable and are not recollected or
+reclassified during reads/installs. The final member set alone feeds the existing
+archive digest, compatibility classification and publication paths.
 
 ### 23. Published version / artifact model
 
@@ -1175,6 +1649,24 @@ The initial official GitHub Actions workflow should follow existing AgentPM repo
 - matrix jobs build/package only;
 - `actions/upload-artifact` transports build outputs;
 - one final fan-in job uses `actions/download-artifact`, validates all descriptors, and performs one atomic AgentPM publish.
+
+Before automatic publication, fan-in must reject a set of matrix build outputs
+that mixes an `any` claim with one or more concrete-target claims. This includes
+permission-derived differences documented in M12, even when member content bytes,
+manifest digest and Python resolution digest agree. Identify the affected builds
+and their claimed targets, and include contributing typed diagnostic paths/reasons
+where present. An `any` build may have no narrowing diagnostic; identify it
+without inventing one or scraping human stderr. The author must correct stray
+permissions or deliberately resolve the compatibility difference and rebuild.
+Do not silently select one claim, relabel an artifact, or drop a build output.
+
+This is a consistency check on M16's automatic matrix fan-in, not a requirement
+that every artifact have the same target. Distinct concrete targets are expected
+for native builds and remain valid under the existing identity/digest and
+target-uniqueness checks. Local single-artifact publishing remains supported.
+This decision adds no canonical release fields, Registry-wide prohibition on
+intentional artifact inventories, override flag or permission-normalization
+mechanism.
 
 Initial required matrix:
 

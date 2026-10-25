@@ -222,6 +222,10 @@
 
 ## Payload compatibility
 
+- Confirm M12 documents publisher-platform-dependent archive modes: Unix
+  executable bits can narrow recognized text/data while Windows produces `any`
+  without a narrowing warning. Existing mode handling and the `.py` exception
+  remain intact; permission normalization is not an incidental M12 change.
 - Confirm canonical target IDs include ABI/libc-relevant identity, not only OS/CPU.
 - Confirm `any` is used only for safely portable payloads.
 - Confirm native/binary detection is conservative.
@@ -349,6 +353,12 @@
 - Confirm matrix jobs build/package only and use CI artifact transport.
 - Confirm final fan-in job downloads all artifacts and performs one atomic publish.
 - Confirm final publish rejects mismatched manifest/Python-resolution state and duplicate targets.
+- Confirm M16 automatic fan-in also rejects mixed `any`/concrete-target claims,
+  reports affected builds/targets and available typed diagnostic paths/reasons,
+  and never silently selects, drops or relabels artifacts. Cover identical text
+  bytes with differing archive modes and actual Unix/Windows packaging. Distinct
+  concrete targets remain valid; no Registry-wide inventory prohibition or new
+  override flag is inferred from this fan-in check.
 - Confirm a failed matrix target prevents publish.
 - Confirm the GitHub workflow does not hide capabilities unavailable to other CI providers.
 - Confirm local single-target publish still works.

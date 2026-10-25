@@ -1952,6 +1952,480 @@ Verify canonical target mapping for at least:
 - `x86_64-unknown-linux-gnu`;
 - `x86_64-pc-windows-msvc` where test host/mocking permits.
 
+#### M12 format-policy follow-up — required verification
+
+The reviewed policy in `spec.md` §22 is implemented. The following cases define
+acceptance, with fresh local results recorded below; hosted execution and
+operator manual acceptance are not implied by local results.
+
+- Validate the shared `tool-payload-formats-v1.json` inventory and derive
+  exhaustive test cases directly from it. Reject invalid type/version or shape,
+  duplicate/conflicting aliases, malformed bytes, invalid offsets and impossible
+  minimum header lengths. Rust must use this embedded inventory rather than a
+  separately maintained exhaustive allowlist.
+- Run the spec/document generation check against the same inventory. A
+  deliberate edit to a documented suffix, basename or signature that disagrees
+  with the data must fail the check; a policy-data edit without its derived
+  document update must also fail. Verify the check is wired into normal CI.
+  Do not use a third handwritten exhaustive list as the expected value. Retain
+  independent representative binary fixtures, negative cases and precedence
+  expectations to test behavior rather than just shared-data consistency.
+- Enumerate the full text/source suffix and exact-basename inventory, including
+  the original formats, `.pyx`/`.pxd`, notebook JSON, templates, queries,
+  extensionless names and `py.typed`. Each otherwise-portable fixture qualifies
+  as `any`, including mixed-case suffixes and lowercase special basenames.
+  Retain whole-file UTF-8, binary-control, renamed-native and chunk-boundary
+  regressions. Binary content cannot become portable merely by adopting a text
+  suffix. Do not add warnings solely because `.pyx`/`.pxd`/`.ipynb` is present.
+- Native filename inventory: enumerate all declared native suffixes and literal
+  versioned-name fragments from the shared data. Real archive classification
+  must report `native_content`, not merely a concrete target that could come
+  from unknown-format fallback. Include uppercase names and a versioned native
+  fragment before a portable final suffix such as `.json`; a matching parent
+  directory alone must not affect a Python source basename. Reject malformed,
+  duplicate and conflicting policy entries. Verify documented suffix/fragment
+  edits and data-only native additions/removals fail the generated-section check.
+- Explicitly cover `MANIFEST.in`, `requirements.in` and a mixed-case `.IN` name
+  as portable text when otherwise eligible. Native/binary content or executable
+  permissions must not gain an exemption through `.in`. Packaging these inputs
+  does not execute a build step or resolve dependencies from their contents.
+- Named dotenv cases: `.env`, `.env.local`, `.env.example`, `.env.production`,
+  mixed-case `.ENV.LOCAL`, and nested `config/.env.local` with valid
+  non-executable text can be `any`. Explicitly test basename equality/prefix
+  modes rather than reusing the extension-enumeration test helper.
+  `config.env.local`, `.envrc`, `.environment` and `.gitignore` must not match
+  the dotenv rule. A parent directory named `.env.local` must not grant its
+  unrecognized child files a portable classification. These are independent
+  matching regressions, not a duplicated exhaustive policy list.
+  Dotenv names do not bypass installed-environment,
+  native suffix/signature or executable-bit checks. No secrets scanning or
+  dotenv publishing prohibition is introduced. `.env.so` still narrows as a
+  native library, and `.env.png` with a mismatched PNG signature still fails.
+- Named metadata cases: single-file `example.egg-info` and
+  `example.egg-info/PKG-INFO` with valid text can be `any`, as can conventional
+  textual members such as `SOURCES.txt`/`requires.txt`. Their exact archive bytes
+  remain present. A native, binary/unknown or executable member inside that
+  directory still narrows the artifact and names the correct cause. A
+  `.dist-info` path or known virtualenv/site-packages state remains conservative.
+- For every recognized portable binary suffix, test a matching signature/header
+  fixture, a truncated required signature/header, wrong-format bytes, and native
+  bytes renamed to that suffix. Matching recognition can qualify as `any`;
+  mismatch fails packaging with path and expected format. WebP requires both
+  RIFF and WebP identifiers at their specified offsets. Include mixed-case
+  names such as `.PNG` and `.JPEG`. These are recognition checks, not full
+  decoder/parser acceptance tests.
+- Cover the publish-time compatibility change with a previously accepted
+  legacy Tool artifact containing GIF bytes named `assets/icon.png`: existing
+  legacy reads/installs retain their behavior, but preparing its next version
+  through the updated CLI fails in dry-run/live modes before publish-init/upload.
+  Assert the error names the path/expected format and advises renaming to the
+  actual format or replacing the data, with reference updates after a rename.
+  The checker need not identify GIF or add a new format recognizer. Correcting
+  the filename to `assets/icon.gif` and updating references clears the mismatch
+  failure but still reports unrecognized-format narrowing; replacing the data
+  with recognized PNG can qualify as `any` when all other members qualify.
+  Do not attempt to overwrite an immutable existing version or retroactively
+  assign it compatibility metadata.
+- Confirm recognized binary assets bypass text validation but cannot bypass
+  executable-bit or installed-environment narrowing. Executable Python source
+  retains its existing exception. Preserve `.so.N`, all native signature and
+  embedded wheel/archive regressions.
+- Accepted M12 limitation: archive modes are publisher-platform-dependent.
+  Unix preserves executable bits; Windows assigns ordinary recognized text/data
+  `0644` by extension-based mode handling. A stray executable bit can therefore
+  narrow only the Unix build. M12 does not normalize modes or emit a hypothetical
+  Windows executable-member warning. Cross-build enforcement and its additional
+  fixtures belong to M16's CI/headless-signing cases below; this note does not
+  claim those tests have run.
+- A known native member plus an invalid `.png` fails in **both archive member
+  orders**. No early concrete-target return may conceal a fatal mismatch.
+  Neither live publish nor dry run sends publish-init/upload requests on this
+  error. A prior valid archive remains byte-identical, and authored manifest/
+  lock bytes remain unchanged.
+- Unknown-format cases, including `.rtf`, `.js`/`.ts`, a portable-but-unrecognized
+  image such as `.tiff`, and `.pth`, are preserved, narrow to the current build
+  target and name the relative file/reason/target. Do not claim their presence
+  proves an undeclared runtime or native code. Differing reasons (native content,
+  installed state, unknown format, executable member, unsupported member type)
+  remain distinct. Multiple diagnostics have stable path ordering and no
+  duplicate path/reason entries.
+- Output/severity cases: narrowing is a warning on stderr and does not fail a
+  valid build; a mismatched binary is an error on stderr with a nonzero exit.
+  Both remain visible under `--quiet` and captured/non-TTY CI invocation.
+  Publish `--strict` retains its existing manifest-lint behavior and does not
+  promote these packaging warnings. A portable payload has no narrowing warning.
+  Assert stable code/severity/path/message/help and applicable target or expected
+  format on typed diagnostics, not only matches against rendered strings.
+- Successful build descriptors and mock Registry publish-init requests carry
+  structured `diagnostics` alongside target/format, in stable order, including
+  warning data for concrete targets and an empty array when none apply. Fatal
+  mismatch retains structured errors on the failed build result, produces no
+  usable successful descriptor and submits no publication request. Do not add
+  diagnostics to canonical release integrity inputs or Tool archive members.
+  These M12 tests cover structured-data production and human stderr rendering;
+  machine stdout and fan-in presentation remain M16 acceptance work, which must
+  preserve the same diagnostics without scraping human messages. Do not claim
+  a current publish `--machine` mode exists or add it for this follow-up.
+- Real CLI dry-run/live mock Registry tests exercise both `any` and concrete
+  target results with the expanded policy. Descriptor and displayed target
+  agree; publisher telemetry remains separate; no consumer target is written
+  into the portable lock and no legacy release receives an inferred `any`.
+- Run relevant suites on both macOS architectures, Windows and Linux using the
+  existing native matrix. Initial M12/M11C runs do not close this follow-up's
+  hosted execution gate. Recheck both prepared dependency-bearing examples.
+
+No directory-exclusion or new blanket rejection behavior is authorized by this
+format-policy test block. A separate collection policy must first distinguish
+incidental traversal results from explicitly listed paths. Existing missing-path
+and embedded-archive failures remain in force.
+
+#### M12 collection-policy follow-up — required verification
+
+These are the reviewed requirements for step 3. Fresh local results below cover
+the implemented collection policy; hosted and operator acceptance remain open.
+Earlier format/classifier results do not establish collection acceptance.
+
+- Shared-data consistency: classification and traversal derive named environment
+  directories and markers from the same validated policy definitions. Exercise
+  all data-defined collection rules/types and deliberate mutations that would
+  diverge from the installed-state vocabulary or generated spec inventory;
+  normal CI must fail. `.dist-info` remains classification-only and `.egg-info`
+  retains its portable-text exception.
+- Incidental traversal: an otherwise source-only Python Tool with `files: ["."]`
+  omits `.git/` and a `.git` worktree pointer file, `__pycache__/`, `.venv/`,
+  `venv/`, `site-packages/`, `dist-packages/`, named OS cruft and dotenv files
+  under the draft's file/directory rules. Assert actual tar members, not just
+  diagnostic strings. A normal regular file named `venv` is not mistaken for
+  a directory. Unrelated package kinds keep their collection behavior.
+- Environment markers: a nested custom directory such as
+  `dev-python/pyvenv.cfg` is pruned as a whole, including siblings and deeper
+  dependencies; omitting only its marker fails the test. Marker matching also
+  works as `PYVENV.CFG` on a case-sensitive filesystem. Do not read marker
+  contents, execute a Python interpreter, follow symlink targets or recurse
+  merely to classify/count the excluded tree. Unreadable directory inspection
+  fails clearly with the path rather than silently bypassing detection.
+- Prune before collecting/counting/validating excluded descendants. An embedded
+  wheel or unreadable child inside an incidentally excluded tree must not be
+  processed, and excluded descendants cannot trigger `MAX_TAR_ENTRIES`. Existing
+  limits and archive prohibitions still apply when explicitly preserved.
+- Dotenv: incidental `.env`, `.env.local`, `.env.production`, `.env.sample`,
+  `.env.template`, `.env.dist` and mixed-case equivalents are omitted. Only
+  exact `.env.example` survives the exception, including case variants;
+  `.env.example.local` does not. Explicit dotenv requests are preserved with
+  override information and undergo the normal text/binary/executable checks.
+  No secret-content inspection or dotenv publishing prohibition is introduced.
+- Explicit precedence: `files: ["mypkg/"]` omits a nested cache/environment;
+  `files: ["mypkg/__pycache__/"]` preserves its whole requested subtree.
+  Include otherwise excluded descendants within an explicitly preserved root
+  to verify full-subtree semantics. Explicit custom environment roots work too.
+  `files: [".", ".git/config"]` preserves the explicit child despite pruned
+  incidental `.git/` traversal. Reverse overlapping manifest entries and assert
+  identical deduplicated member sets and decision diagnostics. Do not claim a
+  pruned directory's contents are wholly absent when explicit children survive.
+- Required inputs and failures: preserve the manifest, generated metadata and
+  required entrypoint. An entrypoint inside an excluded location preserves only
+  that required file unless more content is explicitly requested. Missing
+  explicit `.env`/environment paths still fail instead of being ignored. Explicit
+  preservation does not bypass blocked wheels/archives, path protections,
+  reserved metadata, limits or binary signature mismatch errors. Failure leaves
+  the prior valid archive and authored manifest/lock unchanged, with no upload.
+- Preservation boundaries: keep `_vendor`, `.egg-info`, `.dist-info`, native
+  content and ordinary project/template files unless a named collection rule
+  applies. Makefile, Dockerfile, CODEOWNERS, `.gitignore`, `.editorconfig` and
+  `.dockerignore` are not newly stripped or newly portable. Editing ignore-file
+  contents does not change selection: no Git/npm ignore interpretation or
+  negation/nesting/precedence support is introduced.
+- Information surfaces: stable `info` omission/explicit-override diagnostics
+  name relative paths and matching policy reasons. They appear on stderr in
+  dry/live/quiet/non-TTY runs and in build/publish descriptor diagnostics, ordered
+  and deduplicated. A pruned directory is reported as a skipped traversal root,
+  never as a fabricated descendant-file count. `any` remains valid with these
+  diagnostics; `--strict` and compatibility warning/error behavior are unchanged.
+  A preserved excluded member can independently produce both override information
+  and a normal compatibility warning, without conflating their severities.
+- Verify case-insensitive collection on case-sensitive Linux/Windows/macOS
+  fixtures as applicable, including `.ENV`, `.GIT` and `.DS_STORE`. Explicit
+  requests preserve those names with their actual spelling. Link handling must
+  not dereference external targets; apply the draft's named-entry rules before
+  existing link/classification protections.
+- Run the real CLI dry/live mock Registry flows and relevant checks on both
+  macOS architectures, Windows and Linux. Recheck both prepared examples and
+  operator omission/override reporting before closing M12/Band 8. No existing
+  published artifact is recollected, reclassified or rewritten during install.
+
+Collection is implemented with its own evidence below. The earlier format-only
+record is historical; it does not substitute for collection verification.
+
+#### M12 Native-Inventory Review Fix Evidence (2026-10-24, America/Denver)
+
+Moved the existing native filename suffixes and literal `.so.` basename fragment
+into the shared format inventory. The classifier consumes that inventory; the
+spec's native table is generated and checked alongside text, binary and
+collection policy. No native filename rule was added or removed. Independent
+native-content signature checks remain in place.
+
+Local verification on Apple Silicon macOS:
+
+- `cargo test --workspace`: **1,192 passed, 5 ignored**. The five existing opt-in
+  real-uv tests remain ignored; loopback fixtures ran outside the sandbox.
+- Shared SDK artifact/policy tests: **6 passed**, including data-driven native
+  matching, uppercase names, literal versioned-name fragments, parent-directory
+  negatives and invalid/conflicting inventory rejection. Classifier tests
+  enumerate every native suffix/fragment and assert `native_content`, so unknown
+  format fallback cannot hide a missing native rule.
+- Documentation generator tests: **2 passed**. Native suffix additions/removals,
+  fragment changes and manual native-table edits all fail the drift check unless
+  the document is regenerated. The read-only inventory check, Clippy, Rust
+  formatting, and Python formatting/lint passed.
+
+Fresh hosted target runs and operator manual acceptance remain open; these local
+results do not substitute for them.
+
+#### M12 Collection Implementation Evidence (2026-10-24, America/Denver)
+
+Implemented the separately reviewed collection policy for Python Tools only.
+The shared JSON contract now owns environment directories/markers,
+classification-only distribution metadata suffixes, incidental file rules and
+the exact dotenv exception. Classification and collection consume the same
+installed-state definitions; strict validation rejects conflicting roles and
+divergent dotenv definitions. The generated collection table is checked in
+normal CI with the rest of the format inventory.
+
+Local verification on Apple Silicon macOS:
+
+- `cargo test --workspace`: **1,191 passed, 5 ignored**. The five pre-existing
+  opt-in real-uv runtime tests remain ignored by the ordinary suite; no new
+  collection test is ignored. Loopback fixture tests ran outside the sandbox.
+- The new collection suite has **10 passing tests**. Actual archives verify
+  pruning, Git worktree pointer files, case variants, the narrow dotenv
+  exception, normal-file versus directory kinds, required entrypoints, explicit
+  descendants and full-subtree overrides, and entry-order-independent member
+  sets/diagnostics. Marker detection handles uppercase `PYVENV.CFG` and unreadable
+  marker contents without opening them. Explicit inclusion of that custom
+  environment preserves its subtree. A 15,001-file environment does not consume
+  the tar entry budget when incidental, but fails the existing cap when
+  explicitly included. Fatal wheel/signature checks still apply to preserved
+  trees and retain the prior valid archive on failure.
+- Unix tests verify symlinks are not followed, explicit paths cannot traverse
+  ancestor links, and unreadable directory inspection reports the affected
+  path. These actual link/permission fixtures are Unix-only; shared rule/kind
+  tests and the main collection/archive suite also run on Windows. Fresh hosted
+  verification remains pending and is not inferred from local results.
+- `payload_compatibility` has **7 passing CLI integration tests**, including a
+  full mock init/upload/finalize exchange with directory collection and explicit
+  dotenv inclusion. Assertions cover uploaded tar members, `any` with `info`
+  diagnostics, stable rule/reason data, quiet/non-TTY/strict stderr behavior,
+  and absence of incidental dotenv/Git/environment content. A Node directory
+  package retains its previous collection behavior. Existing authoring and
+  Python-resolution suites pass, including the established missing-file message
+  and no-partial-artifact behavior.
+- Shared SDK artifact/policy tests: **5 passed**. Data-driven environment/kind
+  checks tie collection and classification to one vocabulary and preserve
+  classification-only `.dist-info`, along with binary/format regressions.
+- Documentation generator tests: **2 passed**; deliberate collection table/data
+  drift fails verification. The read-only inventory check, Clippy, Rust and
+  Python formatting/lint, documentation hooks and MDX compilation passed.
+- Fresh isolated copies of prepared `validate-order` and `summarize-text` pass
+  real CLI dry runs as `any`, without narrowing warnings, resolver acquisition
+  or authored manifest/lock changes. Their explicit source-file lists remain
+  compatible with the collection policy. No example source/version change or
+  live Registry publication was performed.
+
+Selection is resolved before archive writes, with deterministic member maps,
+explicit-root guards, no-follow traversal and errors propagated with paths.
+Directory marker probes are reused within one collection; traversal uses a heap
+stack rather than recursive process-stack calls. Existing generated-output,
+author-lock and metadata handling remain in force. The final selected files feed
+the existing atomic archive/signature validation path, and collection itself
+does not rewrite authored manifests or locks.
+
+Information diagnostics have stable omission/override codes, relative paths,
+rule IDs, reasons and applicable help. They are rendered on stderr even in
+quiet/CI invocation and carried in build/publish metadata. They do not infer
+compatibility from the presence of diagnostics: an `any` payload can contain
+information. Format failures retain collection information in the typed error
+without returning a usable descriptor or sending a publish request.
+
+Remaining acceptance and intentional limits:
+
+- Updated hosted macOS ARM/Intel, Windows and Linux runs, independent review
+  and operator manual acceptance are still open. The existing Resolver Contract
+  matrix includes the new collection suite as well as SDK policy, classifier
+  and CLI integration tests. No hosted success or live publication is claimed.
+- The omission list is intentionally small. Surviving project/template names
+  such as `.gitignore` or Dockerfile are preserved and can still narrow the
+  payload when their format is unrecognized. Git ignore semantics are not used.
+- Exact explicit requests can deliberately preserve dotenv data or complete
+  environment trees; full-subtree inclusion is intentional and reported, and
+  does not bypass normal packaging/integrity restrictions.
+- Collection policy/tooling changes can change subsequent archive bytes.
+  Existing published releases are not recollected/reclassified during reads or
+  installation. No release schema, Registry storage model, machine flag,
+  fan-in workflow or other package kind behavior was added.
+
+#### M12 Format-Policy Implementation Evidence (2026-10-24, America/Denver)
+
+Implemented the reviewed format-policy follow-up while leaving directory/file
+collection rules unchanged. The authoritative inventory is
+`crates/agentpm-sdk/contracts/tool-payload-formats-v1.json`, embedded and validated
+by the shared Rust SDK. It supplies every portable suffix/basename/prefix,
+metadata exception and binary signature. The Markdown inventory regions are
+generated from that data; the product docs link the canonical inventory instead
+of duplicating it across repositories.
+
+Local verification on Apple Silicon macOS:
+
+- `cargo test --workspace`: **1,179 passed, 5 ignored**. The five pre-existing
+  opt-in real-uv runtime tests remain ignored by this ordinary suite; no new
+  format-policy test is ignored. Loopback-based integration tests were run
+  outside the sandbox so their local Registry listeners could bind.
+- The payload classifier suite now has **17 passing tests**. It enumerates the
+  shared text/basename/prefix and binary-alias data, with separate independent
+  dotenv/metadata, native-signature, Unicode/short-read and executable/state
+  regressions. All binary aliases are checked for matching/truncated/wrong
+  signatures. Fatal mismatches are found in either member order and preserve
+  a prior archive. A historical GIF-as-PNG archive still extracts through the
+  actual install extraction path without reclassification or byte changes.
+- The shared SDK artifact/policy suite has **4 passing tests**, including
+  malformed inventory, duplicate/conflicting/overlapping registrations,
+  invalid or contradictory signature bytes/offsets/header bounds, exhaustive
+  data matching and independent PNG/JPEG/WebP/PDF/WOFF2 signature fixtures.
+  WebP requires both signatures. Invalid embedded inventory fails closed.
+- `cargo test -p agentpm-cli --test payload_compatibility`: **6 passed**.
+  Real CLI dry-run/live mock publication carries structured warning/target data
+  separately from publisher telemetry; `any` carries an empty diagnostic array.
+  Quiet/non-TTY/strict behavior, stable warning order and deduplication pass.
+  GIF-as-PNG republication fails before any init/upload in both modes and both
+  member orders, retains authored state and the old archive, cleans up the
+  temporary candidate, and provides rename/replace/reference-update guidance.
+  Renaming to `.gif` clears mismatch failure while retaining unknown-format
+  narrowing. Non-Python packaging remains unaffected.
+- `cargo test -p agentpm-cli --test python_resolution`: **10 passed**, including
+  dependency-bearing metadata, lock replay, staleness and failure boundaries.
+- `python3 scripts/check_payload_formats.py --check` passed.
+  `python3 -m unittest discover -s scripts -p test_payload_formats.py -v`:
+  **2 passed**. Mutations of documented suffixes/basenames/signatures, inventory
+  changes without regeneration, and malformed generated regions fail the check.
+  Normal CI runs the checker and tests. No second exhaustive runtime/test list
+  is maintained.
+- `cargo clippy --workspace --all-targets -- -D warnings`, Rust formatting,
+  Black/isort checks, Flake8, diff whitespace checks and applicable documentation
+  pre-commit hooks passed. Both affected product MDX documents compile with
+  the web renderer's MDX/GFM tooling.
+- Fresh isolated copies of `validate-order` and prepared `summarize-text` pass
+  dry runs with `any`, no narrowing warnings, matching-lock reuse despite a
+  deliberately missing uv override, and unchanged authored manifest/lock bytes.
+  No example source/version changes or Registry publication were performed.
+
+Failure handling is typed: `PayloadBuildFailure` retains ordered diagnostics
+with error/warning severity, code, relative path, message/help and relevant
+format/target fields. Validation occurs on the complete temporary gzip archive
+before atomic replacement. Successful descriptors carry `diagnostics` in the
+publish request's `artifact` metadata. No publish machine flag, fan-in,
+release-manifest field or Registry persistence rule was added.
+
+Remaining gates and limitations:
+
+- Fresh hosted execution on both macOS architectures, Windows and Linux is
+  still pending. The existing Resolver Contract matrix now includes all SDK
+  artifact/policy tests and the expanded classifier/CLI suites, with path
+  triggers for the policy data and its consumers. Previous hosted M11C/initial
+  M12 runs do not satisfy this follow-up's gate.
+- Independent review and operator manual acceptance of the follow-up remain
+  pending. No hosted execution or live publication is claimed here.
+- At the format-only phase, directory exclusions were still deferred. Use the
+  separate collection implementation/evidence for the later omission rules;
+  this older result does not establish their acceptance. Surviving unfamiliar
+  files such as `.gitignore` can still narrow the payload under the minimal list.
+- Binary recognition is bounded signature/header agreement, not complete
+  format validation or malware scanning. `any` does not prove arbitrary source
+  behavior or provision additional runtimes. Unrecognized formats retain the
+  current build target. Existing Registry storage/installation semantics remain
+  unchanged; M16 machine output/fan-in must reuse the typed diagnostics later.
+
+#### Milestone 12 Initial Implementation Evidence (2026-10-24, America/Denver)
+
+Historical baseline: this evidence describes the initial classifier before the
+format-policy follow-up above. Use the separate fresh follow-up evidence for
+the expanded policy; these original results do not establish its acceptance.
+
+Scope: package-time Python Tool payload classification only. There are no new
+Registry tables, artifact-selection rules, release formats, manifest fields,
+lockfile fields or CLI subcommands. Existing published releases remain legacy
+with unknown compatibility; no read/install path supplies a default `any`.
+
+Implemented behavior:
+
+- The classifier streams the completed tar archive, so unshipped workspace files
+  and filtered build outputs cannot influence its result. UTF-8 validation
+  covers entire source/data files with bounded memory, including chunk-boundary
+  Unicode and binary suffixes.
+- `any` requires regular files in the explicit source/text-data allowlist, valid
+  UTF-8 without binary controls/native signatures, and no known environment or
+  installed-package paths. Executable Python source can remain portable;
+  unknown executables, binary/unknown formats, symlinks, native libraries,
+  compiled Python and installed environment snapshots use `Target::current()`.
+  This describes payload files, not OS behavior of arbitrary source code.
+- Native detection covers ELF, PE/DOS, Mach-O and universal Mach-O, static
+  archives and WebAssembly, including content disguised as Python source.
+  Native suffixes include `.so`/versioned `.so`, `.dylib`, `.pyd`, `.dll`,
+  `.exe`, `.node`, `.a`/`.o` and bytecode. Unpacked vendored native files are
+  inspected like all other collected files. Pure `_vendor` source can be `any`.
+- Dependency declarations and generated `agentpm-python.json` do not make
+  source payloads target-specific. Embedded wheels remain blocked. Missing
+  declared paths still fail atomically rather than replacing a valid archive.
+- `ToolPayloadDescriptor` in the shared Rust SDK serializes canonical `target`
+  plus `format: "tar.gz"`; neither field silently defaults on legacy input.
+  Publish sends this under the request's `artifact` field, separate from
+  publisher `client.os` / `client.arch`. Dry runs display the same result.
+  There is no descriptor sidecar or new archive member. The current Registry
+  ignores this additive field; persistence/enforcement belong to later work.
+
+Verification on `aarch64-apple-darwin`:
+
+- `cargo test -p agentpm-cli --bin agentpm commands::publish::payload`:
+  **11 passed**, covering real collected archives, native suffixes/signatures,
+  environment/vendor content, unknown executables, short reads, Unicode,
+  executable Python, links, missing files and blocked wheels.
+- `cargo test -p agentpm-cli --test payload_compatibility`: **4 passed**.
+  The shipping CLI performs pure/native dry runs and full init/upload/finalize
+  exchanges with a local mock Registry. Tests assert descriptors, unchanged
+  publisher telemetry, unchanged authored manifest/lock bytes, missing-path and
+  wheel failures, and unchanged non-Python Tool packaging.
+- `cargo test -p agentpm-cli --test python_resolution`: **10 passed**,
+  including dependency-bearing publication carrying `any` with the same
+  prepared resolution, reservation and embedded dependency metadata.
+- Shared SDK target/descriptor tests round-trip all four canonical concrete
+  targets plus `any`, and reject missing/unknown target or format values.
+- `cargo test --workspace`: **1,168 passed, 5 ignored**. The five existing
+  opt-in real-uv environment tests were not rerun for this packaging-only change;
+  no new M12 test is ignored. Local HTTP tests were run outside the sandbox,
+  which otherwise prohibits binding their loopback listeners.
+- `cargo clippy --workspace --all-targets -- -D warnings` passed.
+  `cargo fmt --all` and formatter verification passed. Documentation pre-commit
+  whitespace, EOF and conflict checks passed.
+- Isolated copies of the prepared `validate-order` and `summarize-text` examples
+  both passed real CLI dry runs with `Tool payload: any (format: tar.gz)`.
+  An intentionally missing `AGENTPM_UV_PATH` confirmed matching locks were
+  reused; authored manifest and lock bytes remained unchanged. No Registry
+  publication or example source/version change was performed.
+
+Remaining acceptance gates:
+
+- The existing four-target Resolver Contract matrix now runs target/descriptor
+  tests, classifier/archive tests and real CLI payload tests on both macOS
+  architectures, Linux and Windows. Relevant path triggers were added. These
+  updated hosted jobs have **not** executed from this local checkout; their
+  previous M11C successes are not evidence for M12. Keep the platform checkbox
+  open until the new jobs pass.
+- Operator manual confirmation remains pending: source/dependency-bearing
+  dry run reports `any`, a bundled native fixture reports only the current
+  target, and wheel/missing-file cases fail without changing authored state.
+- Conservative false negatives are intentional: unfamiliar formats, even
+  portable binary data, receive the host target. Classification does not
+  cross-compile or verify a foreign native binary's actual ABI. Legacy storage
+  and installation continue unchanged; target-aware enforcement is later scope.
+
 ### Multi-artifact release / publish storage
 
 Automated cases:
@@ -2098,6 +2572,24 @@ Automated or integration cases:
 - matrix artifacts are uploaded/downloaded through CI fan-in.
 - final job rejects mismatched manifest/resolution descriptors.
 - final job rejects duplicate targets.
+- final job rejects mixed `any`/concrete-target matrix claims before any release
+  publication. Use identical recognized text bytes (for example, `assets/example.csv`)
+  in otherwise equivalent archives with `0644` and `0755` member modes: the former
+  can be `any`, the latter narrows with typed `executable_member` diagnostics.
+  Keep manifest/Python-resolution digests equal so the mixed-claim check itself
+  causes rejection. Exercise the existing mode-producing packaging path on real
+  Unix and Windows hosts as well as deterministic archive-mode fixtures; do not
+  claim synthetic fixtures alone prove native platform behavior.
+- mixed-claim failure identifies the affected builds and claimed targets, with
+  the concrete build's diagnostic path/reason. The `any` build can have no warning;
+  report that build without fabricating diagnostics or scraping human stderr.
+  Assert no silent artifact selection, omission, relabeling or publication.
+  Correcting stray permissions/reconciling claims and rebuilding can clear the
+  gate without introducing an override flag.
+- otherwise valid distinct concrete targets pass this consistency check; target
+  equality is not required. Existing duplicate-target, identity/digest, missing
+  build and local single-artifact checks remain in force. This fan-in policy
+  does not add a Registry-wide ban on intentional `any` plus concrete inventories.
 - final atomic publish succeeds.
 - missing/failed matrix target prevents publish.
 - local single-target publish continues to work.

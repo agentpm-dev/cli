@@ -31,6 +31,11 @@ jobs:
           python3 scripts/check_resolver_targets.py
           python3 -m unittest discover -s scripts -p test_resolver_pins.py -v
 
+      - name: Payload format policy documentation
+        run: |
+          python3 scripts/check_payload_formats.py --check
+          python3 -m unittest discover -s scripts -p test_payload_formats.py -v
+
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
 
