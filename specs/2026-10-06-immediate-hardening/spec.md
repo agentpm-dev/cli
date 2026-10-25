@@ -1570,9 +1570,27 @@ A new-format publish should use one release init/finalize transaction:
 
 A partial artifact upload must never create a partially installable release.
 
+The M13A database backstop enforces agreement between a recorded release manifest
+and its artifact rows, not upload completeness. No foreign key or trigger links
+`package_publish_releases`/`package_publish_artifacts` to the recorded
+`tool_versions` release or requires every reservation child to be verified.
+M13B finalize must enforce that application-level prerequisite before persisting
+the release: verify every intended reserved artifact's stored bytes and upload
+state, and reject missing, pending or failed children. A consistent metadata
+inventory alone is not evidence that uploads are complete.
+
 Retries/resume should operate at the release + artifact level, not collide because one `(package_id, version)` pending `Upload` already exists.
 
 Failed/expired release sessions need server-side cleanup of staged S3 objects.
+
+M13A provides expiry fields/indexes, but no release-path expiry enforcement or
+cleanup job. M13B must implement those behaviors and define retention for expired
+reservation history; allowing deterministic final-key reuse does not clean up
+staging or old rows. The metadata primitive also writes immutable `release.json`
+before DB commit. A rollback can leave that key occupied: identical bytes permit
+retry, different bytes fail create-only storage. M13B must define recovery without
+treating object presence as proof of publication or overwriting immutable bytes;
+committed database state remains the publication authority.
 
 Use separate immutable S3 objects per target, not one giant archive.
 

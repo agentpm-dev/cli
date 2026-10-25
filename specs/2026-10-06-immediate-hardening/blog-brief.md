@@ -1,5 +1,19 @@
 # Blog Brief
 
+## Milestone 13A Evidence
+
+Potential later engineering material: introducing an explicit release format
+alongside legacy single-archive versions, separating logical identity from
+target-specific bytes, and using shared canonical fixtures and database
+invariants before enabling a new upload transaction. Local PostgreSQL evidence
+covers preserved legacy rows, normalized artifact inventories, immutability and
+reservation expiry/key reuse. An applied development migration was recovered
+byte-for-byte and later corrections moved into forward migrations, illustrating
+why migration history must stay immutable. This delivers a data/storage
+foundation, not multi-artifact publishing or installation. Review, hosted CI,
+manual acceptance and live rollout remain separate. This is implementation
+evidence for future planning, not an article or a new content strategy.
+
 Milestone 10B may support a narrowly scoped engineering article about minimal
 CLI telemetry: typed allowlists, anonymous installation IDs, opt-out before
 state creation, per-run versus per-session measurements, and deliberately

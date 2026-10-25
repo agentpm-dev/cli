@@ -2292,6 +2292,35 @@ additional model call was performed. The new **0.1.9** managed-environment
 Tool remains successfully verified on Apple Silicon through direct CLI and
 Harness execution.
 
+Subsequent legacy smoke verification: the operator identified other vendored
+production Tools and proposed sentiment analysis. The already-installed
+`@zack/sentiment-analysis@0.1.5` in
+`agentpm-examples/agent-app-support-assistant-workspace` was executed using
+CLI **0.1.37**, Apple Silicon Python **3.13**, telemetry disabled and the
+existing legacy runtime path:
+
+```bash
+AGENTPM_TELEMETRY=0 AGENTPM_PYTHON=/opt/homebrew/opt/python@3.13/bin/python3.13 \
+  agentpm run @zack/sentiment-analysis@0.1.5 --machine \
+  --input '{"text":"I love this tool. It works beautifully!"}'
+```
+
+The process exited **0** and returned `status: success`, exact Tool version
+**0.1.5**, and output `ok: true`, `label: positive`, `compound: 0.8478`.
+The installed manifest has no declared Python dependencies and no
+`agentpm-python.json`; isolated import inspection confirms VADER loads from
+the installed Tool's `sentiment_analysis/_vendor/` directory. Its vendor tree
+also contains two `charset_normalizer` native extensions, so it is not asserted
+to contain exclusively pure Python files; successful execution establishes
+that those files do not block this legacy Tool on the tested host.
+
+No API key, model call, package install/publication, lock rewrite, vendor
+replacement or SDK change was needed. This supplies the successful existing
+vendored-production Tool smoke evidence and closes the last Band 8 check.
+The prior Intel-only summarizer failure remains documented as an artifact/host
+limitation, not a passing native-legacy test. **Band 8 acceptance is complete**;
+SDK compatibility remains deferred to M17.
+
 #### Release Band 8 Post-Merge Resolver Spawn Race
 
 After the CLI merge, the operator reported Linux CI failing
@@ -2793,6 +2822,181 @@ Remaining acceptance gates:
   cross-compile or verify a foreign native binary's actual ABI. Legacy storage
   and installation continue unchanged; target-aware enforcement is later scope.
 
+### M13A release/artifact foundation — local verification
+
+Implementation completed locally on 2026-10-25. This is the additive data and
+storage foundation only; the multi-artifact publish transaction remains M13B,
+signing/provenance remains M14, target-aware installation remains M15, and the
+new build/CI publishing workflow remains M16. Node/Python SDKs remain unchanged.
+
+Implemented/verified:
+
+- Typed Rust and Pydantic `agentpm.package.release.v1` models, JSON Schema and
+  shared checked-in vectors. Canonical release arrays sort by target, duplicate
+  targets fail, digest fields require full lowercase `sha256:` values, optional
+  Python resolution digests are omitted rather than null, and private upload/
+  machine fields are rejected. Vectors cover `any`, all four concrete targets,
+  a bound Python resolution and non-ASCII manifest content. Rust uses existing
+  `serde_jcs`; the Registry adds pinned `rfc8785==0.1.4`. Manifest integer-domain
+  checks agree across languages; legacy signing serialization is unchanged.
+- The authoritative schema/vectors live under the Rust SDK's `contracts/`;
+  Registry snapshots are byte-identical. Both language suites assert the same
+  expected canonical bytes and digests. `check_release_contract.py` succeeds
+  across the two checkouts and fails on a deliberately changed snapshot.
+  Registry tests compare sibling files when available. The initial check was
+  manual-only; the review follow-up below adds a dedicated Registry CI job
+  that checks out both repositories and executes the check automatically.
+- The three fixed SQLAlchemy models/tables, nullable legacy scalar columns,
+  explicit release format/digest/document, per-release target uniqueness and
+  reservation metadata are implemented. The new format stores null scalar
+  artifact fields and normalized child artifacts; legacy rows preserve their
+  previous scalar authority. No existing row is reinterpreted or backfilled.
+- Internal persistence constructs canonical `release.json`, binds manifest/
+  resolution/identity, and creates normalized version/artifact rows. S3 writes
+  are conditional create-only; exact-byte retries succeed, different existing
+  bytes fail, and authorization errors are not treated as missing objects.
+  These tests use a mocked S3 client, not live writes. Payload-byte verification
+  and cross-store finalize/recovery orchestration remain later work.
+- New object keys use bucket-root `packages/<namespace>/<name>/<version>/`,
+  target directories and full artifact digests. Legacy `S3_PREFIX`/keys remain
+  unchanged. UUID-based staging stays under `uploads/`. Expired reservations
+  may share a deterministic final key with a later reservation; their temporary
+  keys remain distinct. This avoids making retained reservation history block a
+  retry. This is a model invariant, not implementation of the M13B retry API.
+- An internal CLI preparation helper creates a separate, atomic new-format
+  archive containing `agentpm-artifact.json` target/format metadata while
+  preserving the original archive. Existing `agent.json` and optional
+  `agentpm-python.json` are retained. No descriptor contains its own archive
+  digest. Opt-in Registry validation binds archive identity, manifest,
+  Python resolution and target descriptor to the expected release. Existing
+  publish commands do not invoke this helper or create a new-format release.
+- Install resolve and init reject any explicit unsupported release format with
+  HTTP 409/`unsupported_release_format`, even if legacy scalar fields happen
+  to be present. No install session or S3 URL is created. Legacy security reads
+  reject new-format records rather than reporting a null/artifact-mislabeled
+  digest. Existing legacy publish/install/metadata regressions remain passing.
+
+Migration recovery and database evidence:
+
+- The operator's local backend applied V1.98 while it was being developed and
+  then correctly refused a changed checksum. The exact applied V1.98 was
+  recovered at **EAF4B273** and frozen. V1.99 (**8FB2F27D**) carries function/
+  inventory hardening; the operator confirmed the backend starts successfully
+  after that recovery. No migration-history row/checksum was edited.
+- The final reservation-key correction is a forward V1.100 migration, not an
+  edit to V1.98/V1.99. Its operator startup/deployment confirmation is separate
+  from the earlier V1.99 restart confirmation.
+- **Seven** real PostgreSQL tests apply the actual V1.98 → V1.99 → V1.100 SQL to
+  representative pre-migration tables and legacy data in fresh random schemas
+  of a disposable localhost-only PostgreSQL 16 container. They assert preserved
+  legacy values, explicit storage-shape constraints, four target reservations,
+  duplicate/pending-reservation conflicts, one- and four-artifact ORM persistence,
+  exact immutable document bytes, immutable published metadata/associations,
+  yank updates, rejection of a pending-state bypass, incomplete-inventory failure
+  at commit and expired-reservation final-key reuse. SQLAlchemy never generates
+  schema DDL. These are not a full historical-migration/deployment rehearsal.
+- Crossing V1.100 exposed Pyway 0.3.32's two-digit/string sorting limit. The
+  app now delegates to the same Pyway CLI through `run_migrations.py`, changing
+  only numeric ordering; stored version strings, filenames, checksum validation
+  and SQL execution remain unchanged. A real CLI subprocess applies the three
+  migrations to a fresh representative schema and verifies all three Pyway
+  history records. Three additional tests cover numeric ordering of actual
+  repository migration names/dict records, app invocation/password redaction,
+  and the unchanged CLI help interface. No history rewrite or dependency
+  upgrade is used to hide the ordering boundary.
+
+Verification totals and tooling:
+
+- Rust workspace: **1,200 passed**, **5 existing opt-in tests ignored**;
+  includes four new Rust SDK release tests and one new-format archive test.
+  Workspace Clippy `-D warnings` and Rust formatting pass.
+- Full API suite: **519 passed**, **7 existing optional tests skipped**, with
+  **165 subtests passed**. The final PostgreSQL suite separately passed all
+  **7** cases using the complete three-migration sequence. Earlier final
+  focused contract/upgrade verification passed **31** cases before adding the
+  integer-domain and expired-reservation regressions; those additions are
+  included in the full final suite. No new M13A DB case was skipped in this
+  explicitly configured run.
+- Required API Black, isort, Flake8, Pylint, Bandit, pyupgrade and whitespace/
+  conflict hooks run. The cached Bandit environment's missing `pbr` dependency
+  was repaired without changing hook configuration. The full mypy hook still
+  reports two existing errors in unchanged `app/tools/application/search.py`
+  at lines 1486 and 1856. Focused mypy with silent dependency following passes
+  the eleven touched implementation/test/entrypoint modules; the full hook is not claimed
+  green. Required formatting, shared-contract/payload checks, workflow YAML
+  validation and compilation of the changed public MDX pass.
+- Resolver Contract path triggers/test steps now include the release models,
+  shared fixtures and new-format archive helper on all four native runners.
+  Hosted execution is not claimed from local verification.
+
+Remaining acceptance: independent review, normal/updated native CI, operator
+manual walkthrough and later environment-specific rollout/storage-policy checks.
+The local migration recovery is operator-confirmed, but there were no live S3
+writes, bucket-policy changes, production deployment, new public publish/build
+workflow, source commits or pushes by the agent. The existing Node/Python SDK
+compatibility gap stays deferred to M17.
+
+#### M13A review follow-up: deferred child inventory checks
+
+Review demonstrated that a committed pending version could gain, change or
+lose artifacts without revalidating its manifest: the original deferred check
+ran only on parent writes. V1.101 adds an artifact-table constraint trigger for
+INSERT/UPDATE/DELETE, sharing one inventory-validation function with the parent
+trigger. Reparenting checks both old and new parent identities; existing parent
+row locking and published immutability remain intact. Checks remain deferred
+and validate the final transaction state, so valid assembly/repair transactions
+are allowed.
+
+The SQL was first exercised as a draft outside the backend-watched migration
+directory, then added as a forward migration. V1.98/V1.99/V1.100 retain their
+original checksums **EAF4B273**, **8FB2F27D** and **3484543A**. No migration
+history or existing inconsistent draft row was rewritten. Existing bad drafts
+must be made consistent before later mutation/publication can commit.
+
+Six additional real-PostgreSQL regression cases cover inconsistent pending
+inserts, updates and deletes; a valid final state after a transient mismatch;
+and moves that invalidate only the old or only the new parent. DML itself
+succeeds before the invalid transaction is rejected at commit, confirming
+deferral rather than an accidental immediate constraint failure. The full
+13-case PostgreSQL suite and three Pyway ordering/invocation tests pass with
+V1.98 → V1.99 → V1.100 → V1.101, including a real CLI upgrade/history test.
+Full API regression suite: **525 passed**, **7 existing optional tests skipped**,
+with **165 subtests passed**. Formatting and API static checks are run on the
+changed tests; the pre-existing full-hook mypy failures in unchanged search
+code remain separately documented above. No Rust or public API workflow
+change is part of this follow-up.
+
+#### M13A review follow-up: automatic cross-repo contract parity
+
+Added `agentpm-api/.github/workflows/release-contract.yml`. It runs on Registry
+pull requests and pushes to `main`, checking out the Registry and public
+`agentpm-dev/cli` `main` side by side. The job invokes the existing
+`check_release_contract.py --registry-root registry`, then runs the Registry
+release-contract tests against those shared schema/vectors. The checkout layout
+also enables the tests' sibling-source comparison rather than silently taking
+their standalone fallback. Contents permissions are read-only, checkout
+credentials are not persisted, and no cross-repo secret, live database or
+service key is needed. Both checked revision hashes appear in the job log.
+
+Coordinated contract changes merge to CLI `main` first; no CLI publication or
+deployment is required for that ordering. Manual workflow dispatch accepts a
+public CLI branch/tag/commit for pre-merge verification of both proposed changes.
+That diagnostic run does not replace the required main-ref parity check for the
+Registry revision being released. The operator confirmed that the CLI changes
+will reach `main` only after M13B, as part of Release Band 9. The hosted main-ref
+check is therefore tracked under that band's pre-Registry-deployment gates,
+not as an M13A completion or M13B start prerequisite. Local cross-checkout parity
+and contract tests provide the M13A evidence while the hosted gate stays open.
+
+Local verification: the CI parity command succeeds and rejects deliberate
+schema and fixture drift independently. All **27** Registry contract tests pass
+with a cleared environment and developer dotenv loading disabled, using only
+the workflow's dummy test signing key. Workflow YAML, checkout paths, read-only
+permissions and command wiring were checked; YAML/docs formatting and diff
+checks pass. GitHub-hosted execution remains pending after these files are
+pushed and the corresponding authoritative CLI files are available at the
+selected ref. No workflow was dispatched and no commit/push was performed.
+
 ### Multi-artifact release / publish storage
 
 Automated cases:
@@ -2813,6 +3017,7 @@ Automated cases:
 - mismatched manifest digest rejected.
 - mismatched Python resolution digest rejected.
 - one failed/missing upload leaves release unpublished.
+- M13B finalize rejects each missing, pending or failed reservation child even when the proposed release manifest and artifact inventory agree. Verify no published version or finalized artifact rows survive; the M13A database constraints do not enforce reservation completeness or stored-byte verification.
 - finalization creates one logical version + N artifact rows atomically.
 - legacy `PackageVersion.sha_256/size_bytes/s3_key` rows remain populated/readable.
 - new `agentpm.package.release.v1` rows have legacy scalar artifact columns `NULL`, populate the release-level digest field, and use child artifact rows as the only authoritative target-artifact source.
@@ -2820,6 +3025,8 @@ Automated cases:
 - finalized artifact inventory is immutable.
 - adding artifact to finalized version rejected.
 - expired/failed staged objects can be cleaned up safely.
+- M13B enforces release expiry and its chosen reservation-history retention policy; repeated cleanup preserves active reservations and finalized objects, including when an expired reservation shares a deterministic final key with a later reservation.
+- a rollback after storing `release.json` leaves the release unpublished despite object presence; identical-byte retry succeeds, different-byte retry fails without overwriting, and the chosen recovery behavior is tested.
 - legacy S3/read path remains valid.
 - new S3 target object keys include canonical target + full digest.
 - upload implementation streams rather than buffers complete artifact in memory (unit/integration evidence as appropriate).

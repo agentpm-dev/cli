@@ -40,6 +40,7 @@ use walkdir::WalkDir;
 
 mod collection;
 mod payload;
+mod release_artifact;
 
 const MAX_ARTIFACT_BYTES: u64 = 3 * 1024 * 1024 * 1024; // 3 GB
 const MAX_TAR_ENTRIES: usize = 15_000;

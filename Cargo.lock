@@ -80,6 +80,7 @@ dependencies = [
  "pep440_rs",
  "pep508_rs",
  "reqwest 0.12.22",
+ "semver",
  "serde",
  "serde_jcs",
  "serde_json",
