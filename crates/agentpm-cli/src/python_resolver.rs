@@ -9,14 +9,16 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
-    io::{Read, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output},
     time::Duration,
 };
 
 pub const UV_VERSION: &str = env!("AGENTPM_UV_VERSION");
 const MAX_BINARY_BYTES: u64 = 200 * 1024 * 1024;
+const TEXT_BUSY_RETRIES: usize = 20;
+const TEXT_BUSY_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 #[derive(Debug, Deserialize)]
 struct PinTable {
@@ -34,10 +36,32 @@ pub(crate) struct ManagedUv {
     digest: Option<String>,
 }
 
+fn version_output_with_retry(
+    mut output: impl FnMut() -> io::Result<Output>,
+    mut pause: impl FnMut(Duration),
+) -> io::Result<Output> {
+    let mut retries = 0;
+    loop {
+        match output() {
+            Err(error)
+                if error.kind() == io::ErrorKind::ExecutableFileBusy
+                    && retries < TEXT_BUSY_RETRIES =>
+            {
+                // A concurrent fork can inherit the writer until its exec/exit,
+                // even after this thread closes it (rust-lang/rust#114554).
+                // Retry only failed spawns, never a process that already ran.
+                retries += 1;
+                pause(TEXT_BUSY_RETRY_DELAY);
+            }
+            result => return result,
+        }
+    }
+}
+
 fn check_version(path: &Path) -> Result<()> {
-    let output = Command::new(path)
-        .arg("--version")
-        .output()
+    let mut command = Command::new(path);
+    command.arg("--version");
+    let output = version_output_with_retry(|| command.output(), std::thread::sleep)
         .context("Python resolver could not execute; check AGENTPM_UV_PATH or the managed cache")?;
     let text = String::from_utf8_lossy(&output.stdout);
     let mut words = text.split_whitespace();

@@ -10,9 +10,9 @@ errors an author sees. Dependency portability remains a separate concern.
 
 The updated normal CI and all four Resolver Contract jobs are operator-confirmed
 green for the initial reviewed implementation, including Windows after its
-fixture correction. The subsequently authorized Node packaging correction needs
-a fresh CI/native rerun after it is pushed. This walkthrough supplies operator
-acceptance; it does not replace those native-platform tests.
+fixture correction. The subsequently authorized Node packaging correction's
+final CI/native rerun is now also operator-confirmed green. This walkthrough
+supplies operator acceptance; it does not replace those native-platform tests.
 
 | Sections | What changes |
 | --- | --- |
@@ -545,6 +545,6 @@ correction. Retain this checklist as the acceptance record:
 - [x] Live mock descriptors and uploaded members agree; invalid live packaging sends no request.
 - [x] Authored manifests/locks stay unchanged; no real publication or example rollout was performed.
 
-Operator acceptance is recorded in `test-plan.md`. Fresh normal CI/native jobs
-after the Node correction remain a separate M12 gate; Release Band 8 production
-publication/install/run verification also remains separate.
+Operator manual acceptance and final green CI after the Node correction are
+recorded in `test-plan.md`; M12 acceptance is complete. Release Band 8 production
+publication/install/run verification remains separate.

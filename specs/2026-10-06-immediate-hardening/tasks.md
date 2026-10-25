@@ -1140,7 +1140,7 @@ the `summarize-text`/`devwork-copilot` rollout remain Release Band 8 work.
 > - `.whl` is currently blocked as an embedded archive. Keep it blocked for normal Tool payloads; target-side dependency installation removes the need to ship wheels inside the Tool tarball.
 
 - [x] Consume the canonical target identifier and current-target detection defined in Milestone 11A; do not redefine either here.
-- [x] Define portable `any` **payload** semantics explicitly — what makes a payload safely target-independent, as distinct from `any` merely being a valid target value. The reviewed expanded §22 policy has shared-inventory, local, hosted and operator manual evidence; the later Node correction's fresh CI gate remains below.
+- [x] Define portable `any` **payload** semantics explicitly — what makes a payload safely target-independent, as distinct from `any` merely being a valid target value. The reviewed expanded §22 policy has shared-inventory, local, hosted and operator manual evidence; the later Node correction's fresh CI gate is also confirmed complete below.
 - [x] Implement conservative payload classification after final file collection:
   - [x] `.so`;
   - [x] `.dylib`;
@@ -1175,9 +1175,9 @@ of the revised §22 policies. Format and collection implementations have separat
 fresh local evidence below. Independent review, normal CI and all four updated
 native Resolver Contract jobs are now operator-confirmed complete, including
 Windows after its fixture correction. The operator has now confirmed all manual
-tests pass, including the rebuilt Node step. M12 acceptance remains open only
-for fresh hosted CI confirmation of that later Node correction below; Release
-Band 8 production rollout remains separate.
+tests pass, including the rebuilt Node step, and that final CI is all green.
+**M12 acceptance is complete.** Release Band 8 production rollout remains
+separate and unchecked below.
 See the M12 evidence in `test-plan.md`.
 
 ### M12 format-policy follow-up — implementation and verification
@@ -1186,8 +1186,8 @@ The reviewed decisions in `spec.md` §22, "M12 portable format policy", were
 authorized for implementation. The items below record the expanded classifier;
 initial-classifier evidence above is historical. Directory collection policy
 was deferred during this phase and is now implemented below. Updated hosted
-verification and manual acceptance are operator-confirmed complete. The later
-Node correction retains its own fresh CI gate below.
+verification and manual acceptance are operator-confirmed complete, including
+the later Node correction's final CI gate below.
 
 - [x] Before classifier changes, introduce the authoritative portable-format
   inventory at `crates/agentpm-sdk/contracts/tool-payload-formats-v1.json`, as
@@ -1326,8 +1326,8 @@ completed operator manual acceptance.
   any collection implementation or acceptance requirement.
 
 Collection implementation, local tests, updated hosted runs and operator manual
-acceptance are complete. M12 retains only the separately authorized Node
-correction's fresh hosted CI gate below; Release Band 8 also retains its
+acceptance are complete. The separately authorized Node correction's fresh
+hosted CI gate is now confirmed complete as well. Release Band 8 retains its
 production rollout checklist.
 
 ### Authorized Node packaging correction from manual testing
@@ -1345,9 +1345,10 @@ resuming the Node runbook step. It does not extend Python collection policy.
 - [x] Confirm operator acceptance of the rebuilt Node step and completed M12
   manual walkthrough. The operator verified six unique Node members with no
   generated output and subsequently confirmed all manual tests pass.
-- [ ] Confirm fresh normal CI/native Resolver Contract runs for this correction.
-  Earlier hosted confirmation covers the implementation before this separately
-  authorized correction; manual success does not close the fresh hosted gate.
+- [x] Confirm fresh normal CI/native Resolver Contract runs for this correction.
+  The operator confirmed final CI is all green after the Node correction and
+  CLI 0.1.37 preparation. This closes the last M12 verification gate; production
+  release/deployment remains operator-owned Release Band 8 work.
 
 ## Release Band 8: Python Tool Dependency Contract
 Covered milestones: 11A-12.
@@ -1356,6 +1357,10 @@ This gives us the first-party Python dependency story working end to end for a s
 - [x] Prepare CLI **0.1.37** (`v0.1.37`) and the matching website status-page
   release date **2026-10-24**. Keep SDK versions and the published **0.1.36**
   APDS tolerance floor unchanged; verify crate/lockfile/binary/status marker.
+- [ ] Verify the post-merge resolver `ETXTBSY` correction in hosted CI before
+  including it in a production CLI release. The operator's successful rerun of
+  the original failing jobs confirms intermittency, not verification of the
+  new local retry patch. See the post-merge evidence in `test-plan.md`.
 - [ ] After the final required CI/native checks pass, operator publishes CLI
   **0.1.37**, then deploys **Registry**, then **Web**, in that order. CLI tag
   publication remains operator-owned. The CLI release workflow first verifies

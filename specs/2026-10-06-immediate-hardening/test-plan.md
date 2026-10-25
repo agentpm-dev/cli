@@ -2178,6 +2178,58 @@ metadata contract before publishing/installing the dependency-bearing production
 example; its rollout remains unchecked. Version preparation is not evidence of
 tag publication, Homebrew/Scoop availability, or a production deployment.
 
+Final CI handoff: the operator subsequently confirmed **CI is all green** and
+is proceeding with the CLI merge/production release. This confirms the final
+normal CI/native Resolver Contract gate after the Node correction and version
+preparation. Together with completed independent review and manual acceptance,
+**M12 acceptance is complete**. This is operator-reported CI evidence; no CLI
+tag publication, installation or production deployment is claimed yet. Earlier
+pending-CI notes below are historical and superseded by this confirmation.
+
+#### Release Band 8 Post-Merge Resolver Spawn Race
+
+After the CLI merge, the operator reported Linux CI failing
+`valid_download_is_verified_cached_and_reused_offline` with `Text file busy`
+(`ETXTBSY`, errno 26). The operator reran the failed jobs and confirmed they all
+passed on the second attempt. This records an intermittent failure rather than
+retracting the earlier successful M12 acceptance evidence.
+
+The explicit writer close introduced during 11A is still present. A concurrent
+fork can nevertheless inherit that writable descriptor and retain it until the
+child execs/exits, even after the parent closes its handle; see
+[rust-lang/rust#114554](https://github.com/rust-lang/rust/issues/114554). A local,
+disposable Linux container reproduced that exact inherited-writer condition with
+the parent handle already closed, then executed the fixture successfully after
+the child released its inherited handle. The container used a cached image,
+disabled networking, a read-only root and executable temporary storage. This
+kernel-level Perl reproduction is not a Linux Rust-suite run.
+
+The local correction retries only failed resolver `--version` spawns whose I/O
+kind is `ExecutableFileBusy`: at most 20 retries, 25 ms between attempts, or
+500 ms of added waiting. Permission/missing-file/other spawn errors return
+immediately; a process that already started is never retried because of its
+exit status. A persistently busy executable still returns the original error
+through the existing context. Digest/version checks, explicit writer closure,
+temporary-file cleanup and atomic cache publication remain intact. No resolver
+resolution/provisioning command or network request is replayed by this helper.
+
+Verification on local Apple Silicon macOS:
+
+- New deterministic tests cover transient-busy recovery, bounded persistent-busy
+  failure, immediate unrelated-error propagation, and no retry after a started
+  process exits unsuccessfully. The full workspace suite passed **1,195 tests**
+  with **5 existing opt-in tests ignored**; the original download/cache/offline
+  test passed as well. Workspace Clippy and Rust formatting passed.
+- An additional Linux-only Rust test holds a real writable descriptor, asserts
+  a kernel `ETXTBSY`, releases it from the retry pause, and verifies successful
+  execution and version validation. It is included in normal Linux CI, but
+  cannot be counted as executed by the local macOS run.
+
+The operator's green rerun used the pre-fix code. The new patch remains local,
+uncommitted and unpushed at handoff; hosted verification of the correction is
+still required before including it in a production CLI release. M12's completed
+review/manual acceptance stands; this is a subsequent release-hardening fix.
+
 #### M12 Operator Manual Acceptance
 
 The operator confirmed **all M12 manual tests are complete and pass**, after
@@ -2198,10 +2250,10 @@ evidence, not an agent-executed real Registry publication or production rollout.
 
 Earlier pending-manual notes below are historical and superseded by this
 confirmation. Independent review and the initial updated four-target hosted
-runs were already confirmed. **Fresh normal CI and Resolver Contract success
-after the Node correction remains unconfirmed** and is the only remaining M12
-verification gate. Release Band 8 production publication/install/run checks stay
-separate and unchecked.
+runs were already confirmed. The later final all-green CI confirmation above
+also closes the fresh normal CI/Resolver Contract gate after the Node correction.
+Release Band 8 production publication/install/run checks stay separate and
+unchecked.
 
 #### M12 Operator-Confirmed Hosted Acceptance
 

@@ -570,6 +570,119 @@ fn valid_download_is_verified_cached_and_reused_offline() {
         .unwrap();
 }
 
+fn version_probe_output(success: bool) -> Output {
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
+
+    Output {
+        status: std::process::ExitStatus::from_raw(if success { 0 } else { 1 }),
+        stdout: format!("uv {UV_VERSION}\n").into_bytes(),
+        stderr: Vec::new(),
+    }
+}
+
+#[test]
+fn version_probe_recovers_only_from_busy_spawn_failures() {
+    let mut attempts = 0;
+    let mut pauses = Vec::new();
+    let output = version_output_with_retry(
+        || {
+            attempts += 1;
+            if attempts < 3 {
+                Err(io::Error::from(io::ErrorKind::ExecutableFileBusy))
+            } else {
+                Ok(version_probe_output(true))
+            }
+        },
+        |delay| pauses.push(delay),
+    )
+    .unwrap();
+    assert!(output.status.success());
+    assert_eq!(attempts, 3);
+    assert_eq!(pauses, [TEXT_BUSY_RETRY_DELAY; 2]);
+
+    for kind in [
+        io::ErrorKind::PermissionDenied,
+        io::ErrorKind::NotFound,
+        io::ErrorKind::InvalidInput,
+        io::ErrorKind::ResourceBusy,
+    ] {
+        let mut attempts = 0;
+        let error = version_output_with_retry(
+            || {
+                attempts += 1;
+                Err(io::Error::from(kind))
+            },
+            |_| panic!("must not retry unrelated spawn errors"),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), kind);
+        assert_eq!(attempts, 1);
+    }
+    let mut attempts = 0;
+    let failed_process = version_output_with_retry(
+        || {
+            attempts += 1;
+            Ok(version_probe_output(false))
+        },
+        |_| panic!("must not retry a process that already ran"),
+    )
+    .unwrap();
+    assert!(!failed_process.status.success());
+    assert_eq!(attempts, 1);
+}
+
+#[test]
+fn persistent_busy_version_probe_exhausts_a_bounded_retry_budget() {
+    let mut attempts = 0;
+    let mut pauses = Vec::new();
+    let error = version_output_with_retry(
+        || {
+            attempts += 1;
+            Err(io::Error::new(
+                io::ErrorKind::ExecutableFileBusy,
+                "fixture executable remains busy",
+            ))
+        },
+        |delay| pauses.push(delay),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::ExecutableFileBusy);
+    assert_eq!(error.to_string(), "fixture executable remains busy");
+    assert_eq!(attempts, TEXT_BUSY_RETRIES + 1);
+    assert_eq!(pauses, vec![TEXT_BUSY_RETRY_DELAY; TEXT_BUSY_RETRIES]);
+    assert!(pauses.iter().sum::<Duration>() <= Duration::from_millis(500));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn version_probe_recovers_when_a_real_linux_writer_is_released() {
+    let workspace = Workspace::new();
+    let path = fake_uv(&workspace.0, UV_VERSION);
+    let mut writer = Some(fs::OpenOptions::new().write(true).open(&path).unwrap());
+    let error = Command::new(&path).arg("--version").output().unwrap_err();
+    assert_eq!(error.raw_os_error(), Some(libc::ETXTBSY));
+
+    let mut command = Command::new(&path);
+    command.arg("--version");
+    let mut pauses = 0;
+    let output = version_output_with_retry(
+        || command.output(),
+        |delay| {
+            pauses += 1;
+            drop(writer.take());
+            std::thread::sleep(delay);
+        },
+    )
+    .unwrap();
+    assert!((1..=TEXT_BUSY_RETRIES).contains(&pauses));
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout).unwrap().starts_with("uv "));
+    check_version(&path).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn resolver_execution_failure_is_not_a_transport_or_version_error() {
