@@ -42,7 +42,6 @@ mod collection;
 mod payload;
 mod release_artifact;
 
-const MAX_ARTIFACT_BYTES: u64 = 3 * 1024 * 1024 * 1024; // 3 GB
 const MAX_TAR_ENTRIES: usize = 15_000;
 static BLOCKED_EMBEDDED_EXTS: &[&str] = &[".zip", ".whl", ".7z", ".rar", ".tar", ".tgz", ".tar.gz"];
 
@@ -217,13 +216,6 @@ impl PublishArgs {
                 .context("packaging loop into tar.gz")?,
         };
         let (sha256_hex, size_bytes) = file_digest_and_len(&tar_path)?;
-        if size_bytes > MAX_ARTIFACT_BYTES {
-            bail!(
-                "artifact is too large ({} bytes > {} bytes).",
-                size_bytes,
-                MAX_ARTIFACT_BYTES
-            );
-        }
 
         s.ok(format!(
             "{} bytes, sha256: {}",

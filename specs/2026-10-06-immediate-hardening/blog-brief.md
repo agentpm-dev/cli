@@ -94,3 +94,15 @@ Real archive/CLI tests cover a 15,001-file environment and publication metadata;
 fresh hosted/operator acceptance remains open. This supersedes the earlier
 statement about collection remaining deferred, without claiming release or
 production deployment.
+
+
+## M13B follow-up: dependable multi-artifact publication
+
+Implemented the default-off release upload/finalize protocol, bounded streaming
+for all existing package kinds, recoverable per-artifact retries, explicit expiry
+and cleanup, and one malware scan per target artifact. A useful future article
+could show why uploaded files are not yet a published release, how immutable
+storage interacts with database rollback, and why one clean target cannot stand
+in for the complete release. Keep any public walkthrough deferred until signing,
+verification and target-aware consumption are available; local fixtures and
+mocked storage do not establish production rollout or actual GuardDuty coverage.

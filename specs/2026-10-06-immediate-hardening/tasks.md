@@ -1469,8 +1469,8 @@ verified above.
 - [x] Preserve legacy scalar version columns/read path for existing one-artifact releases; do not reinterpret old rows.
 - [x] Ensure unsupported old clients receive a clear "requires newer AgentPM" response for new-format releases rather than a release-manifest URL masquerading as a tarball.
 - [x] Define new-format S3 layout using separate immutable objects, conceptually:
-  - [x] `packages/<ns>/<name>/<version>/release.json`;
-  - [x] `packages/<ns>/<name>/<version>/artifacts/<target>/<full-sha256>.tar.gz`;
+  - [x] `<S3_PREFIX>/<ns>/<name>/<version>/release.json`;
+  - [x] `<S3_PREFIX>/<ns>/<name>/<version>/artifacts/<target>/<full-sha256>.tar.gz`;
   - [x] staging `uploads/<release-id>/<artifact-id>.tar.gz`.
 - [x] Keep legacy S3 key layout readable.
 - [x] Persist the canonical release metadata both in normalized DB state and immutable `release.json`.
@@ -1535,54 +1535,115 @@ Local verification and limits are recorded in `test-plan.md`. Acceptance gates:
 > - **Only malware scanning exists.** GuardDuty object tags drive `malware_status` for every kind. The SBOM/Grype/pip-audit/OSV columns are unwritten schema, so "adapt scanning" means adapting the malware path and nothing else. Three concrete call sites need changing — the version-scoped `s3_key` passed to `_enqueue_scan`, its one-scan-per-version early return, and the single-row read behind `scan_malware_status`.
 > - M13A's deferred inventory trigger checks manifest/artifact-row consistency only. No FK/trigger links upload reservations to recorded versions or proves upload completeness; M13B must enforce that prerequisite in finalize.
 
-- [ ] Implement release init/resume that can return multiple per-artifact presigned PUT instructions without one-pending-upload collisions.
-- [ ] Implement per-artifact retries/resume while keeping one logical release reservation.
-- [ ] Stream artifact PUT bodies instead of `tokio::fs::read` buffering the entire file.
-- [ ] Reconcile size limits:
-  - [ ] server returns authoritative per-artifact max;
-  - [ ] client enforces the server policy;
-  - [ ] remove contradictory independent 3 GB vs 1 GB expectations.
-- [ ] Implement server-side cleanup/expiration for orphaned staged release artifacts.
-- [ ] Implement release-path expiry enforcement and define expired reservation/history retention explicitly; M13A's expiry fields/index do not supply a cleanup job, and V1.100 permits history to linger without defining its retention. Cleanup must be retry-safe and preserve finalized objects.
-- [ ] Define recovery when `release.json` was created but the DB transaction rolled back: identical bytes may retry, different bytes must not overwrite the immutable key. Object presence alone must not mark a release published; verify publication against committed database state.
-- [ ] Define and implement the release expiry/retry policy:
-  - [ ] choose a release-reservation lifetime deliberately, independent of and longer than any single presigned PUT window (today's presign is 900s, sized for one immediate upload);
-  - [ ] allow re-issuing a presigned PUT for a still-pending child artifact without invalidating the release or already-uploaded siblings;
-  - [ ] return expiry information the client can act on, so a CI job reports "release reservation expired, re-run the workflow" rather than an opaque S3 or `409` error;
-  - [ ] keep resume keyed at release + artifact level for the whole window;
-  - [ ] record the chosen lifetimes in the spec rather than leaving them implicit.
-- [ ] Audit publish rate limits against multi-artifact CI usage:
-  - [ ] count worst-case registry calls for a supported release, including presign re-issues and per-job retries;
-  - [ ] confirm a legitimate matrix publish cannot exhaust the current `10/minute; 100/hour` at `cost=3` budget;
-  - [ ] set distinct limits/costs for release-scoped endpoints if the audit shows the current budget is insufficient.
-- [ ] Separate registry-API timeouts from object-transfer timeouts in the publish client:
-  - [ ] today one 600s total timeout covers the S3 PUT because the same `reqwest` client is reused;
-  - [ ] prefer per-transfer connect/idle/progress timeouts over a single total-duration cap for artifact bytes.
-- [ ] Fix two pre-existing publish-path defects while this code is open, and carry the corrected behavior into the new release flow:
-  - [ ] `app/tools/application/cli.py:2099` resolves `final_exists_and_matches` as `False if code in ("404", "NotFound", "NoSuchKey") else False` — both arms are `False`, so `AccessDenied` or any other S3 error on the final HEAD is treated as "object absent" and triggers a copy. Distinguish genuine not-found from an error that should fail finalize.
-  - [ ] `publish_init` returns `"resumed": true` on the resume path, but the Rust `InitPublish` struct has no such field, so the client silently discards it and cannot tell a fresh reservation from a resumed one. Either add the field to the client type and surface it, or drop it from the response — do not leave a documented-but-ignored wire field, and make the equivalent release-level resume state explicitly visible to the client.
-- [ ] Implement one atomic release finalize:
-  - [ ] all intended artifacts present;
-  - [ ] verify stored bytes and upload state for every intended reservation child before invoking `persist_release_metadata`; reject missing, pending or failed children even when the proposed manifest/artifact inventory is internally consistent, with failure-path tests proving no published version or finalized artifact rows survive;
-  - [ ] all metadata consistent;
-  - [ ] target set unique;
-  - [ ] release manifest constructed/persisted;
-  - [ ] DB release/artifact rows committed together;
-  - [ ] release becomes installable only after finalize succeeds.
-- [ ] Enforce immutable artifact inventory after finalize.
-- [ ] Enforce new semantic version requirement for adding targets.
-- [ ] Adapt malware scanning:
-  - [ ] enqueue one scan per `PackageVersionArtifact`;
-  - [ ] associate scan row/result with concrete artifact (artifact FK preferred);
-  - [ ] keep that artifact association **optional** on the scan row rather than required, so a later resolution-scoped scan record is additive instead of a migration undoing this one. Stage 1 adds no such row;
-  - [ ] replace the version-scoped `s3_key` input with the per-artifact key. `_enqueue_scan` is handed `tool_versions.s3_key`, which V1.98's CHECK forces NULL for new-format releases, while `package_version_scans.s3_key` is `NOT NULL`;
-  - [ ] replace the one-scan-per-version guard. `_enqueue_scan` returns early when any scan row exists for the version, so without this change only the first target is ever enqueued;
-  - [ ] aggregate for the detail surface. `ToolsService` reads a single scan row into `scan_malware_status`; with N rows it needs a rollup. Keep the DTO field shape if possible so the website needs no change, and treat a shape change as a user-facing contract change;
-  - [ ] preserve queued/running/unknown semantics;
-  - [ ] if any artifact is infected, yank/disable the logical version;
-  - [ ] never display the version as wholly clean unless all required artifact scan states justify it.
-- [ ] Do not wire existing unused SBOM/Grype columns as a side effect unless deliberately scoped. They are unimplemented schema: nothing writes `sbom_cyclonedx`, `grype_summary`, `grype_findings`, `pip_audit_findings` or `osv_findings` today, so there is no existing vulnerability scanning to adapt or regress.
-- [ ] Do not add dependency vulnerability analysis here. Declared Python dependencies are not in the archive — wheels are fetched at install time — so archive scanning cannot cover them, and the exposure is described by the stored `PythonResolution`. That is a new capability for Stage 2's Package Health evidence model, not Stage 1 hardening. See spec §25.
+- [x] Implement release init/resume that can return multiple per-artifact presigned PUT instructions without one-pending-upload collisions.
+- [x] Implement per-artifact retries/resume while keeping one logical release reservation.
+- [x] Stream artifact PUT bodies instead of `tokio::fs::read` buffering the entire file.
+- [x] Reconcile size limits:
+  - [x] server returns authoritative per-artifact max;
+  - [x] client enforces the server policy;
+  - [x] remove contradictory independent 3 GB vs 1 GB expectations.
+- [x] Implement server-side cleanup/expiration for orphaned staged release artifacts.
+- [x] Implement release-path expiry enforcement and define expired reservation/history retention explicitly; M13A's expiry fields/index do not supply a cleanup job, and V1.100 permits history to linger without defining its retention. Cleanup must be retry-safe and preserve finalized objects.
+- [x] Define recovery when `release.json` was created but the DB transaction rolled back: identical bytes may retry, different bytes must not overwrite the immutable key. Object presence alone must not mark a release published; verify publication against committed database state.
+- [x] Define and implement the release expiry/retry policy:
+  - [x] choose a release-reservation lifetime deliberately, independent of and longer than any single presigned PUT window (today's presign is 900s, sized for one immediate upload);
+  - [x] allow re-issuing a presigned PUT for a still-pending child artifact without invalidating the release or already-uploaded siblings;
+  - [x] return expiry information the client can act on, so a CI job reports "release reservation expired, re-run the workflow" rather than an opaque S3 or `409` error;
+  - [x] keep resume keyed at release + artifact level for the whole window;
+  - [x] record the chosen lifetimes in the spec rather than leaving them implicit.
+- [x] Audit publish rate limits against multi-artifact CI usage:
+  - [x] count worst-case registry calls for a supported release, including presign re-issues and per-job retries;
+  - [x] confirm a legitimate matrix publish cannot exhaust the current `10/minute; 100/hour` at `cost=3` budget;
+  - [x] set distinct limits/costs for release-scoped endpoints if the audit shows the current budget is insufficient.
+- [x] Separate registry-API timeouts from object-transfer timeouts in the publish client:
+  - [x] today one 600s total timeout covers the S3 PUT because the same `reqwest` client is reused;
+  - [x] prefer per-transfer connect/idle/progress timeouts over a single total-duration cap for artifact bytes.
+- [x] Fix two pre-existing publish-path defects while this code is open, and carry the corrected behavior into the new release flow:
+  - [x] `app/tools/application/cli.py:2099` resolves `final_exists_and_matches` as `False if code in ("404", "NotFound", "NoSuchKey") else False` — both arms are `False`, so `AccessDenied` or any other S3 error on the final HEAD is treated as "object absent" and triggers a copy. Distinguish genuine not-found from an error that should fail finalize.
+  - [x] `publish_init` returns `"resumed": true` on the resume path, but the Rust `InitPublish` struct has no such field, so the client silently discards it and cannot tell a fresh reservation from a resumed one. Either add the field to the client type and surface it, or drop it from the response — do not leave a documented-but-ignored wire field, and make the equivalent release-level resume state explicitly visible to the client.
+- [x] Implement one atomic release finalize:
+  - [x] all intended artifacts present;
+  - [x] verify stored bytes and upload state for every intended reservation child before persisting release rows; reject missing, pending or failed children even when the proposed manifest/artifact inventory is internally consistent, with failure-path tests proving no published version or finalized artifact rows survive;
+  - [x] all metadata consistent;
+  - [x] target set unique;
+  - [x] release manifest constructed/persisted;
+  - [x] DB release/artifact rows committed together;
+  - [x] release becomes installable only after finalize succeeds.
+- [x] Enforce immutable artifact inventory after finalize.
+- [x] Enforce new semantic version requirement for adding targets.
+- [x] Adapt malware scanning:
+  - [x] enqueue one scan per `PackageVersionArtifact`;
+  - [x] associate scan row/result with concrete artifact (artifact FK preferred);
+  - [x] keep that artifact association **optional** on the scan row rather than required, so a later resolution-scoped scan record is additive instead of a migration undoing this one. Stage 1 adds no such row;
+  - [x] enforce the artifact/version parent pairing with a composite FK in forward migration V1.103; reject mismatched inserts/updates and validate existing rows without reassignment, while preserving null associations and legacy scans;
+  - [x] replace the version-scoped `s3_key` input with the per-artifact key. `_enqueue_scan` is handed `tool_versions.s3_key`, which V1.98's CHECK forces NULL for new-format releases, while `package_version_scans.s3_key` is `NOT NULL`;
+  - [x] replace the one-scan-per-version guard. `_enqueue_scan` returns early when any scan row exists for the version, so without this change only the first target is ever enqueued;
+  - [x] aggregate for the detail surface. `ToolsService` reads a single scan row into `scan_malware_status`; with N rows it needs a rollup. Keep the DTO field shape if possible so the website needs no change, and treat a shape change as a user-facing contract change;
+  - [x] preserve queued/running/unknown semantics;
+  - [x] if any artifact is infected, yank/disable the logical version;
+  - [x] never display the version as wholly clean unless all required artifact scan states justify it.
+- [x] Do not wire existing unused SBOM/Grype columns as a side effect unless deliberately scoped. They are unimplemented schema: nothing writes `sbom_cyclonedx`, `grype_summary`, `grype_findings`, `pip_audit_findings` or `osv_findings` today, so there is no existing vulnerability scanning to adapt or regress.
+- [x] Do not add dependency vulnerability analysis here. Declared Python dependencies are not in the archive — wheels are fetched at install time — so archive scanning cannot cover them, and the exposure is described by the stored `PythonResolution`. That is a new capability for Stage 2's Package Health evidence model, not Stage 1 hardening. See spec §25.
+
+### M13B storage-prefix and scan-rollup follow-up — specified after the initial implementation
+
+These were settled during review while 13B was in progress. The checked scanning items
+above predate them, so verify each against what actually landed rather than assuming
+coverage. Details in spec §22 storage layout and §25.
+
+- [x] Move new-format final objects under the configured `S3_PREFIX`, reusing the existing namespace/package/version structure instead of a bucket-root `packages/` directory:
+  - [x] `<S3_PREFIX>/<namespace>/<name>/<version>/release.json` and `.../artifacts/<target>/<full-sha256>.tar.gz`;
+  - [x] **this is required because GuardDuty Malware Protection is prefix-scoped to `tools/`.** A bucket-root layout puts every new-format artifact outside the protected scope, so nothing scans or tags it;
+  - [x] add prefix-aware tests asserting artifact and release keys fall inside the configured `S3_PREFIX`, so a future layout change cannot silently leave the protected scope;
+  - [x] resolve the `S3_PREFIX` divergence while here: `cli.py` defaults it to `tools`, `resolvers.py` to empty, `config.py` to empty, and the M13A release key builders ignored it;
+  - [x] verify legacy and new-format objects coexist at the same version path — legacy `<sha12>.tar.gz` versus `release.json` plus `artifacts/` — rather than assuming the `ck_tool_versions_release_storage` XOR makes it safe;
+  - [x] note that final objects are created by conditional PUT rather than a staging copy; GuardDuty covers both PUT and Copy creation events, so the protected prefix remains the thing that matters.
+- [x] Make a missing-tag/out-of-scope condition visible instead of merely plausible:
+  - [x] log the poller's timeout branch explicitly. It currently sets `failed`/`unknown` after `SCAN_MAX_WAIT_MIN` (default 30) and emits no log, so the operator sees only `[guardduty-worker] updated N rows` — identical to a healthy poll, and indistinguishable from a real scanner failure;
+  - [x] test the missing-tag path: objects that are never tagged must produce the timeout outcome and that log, not a silent degrade.
+- [x] Verify the rollup against spec §25 rather than assuming the implemented aggregate matches:
+  - [x] `clean` is **count-based** against `package_version_artifacts`, not status-based — a status-only rollup reports clean when enqueue failed and an artifact has no scan row at all;
+  - [x] the rollup is computed server-side once, so the read DTO and any install-side consumer share one safety rule;
+  - [x] name and document full row coverage separately from scan completion; keep result/progress aggregation independent and retain the defensive unrelated-artifact filter;
+  - [x] `status` never rolls up to null: the Security view renders a missing status as "Scan: not run", meaning published before scanning existed, so a partially enqueued release must read `queued`/`unknown`;
+  - [x] `notes` are not concatenated across rows; the poller appends free text that is rendered directly;
+  - [x] the three flat DTO fields are unchanged. `scanTone`/`scanMessage` are duplicated across all eight kind pages and `PackageSecurity.test.tsx` covers the malware render path for each; the per-artifact array belongs to M14C, which already owns the public Security/read DTO evolution and the target-artifact inventory;
+  - [x] a legacy version with one scan row and no artifact rows rolls up to exactly today's values.
+- [x] Record the operator gates: confirm real scanning in dev and production before rollout, and size scanning cost across artifact objects, their bytes, and the `release.json` metadata object that the protected prefix also covers. Prefix alignment reduces configuration drift; it does not prove AWS coverage, and asynchronous scanning still never blocks publication.
+
+### M13B review follow-up: bounded finalization without transfer-time DB locks
+
+- [x] Enforce `MAX_RELEASE_UPLOAD_BYTES` (default 1,000,000,000 aggregate bytes) before reservation/storage and recheck both size budgets before transfer and commit; expose `max_total_bytes` in init and the Rust response type.
+- [x] Document the equal 1 GB defaults as deliberate: artifact-first validation provides a precise single-file error, while independent limits permit later tuning; aggregate increases require transfer/request/concurrency sizing, not longer transfer-time DB locks or sum-of-artifacts snapshot disk.
+- [x] End the initial read transaction before storage I/O, retain one temporary snapshot at a time, and limit the package/reservation locks to revalidation and DB-only persistence.
+- [x] Reauthorize and recheck expiry, signing policy, full reservation intent/inventory, current budgets and version conflicts after storage; preserve idempotent concurrent completion.
+- [x] Require explicit S3 SHA-256 request/response confirmation for fresh conditional PUTs instead of downloading them again; independently verify existing final objects and conditional-write race winners. Never use ETag as SHA-256 proof.
+- [x] Exercise real PostgreSQL lock availability during every storage call, one-snapshot disk usage, concurrent mutations/completion, checksum failures, race winners and caller-owned pending changes; document remaining per-request/concurrency capacity limits.
+
+M13B implementation and local verification completed 2026-10-25. The separate
+release endpoint family is default-off (`RELEASE_PUBLISH_ENABLED=false`) and
+limited to Python Tools. Legacy publication retains its format; its shared
+upload transport now streams all package kinds. The implementation adds
+release/artifact init/resume, presign renewal, bounded verified finalize,
+24-hour expiry, five-minute staging cleanup, 30-day history retention,
+conditional immutable storage retries, and artifact-specific malware scans.
+The existing Security/install new-format gates remain intact. No new release
+signatures, target-aware install, build/CI publish command, dependency
+vulnerability analysis or public Python/Node SDK changes are introduced.
+
+Forward migration V1.102 adds the reservation's intended release document and
+an optional scan-to-artifact association. Earlier applied migrations remain
+unchanged. The actual migration and Pyway numeric ordering are exercised on a
+disposable PostgreSQL instance; see `test-plan.md` for evidence and limitations.
+
+Acceptance remaining:
+
+- [ ] Complete independent review of the M13B implementation.
+- [ ] Run updated normal CI and all four Resolver Contract jobs, including the
+      streaming HTTP fixtures, and the Registry PostgreSQL release-upload job.
+- [ ] Complete operator manual acceptance of the gated release flow, interrupted
+      uploads, finalization, cleanup and malware rollup. No operator acceptance
+      is inferred from local automated verification.
 
 ## Release Band 9: Release Data Model and Multi-Artifact Publishing
 Covered milestones: 13A-13B.
@@ -1595,12 +1656,17 @@ This gives us the server-side capability for one immutable release composed of m
       IDs. Complete this gate before Registry deployment. Manual pre-merge
       dispatch may select a proposed CLI ref, but does not replace this main-ref
       release gate. This is a band-level gate, not an M13A completion prerequisite.
-- [ ] Rehearse deployment and verify permissions/retention for bucket-root
-      `packages/` and staging `uploads/` in dev and production before enabling
+- [ ] Rehearse deployment and verify permissions/retention for the configured
+      `S3_PREFIX` final-object layout and staging `uploads/`, including real
+      GuardDuty scanning/tagging in dev and production before enabling
       the later new-format release flow. This is a Release Band 9 readiness gate,
       not an M13A completion prerequisite. No live S3 write/policy change or
       production deployment is claimed by the M13A implementation; keep the
       new-format publish path gated as required above.
+- [ ] Size GuardDuty scan volume/cost before rollout: each release's artifact
+      objects and total bytes plus the small `release.json` object are scanned
+      under the protected prefix. Prefix alignment is not proof of AWS coverage;
+      scanning remains asynchronous and does not block publication.
 
 ## Milestone 14A: Canonical Signing Foundation
 > Scope note: build the cryptographic groundwork that every later integrity statement depends on — a typed Rust representation of the existing `agentpm.package.signature.v1` statement, RFC 8785/JCS canonicalization in both Rust and Python with shared cross-language test vectors, the canonical release-manifest content binding, and the release-level digest definition. Introduces no new statement types and changes no verification behavior.

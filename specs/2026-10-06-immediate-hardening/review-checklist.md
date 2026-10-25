@@ -264,14 +264,25 @@
 - Confirm one clean artifact cannot make an incompletely scanned release look wholly clean.
 - Confirm all three malware call sites moved off version scope: the per-artifact S3 key replaces `tool_versions.s3_key` (NULL for new-format releases, while the scan row requires it), the one-scan-per-version early return no longer drops targets 2..N, and the detail rollup no longer reads a single scan row.
 - Confirm the scan row's artifact association is optional rather than required, so resolution-scoped scanning stays additive later.
+- Confirm the composite scan/artifact FK enforces a shared parent version on inserts and updates, preserves null associations, and validates existing rows without silent reassignment.
 - Confirm no SBOM/Grype/pip-audit/OSV column was populated as a side effect. Those columns are unwritten schema; "existing vulnerability scanning" does not exist and cannot be regressed. Only the GuardDuty malware path is live.
 - Confirm no dependency vulnerability analysis was added. Declared Python dependencies are not in the archive, so archive scanning cannot cover them; that exposure lives in `PythonResolution` and belongs to Stage 2 Package Health.
+- Confirm new-format final objects sit under the configured `S3_PREFIX`, not a bucket-root prefix. GuardDuty Malware Protection is prefix-scoped to `tools/`, so a bucket-root layout silently leaves every artifact unscanned. Check for a test asserting keys fall inside the configured prefix.
+- Confirm the `clean` rollup is count-based against `package_version_artifacts` rather than status-based, that `status` never rolls up to null (the Security view reads null as "Scan: not run"), that `notes` are not concatenated, and that a legacy single-scan version rolls up to exactly its current values.
+- Confirm the rollup is computed server-side once rather than duplicated between the read DTO and any install-side consumer.
+- Confirm full scan-row coverage is not described as scan completion; result/progress aggregation is independent and in-progress statuses remain visible.
+- Confirm the three flat scan DTO fields are unchanged; per-artifact detail is M14C's, alongside the target-artifact inventory. A shape change here touches eight kind pages and their tests.
+- Confirm the poller's timeout branch now logs. It sets `failed`/`unknown` after `SCAN_MAX_WAIT_MIN` with no log today, so an out-of-scope prefix looks identical to a genuine scanner failure. Check the missing-tag path is tested.
 - Confirm the release reservation lifetime is chosen deliberately and outlives any single presigned PUT window, rather than inheriting the existing 900-second presign.
 - Confirm a presigned PUT can be re-issued for a pending child artifact without invalidating the release or already-uploaded siblings.
 - Confirm reservation expiry surfaces as an identifiable, actionable error rather than an opaque S3 or `409` response.
 - Confirm publish rate limits were audited against worst-case multi-target CI usage including presign re-issues and retries.
 - Confirm registry-API timeouts are separated from artifact-transfer timeouts rather than one total-duration cap covering the S3 PUT.
 - Confirm the finalize destination-exists check distinguishes genuine not-found from other S3 errors, and that `AccessDenied` no longer reads as "object absent".
+- Confirm the aggregate release budget is enforced before reservation/storage and rechecked before publication; `max_total_bytes` is retained in the typed init response.
+- Confirm every storage operation runs outside a DB transaction, only one temporary artifact snapshot is retained, and package/reservation locks protect only the final metadata transaction.
+- Confirm finalize reauthorizes and revalidates complete reservation intent, expiry, signing policy and both budgets after transfer, including identical concurrent completion and changed-intent failures.
+- Confirm fresh conditional PUTs require matching explicit S3 SHA-256 responses without a second GET; existing objects and conditional-write race winners still undergo stored-byte hashing. ETags must not substitute for SHA-256.
 - Confirm resume state is either surfaced in the client's typed response or removed from the wire, with no documented-but-ignored field, and that release-level resume is visible to the client.
 
 ## Integrity and signing

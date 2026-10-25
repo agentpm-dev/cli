@@ -316,7 +316,8 @@ cmp "$M13A_ROOT/documents/four-targets.canonical.json" "$M13A_ROOT/documents/rec
 Expected: two logical version rows total (legacy `0.1.0`, new fixture `1.2.0`),
 not one version per target. Only the new row has release metadata and null legacy
 SHA/size/key fields. It has four child artifacts, each with a full digest and
-target-specific `packages/fixture/example/1.2.0/artifacts/...` key. `cmp` prints
+target-specific `<S3_PREFIX>/fixture/example/1.2.0/artifacts/...` key
+(default `tools/fixture/example/1.2.0/artifacts/...` with the later prefix fix). `cmp` prints
 nothing and exits successfully. The fixture's `published` status comes from
 the internal metadata primitive; it is not a real Registry publication.
 

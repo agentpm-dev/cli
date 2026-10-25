@@ -1594,10 +1594,12 @@ committed database state remains the publication authority.
 
 Use separate immutable S3 objects per target, not one giant archive.
 
-Conceptual new-format storage:
+New-format final objects live under the configured `S3_PREFIX`, reusing the existing
+namespace/package/version structure rather than introducing a second top-level
+directory beside namespaces:
 
 ```text
-packages/<namespace>/<name>/<version>/
+<S3_PREFIX>/<namespace>/<name>/<version>/
   release.json
   artifacts/
     any/<full-sha256>.tar.gz
@@ -1605,6 +1607,26 @@ packages/<namespace>/<name>/<version>/
     x86_64-apple-darwin/<full-sha256>.tar.gz
     x86_64-unknown-linux-gnu/<full-sha256>.tar.gz
 ```
+
+This is a deliberate decision, not a formatting preference. **GuardDuty Malware
+Protection for S3 is scoped to objects beginning with a specific prefix, and that
+prefix is `tools/`.** A bucket-root layout would place every new-format artifact
+outside the protected scope, so nothing would scan or tag them. Keeping release
+objects inside `S3_PREFIX` removes an infrastructure dependency from the release
+path and also ends the current three-way divergence in how `S3_PREFIX` is read
+(`cli.py` defaults it to `tools`, `resolvers.py` to empty, and the M13A release key
+builders ignored it entirely while `config.py` defaults it to empty).
+
+Legacy and new-format objects coexist safely at the same version path: legacy writes
+`<sha12>.tar.gz` directly under the version directory, new-format writes `release.json`
+and an `artifacts/` subtree, and the `ck_tool_versions_release_storage` CHECK makes a
+version exclusively one or the other. Verify that rather than assuming it.
+
+Prefix alignment is necessary but not sufficient. It reduces configuration drift; it
+does not prove AWS coverage, and asynchronous scanning still never blocks publication.
+Confirm real scanning in dev and production before rollout, and size scanning cost
+across the artifact objects, their bytes, and the small `release.json` metadata object
+that the protected prefix will also cover.
 
 Staging may use:
 
@@ -1631,6 +1653,71 @@ Requirements:
 - expiry must be reported to the client in a form it can act on, so a CI job can fail with "release reservation expired, re-run the workflow" rather than an opaque S3 or 409 error;
 - resuming must remain possible for the whole window, keyed at release + artifact level rather than colliding on one pending `(package_id, version)` row;
 - choose concrete values deliberately rather than inheriting 900 seconds, and state them in the spec once chosen.
+
+The M13B policy is a **24-hour** release reservation, **900-second maximum**
+presigned PUT capped by remaining reservation time, and **30 days of history
+after reservation expiry**. The existing scheduler cleans up reservation-owned
+staging every five minutes, up to 100 reservations per pass. Cleanup rotates by
+last-updated time, retries storage failures, and never deletes immutable final
+objects. Expired reservations return HTTP 410/`release_expired`; init may reserve
+the same unpublished version again with new staging keys. An orphaned immutable
+document can be reused only with identical canonical bytes; different bytes
+require retrying the original inventory or selecting a new semantic version.
+
+The new endpoint family is `/v1/tools/publish/releases/...`, enabled only by
+the default-false server setting `RELEASE_PUBLISH_ENABLED`. Ordinary publication
+retains its legacy endpoint/format. The guarded endpoints accept only Python
+Tools and remain disabled in normal deployments through Release Band 9; they
+do not enable target-aware installation, release signing or attestation.
+
+Upload policy defaults to **1,000,000,000 bytes per artifact**, controlled by
+the Registry's `MAX_UPLOAD_BYTES`. Both legacy and guarded init/finalize enforce
+it; the CLI uses the returned maximum instead of its old independent 3 GiB cap.
+Both upload paths stream from disk, including non-Python packages. Registry API
+requests retain their separate timeout; object transfers use a 30-second connect
+timeout and 120-second response-read/upload-idle checks, with no fixed total
+600-second transfer ceiling. Guarded releases additionally enforce
+`MAX_RELEASE_UPLOAD_BYTES`, default **1,000,000,000 bytes across all artifacts**.
+Init rejects excess totals with HTTP 413/`release_too_large` before reservation
+or storage work and returns `max_total_bytes` alongside the per-artifact maximum.
+Finalize rechecks both current budgets before transfer and before publication.
+
+The equal 1 GB defaults are intentional. The aggregate cap bounds release work;
+the per-artifact check runs first for the clearer `413 / too_large` error on a
+single oversized file, and becomes an independent accepted-size bound when the
+aggregate budget is raised. Raising the total requires reviewing transfer volume,
+request duration and concurrency capacity. It does not extend transfer-time row
+locks because transfers occur outside DB transactions, nor increase the
+per-request snapshot disk bound above the unchanged per-artifact limit.
+
+Finalize copies a fully validated reservation intent in a short read transaction,
+then ends that transaction and returns its connection before storage I/O. It
+verifies and stores one temporary artifact snapshot at a time, preventing staging
+mutation between hashing and final PUT. Snapshot disk is bounded by the largest
+accepted artifact, at most the smaller of the two configured size caps, rather
+than the sum of artifacts. Fresh conditional PUTs send explicit full-object
+SHA-256 checksums and require matching S3 checksum responses; they do not
+re-download freshly written objects. ETags are not SHA-256 integrity evidence.
+Existing objects and conditional-write race winners still require independent
+stored-byte verification. A normal fresh transfer moves approximately twice the
+accepted payload bytes through the server (staging GET plus final PUT); retries
+and existing-object verification add reads.
+
+After immutable artifacts and the canonical document are stored, finalize takes
+package then reservation locks, reauthorizes, and checks expiry, signing policy,
+unchanged complete intent/inventory, both budgets and version conflicts again.
+The locked transaction contains only metadata persistence, reservation changes
+and scan enqueueing; it performs no storage I/O. An identical concurrent winner
+returns its committed receipt. Partial immutable objects remain retryable orphan
+state, never publication evidence. Per-request bounds do not constitute global
+concurrency/disk scheduling; hosted capacity checks remain required.
+
+Release endpoints use cost 1 with limits **60/minute; 600/hour**. Four matrix jobs
+issuing four init/resume calls, four presign renewals and two finalize attempts
+use 10 Registry calls, or 20 with a complete repeat; even the schema's five-entry
+maximum fits in 24. PUTs go directly to storage. Existing legacy route limits
+remain unchanged. Hosted rollout must still verify actual bucket permissions,
+retention, scheduler enablement and finalize disk/request capacity.
 
 Reconcile publish rate limits with CI usage. `publish_init` and `publish_finalize` currently carry `10/minute; 100/hour` at `cost=3` per call. A multi-artifact release performs more registry calls than a single-artifact publish, and a matrix workflow may retry individual jobs. Audit the effective call count for a worst-case supported release, including presign re-issues and retries, and ensure a legitimate CI publish cannot exhaust the limit. If the new flow needs different limits or a distinct cost for release-scoped calls, set them here rather than discovering the ceiling in CI.
 
@@ -1687,6 +1774,57 @@ Milestone 13B must therefore not foreclose it: when the scan schema gains its
 artifact association, keep that association optional rather than making every scan row
 require a concrete artifact, so a later resolution-scoped scan record is an additive
 change rather than a second migration undoing this one. Stage 1 adds no such row.
+
+For a non-null artifact association, the database must also enforce that the
+scan's version matches the artifact's parent version. A composite foreign key
+supplies this invariant; the rollup's defensive artifact-ID filtering is not a
+substitute. A forward migration validates existing rows and rejects mismatches
+without silently reassigning them. Null artifact associations remain valid.
+
+**Aggregating per-artifact results.** Up to five artifacts produce up to five scan rows
+for one logical version, so the release-level answer is a rollup. Compute it
+server-side, once, so the public read DTO and any install-side consumer share one
+safety rule; `spec.md` already warns against making install depend on the UI-oriented
+Security DTO.
+
+- `malware_status`: `infected` if any artifact is infected; else `suspicious` if any is
+  suspicious; else `clean` **only if every artifact row has a scan row reporting
+  clean**; else `unknown`.
+- `status`: `failed` if any failed; `complete` only if all complete; else `running` if
+  any is running; else `queued`.
+
+The `clean` rule must be count-based against `package_version_artifacts`, not
+status-based. A status-only rollup ("no infected found, therefore clean") reports clean
+when an artifact has no scan row at all because enqueue failed — which is the precise
+failure the per-artifact requirement above exists to prevent.
+
+Row coverage and scan completion are distinct: coverage means one scan row exists
+for every expected artifact, while only aggregate `status` describes progress.
+Result and progress aggregation are independent, so even a synthetic set of clean
+results with queued/running rows must retain its queued/running progress status.
+
+A legacy version with one scan row and no artifact rows must roll up to exactly its
+current values, so existing detail surfaces render unchanged.
+
+Two rendering constraints follow from the current UI, which reads these fields directly
+across all eight package kinds:
+
+- The rollup must never produce a null `status`. The existing Security view treats a
+  missing status as "Scan: not run", meaning published before scanning existed. A
+  partially enqueued new-format release must roll up to `queued`/`unknown` so it reads
+  as unresolved rather than as a benign historical record.
+- Do not concatenate `notes`. The poller appends free text per row, and that string is
+  rendered directly. The rollup's `notes` carries an aggregate-relevant message or
+  nothing; per-artifact notes stay per artifact.
+
+**Scan timeout behavior, stated accurately.** Rows do not sit queued indefinitely. The
+poller moves `queued → running` on first touch, and after `SCAN_MAX_WAIT_MIN` (default
+30) it sets `failed` with `malware_status` `unknown` and appends a timeout note. The
+real gap is visibility: that branch emits no log, so an operator sees only
+`[guardduty-worker] updated N rows`, identical to a healthy poll. A release whose
+objects fall outside the protected prefix is therefore indistinguishable from a genuine
+scanner failure. M13B must log the timeout path explicitly and test the missing-tag
+path, so a prefix or permissions regression is visible rather than merely plausible.
 
 ### 26. GitHub Actions v1 and package-build CLI
 
