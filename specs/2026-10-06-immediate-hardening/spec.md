@@ -26,7 +26,7 @@ This stage covers five major workstreams:
 2. Stars, trending, and namespace curation.
 3. CLI consistency and lint-error quality.
 4. Analytics, billing-funnel measurement, privacy, and feedback.
-5. Cross-platform Python Tool packaging, multi-artifact releases, integrity, provenance, and CI publishing.
+5. Cross-platform Python Tool packaging, multi-artifact releases, integrity, provenance, CI publishing, and SDK consumer compatibility.
 
 ---
 
@@ -1986,6 +1986,50 @@ Never print passphrases, decrypted private key material, or full secret paths in
 
 OIDC/keyless AgentPM registry publishing is deferred.
 
+### 35. SDK lockfile and managed Python Tool compatibility
+
+Milestone 17 updates both the Python and Node SDKs after the CLI/Registry
+contracts in Milestones 11B–16 settle. The production smoke test exposed two
+independent gaps: both SDKs accept only lockfile v2/v3, and their direct Python
+subprocess runners do not select the new managed dependency environment. A
+successful CLI install or direct CLI Tool call is not proof that an SDK-hosted
+app can load or invoke the same installed composition. SDK implementation is
+explicitly deferred to M17; completed M12/Band 8 CLI work is not reopened.
+
+Both SDKs must read supported lockfile v2/v3/v4 shapes without mutating the
+portable lock. Exact installed package references remain exact, including when
+older versions are present alongside them. Local author roots are not installed
+releases. Existing additive v4 compatibility applies, but an unsupported future
+lock version must fail explicitly rather than being downgraded or guessed.
+
+Dependency-bearing Python Tools invoked through either SDK must use the
+compatible installed CLI's authoritative managed execution path and its machine
+result contract. Reuse finalized target/integrity checks and environment
+validation; do not implement another resolver, wheel installer, environment
+selector or provenance verifier in an SDK. Missing/old CLI, missing/stale
+environment, tampered metadata or unsupported target/interpreter must fail
+clearly with installation/repair guidance. SDK load/call must not silently
+resolve dependencies, install packages, rebuild environments, rewrite locks or
+fall back to global/app Python. A Node-hosted consumer is subject to the same
+Python Tool rules as a Python-hosted consumer.
+
+Preserve public loading functions, callable input/output shapes, required-env
+checks, documented env layering, timeout/cancellation and stderr behavior.
+Managed execution retains isolation from ambient `PYTHONPATH`/`PYTHONHOME`;
+secrets and full credential-bearing commands must not appear in errors/logs.
+Machine runner failures must remain distinct from a Tool's own returned error
+data. Existing no-dependency/legacy vendored Python and Node Tools retain their
+supported invocation paths without gaining an unnecessary CLI requirement.
+Python typing/optional adapters and Node ESM/CJS/types remain supported.
+
+M17 acceptance requires both SDKs' native suites and cross-platform integration
+evidence, including a real native-dependency Tool called through an SDK wrapper,
+shared compatibility fixtures, documented version floors and operator-confirmed
+SDK distribution smoke checks. SDK package/release preparation is separate from
+publication approval. Milestone 18 remains the final documentation/migration
+milestone and documents the verified SDK behavior; Stage 2 category work stays
+separate.
+
 ## Acceptance criteria
 
 ### Registry / Explore
@@ -2171,6 +2215,19 @@ OIDC/keyless AgentPM registry publishing is deferred.
 - Unsafe symlink/hardlink archive entries do not silently disappear; extraction fails explicitly if unsupported.
 - Decompressed-size and entry-count limits protect extraction.
 - Legacy install behavior remains intact.
+
+### SDK compatibility
+
+- Python and Node SDKs load supported v2/v3/v4 locks and installed compositions
+  read-only, reject unsupported future locks and preserve exact installed versions.
+- Both SDKs invoke dependency-bearing Python Tools through the verified managed
+  CLI runtime, with unchanged public result shapes and actionable failures.
+- No ambient-Python fallback, silent provisioning, re-resolution or lock rewrite
+  occurs during SDK load/call; legacy standalone paths remain supported.
+- Real Python and Node consumer tests exercise native Python dependencies on
+  supported Linux/macOS/Windows runners and preserve optional adapter/package exports.
+- Supported SDK/CLI version floors, package smoke checks and example-app
+  instructions are verified before final documentation acceptance in M18.
 
 ### CI publishing
 

@@ -181,7 +181,7 @@ relevance, stars/trending, namespace pins/search, shared detail shell, technical
 error/Tool scaffolding, telemetry, Python Tool portability, lockfile v4, multi-artifact release integrity,
 signing and client verification, and CI publishing. Source:
 `agentpm-dev/cli/specs/2026-10-06-immediate-hardening/{spec.md,tasks.md}`; its exact milestone IDs include
-M1–M17 with submilestones 10A/B, 11A/B/C, 13A/B, 14A/B/C.
+M1–M18 with submilestones 10A/B, 11A/B/C, 13A/B, 14A/B/C.
 
 **Milestone ID convention:** the two stages share an `M<n><A/B/C>` namespace — `M11A`, `M13A`, `M14A/B`,
 `M15A/B`, `M16A/B` and `M17` exist in both. Throughout this spec and its companions a bare `M…` reference
@@ -191,7 +191,8 @@ materially different contracts.
 
 Stage 2 **consumes those foundations**, does not duplicate them. Integration gates belong in `tasks.md`.
 Particular handoffs: Stage 1 M2–M7 (discovery, detail shell, SEO), M8–M9 (CLI), M11B (lock v4), M12–M16
-(portability, provenance, artifacts), M10A/B (analytics). Stage 1 M17 focuses its own
+(portability, provenance, artifacts), M10A/B (analytics), Stage 1 M17 (SDK lock/runtime
+compatibility). Stage 1 M18 focuses its own
 migration/documentation corrections; Stage 2 comprehensive category docs/AgentPM-owned READMEs happen
 **only after all Stage 1 work is complete**, as Stage 2's **last** milestone. Earlier APDS normative files
 and technical UI copy **are allowed**; they are required for functional development.
