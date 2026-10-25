@@ -1140,7 +1140,7 @@ the `summarize-text`/`devwork-copilot` rollout remain Release Band 8 work.
 > - `.whl` is currently blocked as an embedded archive. Keep it blocked for normal Tool payloads; target-side dependency installation removes the need to ship wheels inside the Tool tarball.
 
 - [x] Consume the canonical target identifier and current-target detection defined in Milestone 11A; do not redefine either here.
-- [x] Define portable `any` **payload** semantics explicitly — what makes a payload safely target-independent, as distinct from `any` merely being a valid target value. The reviewed expanded §22 policy is implemented with a shared inventory and local regression evidence; hosted/manual acceptance remains open below.
+- [x] Define portable `any` **payload** semantics explicitly — what makes a payload safely target-independent, as distinct from `any` merely being a valid target value. The reviewed expanded §22 policy has shared-inventory, local, hosted and operator manual evidence; the later Node correction's fresh CI gate remains below.
 - [x] Implement conservative payload classification after final file collection:
   - [x] `.so`;
   - [x] `.dylib`;
@@ -1174,9 +1174,10 @@ dependency-bearing examples. This is initial-classifier evidence, not acceptance
 of the revised §22 policies. Format and collection implementations have separate
 fresh local evidence below. Independent review, normal CI and all four updated
 native Resolver Contract jobs are now operator-confirmed complete, including
-Windows after its fixture correction. M12 acceptance remains open for operator
-manual confirmation through `manual-tests/CLI_M12_MANUAL_TESTS.md`; Release Band 8
-production rollout remains separate.
+Windows after its fixture correction. The operator has now confirmed all manual
+tests pass, including the rebuilt Node step. M12 acceptance remains open only
+for fresh hosted CI confirmation of that later Node correction below; Release
+Band 8 production rollout remains separate.
 See the M12 evidence in `test-plan.md`.
 
 ### M12 format-policy follow-up — implementation and verification
@@ -1185,7 +1186,8 @@ The reviewed decisions in `spec.md` §22, "M12 portable format policy", were
 authorized for implementation. The items below record the expanded classifier;
 initial-classifier evidence above is historical. Directory collection policy
 was deferred during this phase and is now implemented below. Updated hosted
-verification is operator-confirmed complete; manual acceptance remains pending.
+verification and manual acceptance are operator-confirmed complete. The later
+Node correction retains its own fresh CI gate below.
 
 - [x] Before classifier changes, introduce the authoritative portable-format
   inventory at `crates/agentpm-sdk/contracts/tool-payload-formats-v1.json`, as
@@ -1276,7 +1278,7 @@ The reviewed "M12 collection policy" in `spec.md` §22 was authorized for
 implementation. This is Python Tool collection only, not a general ignore system
 or a change to other kinds. Keep the previously implemented format policy intact.
 Fresh local evidence is separate from operator-confirmed hosted success and
-pending manual acceptance.
+completed operator manual acceptance.
 
 - [x] Add the reviewed minimal collection rules and shared installed-state
   vocabulary to the checked-in policy contract; derive classifier/collector
@@ -1318,15 +1320,15 @@ pending manual acceptance.
   exclusions, marker detection, dotenv/case choices and omission reporting.
   State that policy/tooling changes can change subsequent archive bytes;
   checked-in data alone does not promise cross-version byte reproducibility.
-- [ ] Implement the collection-specific cases in `test-plan.md`, run relevant
+- [x] Implement the collection-specific cases in `test-plan.md`, run relevant
   local checks and all four hosted native jobs, and record fresh evidence plus
   operator manual acceptance. Initial/format-policy results do not check off
   any collection implementation or acceptance requirement.
 
-Collection implementation, local tests and updated hosted runs are complete.
-The final combined verification task remains open for operator manual acceptance
-through the M12 runbook. M12 cannot be marked complete until that confirmation;
-Release Band 8 also retains its production rollout checklist below.
+Collection implementation, local tests, updated hosted runs and operator manual
+acceptance are complete. M12 retains only the separately authorized Node
+correction's fresh hosted CI gate below; Release Band 8 also retains its
+production rollout checklist.
 
 ### Authorized Node packaging correction from manual testing
 
@@ -1340,14 +1342,28 @@ resuming the Node runbook step. It does not extend Python collection policy.
   manifest paths, overlapping requests and repeated packaging. Keep Node's
   dotenv/Git/environment inclusion and ordinary blocked-archive/atomic-failure
   protections. Update docs and the resumable Node runbook assertions.
-- [ ] Confirm fresh normal CI/native Resolver Contract runs for this correction
-  and operator acceptance of the rebuilt Node step. Earlier hosted confirmation
-  covers the implementation before this separately authorized correction.
+- [x] Confirm operator acceptance of the rebuilt Node step and completed M12
+  manual walkthrough. The operator verified six unique Node members with no
+  generated output and subsequently confirmed all manual tests pass.
+- [ ] Confirm fresh normal CI/native Resolver Contract runs for this correction.
+  Earlier hosted confirmation covers the implementation before this separately
+  authorized correction; manual success does not close the fresh hosted gate.
 
 ## Release Band 8: Python Tool Dependency Contract
 Covered milestones: 11A-12.
 This gives us the first-party Python dependency story working end to end for a single published artifact: declaration in `agent.json` with real lint validation, a pinned AgentPM-managed `uv` acquired from AgentPM-controlled storage and resolving to exact portable state, the fixed `PythonResolution` v1 contract with distribution digests, lockfile persistence with a forward-version guard, an AgentPM-managed per-Tool environment under `.agentpm/`, digest-verified wheel-only provisioning, dependency-bearing execution through `agentpm run`, and honest payload-compatibility classification. These four milestones are one band because any smaller cut ships a Tool that can declare dependencies it cannot install, or install dependencies it cannot verify are compatible with the consumer's target. Legacy vendored Tools keep working unchanged throughout. If schedule pressure demands an earlier partial release, the Milestone 11B lockfile forward-version guard is the only piece with standalone value — it is a correctness fix for a hazard that exists today.
 
+- [x] Prepare CLI **0.1.37** (`v0.1.37`) and the matching website status-page
+  release date **2026-10-24**. Keep SDK versions and the published **0.1.36**
+  APDS tolerance floor unchanged; verify crate/lockfile/binary/status marker.
+- [ ] After the final required CI/native checks pass, operator publishes CLI
+  **0.1.37**, then deploys **Registry**, then **Web**, in that order. CLI tag
+  publication remains operator-owned. The CLI release workflow first verifies
+  the already-deployed uv inventory/mirrored bytes; do not bypass that gate.
+- [ ] Verify installed CLI reports **0.1.37**, the deployed Registry serves the
+  Python resolution/install metadata contract, and the deployed status page
+  advertises **0.1.37** with **2026-10-24**. Publish/install dependency-bearing
+  production Tool versions only after the Registry deployment is verified.
 - [ ] After the band prerequisites and CLI release are verified, publish the prepared `agentpm-examples/tools-python/summarize-text` **0.1.9** to the production Registry as `@zack/summarize-text`, using its reviewed `agent.lock` and declared Python dependencies rather than a vendored native tree.
 - [ ] Add exact `@zack/summarize-text@0.1.9` to `devwork-copilot`, install/update its consumer lock and managed environment, and verify an actual summarization via direct run and a Harness Tool call with `OPENAI_API_KEY`. Review any required Agent version bump/publication as part of that rollout; do not silently alter an immutable Agent release.
 - [ ] Confirm the existing vendored production Tool version still works for legacy consumers. Keep `validate-order` a dev Registry/manual-test example; no production publication is required for it.

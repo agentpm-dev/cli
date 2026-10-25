@@ -533,17 +533,18 @@ Expected: all assertions pass. The generated files remain available for inspecti
 no cleanup command deletes your working files. Source assets were changed only
 where the walkthrough explicitly requested the disposable PNG/permission edits.
 
-Report these results before checking off M12:
+Operator-confirmed complete: all manual tests below passed after the Node
+correction. Retain this checklist as the acceptance record:
 
-- [ ] Portable source/assets and both prepared dependency-bearing examples report `any`.
-- [ ] Native, unknown, executable, symlink and installed-state cases have accurate warnings/targets.
-- [ ] Incidental exclusions, required entrypoint preservation, explicit overrides and request-order checks pass.
-- [ ] Node collection keeps its previous behavior.
-- [ ] Expected missing-file, embedded-wheel and format-mismatch failures are clear; prior good archives survive.
-- [ ] Quiet/strict/captured stderr retains information/warnings/errors with the intended severities.
-- [ ] Live mock descriptors and uploaded members agree; invalid live packaging sends no request.
-- [ ] Authored manifests/locks stay unchanged; no real publication or example rollout was performed.
+- [x] Portable source/assets and both prepared dependency-bearing examples report `any`.
+- [x] Native, unknown, executable, symlink and installed-state cases have accurate warnings/targets.
+- [x] Incidental exclusions, required entrypoint preservation, explicit overrides and request-order checks pass.
+- [x] Node keeps its existing incidental-file selection, with unique members and no generated output after the correction.
+- [x] Expected missing-file, embedded-wheel and format-mismatch failures are clear; prior good archives survive.
+- [x] Quiet/strict/captured stderr retains information/warnings/errors with the intended severities.
+- [x] Live mock descriptors and uploaded members agree; invalid live packaging sends no request.
+- [x] Authored manifests/locks stay unchanged; no real publication or example rollout was performed.
 
-Once you confirm these, record operator acceptance in `test-plan.md` and close
-the remaining M12 tasks. Release Band 8 production publication/install/run
-verification is still a separate checklist.
+Operator acceptance is recorded in `test-plan.md`. Fresh normal CI/native jobs
+after the Node correction remain a separate M12 gate; Release Band 8 production
+publication/install/run verification also remains separate.

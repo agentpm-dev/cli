@@ -2156,6 +2156,53 @@ Earlier format/classifier results do not establish collection acceptance.
 Collection is implemented with its own evidence below. The earlier format-only
 record is historical; it does not substitute for collection verification.
 
+#### Release Band 8 Version Preparation (2026-10-24, America/Denver)
+
+Prepared CLI **0.1.37** in the crate manifest and Cargo-generated lockfile; the
+rebuilt local binary reports `agentpm 0.1.37`. The website status page now pairs
+**v0.1.37** with release date **2026-10-24**. SDK versions and the already
+published **0.1.36** APDS tolerance floor remain unchanged.
+
+Verification: offline CLI build, **18 passing** packaging/Python-resolution
+integration tests, workspace Clippy/Rust formatting, cross-repo uv pin/target
+agreement, policy documentation verification, website typecheck, targeted status
+page ESLint and Prettier checks. Only the CLI package version changed in
+`Cargo.lock`; no dependency upgrades were introduced. The recent full workspace
+baseline remains **1,193 passed, 5 ignored** from the Node correction.
+
+The operator requested deployment order **CLI → Registry → Web**. Wait for the
+required hosted checks, then the operator publishes the CLI tag/release, deploys
+the Registry, and deploys the website. The CLI release workflow retains its
+production resolver-mirror verification gate. Verify the Registry's new Python
+metadata contract before publishing/installing the dependency-bearing production
+example; its rollout remains unchecked. Version preparation is not evidence of
+tag publication, Homebrew/Scoop availability, or a production deployment.
+
+#### M12 Operator Manual Acceptance
+
+The operator confirmed **all M12 manual tests are complete and pass**, after
+rebuilding with the authorized Node packaging correction and resuming the guide.
+This includes the corrected required-entrypoint expectation: selected source
+under `__pycache__` remains preserved while correctly narrowing as installed
+state. The rebuilt Node result was shown explicitly with six unique members and
+no generated archive/temp member, retaining its selected dotenv/Git/environment
+content.
+
+Acceptance covers the full runbook: portable source/assets and both prepared
+dependency-bearing examples; accurate native/unknown/executable/link/state
+warnings; incidental omissions, required inputs and explicit overrides;
+expected failures and atomic preservation; quiet/strict/stderr behavior;
+loopback publish descriptors/uploaded members and no request on invalid
+packaging; and unchanged authored manifests/locks. This is operator-reported
+evidence, not an agent-executed real Registry publication or production rollout.
+
+Earlier pending-manual notes below are historical and superseded by this
+confirmation. Independent review and the initial updated four-target hosted
+runs were already confirmed. **Fresh normal CI and Resolver Contract success
+after the Node correction remains unconfirmed** and is the only remaining M12
+verification gate. Release Band 8 production publication/install/run checks stay
+separate and unchecked.
+
 #### M12 Operator-Confirmed Hosted Acceptance
 
 After the Windows fixture correction below, the operator confirmed normal CI
@@ -2204,7 +2251,7 @@ generated-output exclusion and deduplication keys assume normalized names.
 Source inspection of `1383c01^` confirms the relevant traversal/key logic
 predates M12. Node's absent compatibility descriptor and preserved dotenv/Git/
 environment content satisfy M12's unchanged-runtime boundary; the extra entries
-are an existing packaging defect, not intended archive contents. The runbook now
+are an existing packaging defect, not intended archive contents. The runbook
 initially recorded that limitation and kept this fixture unpublished. The
 operator then explicitly authorized fixing it before continuing manual testing.
 The correction/evidence below supersede that initial deferral; Python-specific
