@@ -160,6 +160,8 @@ fn handle(
     model_delay: Duration,
     model_status: u16,
 ) {
+    // read_line/read_exact below require blocking I/O, regardless of listener mode.
+    stream.set_nonblocking(false).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();

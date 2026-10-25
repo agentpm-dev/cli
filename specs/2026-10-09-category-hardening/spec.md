@@ -306,10 +306,11 @@ publishable/installable.
 
 **Stage 1 release handoff (updated 2026-10-22):** Release Band 5 records CLI **0.1.36**
 as the tolerance-release minimum for M4B's outdated-client error and package-detail
-upgrade guidance. Release Band 7 prepares that binary, superseding the original
-0.1.35 preparation target. The version and release metadata are not confirmation
-of publication. **M3A remains blocked from emitting `standard`** until the operator
-confirms that `v0.1.36` is actually published and records that confirmation in
+upgrade guidance, superseding the original 0.1.35 preparation target. Operator
+confirmed **v0.1.36 publication/installation on 2026-10-22**, and live Production
+first-use capture reports that CLI version. **M3A's publication prerequisite is
+now satisfied; its M1B/M2B dependencies and other acceptance requirements are
+not waived.** The publication record is in
 [`Stage 1 Release Band 5`](../2026-10-06-immediate-hardening/tasks.md#release-band-5-cli-authoring-and-messaging-quality).
 
 **REQUIRED, and sequenced before M3A.** The root schema is `additionalProperties: false`, so every CLI
@@ -1081,6 +1082,15 @@ The lockfile is the Manager's reproducibility record, not an APDS manifest. Stag
 Python resolution and new release integrity, and fixes forward-version rejection. Stage 2 should **prefer
 extending v4** with an effective standard identity plus origin rather than introducing a new lockfile major
 version as a reflex.
+
+**Stage 1 reader constraint:** M11B's v4 readers reject unknown structural fields,
+including optional additions to locked package/root entries. Retaining v4 under
+D06 does not by itself make these readers compatible with standard/origin fields.
+Before the APDS freeze, M5A must settle safe extension preservation versus an
+explicit minimum-CLI rollout, or justify a format bump under D06. See the
+[Stage 1 lockfile compatibility note](../2026-10-06-immediate-hardening/spec.md#21-lockfile-evolution).
+Do not remove strict field rejection without protecting read-modify-write and
+resolve-plan regeneration from losing unknown state or ignoring required semantics.
 
 Recommended conceptual locked entry (field names/placement flexible, not a guaranteed current serializer):
 

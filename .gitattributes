@@ -1,0 +1,2 @@
+# These are byte-compatibility snapshots, including on Windows checkouts.
+crates/agentpm-cli/tests/fixtures/locks/*.json text eol=lf

@@ -1,6 +1,9 @@
+pub mod artifact;
 pub mod client;
 pub mod error;
 pub mod models;
+pub mod python;
+pub mod target;
 pub mod types;
 
 pub use client::AgentPmClient;

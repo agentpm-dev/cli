@@ -1,6 +1,6 @@
 [package]
 name = "agentpm-cli"
-version = "0.1.36"
+version = "0.1.37"
 edition = "2024"
 
 [[bin]]
@@ -49,3 +49,6 @@ ureq = { version = "2.9", default-features = true } # simple HTTP for schema fet
 walkdir = "2.5.0"
 agentpm-sdk = { path = "../agentpm-sdk" }
 libc = "0.2.174"
+
+[build-dependencies]
+serde_json = "1"

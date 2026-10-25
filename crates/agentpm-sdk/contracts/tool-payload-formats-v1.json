@@ -1,0 +1,40 @@
+{
+  "type": "agentpm.tool-payload-formats.v1",
+  "text_groups": [
+    {"name": "Python source and notebook data", "suffixes": [".py", ".pyi", ".pyx", ".pxd", ".ipynb"]},
+    {"name": "Structured data and configuration", "suffixes": [".json", ".jsonl", ".ndjson", ".toml", ".yaml", ".yml", ".csv", ".tsv", ".ini", ".cfg", ".conf", ".properties", ".xml", ".in"]},
+    {"name": "Documentation and text", "suffixes": [".txt", ".md", ".markdown", ".mdx", ".rst", ".adoc", ".tex", ".bib"]},
+    {"name": "Web markup/styles and text templates", "suffixes": [".html", ".htm", ".css", ".scss", ".sass", ".less", ".svg", ".j2", ".jinja", ".jinja2", ".mustache", ".hbs"]},
+    {"name": "Queries and interface definitions", "suffixes": [".sql", ".graphql", ".gql", ".proto"]}
+  ],
+  "text_basenames": ["README", "LICENSE", "LICENCE", "NOTICE", "AUTHORS", "COPYRIGHT", "CHANGELOG", "HISTORY", "py.typed", ".env"],
+  "text_basename_prefixes": [".env."],
+  "text_metadata": {
+    "file_suffixes": [".egg-info"],
+    "directory_suffixes": [".egg-info"],
+    "basenames": ["PKG-INFO"]
+  },
+  "native_filenames": {
+    "suffixes": [".so", ".dylib", ".pyd", ".dll", ".exe", ".node", ".a", ".o", ".obj", ".lib", ".pyc", ".pyo"],
+    "basename_contains": [".so."]
+  },
+  "installed_state": {
+    "directory_basenames": [".venv", "venv", "site-packages", "dist-packages", "__pycache__"],
+    "marker_basenames": ["pyvenv.cfg"],
+    "metadata_directory_suffixes": [".dist-info"]
+  },
+  "collection": {
+    "any_basenames": [".git"],
+    "file_basenames": [".ds_store", "thumbs.db", "desktop.ini"],
+    "dotenv_basename": ".env",
+    "dotenv_prefix": ".env.",
+    "dotenv_exceptions": [".env.example"]
+  },
+  "binary_formats": [
+    {"name": "PNG", "suffixes": [".png"], "min_header_bytes": 8, "signatures": [{"offset": 0, "hex": "89504e470d0a1a0a"}]},
+    {"name": "JPEG", "suffixes": [".jpg", ".jpeg"], "min_header_bytes": 3, "signatures": [{"offset": 0, "hex": "ffd8ff"}]},
+    {"name": "WebP", "suffixes": [".webp"], "min_header_bytes": 12, "signatures": [{"offset": 0, "hex": "52494646"}, {"offset": 8, "hex": "57454250"}]},
+    {"name": "PDF", "suffixes": [".pdf"], "min_header_bytes": 5, "signatures": [{"offset": 0, "hex": "255044462d"}]},
+    {"name": "WOFF2", "suffixes": [".woff2"], "min_header_bytes": 4, "signatures": [{"offset": 0, "hex": "774f4632"}]}
+  ]
+}

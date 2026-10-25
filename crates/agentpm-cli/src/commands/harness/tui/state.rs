@@ -1725,6 +1725,7 @@ fn memory_operations_from_session(session: &HarnessSession) -> Vec<TuiMemoryOper
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::commands::harness::{ManagedMcpExportSurface, McpExportActivity};
     use crate::harness_plan::PreflightMcpExportSurface;
     use crate::harness_runtime::McpExportRuntimeSnapshot;
@@ -2054,6 +2055,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn process_is_alive(pid: u32) -> bool {
         unsafe { libc::kill(pid as i32, 0) == 0 }
     }

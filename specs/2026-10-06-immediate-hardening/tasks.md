@@ -505,7 +505,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [x] Verify all eight `init` kinds lint clean immediately.
 - [x] **Cross-stage, ship with this milestone's CLI release:** add `standard` to the manifest schema's root `properties` with a permissive shape so the field is *accepted and ignored*. Do not emit it, validate it, or require it — Stage 2 M3A owns emission. Rationale: the root is `additionalProperties: false`, so once Stage 2 publishes packages declaring `standard`, every CLI released before this change hard-fails `agentpm lint` (exit 1) and fails `agentpm new` inside `validate_generated_manifests_blocking`. Relax the root by **this one field only**; a misspelled top-level key must still be rejected. See Stage 2 `spec.md` §2 "Old-client forward compatibility" and Stage 2 M1A.1.
 - [x] Verify the `standard` field survives every manifest-rewriting path: `agentpm install <pkg>` write-back and `knowledge build` (which writes by default; there is no `--write` flag) must preserve it. Regression tests use `standard` plus one extra unknown key; Knowledge build uses a local schema override for the extra key so the bundled root stays closed. Keep `serde_json` pinned without `preserve_order`; alphabetized rewrites are expected and lose nothing.
-- [ ] Record the released CLI version carrying this tolerance change — Stage 2 M4B names it as the minimum CLI version in its outdated-client error. Release target: **0.1.36**, prepared in Release Band 7 and recorded in the Band 5 handoff below; actual publication remains unconfirmed. Stage 2 M3A must not emit `standard` until publication of **0.1.36** is confirmed.
+- [x] Record the released CLI version carrying this tolerance change — **0.1.36**, published/installed by operator confirmation on **2026-10-22** and verified by a live Production `cli_first_used` payload carrying `cli_version: 0.1.36`. Stage 2 M4B must name **0.1.36** as its minimum CLI floor. This satisfies M3A's publication prerequisite only, not its other dependencies or acceptance criteria.
 - [x] Refactor human lint rendering:
   - [x] semantic/domain errors first;
   - [x] suppress redundant parent oneOf/anyOf errors when covered by a more specific descendant/domain error;
@@ -540,7 +540,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [x] Add a reproducible operator runbook and disposable fixtures: `specs/2026-10-06-immediate-hardening/manual-tests/CLI_M8_MANUAL_TESTS.md` and `scripts/cli_m8_manual.py`.
 - [ ] Complete the operator walkthrough and record readability/unexpected-output notes in the runbook. Builder smoke checks do not replace this manual acceptance.
 
-Implementation and verification completed 2026-10-15; see `specs/2026-10-06-immediate-hardening/test-plan.md`, "Milestone 8 evidence". The schema tolerance is implemented. The designated first shipping tolerance version is now **0.1.36**, prepared in Release Band 7 on **2026-10-22**, superseding the original **0.1.35** preparation target. Publication confirmation remains open; neither earlier versions nor prepared metadata satisfy the Stage 2 compatibility gate.
+Implementation and verification completed 2026-10-15; see `specs/2026-10-06-immediate-hardening/test-plan.md`, "Milestone 8 evidence". The schema tolerance ships in **0.1.36**, published/installed by operator confirmation on **2026-10-22**, superseding the original **0.1.35** preparation target. Production first-use capture confirms the installed binary reports **0.1.36**; this is operator release evidence, not an independent GitHub/Homebrew publication audit.
 
 ## Milestone 9: CLI Error and Success Consistency
 > Scope note: make non-Harness CLI success/failure behavior feel like one coherent product by centralizing transport errors, correcting exit codes, normalizing sibling inspect output, and cleaning up low-level path/filesystem leaks. This milestone does not alter Harness output, introduce new package/runtime capabilities, change machine-readable contracts beyond explicitly specified fixes, or absorb the Python portability work from later milestones.
@@ -606,19 +606,18 @@ Implementation and automated verification completed 2026-10-16; see "Milestone 9
 Covered milestones: 8-9.
 This gives us trustworthy scaffolding, lint output that explains what is actually wrong (including the `oneOf`/`anyOf` cases that currently produce unusable messages), and consistent error/success wording and exit codes across non-Harness commands. Ship it before the dependency/release work because that work adds new failure modes to the same messaging surface. Deploy the registry's opt-in strict install-token handling before or with the CLI: the new client recognizes its existing 401 contract, but cannot distinguish rejected credentials from anonymous not-found responses sent by an older registry.
 
-**🚦 On release, record the published CLI version — this band carries a cross-stage gate. The designated tolerance-release floor is now CLI 0.1.36, prepared in Release Band 7; publication is still unconfirmed.** Milestone 8 added the permissive root `standard` field so clients carrying that change tolerate manifests that declare it. That tolerance only exists for users once a CLI carrying it ships, so **0.1.36** becomes the **minimum CLI version** for the whole APDS rollout once actually published. Stage 2 emission cannot proceed until that publication is confirmed and recorded:
+**🚦 Published CLI 0.1.36 is the APDS minimum floor (operator-confirmed 2026-10-22).** Milestone 8 added the permissive root `standard` field so clients carrying that change tolerate manifests that declare it. Operator publication/installation confirmation and a live Production first-use payload now satisfy the cross-stage publication prerequisite. Stage 2 M3A's other dependencies and acceptance criteria remain unchanged:
 
 - [x] Original preparation: CLI **0.1.35** (`v0.1.35`) and matching website status date **2026-10-16**. This historical preparation target is superseded by **0.1.36** / **2026-10-22** under Release Band 7; it is not the APDS minimum floor or evidence that the tolerance change shipped.
-- [x] Record CLI **0.1.36** as the designated tolerance-release version carrying M8 and hand publication confirmation to the operator. This records the target only, not an already-published release. M8's actual-publication task remains unchecked.
-- [x] Hand **0.1.36** to the Stage 2 track as the designated tolerance-release floor: recorded in Stage 2 `spec.md` and M1A.1/M3A/M4B in `tasks.md`. **Stage 2 M4B** must name this version in its outdated-client error, and **Stage 2 M3A remains blocked from emitting `standard` until publication of 0.1.36 is confirmed.**
+- [x] Record CLI **0.1.36** as the published tolerance-release version carrying M8. Operator confirmed publication/installation on **2026-10-22**; the installed Homebrew-path binary reports **0.1.36** and a live Production first-use event carries that version. M8's publication task is now complete.
+- [x] Hand **0.1.36** to the Stage 2 track as the published tolerance-release floor: recorded in Stage 2 `spec.md` and M1A.1/M3A/M4B in `tasks.md`. **Stage 2 M4B** must name this version in its outdated-client error. **M3A's publication prerequisite is satisfied; no other Stage 2 prerequisite is waived.**
 
 Release handoff updated **2026-10-22** to use **0.1.36**, superseding the
-**2026-10-16** target of **0.1.35**. Actual publication/deployment is still
-operator-owned and unconfirmed. Follow Release Band 7's gate: deploy the
-registry, docs and Privacy Policy first, then publish CLI `v0.1.36`, then deploy
-the website with its matching status marker. Once the CLI release is confirmed,
-complete the publication record in M8 and
-Stage 2 M1A.1's release task; until then the Stage 2 emission gate stays closed.
+**2026-10-16** target of **0.1.35**. Operator confirmed backend/web deployment
+before CLI publication, then published/installed **0.1.36** and verified
+Production first-use capture. M8 and Stage 2 M1A.1's publication records are
+complete on that evidence. Remaining Band 7 privacy/Harness/dashboard checks
+do not imply that all Stage 2 work is accepted or implemented.
 
 Publishing a package that declares `standard` before this CLI is released makes `agentpm lint` hard-fail (exit 1) and `agentpm new` fail inside `validate_generated_manifests_blocking` for every user on an older build — and published packages are immutable, so it cannot be walked back.
 
@@ -667,9 +666,9 @@ Publishing a package that declares `standard` before this CLI is released makes 
   - [x] are people arriving?; Arrivals panel verified with `landing_viewed` unique users / total count, last 7 days, and `environment = development`.
   - [x] do they reach docs/explore/package pages?; Discovery panel verified with all four discovery events as total counts, last 7 days, and `environment = development`.
   - [x] do signup starts connect to account creation?; Saved Signup funnel verified with one person completing both steps (100%), Sequential order, and a 7-day conversion window.
-  - [ ] do they install/use the CLI?; Deferred reference: owned by the explicit dashboard follow-up tasks in Milestone 10B; the M10A availability card is present.
+  - [x] do they install/use the CLI?; Completed by Milestone 10B: operator confirmed live Development and Production CLI adoption charts on 2026-10-22.
   - [x] do installs complete?; Real local-registry install captured and Registry use panel saved with completion-event total counts.
-  - [ ] do Harness runs start/complete?; Deferred reference: owned by the explicit dashboard follow-up tasks in Milestone 10B; the M10A availability card is present.
+  - [x] do Harness runs start/complete?; Completed by Milestone 10B: operator confirmed live Development and Production per-run Harness activity charts on 2026-10-22.
   - [x] do users publish?; Real local-only publish completed and Registry use panel saved with `publish_completed` total count.
   - [x] do users start checkout/subscribe?; Operator confirmed test checkout and conversion events, then saved Billing intent and conversion with the three expected steps, last 7 days, and `environment = development`. Screenshot shows one person reaching subscription creation at 100% conversion.
   - [x] are users giving feedback/stars?; Engagement panel verified with `package_starred`, `package_unstarred`, and `feedback_submitted` total counts, last 7 days, and `environment = development`.
@@ -691,9 +690,9 @@ Implementation/offline verification and live operator evidence are recorded in
 `test-plan.md`. Milestone 10A implementation and scoped live operator acceptance
 are complete. The unresolved customer-portal redirect and invoice-event
 `plan: unknown` attribution limitation remain documented residual risks, not
-fixed or verified by the analytics checks. CLI/Harness measurement remains
-unchecked and deferred to Milestone 10B; dashboard availability cards explicitly
-state that it is pending rather than imply zero usage.
+fixed or verified by the analytics checks. CLI/Harness measurement was deferred
+to Milestone 10B and is now verified in both projects; operator also confirmed
+the availability card's post-release update on 2026-10-22.
 
 ## Release Band 6: Product Analytics, Billing Funnel, and Feedback
 Covered milestones: 10A.
@@ -715,11 +714,11 @@ This gives us the small deliberate analytics vocabulary, authoritative server-si
   - [x] `cli_first_used`;
   - [x] `harness_started`;
   - [x] `harness_completed`.
-- [ ] Extend the existing Early Product Funnel dashboard in Development and Production with the two questions deferred from M10A; do not create a separate dashboard:
+- [x] Extend the existing Early Product Funnel dashboard in Development and Production with the two questions deferred from M10A; do not create a separate dashboard:
   - [x] Add a CLI adoption chart using `cli_first_used` and unique anonymous installations, consistent with the first-use semantics chosen below. Do not label it as a count of all CLI commands or package installs.
   - [x] Add a Harness activity chart showing `harness_started` and `harness_completed` event counts. Label it as **per-run** activity and break it down by surface, so TUI sessions and headless invocations are not silently summed as if equivalent. Note on the chart that a missing completion is an upper bound on failures, not a failure rate.
-  - [ ] Save the correct environment filters in each project's new insights and verify their counts with real CLI/Harness test activity in Development, then live capture after the Release Band 7 production rollout. Do not inject fake production events to populate charts.
-  - [ ] Update the M10A availability card after local telemetry is released and verified; keep the distinction between registry completions and local execution, and explain that missing/opted-out telemetry is not evidence of zero usage.
+  - [x] Save the correct environment filters in each project's new insights and verify their counts with real CLI/Harness test activity in Development, then live capture after the Release Band 7 production rollout. Do not inject fake production events to populate charts.
+  - [x] Update the M10A availability card after local telemetry is released and verified; keep the distinction between registry completions and local execution, and explain that missing/opted-out telemetry is not evidence of zero usage.
 
 Development progress (operator-confirmed 2026-10-22): both new insights are
 saved in Early Product Funnel with `environment = development` and `source = cli`.
@@ -730,8 +729,11 @@ Operator also confirmed both copied insights appear on the existing Production
 dashboard. Production screenshots verify saved `environment = production` and
 `source = cli` filters on both insights, correct aggregations, and the Harness
 surface breakdown/caveat. Operator confirmed Production dashboard public sharing
-remains disabled. Post-release capture and availability-card updates remain
-pending; the checklist is not yet complete.
+remains disabled. After publishing CLI 0.1.36, operator confirmed real Production
+first-use capture and a TUI start/completion pair from an actual Agent in
+`agentpm-examples`, with terminal outcome `handed_off`. Operator also confirmed
+both Production charts reflect adoption and the runs. Operator confirmed the
+availability-card update on 2026-10-22; the dashboard checklist is complete.
 
 - [x] Decide whether `cli_first_used` is once per anonymous installation or once per CLI version; prefer once per installation unless product analysis requires version-level adoption. **Chosen: once per installation, best-effort attempt.**
 - [x] Record the `harness_started`/`harness_completed` contract before instrumenting, since redefining an event's meaning later invalidates the chart's history:
@@ -775,22 +777,25 @@ pending; the checklist is not yet complete.
 
 Implementation and local verification: see `test-plan.md` and
 `manual-tests/CLI_M10B_MANUAL_TESTS.md`. Development capture and both dashboards'
-configuration are verified as recorded above; real Production capture and the
-availability-card update remain open until rollout. Deploy the API/docs/Privacy
-Policy before distributing the CLI. Release preparation is tracked below and
-does not itself publish, deploy, or close Release Band 7.
+configuration and real Production capture/counts are verified as recorded above.
+Operator confirmed the availability-card update and public Privacy Policy
+spot-check, including minimal CLI telemetry and both opt-out methods, on
+2026-10-22. Backend/web deployment preceded CLI publication. Milestone 10B and
+Release Band 7 acceptance are complete on the recorded operator evidence.
 
 ## Release Band 7: CLI Telemetry and Privacy Contract
 Covered milestones: 10B.
 This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a strict event/property allowlist, working opt-out mechanisms, the matching Privacy Policy update, and CLI adoption / Harness activity charts in the existing Early Product Funnel dashboard. It is its own band for two reasons: it ships inside the Rust binary rather than on a web deploy, and it has a legal gate. Collection must not go out ahead of disclosure, and a partially implemented allowlist or opt-out is a privacy defect rather than an incomplete feature, so this band is strictly all-or-nothing.
 
 - [x] Prepare CLI **0.1.36** (`v0.1.36`) and matching website status-page date **2026-10-22**, keeping SDK versions unchanged. Crate/lockfile agree; binary reports `agentpm 0.1.36`. Verification is recorded in `test-plan.md`.
-- [ ] Deploy the Registry/API, docs and Privacy Policy; confirm the disclosure is public before publishing the telemetry-enabled CLI.
-- [ ] Publish CLI **0.1.36**, then deploy the website with the matching status marker.
-- [ ] Verify real Production CLI/Harness capture and chart counts, then update the availability card and close the remaining M10B dashboard acceptance.
+- [x] Deploy the Registry/API, docs and Privacy Policy; confirm the disclosure is public before publishing the telemetry-enabled CLI. Operator confirmed backend/web deployment before CLI publication and completed the public disclosure spot-check on 2026-10-22.
+- [x] Publish CLI **0.1.36** and deploy the website with the matching status marker. Operator confirmed backend/web deployment before publishing/installing the CLI on **2026-10-22**; installed version and live Production first-use payload both report **0.1.36**.
+- [x] Verify real Production CLI/Harness capture and chart counts, then update the availability card and close the remaining M10B dashboard acceptance. Operator confirmed all remaining checks on 2026-10-22.
 
 ## Milestone 11A: Python Dependency Declaration and Resolution
-> Scope note: establish what a new-format Python Tool may declare and how AgentPM resolves it to exact portable state. Owns the canonical AgentPM target identifier, the `agent.json` dependency surface and its lint rules, the fixed `PythonResolution` v1 contract, and AgentPM-managed `uv` resolution. Produces resolution state but does not yet persist it in `agent.lock` (11B) or install it into a runtime environment (11C).
+> Scope note: establish what a new-format Python Tool may declare and how AgentPM resolves it to exact portable state. Owns the canonical AgentPM target identifier and its single source of truth, the `agent.json` dependency surface and its lint rules, the fixed `PythonResolution` v1 contract including distribution digests, and the full AgentPM-managed `uv` story — acquisition, pinning, verification, caching, override, and the checked-in pin-table generator. Produces resolution state but does not yet persist it in `agent.lock` (11B) or install it into a runtime environment (11C).
+>
+> This milestone **owns resolver acquisition for the whole stage**. Milestone 11C and Milestone 15 both provision Python environments through the same managed binary; neither re-implements acquisition, discovery, or verification. Build the acquisition surface here as a reusable component so the install path calls it rather than duplicating it.
 >
 > This milestone **owns the canonical AgentPM target identifier and current-target detection**, because Milestone 11C keys the managed Python environment by consumer target. Milestone 12 consumes the same vocabulary for payload classification; Milestones 13, 15, and 16 consume it for artifact storage, selection, and the CI matrix.
 >
@@ -798,80 +803,267 @@ This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a st
 > - `runtime.version` is currently enforced as a minimum, not an exact interpreter pin; retain that contract.
 > - The new portable resolution must not capture only the publisher's selected wheel/architecture. Exact versions may need environment markers/conditional branches.
 > - Target IDs should follow the Rust target-triple vocabulary already used by `agentpm/.github/workflows/release.yml`, and must distinguish relevant ABI/libc rather than only OS + CPU. Do not reuse `client.os`/`client.arch` from the publish descriptor — those describe the publishing machine and are telemetry only.
+> - **The `uv` acquisition strategy is decided, not open.** See spec §19 "AgentPM-managed `uv` acquisition". Pinned standalone binary, AgentPM-controlled immutable storage, compiled-in SHA-256, `AGENTPM_UV_PATH` override at exact pinned version, no PATH `uv`, no bundling. Do not implement a second architecture or a PATH-discovery fallback.
+> - **`PythonResolution` v1 records distribution digests.** This is fixed in v1 because the contract is frozen here and Stage 2's APDS v1.0.0 freeze is gated on it; digests cannot be added additively later.
 
-- [ ] Define canonical AgentPM target identifier representation, including:
-  - [ ] `any`;
-  - [ ] `aarch64-apple-darwin`;
-  - [ ] `x86_64-apple-darwin`;
-  - [ ] `x86_64-unknown-linux-gnu`;
-  - [ ] `x86_64-pc-windows-msvc`;
-  - [ ] room for future supported targets/ABI variants.
-- [ ] Add deterministic current-target detection/mapping rather than treating raw `std::env::consts::{OS,ARCH}` as the compatibility ID.
-- [ ] Extend Tool runtime schema with optional Python `dependencies` when `runtime.type == "python"`. **Cross-stage note:** `$defs/runtime` is `additionalProperties: false, required: [type, version]`, so this is a conformance-affecting change and Stage 2's APDS v1.0.0 freeze (Stage 2 M1B) is gated on it. Flag the merge to the Stage 2 track.
-- [ ] Extend all relevant typed runtime representations, including runner-side `RuntimeDecl`, so the new field is understood consistently.
-- [ ] Reject `dependencies` for Node Tools.
-- [ ] Add Python requirement syntax validation.
-- [ ] Add deterministic duplicate/conflict validation.
-- [ ] Implement the fixed `PythonResolution` v1 contract:
-  - [ ] `type` exactly `agentpm.python-resolution.v1`;
-  - [ ] `python.requires` as the normalized runtime Python constraint;
-  - [ ] `requirements: string[]` containing normalized authored root requirements;
-  - [ ] `packages[]` containing normalized distribution `name`, exact `version`, and optional normalized PEP 508 `marker`;
-  - [ ] allow repeated normalized package names only when distinguished by mutually exclusive marker conditions needed for portable resolution;
-  - [ ] normalize distribution names deterministically (PEP 503-style lowercase/hyphen normalization preferred);
-  - [ ] sort `requirements` deterministically;
-  - [ ] sort `packages` by normalized `(name, marker-or-empty, version)`;
-  - [ ] do not include wheel filenames/tags, publisher target/architecture, interpreter path, local paths, or environment IDs;
-  - [ ] do not require a full parent/child dependency graph in v1;
-  - [ ] digest canonical `PythonResolution` bytes with RFC 8785/JCS when producing `pythonResolutionDigest`.
-- [ ] Use this exact typed object consistently in:
-  - [ ] `LockedPackage`;
-  - [ ] resolve/install DTOs and `ResolvePlan`;
-  - [ ] publish/build descriptor;
-  - [ ] artifact inspection metadata;
-  - [ ] release-manifest digest input.
-- [ ] Do not lock publisher-selected wheel filenames or publisher architecture in `PythonResolution`.
-- [ ] Integrate AgentPM-managed `uv`:
-  - [ ] pin/version-check the resolver AgentPM uses;
-  - [ ] choose a managed acquisition strategy (bundled or downloaded/cached) rather than requiring the user's project to manage uv;
-  - [ ] surface a clear error if the managed resolver cannot be acquired/run.
-- [ ] Do not make `requirements.txt`, `pyproject.toml`, Poetry, or uv project lockfiles authoritative in Stage 1.
-- [ ] Resolve declared dependencies to exact portable state before publishing:
-  - [ ] update/write AgentPM lock state;
-  - [ ] fail publish if manifest declarations and resolved state disagree/stale.
+- [x] Define canonical AgentPM target identifier representation, including:
+  - [x] `any`;
+  - [x] `aarch64-apple-darwin`;
+  - [x] `x86_64-apple-darwin`;
+  - [x] `x86_64-unknown-linux-gnu`;
+  - [x] `x86_64-pc-windows-msvc`;
+  - [x] room for future supported targets/ABI variants.
+- [x] Give the supported-target list **one checked-in machine-readable source of truth**. Today it exists only as the four-entry YAML matrix in `agentpm/.github/workflows/release.yml`, which is not readable by the CLI, by tests, or by the resolver pin-table generator:
+  - [x] define the canonical list in one checked-in location;
+  - [x] have the canonical target enum, the resolver pin table, and `release.yml`'s matrix derive from it or validate against it;
+  - [x] add a check that **fails** when the release matrix and the resolver pin table disagree, so adding a CLI target cannot silently ship a platform whose Python provisioning is impossible.
+- [x] Add deterministic current-target detection/mapping rather than treating raw `std::env::consts::{OS,ARCH}` as the compatibility ID.
+- [x] Extend Tool runtime schema with optional Python `dependencies` when `runtime.type == "python"`. **Cross-stage note:** `$defs/runtime` is `additionalProperties: false, required: [type, version]`, so this is a conformance-affecting change and Stage 2's APDS v1.0.0 freeze (Stage 2 M1B) is gated on it. Flag the merge to the Stage 2 track.
+- [x] Extend all relevant typed runtime representations, including runner-side `RuntimeDecl`, so the new field is understood consistently.
+- [x] Reject `dependencies` for Node Tools.
+- [x] Add Python requirement syntax validation.
+- [x] Add deterministic duplicate/conflict validation.
+- [x] Implement the fixed `PythonResolution` v1 contract:
+  - [x] `type` exactly `agentpm.python-resolution.v1`;
+  - [x] `python.requires` as the normalized runtime Python constraint;
+  - [x] `requirements: string[]` containing normalized authored root requirements;
+  - [x] `packages[]` containing normalized distribution `name`, exact `version`, required non-empty `hashes[]`, and optional normalized PEP 508 `marker`;
+  - [x] allow repeated normalized package names only when distinguished by mutually exclusive marker conditions needed for portable resolution;
+  - [x] normalize distribution names deterministically (PEP 503-style lowercase/hyphen normalization preferred);
+  - [x] sort `requirements` deterministically;
+  - [x] sort `packages` by normalized `(name, marker-or-empty, version)`;
+  - [x] sort `hashes` lexicographically within each package entry;
+  - [x] do not include wheel filenames/tags, publisher target/architecture, interpreter path, local paths, or environment IDs;
+  - [x] do not require a full parent/child dependency graph in v1;
+  - [x] digest canonical `PythonResolution` bytes with RFC 8785/JCS when producing `pythonResolutionDigest`.
+- [x] Record distribution digests for every locked version:
+  - [x] each digest is `sha256:` plus 64 lowercase hex characters, never truncated;
+  - [x] `hashes[]` covers **every published distribution of that exact version any supported AgentPM target could install** — applicable wheels plus the sdist where one exists — not the publisher's selected wheel;
+  - [x] do **not** key digests by target, filename, or wheel tag; any one listed digest matching is acceptance, which is what keeps the object target-independent;
+  - [x] enumerate distributions across the full supported-target set, not only the publishing machine's — under-enumeration produces a lock that installs locally and fails on other platforms;
+  - [x] **fail resolution** if any resolved version has no retrievable digest rather than emitting an empty/omitted `hashes` array;
+  - [x] add a lint/validation rule rejecting a `PythonResolution` with any package entry lacking digests, so an unverifiable resolution cannot reach `agent.lock` or a release.
+- [x] Define the object once as the single shared type, so every later consumer reuses it rather than restating its shape. **Propagating it into `LockedPackage`, resolve/install DTOs, the publish descriptor, artifact metadata, and the release-manifest digest input moved to Milestone 11B**, matching this milestone's scope note that 11A produces resolution state without persisting it. Band 8 acceptance for those surfaces is judged in 11B, not here.
+- [x] Do not lock publisher-selected wheel filenames or publisher architecture in `PythonResolution`.
+- [x] Integrate AgentPM-managed `uv` as the pinned internal Python dependency engine:
+  - [x] pin one exact `uv` version as a compiled-in constant;
+  - [x] version-check the binary before every execution, not only at download;
+  - [x] never discover or fall back to a PATH-installed `uv`;
+  - [x] acquire lazily — nothing downloads until the first operation that actually needs the dependency engine.
+- [x] Implement acquisition in this exact resolution order:
+  - [x] `AGENTPM_UV_PATH` set → validate the binary reports the pinned version, then use it;
+  - [x] managed binary present in cache → validate digest/version, then use it;
+  - [x] target not in the pin table → fail with the unsupported-target error **before any network access**;
+  - [x] otherwise download from AgentPM storage → verify SHA-256 against the compiled-in pin → cache → use.
+- [x] Cache the binary per user, per `uv` version, per target, outside any project directory (for example `~/.cache/agentpm/runtimes/uv/<version>/<target>/uv`) so one download serves every project and a version bump cannot overwrite a binary an older CLI still pins.
+- [x] Serve mirrored binaries from AgentPM's **existing** registry object storage / presigned-URL distribution path:
+  - [x] Reserve the `runtimes` namespace/storage-key segment server-side before namespace creation; reject case/whitespace and path-style bypasses without changing existing `agentpm` rejection behavior.
+  - [x] do not teach the CLI to parse GitHub Releases;
+  - [x] do not stand up a new CDN hostname or separate download service for this;
+  - [x] honor standard proxy environment variables on this download. **Note the deliberate contrast with telemetry**, which uses a no-proxy client: telemetry must not depend on corporate network config, whereas resolver acquisition must work *through* it;
+  - [x] set explicit connect/idle timeouts rather than inheriting `reqwest` defaults.
+  - [x] Gate CLI release on the deployed Registry's version/target download routes and SHA-256 verification of every mirrored binary, rather than relying on a manual cross-repo inventory comparison.
+- [x] Record the **append-only retention rule** for mirrored resolver artifacts where storage lifecycle policy actually lives, not only in the spec. Published CLI versions pin older `uv` versions permanently, so deleting a mirrored binary retroactively breaks every CLI release that pinned it. Operator confirmed the scoped delete/conditional-write policies in both real buckets; lifecycle review and deployment mapping are recorded beside the Registry S3 integration.
+- [x] Add a checked-in pin-table generator (script or `xtask`) — the digest table must not be hand-maintained:
+  - [x] accept the desired `uv` version as input;
+  - [x] download the upstream artifacts for every supported AgentPM target;
+  - [x] verify the upstream GitHub Artifact Attestation against repository `astral-sh/uv`;
+  - [x] Gate adoption on real native execution for every supported target, checking the production lock/export commands and portable pylock output before any upload or pin-table write; keep ordinary tests offline and reject missing/stale cross-platform evidence.
+  - [x] Execute the hosted native workflow and validate all four downloaded reports against the current pin and smoke contract (run `40043503095`, 2026-10-23).
+  - [x] compute SHA-256 independently rather than trusting an upstream checksum file;
+  - [x] upload the verified immutable bytes to AgentPM storage (operator completed dev and production uv 0.13.5 ingestion);
+  - [x] write the generated, source-controlled pin table (version + per-target `sha256`);
+  - [x] **fail** if any supported AgentPM target is missing, so a bump cannot ship a partial table;
+  - [x] mark the output as generated so it is never edited by hand — its integrity rests on code review and git history.
+- [x] Implement `AGENTPM_UV_PATH` in this milestone, not as a later advanced option — without it an airgapped install has no path forward:
+  - [x] enforce **exact** equality with the pinned `uv` version;
+  - [x] on mismatch, error (never warn) and name the exact required version so an operator can provision it;
+  - [x] document it as serving airgapped environments, enterprise images, and preprovisioned CI images **that provision AgentPM's pinned version** — explicitly not as a way to adopt whatever `uv` an image already contains.
+- [x] Make resolver failures distinguishable in error text — these are five different operator problems with five different fixes:
+  - [x] unsupported target (names supported targets and the override, no network attempted);
+  - [x] network/proxy failure reaching AgentPM storage;
+  - [x] downloaded-bytes digest mismatch;
+  - [x] `AGENTPM_UV_PATH` version mismatch;
+  - [x] resolver executed but failed.
+- [x] Do not make `requirements.txt`, `pyproject.toml`, Poetry, or uv project lockfiles authoritative in Stage 1.
+- [x] Resolve declared dependencies to exact portable state before publishing, and block publication that cannot yet retain it. **Writing that state into `agent.lock` and gating publish on lock freshness moved to Milestone 11B**, which owns lock persistence; 11A resolves, records the author-side input fingerprint, and refuses to publish a dependency-bearing Tool at all until 11B can persist the result.
+- [x] Implement re-resolution/staleness as a recorded input fingerprint rather than a fuzzy comparison:
+  - [x] fingerprint covers normalized authored root requirements, normalized `python.requires`, the supported target set, and **the `uv` version that produced the resolution**;
+  - [x] a valid matching resolution is reused — `agentpm publish` alone does not trigger re-resolution;
+  - [x] a missing/stale fingerprint, or an explicit refresh, triggers re-resolution;
+  - [x] a resolver pin bump therefore invalidates stored resolutions. Omitting the `uv` version from the fingerprint lets a lock mix entries produced by different resolver versions with no way to tell, which defeats the only guarantee the pin provides.
+
+M11A implementation status (2026-10-22): declaration/lint, the portable shared
+Rust type, target vocabulary, resolver acquisition, structured universal
+resolution, canonical digesting and input-fingerprint reuse/refresh are
+implemented. `uv` is pinned to **0.13.5**, generated from upstream artifacts whose
+GitHub attestations were verified for all four supported targets. Release CI and
+the target enum derive from `crates/agentpm-sdk/platforms/targets.json`; pin-table
+coverage is checked in normal CI and before release. See `test-plan.md` for
+verification evidence.
+
+Review hardening: resolver adoption now requires native execution evidence for
+every supported binary, bound to its exact SHA-256/version/target and the current
+smoke contract. `Resolver Contract` runs on relevant pin/contract PR changes or
+manual dispatch; it does not upload to S3 or update either repo. The production
+CLI and real smoke use the same checked-in command arguments, while offline
+fakes independently enforce those arguments. The macOS arm64 real ingestion
+smoke passed locally. Subsequently, the user reported successful CI and Resolver
+Contract runs on the PR; all four downloaded native reports from run
+`40043503095` were locally validated against uv 0.13.5, every executable pin,
+the current smoke contract and portable output checks on 2026-10-23. The hosted
+native-verification gate is satisfied; the later storage progress is recorded below.
+See `test-plan.md` for the run link and evidence.
+
+Follow-up review hardening: the CLI release workflow now checks the deployed
+Registry inventory and actual mirrored bytes before builds/assets, without
+private backend-repo access. Missing/inaccessible mirrors (HTTP 403/404), other
+HTTP service failures and transport/proxy failures have distinct diagnostics.
+Plain dependency-bearing publication fails before resolver acquisition, even on
+a cold cache or with `--refresh-python`. The graph-free v1 contract's coverage
+check is explicitly root-only; parser tests preserve conditional transitives and
+the native adoption fixture rejects a missing Windows-only transitive, without
+claiming that general transitive closure can be proved without dependency edges.
+
+Scope boundary: the unchecked lock/DTO/build/inspection/release-manifest wiring
+above belongs to 11B and later owning milestones, per this milestone's explicit
+scope note. No v4 lock writes or managed Python environment installation were
+added. `publish --dry-run` prepares/reuses a typed author-side resolution under
+`target/agentpm/python-resolutions/`; `--refresh-python` refreshes it. Live
+dependency-bearing publication is deliberately blocked before upload until
+portable lock/release integration exists, rather than publishing declarations
+whose exact resolution would be discarded. Legacy publication remains unchanged.
+
+Operator progress (2026-10-23): uv 0.13.5 ingestion completed in both
+`agentpm-dev-tools` and `agentpm-tools` under `tools/runtimes/uv/`. The operator
+saved scoped delete protection and create-only write requirements in both bucket
+policies, and supplied matching lifecycle rules with no current-object expiration
+or archival transitions under `tools/`. The local Registry mirror check verified
+all four binaries. An initial production probe returned 404 before deployment;
+the operator subsequently shared a successful probe against
+`https://api.agentpackagemanager.com`, verifying uv 0.13.5 downloads and pinned
+digests for all four targets. Production mirror delivery is accepted. This is
+not a CLI release or an independent deployment/build audit. Namespace auditing
+was confirmed by the user.
+The deployment/retention mapping is recorded in
+`agentpm-api/app/tools/domain/tools/RESOLVER_STORAGE.md`.
+
+The operator confirmed the individual-command manual walkthrough in
+`manual-tests/CLI_M11A_MANUAL_TESTS.md` passed on 2026-10-23, including the local
+reserved-namespace check. Its completion record is checked on that confirmation.
+Pasted CLI output additionally verifies portable resolution, changed-input cache
+invalidation, deliberate engine failure without overwriting the valid record,
+and successful recovery. With production mirror delivery also verified, M11A
+acceptance is complete; lock persistence/publication and managed environments
+remain in their later owning milestones.
+
+Cross-stage handoff: optional Python `runtime.dependencies` changes the closed
+manifest schema. Stage 2 M1B now has a working-tree handoff note; its requirement
+to inspect the **merged** schema/type/tests remains unchecked. No APDS freeze,
+Tool scaffold change, Node/Python SDK change or version bump is claimed.
 
 ## Milestone 11B: Lockfile Evolution and Forward Compatibility
-> Scope note: persist Milestone 11A resolution state in `agent.lock` and make the lockfile safe to evolve. Owns the `LockedPackage` shape, content-derived version selection, the forward-version guard, resolve/install DTO plumbing so regeneration cannot erase state, and the duplicated `PackageKind` reconciliation.
+> Scope note: persist Milestone 11A resolution state in `agent.lock` and make the lockfile safe to evolve. Owns the `LockedPackage` shape, content-derived version selection, the forward-version guard, resolve/install DTO plumbing so regeneration cannot erase state, the duplicated `PackageKind` reconciliation, **propagation of the Milestone 11A `PythonResolution` type into every remaining contract surface**, and **lifting the M11A block on publishing dependency-bearing Tools**. Milestone 11A defined and validated the type and deliberately refused to publish declarations it could not retain; this milestone is where the resolution reaches the lock, the DTOs, the publish descriptor, artifact metadata, and the release-manifest digest — and therefore where dependency-bearing publication becomes legal.
 >
 > Split from 11A because the forward-version guard is a standalone correctness fix with value independent of Python work: today `lockfile_version` is not consulted before untagged deserialization, unknown fields are silently ignored, and an older CLI can read a future lock and rewrite it lossily. That is worth shipping on its own merit.
 >
 > Implementation notes:
 > - Fix the forward-compatibility hazard **before** writing any v4 data.
-> - Plain `agentpm install` fully regenerates `agent.lock` from the server resolve plan. New Python resolution state must therefore flow through the resolve DTO/plan or it will be erased.
+> - Plain `agentpm install` fully regenerates `agent.lock` from the server resolve plan. **Consumer-side** Python resolution state must therefore flow through the resolve DTO/plan or it will be erased.
 > - Keep one logical locked package entry per `kind:name@version`; target selection is local machine state, not source-controlled lock state.
+> - **`agent.lock` takes on a second role in this milestone, and the container is decided — do not re-open it during implementation.** Until now the lock has been an install output. Writing the author's own pre-publish resolution into it makes it also a record of what this project *is*, which is a different role from what it *depends on*. The two must not share a container:
+>   - **consumer role** — "this project installed Tool X@1.2.3, whose resolution is R" → `LockedPackage.python_resolution`, projected from the resolve plan, regenerated on every install;
+>   - **author role** — "this project *is* Tool X, and its own dependencies resolve to R" → the **local-root lane**, alongside the Milestone 11A input fingerprint.
+> - The author resolution cannot go in `packages`, for two independent reasons. `lock_from_plan` (`crates/agentpm-cli/src/semver/types.rs:379`) builds `packages` into a fresh `BTreeMap` from `plan.items` alone, and an unpublished local release can never come back from the server, so the entry would be erased by the next `agentpm install`. And `LockedPackage.integrity` is the logical release digest, which does not exist before the release does — a self-describing entry would need a placeholder for a required field. Do not create a synthetic `LockedPackage` for the project itself.
+> - **There is no local Tool root today, and the current fallback mislabels one.** `LockRoot` has exactly four variants — `LocalAgent`, `RegistryAgent`, `LocalSkill`, `RegistrySkill` — and `build_lock_roots` (`crates/agentpm-cli/src/commands/install.rs:762-776`) branches only on `kind == "skill"`, sending everything else to `LockRoot::LocalAgent` under key `local:agent` with name defaulting to `"local-agent"`. A `kind: tool` project is therefore already recorded as a local *agent*. This milestone needs an explicit local-Tool root representation; adding one is also a small correctness fix, not only new structure.
+> - **Preservation across regeneration must be deliberate.** Full install reconstructs both `packages` and `roots`, so merely adding fields to the root type still loses them — nothing in `agent.json` can regenerate a resolution. Install must carry the matching local project's resolution and fingerprint forward. The seam already exists and is already load-bearing: `build_updated_lock` (`install.rs:450`) receives `existing_lock` and already merges from it on the targeted-install path, and `lock_from_packages_and_roots` is already imported for that purpose. Only the `spec.is_none()` full-regeneration branch discards it. This does not weaken the "lock mirrors the resolve plan" invariant, which only ever applied to `packages`.
+> - **Matrix builds share one prepared resolution; they do not each resolve.** Milestone 16's fan-in rejects a release whose matrix jobs disagree on the Python resolution digest, and independent resolution against a live index cannot guarantee agreement — one upstream release of an unpinned transitive between the first and last job is enough to break the build. A committed lock is the chosen mechanism because it also keeps a dependency change visible as a reviewable diff and keeps a local publish and a CI publish of the same commit producing the same resolution. A prep job distributing one resolution to every matrix job would also work mechanically; it is rejected because it makes the resolution invisible to review and reproducible only inside CI.
+> - The M11A publication block exists in **two** places — the CLI `bail!` in `publish.rs` and the registry's `publish:init` rejection of non-empty `runtime.dependencies`. Both must lift in this milestone, and the registry side must not lift before the lock path actually persists resolution state, or a custom client can publish a dependency-bearing Tool consumers cannot install.
+> - Reuse the Milestone 11A `PythonResolution` type verbatim on every surface. Do not restate its field shape, re-derive its ordering, or add a parallel per-surface struct — the whole point of fixing the contract in 11A is that these surfaces share one validated type whose digest is stable across all of them.
+> - **Resolutions are larger than the 11A test fixtures suggest.** Those fixtures carry 1–3 digests; real ones carry every distribution digest for all four supported targets across every Python version in range. A single `pydantic>=2.8,<3` dependency measures 5 packages / 56 digests / ~5.7 KB of canonical JSON, so a Tool with a handful of dependencies lands in the tens of KB and a multi-Tool workspace lock can reach low hundreds. This is the intended cost of the digest decision, not a defect — but size it against real dependencies before settling serialization.
 
-- [ ] Extend `LockedPackage` with optional Python resolution state. Settle the **final** field layout here so Milestone 14B extends it rather than reshaping it:
-  - [ ] keep the four existing fields unchanged — `kind`, `name`, `version`, `integrity`;
-  - [ ] add one optional typed field for Python resolution (for example `python_resolution: Option<PythonResolution>`), `#[serde(default, skip_serializing_if = "Option::is_none")]` so v2/v3 locks round-trip byte-identically;
-  - [ ] do **not** add any target, selected-artifact, interpreter, or environment-fingerprint field — those are machine-local `.agentpm/` state, not portable lock state;
-  - [ ] note explicitly in code comments that `integrity` is the single logical package digest, and that Milestone 14B redefines what it *contains* for new-format releases (the 64-char lowercase release digest) **without changing its type or adding sibling digest fields**.
-- [ ] Confirm the `LockedPackage` layout chosen here satisfies Milestone 14B's integrity requirements before implementing, so the struct is touched once across the two milestones.
-- [ ] Evolve lockfile-version selection:
-  - [ ] replace `requires_v3_lock(...)` with a `minimum_lock_version(...)`-style helper;
-  - [ ] return minimum version 4 when Python resolution/new release fields are present;
-  - [ ] retain versions 2/3 for locks that do not need v4 capabilities unless a broader migration is intentionally chosen.
-- [ ] Add a **forward-version guard before normal lock deserialization/mutation**:
-  - [ ] reject `lockfile_version` newer than the CLI supports;
-  - [ ] prevent older CLIs from silently dropping future fields on rewrite;
-  - [ ] audit `Lock::empty_v2()` and Harness `>=2` checks for correct max-version behavior.
-- [ ] Preserve current V1/V2-shape and on-disk v2/v3 reads.
-- [ ] Keep package keys target-independent (`kind:name@version`).
-- [ ] Update registry resolve/install DTOs and `ResolvePlan` so Python resolution state reaches `lock_from_plan` and survives a plain full-regeneration install.
-- [ ] Reconcile the duplicated `PackageKind` enumerations while both sides are being modified:
-  - [ ] the CLI lockfile/semver types define seven variants; the SDK install DTOs define eight, and only the SDK has `Template`;
-  - [ ] either share one definition across the crates, or keep two with an explicit total-coverage conversion;
-  - [ ] add a test that fails when one side gains a variant the other lacks, so the drift cannot be reintroduced silently.
-- [ ] Ensure published Tool release metadata/artifact contains the Tool-specific Python resolution independently of the publisher's broader workspace lock.
+- [x] Extend `LockedPackage` with optional Python resolution state. Settle the **final** field layout here so Milestone 14B extends it rather than reshaping it:
+  - [x] keep the four existing fields unchanged — `kind`, `name`, `version`, `integrity`;
+  - [x] add one optional typed field for Python resolution (for example `python_resolution: Option<PythonResolution>`), `#[serde(default, skip_serializing_if = "Option::is_none")]` so v2/v3 locks round-trip byte-identically;
+  - [x] do **not** add any target, selected-artifact, interpreter, or environment-fingerprint field — those are machine-local `.agentpm/` state, not portable lock state;
+  - [x] note explicitly in code comments that `integrity` is the single logical package digest, and that Milestone 14B redefines what it *contains* for new-format releases (the 64-char lowercase release digest) **without changing its type or adding sibling digest fields**.
+- [x] Confirm the `LockedPackage` layout chosen here satisfies Milestone 14B's integrity requirements before implementing, so the struct is touched once across the two milestones.
+- [x] Propagate that same `PythonResolution` type into the remaining contract surfaces (moved here from Milestone 11A, which defined and validated the type but persisted it nowhere):
+  - [x] resolve/install DTOs and `ResolvePlan`;
+  - [x] publish/build descriptor;
+  - [x] artifact inspection metadata;
+  - [x] release-manifest digest input;
+  - [x] reuse the 11A type itself on each surface — no parallel per-surface struct, no re-derived ordering;
+  - [x] add a test asserting the same resolution digests identically through `agent.lock`, the resolve DTO, and the release-manifest digest input, so a divergent re-serialization on any one surface fails rather than silently producing a second digest for the same resolution.
+- [x] Add an explicit **local Tool root** representation, and stop routing `kind: tool` into `LockRoot::LocalAgent`:
+  - [x] add the variant and its `local:tool`-style key rather than reusing the `_ =>` fallback in `build_lock_roots`;
+  - [x] carry the project's own `PythonResolution` and the 11A input fingerprint on that root;
+  - [x] do not add a synthetic `LockedPackage` for the project itself, and do not place a placeholder in `integrity`;
+  - [x] confirm an existing lock that recorded a Tool project as `local:agent` still reads, and decide explicitly whether it is rewritten to `local:tool` or left alone — either is acceptable, silently producing both keys for one project is not.
+- [x] Preserve the local project's resolution across full lock regeneration:
+  - [x] carry the matching local root's resolution and fingerprint forward in the `spec.is_none()` branch of `build_updated_lock`, which currently discards them;
+  - [x] keep `packages` a pure projection of the resolve plan — preservation applies to the local-root lane only;
+  - [x] ensure carried-forward state **cannot** satisfy the publish freshness check when it is stale; preservation must not become a way for an out-of-date resolution to pass.
+- [x] Write resolved Python state into `agent.lock` at publish time and gate publication on its freshness (moved here from Milestone 11A, which resolves and fingerprints but persists nothing):
+  - [x] update/write the local-root resolution from the prepared resolution;
+  - [x] fail publish if manifest declarations and resolved state disagree or the resolution is stale, reusing the 11A input fingerprint rather than inventing a second staleness rule;
+  - [x] treat the committed lock as the authoritative shared input for multi-target builds, so every matrix job emits the same `pythonResolutionDigest` rather than resolving independently;
+  - [x] **lift the M11A publication block in both places at once** — the CLI `bail!` in `publish.rs` and the registry's `publish:init` rejection of non-empty `runtime.dependencies`. Leaving either in place makes dependency-bearing publish fail for a now-wrong reason; removing only the server one lets a custom client publish a Tool whose resolution never reached the lock;
+  - [x] confirm the client-side gate still fails **before** resolver acquisition, so a publish that cannot succeed never pays for a resolver download.
+- [x] Relocate the Milestone 11A author-side resolution cache now that the committed lock is authoritative:
+  - [x] the committed local-root resolution is the source of truth; any remaining cache is disposable acceleration only, and publish must behave identically with it absent;
+  - [x] move it off `<project>/target/agentpm/python-resolutions/`. `target/agentpm/` is the pre-existing publish-output directory (`commands/publish.rs:501`, excluded from the tarball at `:562`), so it predates this cache — but it is build output, which is the wrong home for dependency preparation state;
+  - [x] prefer the per-user cache directory already used for the managed resolver binary, so one cache serves every project and nothing unexpected appears beside an author's source;
+  - [x] confirm a cold cache plus a committed lock publishes without re-resolving, which is the property CI depends on.
+- [x] Size the lock against real dependency sets before finalizing serialization:
+  - [x] measure `agent.lock` with at least one realistic multi-dependency Python Tool (something like `openai` plus `pydantic`) rather than the 11A unit fixtures, and record the measured size as evidence;
+  - [x] decide deliberately whether `agent.lock` stays pretty-printed at that scale, and write the decision down — it changes diff readability and review burden for every consumer of the lock;
+  - [x] confirm the chosen serialization still round-trips v2/v3 locks byte-identically, so a formatting change made for v4 cannot rewrite existing locks;
+  - [x] confirm a multi-Tool workspace lock stays within the size assumptions the resolve/install DTO path and registry request limits already impose, and state which limit was checked.
+- [x] Evolve lockfile-version selection:
+  - [x] replace `requires_v3_lock(...)` with a `minimum_lock_version(...)`-style helper;
+  - [x] return minimum version 4 when Python resolution/new release fields are present;
+  - [x] retain versions 2/3 for locks that do not need v4 capabilities unless a broader migration is intentionally chosen.
+- [x] Add a **forward-version guard before normal lock deserialization/mutation**:
+  - [x] reject `lockfile_version` newer than the CLI supports;
+  - [x] prevent older CLIs from silently dropping future fields on rewrite;
+  - [x] audit `Lock::empty_v2()` and Harness `>=2` checks for correct max-version behavior.
+- [x] Preserve current V1/V2-shape and on-disk v2/v3 reads.
+- [x] Keep package keys target-independent (`kind:name@version`).
+- [x] Update registry resolve/install DTOs and `ResolvePlan` so Python resolution state reaches `lock_from_plan` and survives a plain full-regeneration install.
+- [x] Reconcile the duplicated `PackageKind` enumerations while both sides are being modified:
+  - [x] the CLI lockfile/semver types define seven variants; the SDK install DTOs define eight, and only the SDK has `Template`;
+  - [x] either share one definition across the crates, or keep two with an explicit total-coverage conversion;
+  - [x] add a test that fails when one side gains a variant the other lacks, so the drift cannot be reintroduced silently.
+- [x] Ensure published Tool release metadata/artifact contains the Tool-specific Python resolution independently of the publisher's broader workspace lock.
+
+M11B implementation/verification (2026-10-23, America/Denver): complete within
+this milestone's scope. Author state is stored on `local:tool`; installed Tool
+state comes from the Registry plan on `LockedPackage`. Live publication requires
+a matching committed lock; dry-run preparation/refresh writes it. Disposable
+preparation cache moved to the OS per-user cache. Tool archives carry only their
+own typed `agentpm-python.json` metadata, bound to the publish reservation.
+
+Lock version selection is content-based with a monotonic existing-version floor:
+no Python state means no forced v4 upgrade, and regeneration never downgrades an
+existing lock. Unchanged logical state preserves existing bytes and `generated`.
+Removing declarations drops local Python state on normal install. Genuine v2/v3
+fixtures produced by the installed pre-11B CLI verify byte compatibility; frozen
+and carry-forward regression checks were also verified with deliberate mutations.
+
+Registry persistence uses additive migration `V1.97__Persist_Python_Resolution.sql`
+and pinned symbolic marker validation (`dep-logic==0.7.2`). The realistic committed
+fixture covers 14 distributions / 113 hashes: 16,213-byte author lock, 15,104-byte
+Tool metadata, 322,233-byte serialized 20-Tool lock and 259,001-byte resolve DTO.
+Pretty printing is retained deliberately. See `test-plan.md` for tests, limits,
+known baseline tooling failures and operator/deployment boundaries. No version
+bump, CLI release, production deployment or 11C environment provisioning is claimed.
+
+M11B operator acceptance (2026-10-24, America/Denver): the operator confirmed
+hosted CLI CI is green and all local/dev manual tests pass. The runbook completion
+record and `test-plan.md` contain the acceptance evidence and the duplicate
+file-list fixture note. Milestone 11B is complete; no 11C environment or execution
+acceptance is implied.
 
 ## Milestone 11C: AgentPM-Managed Python Runtime Environment
 > Scope note: give new-format Python Tools somewhere for their dependencies to live and execute. Owns the AgentPM-managed per-Tool environment under `.agentpm/`, eager provisioning during install, execution of dependency-bearing Tools through the managed interpreter, and runtime fingerprint validation. Preserves legacy vendored Tool behavior unchanged.
@@ -881,26 +1073,62 @@ This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a st
 > Implementation notes:
 > - Current AgentPM has no venv, no pip/uv integration, and no Python dependency location. `agentpm run` resolves `python`/`python3` from PATH (or `AGENTPM_PYTHON`) and invokes it directly.
 > - Existing `_vendor` support is entirely author code (`sys.path.insert`) and must keep working for legacy Tools.
+> - **Why `uv` is on the consumer side too.** Replaying exact pins needs no resolver, so this is not about dependency solving — install must never re-resolve. `uv` is here as the *environment/provisioning engine*: it removes the user's `pip`/`ensurepip`/`setuptools` from the install path entirely. Concretely, on Debian and Ubuntu `python3 -m venv` fails unless the separately packaged `python3-venv` is installed, because `ensurepip` is split out of base Python. A pinned static `uv` creates and populates the environment regardless of what venv/pip behavior shipped with the user's interpreter. Do not substitute `python -m venv` + `pip install --no-deps`; it walks straight into that failure.
+> - Acquisition comes from Milestone 11A. Call that component; do not re-implement discovery, download, or verification here.
 > - The closing test block covers Milestones 11A–11C together; treat it as the integration gate for the trio rather than 11C-only coverage.
 
-- [ ] Add an AgentPM-managed per-Tool Python environment under `.agentpm/`, keyed by:
-  - [ ] Tool identity/version;
-  - [ ] consumer target;
-  - [ ] resolved interpreter major/minor or equivalent ABI identity.
-- [ ] During install, resolve the interpreter using current `AGENTPM_PYTHON`/PATH family and minimum-version rules.
-- [ ] Create/reuse a managed venv-style environment with that interpreter and install the exact applicable locked dependencies through AgentPM-managed uv.
-- [ ] Update `agentpm run` so new-format dependency-bearing Python Tools execute with the managed environment's Python interpreter.
-- [ ] Validate the local runtime-environment fingerprint at run time; if interpreter/target changed, deterministically rebuild or fail with an actionable refresh/reinstall instruction.
-- [ ] Preserve legacy Tool execution through current PATH/`AGENTPM_PYTHON` semantics.
-- [ ] Preserve existing author-written `_vendor` imports alongside managed environments.
-- [ ] Warn when a new-format Tool both declares dependencies and vendors likely dependency trees.
-- [ ] Add tests covering:
-  - [ ] pure-Python dependency;
-  - [ ] dependency with native wheel;
-  - [ ] conditional/marker dependency;
-  - [ ] interpreter minimum/version changes;
-  - [ ] future lockfile rejection;
-  - [ ] plain install lock regeneration retaining Python resolution.
+- [x] Add an AgentPM-managed per-Tool Python environment under `.agentpm/`, keyed by:
+  - [x] Tool identity/version;
+  - [x] consumer target;
+  - [x] resolved interpreter major/minor or equivalent ABI identity.
+- [x] During install, resolve the interpreter using current `AGENTPM_PYTHON`/PATH family and minimum-version rules.
+- [x] Create/reuse a managed venv-style environment with that interpreter through AgentPM-managed `uv`, not through the interpreter's own `venv`/`ensurepip`.
+- [x] Provision by **replaying** the stored `PythonResolution`:
+  - [x] converge the environment to the complete recorded set (a `sync`-style operation), so an interrupted provisioning run self-heals instead of accumulating partial state;
+  - [x] do not perform a new dependency resolution at install time;
+  - [x] ensure the install path **cannot** add a package absent from the stored resolution.
+- [x] Verify every installed distribution against the recorded digests:
+  - [x] run hash-verified installation;
+  - [x] treat a digest mismatch as a fatal install error — never a warning, and never a silent retry from an alternate source;
+  - [x] fail the install session rather than leaving a partially provisioned environment that looks complete.
+- [x] Keep install **wheel-only — never build from source**:
+  - [x] if no wheel compatible with the consumer target/interpreter exists for a locked version, fail with a distinct no-compatible-wheel error naming package, version, and target;
+  - [x] the recorded sdist digest exists because it is part of the published distribution set, not as license to build it.
+- [x] Distinguish these three install failures in error text — they look alike to users and have entirely different causes:
+  - [x] distribution **gone** from the index;
+  - [x] distribution present but **digest mismatch** (a supply-chain signal);
+  - [x] distribution present and intact but **no wheel for this target**.
+- [x] Update `agentpm run` so new-format dependency-bearing Python Tools execute with the managed environment's Python interpreter.
+- [x] Validate the local runtime-environment fingerprint at run time; if interpreter/target changed, deterministically rebuild or fail with an actionable refresh/reinstall instruction.
+- [x] Preserve legacy Tool execution through current PATH/`AGENTPM_PYTHON` semantics.
+- [x] Preserve existing author-written `_vendor` imports alongside managed environments.
+- [x] Warn when a new-format Tool both declares dependencies and vendors likely dependency trees.
+- [x] Add tests covering:
+  - [x] pure-Python dependency;
+  - [x] dependency with native wheel;
+  - [x] conditional/marker dependency;
+  - [x] interpreter minimum/version changes;
+  - [x] future lockfile rejection;
+  - [x] plain install lock regeneration retaining Python resolution;
+  - [x] digest mismatch on a fetched distribution fails the install;
+  - [x] locked version with no target-compatible wheel fails with the no-compatible-wheel error rather than building;
+  - [x] install does not install any package absent from the stored resolution, even if a dependency's own metadata requires one;
+  - [x] a cached managed `uv` is reused with no network access on second install;
+  - [x] `AGENTPM_UV_PATH` pointing at a wrong-version binary is rejected with the required version named;
+  - [x] a PATH-installed `uv` of a different version is never selected.
+
+M11C implementation/verification (2026-10-24, America/Denver): managed consumer
+environments, exact hash-verified wheel-only replay, run/Harness environment
+validation and the dependency-using `validate-order` example are implemented.
+Local tests cover real pinned uv, Pydantic/native wheels, interrupted creation
+and sync, failed-refresh invalidation, changed interpreters, no ensurepip,
+normal/frozen installs and install-finalization failure boundaries. Portable lock
+and resolution formats are unchanged. See `test-plan.md` for verification and
+limits. The operator has confirmed all four updated Resolver Contract jobs pass,
+closing the hosted native verification gate. Review is complete, and the operator
+confirmed all cases in `manual-tests/CLI_M11C_MANUAL_TESTS.md` passed on
+2026-10-24. **M11C acceptance is complete.** Production rollout, CLI release and
+the `summarize-text`/`devwork-copilot` rollout remain Release Band 8 work.
 
 ## Milestone 12: Python Tool Artifact Compatibility
 > Scope note: establish a conservative compatibility model for the Tool payload itself, distinct from Python dependency portability, so AgentPM can distinguish portable `any` artifacts from target-specific native payloads. This milestone defines package-time classification metadata on top of the canonical target vocabulary. It does not yet implement multi-artifact registry storage, target-aware install selection, CI fan-in publishing, or retroactively classify legacy releases.
@@ -911,28 +1139,234 @@ This gives us minimal, anonymous, default-on-with-disclosure CLI telemetry, a st
 > - Declared Python dependencies are installed separately for the consumer and do not make the Tool payload target-specific.
 > - `.whl` is currently blocked as an embedded archive. Keep it blocked for normal Tool payloads; target-side dependency installation removes the need to ship wheels inside the Tool tarball.
 
-- [ ] Consume the canonical target identifier and current-target detection defined in Milestone 11A; do not redefine either here.
-- [ ] Define portable `any` **payload** semantics explicitly — what makes a payload safely target-independent, as distinct from `any` merely being a valid target value.
-- [ ] Implement conservative payload classification after final file collection:
-  - [ ] `.so`;
-  - [ ] `.dylib`;
-  - [ ] `.pyd`;
-  - [ ] `.dll`;
-  - [ ] `.exe`;
-  - [ ] executable/native binary signatures where practical;
-  - [ ] known platform-specific unpacked vendored binary content.
-- [ ] Treat unknown executable/binary payload conservatively as current-target specific.
-- [ ] Ensure declared Python dependencies do not force Tool payload to target-specific.
-- [ ] Keep `.whl` blocked as an embedded Tool payload unless a non-dependency use case is separately justified.
-- [ ] Add target + artifact-format metadata to the package-build descriptor.
-- [ ] Preserve legacy Tool behavior with compatibility unknown/legacy rather than inventing `any`.
-- [ ] Ensure local publish of a pure source Tool can produce `any`.
-- [ ] Ensure local publish of a native payload claims only the detected current target.
-- [ ] Add tests for pure Python/data payload versus native payload classification on supported host families. These must actually execute on macOS and Windows, not only Linux — see the AgentPM CI matrix task in Milestone 16, and schedule it before relying on this coverage.
+- [x] Consume the canonical target identifier and current-target detection defined in Milestone 11A; do not redefine either here.
+- [x] Define portable `any` **payload** semantics explicitly — what makes a payload safely target-independent, as distinct from `any` merely being a valid target value. The reviewed expanded §22 policy has shared-inventory, local, hosted and operator manual evidence; the later Node correction's fresh CI gate remains below.
+- [x] Implement conservative payload classification after final file collection:
+  - [x] `.so`;
+  - [x] `.dylib`;
+  - [x] `.pyd`;
+  - [x] `.dll`;
+  - [x] `.exe`;
+  - [x] executable/native binary signatures where practical;
+  - [x] known platform-specific unpacked vendored binary content.
+- [x] Treat unknown executable/binary payload conservatively as current-target specific.
+- [x] Record the accepted M12 publisher-platform permission limitation in §22:
+  Unix preserves executable bits while Windows derives archive modes from
+  extensions, so recognized text/data can narrow only on Unix. Keep the existing
+  modes and `.py` exception; do not remove permissions or invent a Windows
+  narrowing diagnostic. Defer mixed-claim fan-in enforcement to M16 below.
+- [x] Ensure declared Python dependencies do not force Tool payload to target-specific.
+- [x] Keep `.whl` blocked as an embedded Tool payload unless a non-dependency use case is separately justified.
+- [x] Add target + artifact-format metadata to the package-build descriptor.
+- [x] Preserve legacy Tool behavior with compatibility unknown/legacy rather than inventing `any`.
+- [x] Ensure local publish of a pure source Tool can produce `any`.
+- [x] Ensure local publish of a native payload claims only the detected current target.
+- [x] Add tests for pure Python/data payload versus native payload classification on supported host families. These must actually execute on macOS and Windows, not only Linux — see the AgentPM CI matrix task in Milestone 16, and schedule it before relying on this coverage. The operator confirmed all four updated Resolver Contract jobs passed after the Windows fixture correction.
+
+M12 implementation/local verification (2026-10-24, America/Denver): completed
+Python Tool archives are classified without changing their bytes, manifests or
+locks. A typed Rust build descriptor carries canonical `target` and `format`;
+publish sends it as `artifact` metadata and dry runs display it. The existing
+Registry accepts that additive request field but does not persist/enforce an
+artifact inventory. No new release/storage/install model or standalone build
+command is introduced. Local Apple Silicon tests pass, including both prepared
+dependency-bearing examples. This is initial-classifier evidence, not acceptance
+of the revised §22 policies. Format and collection implementations have separate
+fresh local evidence below. Independent review, normal CI and all four updated
+native Resolver Contract jobs are now operator-confirmed complete, including
+Windows after its fixture correction. The operator has now confirmed all manual
+tests pass, including the rebuilt Node step. M12 acceptance remains open only
+for fresh hosted CI confirmation of that later Node correction below; Release
+Band 8 production rollout remains separate.
+See the M12 evidence in `test-plan.md`.
+
+### M12 format-policy follow-up — implementation and verification
+
+The reviewed decisions in `spec.md` §22, "M12 portable format policy", were
+authorized for implementation. The items below record the expanded classifier;
+initial-classifier evidence above is historical. Directory collection policy
+was deferred during this phase and is now implemented below. Updated hosted
+verification and manual acceptance are operator-confirmed complete. The later
+Node correction retains its own fresh CI gate below.
+
+- [x] Before classifier changes, introduce the authoritative portable-format
+  inventory at `crates/agentpm-sdk/contracts/tool-payload-formats-v1.json`, as
+  specified in §22: grouped text/source suffixes, exact basenames, basename
+  prefixes, named text exceptions and binary aliases/signature/header
+  definitions. Validate its
+  type/version, shape, normalization, uniqueness, category conflicts and bounded
+  signature checks. Embed/consume it in Rust; enumerate it in tests instead of
+  copying exhaustive inventories into match arms or parameter arrays. Do not
+  add runtime policy configuration or a generic rules engine.
+- [x] Add a checked-in generation/verification command with a read-only check
+  mode for the spec's candidate tables and special-name inventories; run it in
+  normal CI. Exhaustive product-doc inventories must use the same source.
+  Deliberate data/document mismatches must fail verification. Keep independent
+  representative fixtures to verify actual matching and precedence, not only
+  consistency between consumers of the same data.
+- [x] Include native filename suffixes and literal versioned-name fragments in
+  that same inventory and generated/checkable spec section. Remove the Rust
+  native-name list; reject malformed/duplicate/conflicting registrations.
+  Enumerate native cases from the data and assert `native_content`, not just
+  concrete-target fallback. Mutation-test native suffix/fragment drift in both
+  the document and inventory while preserving the existing matching behavior.
+- [x] Expand portable text/source candidates to the exact suffix and basename
+  inventories seeded from §22 into the shared data file, retaining full-file
+  text/native-signature checks and case-insensitive comparisons. Include `.pyx`,
+  `.pxd` and `.ipynb` as source/data without extension-only warnings. Include
+  `.in` text inputs such as `MANIFEST.in` and `requirements.in`, without treating
+  them as executable build steps or additional dependency sources. Keep JS/TS
+  and `.rtf` outside this initial expanded list with an honest unknown-format
+  diagnostic.
+- [x] Treat `.env` and `.env.*` as named text-configuration candidates, including
+  `.env.example`: case-normalized basename equality for `.env`, basename-prefix
+  matching for `.env.`, with both modes declared in the shared policy data.
+  Do not reuse extension extraction, match parent directories/substrings,
+  override native/binary/executable/environment rules or add a secrets-denial
+  policy. Cover positive and negative dotenv name matches independently of the
+  data-derived format enumeration.
+- [x] Remove the blanket `.egg-info` narrowing rule: inspect a single-file
+  `*.egg-info`, its conventional `PKG-INFO`, and other directory members under
+  the text/normal per-member rules. Preserve shipped metadata; do not exempt
+  bundled native/unknown files. Keep `.dist-info` and known installed-environment
+  state conservative. Do not add a blanket `.pth` prohibition.
+- [x] Add dedicated format recognition for `.png`, `.jpg`/`.jpeg`, `.webp`,
+  `.pdf` and `.woff2` using the exact bounded signature/header checks in §22;
+  do not route them through `portable_text` or rely on suffix alone.
+- [x] Fail packaging on a recognized binary suffix/signature mismatch, naming
+  the file and expected format, and directing the author to rename it to its
+  actual format or replace it with valid expected-format data; explain updating
+  file references after a rename. Check all relevant members even after another
+  member narrows the archive. Fail before publish-init/upload and preserve the
+  prior valid archive on failure using the existing atomic packaging pattern.
+- [x] Document and test the publish-time compatibility change: previously
+  accepted mismatched assets must be fixed before a subsequent publication
+  through the updated packager, including a new version of an existing Tool.
+  Preserve legacy reads/installs and immutable-version rules. Correctly renaming
+  to an unrecognized actual format removes the mismatch error but still narrows
+  the payload; do not imply renaming always produces `any`.
+- [x] Report concrete-target narrowing with relative path, accurate reason and
+  canonical build target in dry-run/live packaging; order/deduplicate diagnostics
+  deterministically. Preserve existing executable-bit, native-signature,
+  versioned `.so.N`, symlink and embedded-wheel/archive protections.
+- [x] Implement narrowing as a warning and binary mismatch as an error under
+  §22's output contract: stderr diagnostics survive `--quiet`/non-TTY use;
+  narrowing alone does not fail packaging or change manifest-lint `--strict`
+  semantics. Keep stable typed code/severity/path/message/help and applicable
+  target/expected-format data, render from that data, and carry successful
+  `diagnostics` in build descriptors/publish `artifact` metadata. Failed builds
+  retain structured errors without returning a successful artifact descriptor.
+  Preserve this data for M16's machine-readable build/fan-in surfaces; do not add
+  a publish `--machine` flag or implement fan-in in M12.
+- [x] Update product docs to explain the expanded format list, configuration/
+  metadata exceptions, signature recognition limits, and the boundary between
+  payload classification and author responsibility for code behavior.
+- [x] Implement and run the follow-up cases in `test-plan.md`, including the
+  four native hosted targets; retain initial tests as regression coverage and
+  record fresh evidence rather than reusing the initial classifier's results.
+
+The format-policy phase changed no directory traversal/collection exclusions.
+The separately reviewed collection policy below is now implemented. See the
+separate fresh local verification records in `test-plan.md`; the
+combined platform-test item is now checked following the operator's confirmation
+of all four updated hosted jobs. Format-policy evidence does not substitute for
+the separate collection evidence.
+
+### M12 collection-policy follow-up — implementation and verification
+
+The reviewed "M12 collection policy" in `spec.md` §22 was authorized for
+implementation. This is Python Tool collection only, not a general ignore system
+or a change to other kinds. Keep the previously implemented format policy intact.
+Fresh local evidence is separate from operator-confirmed hosted success and
+completed operator manual acceptance.
+
+- [x] Add the reviewed minimal collection rules and shared installed-state
+  vocabulary to the checked-in policy contract; derive classifier/collector
+  environment names and markers from that source. Keep `.dist-info`
+  classification-only, and preserve `.egg-info` text-metadata handling. Extend
+  strict data validation and generated inventory/normal CI checks so these
+  inventories cannot silently diverge. Do not maintain a second hardcoded list.
+- [x] Prune incidental `.git` (including worktree pointer files), named state/
+  environment directories, custom-named environment roots with a direct
+  `pyvenv.cfg` marker, OS-cruft files and dotenv files under the exact §22
+  matching/type rules. Probe markers case-insensitively without executing
+  Python, reading marker contents, following links or recursively scanning an
+  excluded tree. Fail directory inspection errors with the affected path;
+  do not use silent scan caps or let skipped descendants consume entry limits.
+- [x] Preserve only exact `.env.example` as the incidental dotenv exception,
+  case-insensitively; explicitly record why `.env.sample`/`.env.template`/
+  `.env.dist` remain omitted by default. No content-based secrets scanning or
+  blanket prohibition on explicitly listed dotenv files.
+- [x] Implement explicit-root/subtree overrides and separately requested
+  descendants independent of manifest entry order, with member deduplication.
+  A normal parent-directory request still filters excluded descendants; an
+  explicitly requested excluded directory preserves its subtree. Preserve
+  required manifest/entrypoint/generated inputs without accidentally including
+  an entire excluded parent. Missing explicit paths stay fatal; overrides do
+  not bypass existing packaging/integrity restrictions.
+- [x] Report omitted traversal paths and explicit overrides as stable typed
+  `info` diagnostics, with matching rules/reasons and help where appropriate.
+  Print on stderr in dry/live/quiet/non-TTY runs; preserve them in descriptor
+  metadata for later machine/CI consumers. Count only observed omission units,
+  not unseen files inside pruned directories. Keep `any` possible with `info`
+  diagnostics and preserve warning/error and `--strict` behavior.
+- [x] Do not honor `.gitignore` or ecosystem ignore semantics. Do not expand
+  automatic omissions to generic build/cache/configuration names, or discard
+  Makefile/Dockerfile/CODEOWNERS and other plausible runtime fixtures. Keep
+  unrecognized surviving files on the visible narrowing path. Retain existing
+  reserved/generated-output exclusions and the immutable legacy read/install
+  path, without adding release fields or cross-target byte-equality rules.
+- [x] Update product docs for incidental versus explicit inclusion, exact
+  exclusions, marker detection, dotenv/case choices and omission reporting.
+  State that policy/tooling changes can change subsequent archive bytes;
+  checked-in data alone does not promise cross-version byte reproducibility.
+- [x] Implement the collection-specific cases in `test-plan.md`, run relevant
+  local checks and all four hosted native jobs, and record fresh evidence plus
+  operator manual acceptance. Initial/format-policy results do not check off
+  any collection implementation or acceptance requirement.
+
+Collection implementation, local tests, updated hosted runs and operator manual
+acceptance are complete. M12 retains only the separately authorized Node
+correction's fresh hosted CI gate below; Release Band 8 also retains its
+production rollout checklist.
+
+### Authorized Node packaging correction from manual testing
+
+The operator explicitly authorized this pre-existing collector fix before
+resuming the Node runbook step. It does not extend Python collection policy.
+
+- [x] Normalize non-Python Tool member names before deduplication and generated-
+  output exclusions, including dotted explicit requests/entrypoint aliases and
+  empty relative manifest parents. Exclude old and in-progress build outputs.
+- [x] Add CLI archive regressions for default/dotted/absolute/nested-relative
+  manifest paths, overlapping requests and repeated packaging. Keep Node's
+  dotenv/Git/environment inclusion and ordinary blocked-archive/atomic-failure
+  protections. Update docs and the resumable Node runbook assertions.
+- [x] Confirm operator acceptance of the rebuilt Node step and completed M12
+  manual walkthrough. The operator verified six unique Node members with no
+  generated output and subsequently confirmed all manual tests pass.
+- [ ] Confirm fresh normal CI/native Resolver Contract runs for this correction.
+  Earlier hosted confirmation covers the implementation before this separately
+  authorized correction; manual success does not close the fresh hosted gate.
 
 ## Release Band 8: Python Tool Dependency Contract
 Covered milestones: 11A-12.
-This gives us the first-party Python dependency story working end to end for a single published artifact: declaration in `agent.json` with real lint validation, AgentPM-managed `uv` resolution to exact portable state, the fixed `PythonResolution` v1 contract, lockfile persistence with a forward-version guard, an AgentPM-managed per-Tool environment under `.agentpm/`, dependency-bearing execution through `agentpm run`, and honest payload-compatibility classification. These four milestones are one band because any smaller cut ships a Tool that can declare dependencies it cannot install, or install dependencies it cannot verify are compatible with the consumer's target. Legacy vendored Tools keep working unchanged throughout. If schedule pressure demands an earlier partial release, the Milestone 11B lockfile forward-version guard is the only piece with standalone value — it is a correctness fix for a hazard that exists today.
+This gives us the first-party Python dependency story working end to end for a single published artifact: declaration in `agent.json` with real lint validation, a pinned AgentPM-managed `uv` acquired from AgentPM-controlled storage and resolving to exact portable state, the fixed `PythonResolution` v1 contract with distribution digests, lockfile persistence with a forward-version guard, an AgentPM-managed per-Tool environment under `.agentpm/`, digest-verified wheel-only provisioning, dependency-bearing execution through `agentpm run`, and honest payload-compatibility classification. These four milestones are one band because any smaller cut ships a Tool that can declare dependencies it cannot install, or install dependencies it cannot verify are compatible with the consumer's target. Legacy vendored Tools keep working unchanged throughout. If schedule pressure demands an earlier partial release, the Milestone 11B lockfile forward-version guard is the only piece with standalone value — it is a correctness fix for a hazard that exists today.
+
+- [x] Prepare CLI **0.1.37** (`v0.1.37`) and the matching website status-page
+  release date **2026-10-24**. Keep SDK versions and the published **0.1.36**
+  APDS tolerance floor unchanged; verify crate/lockfile/binary/status marker.
+- [ ] After the final required CI/native checks pass, operator publishes CLI
+  **0.1.37**, then deploys **Registry**, then **Web**, in that order. CLI tag
+  publication remains operator-owned. The CLI release workflow first verifies
+  the already-deployed uv inventory/mirrored bytes; do not bypass that gate.
+- [ ] Verify installed CLI reports **0.1.37**, the deployed Registry serves the
+  Python resolution/install metadata contract, and the deployed status page
+  advertises **0.1.37** with **2026-10-24**. Publish/install dependency-bearing
+  production Tool versions only after the Registry deployment is verified.
+- [ ] After the band prerequisites and CLI release are verified, publish the prepared `agentpm-examples/tools-python/summarize-text` **0.1.9** to the production Registry as `@zack/summarize-text`, using its reviewed `agent.lock` and declared Python dependencies rather than a vendored native tree.
+- [ ] Add exact `@zack/summarize-text@0.1.9` to `devwork-copilot`, install/update its consumer lock and managed environment, and verify an actual summarization via direct run and a Harness Tool call with `OPENAI_API_KEY`. Review any required Agent version bump/publication as part of that rollout; do not silently alter an immutable Agent release.
+- [ ] Confirm the existing vendored production Tool version still works for legacy consumers. Keep `validate-order` a dev Registry/manual-test example; no production publication is required for it.
 
 ## Milestone 13A: Release and Artifact Data Model
 > Scope note: redefine what a published Tool release **is** — one immutable release composed of one or more target artifacts — and where its bytes live. Owns the canonical release-manifest contract, the three new publish/version artifact tables, the `PackageVersion` release-format discriminator, the legacy-column migration, the new immutable S3 layout, per-artifact self-description, and cross-artifact consistency validation. Does not change how uploads are performed (13B).
@@ -1261,7 +1695,9 @@ This gives us a typed Rust representation of the existing `agentpm.package.signa
   - [ ] ensure failed extraction cannot leave a seemingly complete install directory.
 - [ ] Provision dependencies after payload extraction:
   - [ ] create/reuse Milestone-11C managed Python environment;
-  - [ ] install exact applicable locked dependencies with AgentPM-managed uv;
+  - [ ] replay the stored `PythonResolution` through AgentPM-managed `uv`, hash-verified against the recorded digests, without re-resolving;
+  - [ ] keep the wheel-only rule — no source builds — and surface the no-compatible-wheel error for the selected target;
+  - [ ] call the Milestone-11A resolver acquisition component; do not re-implement acquisition, PATH discovery, or verification here;
   - [ ] verify environment fingerprint.
 - [ ] Only finalize the install session as successful after payload + dependency environment are ready.
 - [ ] Preserve legacy install/download/extract path for legacy releases.
@@ -1308,7 +1744,9 @@ This is the band where the new release format becomes real for users. It gives u
   - [ ] artifact size;
   - [ ] manifest digest;
   - [ ] Python resolution digest;
-  - [ ] machine-readable descriptor for fan-in validation.
+  - [ ] machine-readable descriptor for fan-in validation, preserving M12's typed
+    payload diagnostics; expose structured build errors on failure and keep
+    human progress out of machine stdout.
 - [ ] Keep local `agentpm publish` convenient by internally reusing the same package-build code for current-target/`any` publishing.
 - [ ] Build official GitHub Actions example/workflow for Python Tools.
 - [ ] Follow established AgentPM conventions:
@@ -1334,6 +1772,19 @@ This is the band where the new release format becomes real for users. It gives u
   - [ ] download all build outputs with `actions/download-artifact`;
   - [ ] verify name/version/manifest digest/Python resolution digest match;
   - [ ] reject duplicate targets;
+  - [ ] reject mixed `any` and concrete-target claims across matrix outputs
+    before automatic publication, including permission-derived differences with
+    identical member contents and manifest/resolution digests. Identify every
+    affected build/claimed target and contributing typed diagnostic paths/reasons
+    where present; `any` can have none. Require author correction/reconciliation
+    and rebuild; do not silently drop, select or relabel artifacts. Distinct
+    concrete targets remain valid, and local single-artifact publish is unchanged.
+  - [ ] Test the permission-derived mixed-claim gate with identical recognized
+    text bytes under `0644`/`0755` archive modes, plus actual Unix/Windows
+    packaging coverage. Assert no publication on mixed claims, actionable
+    diagnostics, and acceptance of otherwise valid distinct concrete targets.
+  - [ ] when target validation fails, report affected build targets and their
+    M12 diagnostic paths/reasons where present; do not scrape human stderr.
   - [ ] authenticate with `AGENTPM_TOKEN`;
   - [ ] load encrypted signing key/passphrase secrets if signing;
   - [ ] perform one atomic release publish/finalize.
@@ -1369,6 +1820,8 @@ This gives us headless signing with encrypted AgentPM key material plus a nonint
   - [ ] `agent.lock` = AgentPM-resolved portable state;
   - [ ] AgentPM-managed uv/resolution;
   - [ ] users do not need a uv project;
+  - [ ] what the stored resolution guarantees: **reproducible, digest-verified dependency resolution across supported targets** — not byte-for-byte identical environments on every platform, since the consumer still selects a target-appropriate distribution from the verified set. Do not describe the `uv` pin as the source of reproducibility;
+  - [ ] install is wheel-only and never compiles from source, and what the no-compatible-wheel error means;
   - [ ] AgentPM-managed per-Tool Python environment;
   - [ ] `AGENTPM_PYTHON` interpreter behavior/minimum runtime version;
   - [ ] portable source payload versus native target-specific payload;
@@ -1380,6 +1833,13 @@ This gives us headless signing with encrypted AgentPM key material plus a nonint
   - [ ] historical compatibility remains unknown/legacy;
   - [ ] how to migrate a new version to declared dependencies.
 - [ ] Mark `_vendor` as legacy/manual for dependency management and explain architecture pitfalls.
+- [ ] Document the managed resolver for operators and CI, not just Tool authors:
+  - [ ] AgentPM acquires its own pinned `uv` on first use and does not use a PATH-installed one;
+  - [ ] the cache location, and that it is shared across projects;
+  - [ ] the first-use network requirement, and that the download honors standard proxy environment variables;
+  - [ ] `AGENTPM_UV_PATH` for airgapped/preprovisioned environments, including that it must report AgentPM's exact pinned version;
+  - [ ] which hosts need allowlisting for a Python-dependency install to work;
+  - [ ] the supported resolver targets, and that ARM Linux/musl are unsupported because AgentPM's CLI does not ship them.
 - [ ] Correct current docs/comments that imply Tool `files` entries are globs if the implementation remains literal file/directory paths.
 - [ ] Document missing declared `files` path as a publish error.
 - [ ] Document lockfile evolution:

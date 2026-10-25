@@ -1,0 +1,109 @@
+name: Resolver Contract
+
+on:
+  pull_request:
+    paths:
+      - 'platforms/uv-pins.json'
+      - 'platforms/uv-resolution-commands.json'
+      - 'crates/agentpm-cli/src/python_environment.rs'
+      - 'crates/agentpm-cli/src/python_resolver.rs'
+      - 'crates/agentpm-cli/src/python_environment/**'
+      - 'crates/agentpm-cli/src/runner.rs'
+      - 'crates/agentpm-cli/src/harness_plan.rs'
+      - 'crates/agentpm-cli/src/commands/install.rs'
+      - 'crates/agentpm-cli/src/commands/publish.rs'
+      - 'crates/agentpm-cli/src/commands/publish/**'
+      - 'crates/agentpm-cli/tests/python_resolution.rs'
+      - 'crates/agentpm-cli/tests/payload_compatibility.rs'
+      - 'crates/agentpm-cli/src/io/download.rs'
+      - 'crates/agentpm-sdk/src/python.rs'
+      - 'crates/agentpm-sdk/src/artifact.rs'
+      - 'crates/agentpm-sdk/src/artifact/**'
+      - 'crates/agentpm-sdk/contracts/tool-payload-formats-v1.json'
+      - 'scripts/check_payload_formats.py'
+      - 'scripts/test_payload_formats.py'
+      - 'crates/agentpm-sdk/src/target.rs'
+      - 'crates/agentpm-sdk/src/lib.rs'
+      - 'crates/agentpm-sdk/src/python/tests.rs'
+      - 'crates/agentpm-sdk/contracts/python-resolution-pydantic-v1.json'
+      - 'crates/agentpm-sdk/platforms/targets.json'
+      - 'scripts/resolver_pins.py'
+      - 'scripts/resolver_smoke.py'
+      - '.github/workflows/resolver-contract.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Candidate uv version (leave empty to test the checked-in pin)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  targets:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: targets
+        run: python3 scripts/check_resolver_targets.py --matrix >> "$GITHUB_OUTPUT"
+
+  smoke:
+    needs: targets
+    name: uv contract (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    env:
+      CANDIDATE_VERSION: ${{ inputs.version }}
+      RESOLVER_TARGET: ${{ matrix.target }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify and execute candidate on its native platform
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UV_SMOKE_DIR: ${{ runner.temp }}/uv-contract
+        run: |
+          VERSION="${CANDIDATE_VERSION:-$(python -c 'import json; print(json.load(open("platforms/uv-pins.json"))["version"])')}"
+          python scripts/resolver_pins.py "$VERSION" \
+            --stage-only --staging "$UV_SMOKE_DIR" --smoke-target "$RESOLVER_TARGET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uv-smoke-${{ matrix.target }}
+          path: ${{ runner.temp }}/uv-contract/smoke/*.json
+          if-no-files-found: error
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.89.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify payload compatibility and canonical targets
+        shell: bash
+        run: |
+          cargo test -p agentpm-sdk target::tests
+          cargo test -p agentpm-sdk artifact::
+          cargo test -p agentpm-cli --bin agentpm commands::publish::payload
+          cargo test -p agentpm-cli --bin agentpm commands::publish::collection
+          cargo test -p agentpm-cli --test payload_compatibility
+      - name: Verify native managed Python environments
+        shell: bash
+        env:
+          UV_SMOKE_DIR: ${{ runner.temp }}/uv-contract
+        run: |
+          PINNED_VERSION="$(python -c 'import json; print(json.load(open("platforms/uv-pins.json"))["version"])')"
+          if [ -n "$CANDIDATE_VERSION" ] && [ "$CANDIDATE_VERSION" != "$PINNED_VERSION" ]; then
+            echo 'Candidate resolution smoke completed; Rust provisioning tests require the checked-in uv pin.'
+            exit 0
+          fi
+          export AGENTPM_TEST_UV="$(python -c 'import os; from pathlib import Path; print(Path(os.environ["UV_SMOKE_DIR"]) / os.environ["RESOLVER_TARGET"] / ("uv.exe" if os.name == "nt" else "uv"))')"
+          export AGENTPM_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          export AGENTPM_PYTHON="$AGENTPM_TEST_PYTHON"
+          cargo build -p agentpm-cli
+          cargo test -p agentpm-cli --bin agentpm python_environment::tests -- --include-ignored --test-threads=1

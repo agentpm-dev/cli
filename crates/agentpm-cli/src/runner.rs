@@ -96,6 +96,7 @@ pub(crate) fn classify_runner_error(err: &anyhow::Error) -> RunnerErrorKind {
     } else if message.contains(ERR_TOOL_OUTPUT_NOT_JSON) {
         RunnerErrorKind::MalformedOutput
     } else if message.contains(ERR_REQUIRED_ENV_MISSING)
+        || message.contains(crate::python_environment::ERR_ENVIRONMENT)
         || message.contains(ERR_RUNTIME_TYPE_MISMATCH)
         || message.contains(ERR_INTERPRETER_UNSUPPORTED)
         || message.contains(ERR_INTERPRETER_OVERRIDE_MISMATCH)
@@ -222,6 +223,8 @@ pub struct RuntimeDecl {
     pub runtime_type: String,
     #[serde(default)]
     pub version: Option<String>,
+    #[serde(default)]
+    pub dependencies: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
@@ -239,13 +242,14 @@ pub struct EnvVarDecl {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct PreparedInvocation {
     command: String,
     args: Vec<String>,
     cwd: PathBuf,
     env: HashMap<String, String>,
     timeout_ms: u64,
+    _python_environment: Option<crate::python_environment::ManagedPython>,
 }
 
 #[allow(dead_code)]
@@ -411,7 +415,7 @@ pub fn run_installed_tool(
     )?;
 
     let run_dir = create_run_dir(project_dir)?;
-    let prepared = prepare_invocation(&resolved, input, options)
+    let prepared = prepare_invocation(project_dir, &resolved, input, options)
         .with_context(|| format!("preparing {}", resolved.package))?;
 
     let input_bytes = serde_json::to_vec(input).context("serializing JSON input")?;
@@ -661,12 +665,13 @@ fn split_package(package: &str) -> Result<(String, String)> {
 
 #[allow(dead_code)]
 fn prepare_invocation(
+    project_dir: &Path,
     resolved: &ResolvedTool,
     _input: &Value,
     options: &RunOptions,
 ) -> Result<PreparedInvocation> {
     let entrypoint = &resolved.manifest.entrypoint;
-    let interpreter = resolve_interpreter_command(
+    let mut interpreter = resolve_interpreter_command(
         entrypoint.command.as_str(),
         resolved.manifest.runtime.as_ref(),
         &options.env_overrides,
@@ -689,6 +694,28 @@ fn prepare_invocation(
     }
     for (key, value) in &options.env_overrides {
         env.insert(key.clone(), value.clone());
+    }
+
+    let managed = crate::python_environment::for_run(project_dir, resolved, &interpreter)?;
+    if let Some(managed) = &managed {
+        interpreter = managed.python.to_string_lossy().into_owned();
+        env.insert(
+            "VIRTUAL_ENV".into(),
+            managed.directory.to_string_lossy().into_owned(),
+        );
+        // Apply after defaults, manifest env and invocation overrides have merged.
+        // Windows environment names are case-insensitive.
+        env.retain(|name, _| {
+            !name.eq_ignore_ascii_case("PYTHONHOME") && !name.eq_ignore_ascii_case("PYTHONPATH")
+        });
+        let mut paths = vec![managed.python.parent().unwrap().to_path_buf()];
+        paths.extend(std::env::split_paths(
+            env.get("PATH").map(String::as_str).unwrap_or_default(),
+        ));
+        env.insert(
+            "PATH".into(),
+            std::env::join_paths(paths)?.to_string_lossy().into_owned(),
+        );
     }
 
     if let Some(env_decl) = &resolved.manifest.environment {
@@ -724,11 +751,12 @@ fn prepare_invocation(
         cwd,
         env,
         timeout_ms: options.timeout_ms.unwrap_or(entrypoint.timeout_ms),
+        _python_environment: managed,
     })
 }
 
 #[allow(dead_code)]
-fn resolve_interpreter_command(
+pub(crate) fn resolve_interpreter_command(
     command: &str,
     runtime: Option<&RuntimeDecl>,
     env_overrides: &HashMap<String, String>,
@@ -1200,6 +1228,7 @@ fn preserve_failure_artifacts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1793,6 +1822,36 @@ mod tests {
 
         assert_eq!(result.output["input"]["message"], "hi");
         assert_eq!(result.output["envValue"], "");
+    }
+
+    #[test]
+    fn legacy_python_tool_keeps_declared_pythonpath() {
+        let python = available_command(&["python3", "python"]).expect("python required for tests");
+        let root = TestProject::new();
+        let helper = root.path().join("legacy-pythonpath");
+        fs::create_dir_all(&helper).unwrap();
+        fs::write(helper.join("legacy_helper.py"), "VALUE='legacy-path'\n").unwrap();
+        let mut manifest: Value = serde_json::from_str(&tool_manifest("python3")).unwrap();
+        manifest["entrypoint"]["env"]["PYTHONPATH"] = serde_json::json!(helper.to_string_lossy());
+        root.write_lock(lock_for("@zack/echo-python", "0.1.0"));
+        root.write_tool(
+            "@zack/echo-python",
+            "0.1.0",
+            serde_json::to_string(&manifest).unwrap(),
+            "import json\nfrom legacy_helper import VALUE\nprint(json.dumps({'value':VALUE}))\n",
+        );
+        let mut options = RunOptions::default();
+        options
+            .env_overrides
+            .insert("AGENTPM_PYTHON".into(), python);
+        let result = run_installed_tool(
+            root.path(),
+            &parse_tool_spec("@zack/echo-python").unwrap(),
+            &serde_json::json!({}),
+            &options,
+        )
+        .unwrap();
+        assert_eq!(result.output["value"], "legacy-path");
     }
 
     #[test]

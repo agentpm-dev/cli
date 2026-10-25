@@ -17,6 +17,7 @@ use crate::manifest::{
     parse_publish_manifest, resolve_schema_source, validate_manifest_value,
 };
 use crate::prelude::*;
+use crate::semver::types::declares_python_dependencies;
 use crate::ui::Step;
 use anyhow::{anyhow, bail};
 use base64::Engine;
@@ -36,6 +37,9 @@ use std::{
 use tar::{Builder as TarBuilder, EntryType, Header};
 use tracing::info;
 use walkdir::WalkDir;
+
+mod collection;
+mod payload;
 
 const MAX_ARTIFACT_BYTES: u64 = 3 * 1024 * 1024 * 1024; // 3 GB
 const MAX_TAR_ENTRIES: usize = 15_000;
@@ -81,10 +85,19 @@ pub struct PublishArgs {
     /// Namespace handle to publish into
     #[arg(long, value_name = "HANDLE")]
     pub namespace: Option<String>,
+
+    /// Refresh Python dependency resolution and its local Tool entry in agent.lock (requires --dry-run)
+    #[arg(long)]
+    pub refresh_python: bool,
 }
 
 impl PublishArgs {
     pub async fn run(self, base_url: String) -> Result<()> {
+        if self.refresh_python && !self.dry_run {
+            bail!(
+                "--refresh-python requires --dry-run. Run `agentpm publish --dry-run --refresh-python`, review and commit agent.lock, then run `agentpm publish`."
+            );
+        }
         let cfg = Config::load(base_url.clone())?;
 
         // Quiet if the user asked OR stderr is not a terminal (piped/redirected)
@@ -140,14 +153,48 @@ impl PublishArgs {
         }
         s.ok("schema + semantics");
 
+        let directory = manifest_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        if !self.dry_run {
+            crate::python_resolver::require_publish_resolution(&manifest_value, &directory)?;
+        }
+        if declares_python_dependencies(&manifest_value) {
+            Step::final_msg("• Preparing Python dependencies…", quiet);
+        }
+        let input = manifest_value.clone();
+        let registry = cfg.base_url.clone();
+        let refresh = self.refresh_python;
+        let resolution = tokio::task::spawn_blocking(move || {
+            crate::python_resolver::prepare(&input, &directory, &registry, refresh)
+        })
+        .await??;
+        if let Some(resolution) = &resolution {
+            eprintln!(
+                "✓ Python dependencies resolved: {} distributions, sha256:{}",
+                resolution.packages().len(),
+                resolution.digest()?
+            );
+        }
+        let python_metadata = resolution
+            .map(agentpm_sdk::python::PythonReleaseMetadata::new)
+            .transpose()?;
+
         // 3) Strongly typed manifest split
         let publish_manifest = parse_publish_manifest(&manifest_value)?;
 
         // 4) Package files by artifact kind
         let mut s = Step::new("Packaging files", quiet);
+        let mut artifact_descriptor = None;
         let tar_path = match &publish_manifest {
             PublishManifest::Tool(mf) => {
-                package_tool(mf, &manifest_path).context("packaging tool into tar.gz")?
+                let (path, descriptor) =
+                    package_tool_build(mf, &manifest_path, python_metadata.as_ref())
+                        .context("packaging tool into tar.gz")?;
+                artifact_descriptor = descriptor;
+                path
             }
             PublishManifest::Agent(mf) => {
                 package_agent(mf, &manifest_path).context("packaging agent into tar.gz")?
@@ -182,6 +229,22 @@ impl PublishArgs {
             size_bytes,
             &sha256_hex[..12]
         ));
+
+        if let Some(descriptor) = &artifact_descriptor {
+            for diagnostic in &descriptor.diagnostics {
+                let level = match diagnostic.severity {
+                    agentpm_sdk::artifact::PayloadSeverity::Info => "Info",
+                    agentpm_sdk::artifact::PayloadSeverity::Warning => "Warning",
+                    agentpm_sdk::artifact::PayloadSeverity::Error => "Error",
+                };
+                eprintln!("{level}: {diagnostic}");
+            }
+            eprintln!(
+                "✓ Tool payload: {} (format: {})",
+                descriptor.target,
+                descriptor.format.as_str()
+            );
+        }
 
         info!(
             "Package ready: {} ({} bytes, sha256:{})",
@@ -323,7 +386,7 @@ impl PublishArgs {
         let mut s = Step::new("Uploading artifact", quiet);
         let client = AgentPmClient::new(cfg.base_url.clone())?.with_token(token);
 
-        let meta = build_publish_metadata(
+        let mut meta = build_publish_metadata(
             manifest_value,
             &sha256_hex,
             size_bytes,
@@ -332,6 +395,13 @@ impl PublishArgs {
             license_payload,
             self.namespace.as_deref(),
         );
+        if let Some(metadata) = &python_metadata {
+            meta["python_resolution"] = serde_json::to_value(&metadata.python_resolution)?;
+            meta["python_resolution_digest"] = metadata.python_resolution_digest.clone().into();
+        }
+        if let Some(descriptor) = &artifact_descriptor {
+            meta["artifact"] = serde_json::to_value(descriptor)?;
+        }
         let filename = match &publish_manifest {
             PublishManifest::Tool(mf) => {
                 artifact_filename(&mf.name, &mf.version, Some(&mf.runtime))
@@ -453,7 +523,14 @@ fn build_publish_metadata(
 /// - agent.json (as root/agent.json)
 /// - entrypoint script (preserve the relative path)
 /// - literal file/directory paths, preserving relative paths (no glob expansion)
-fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf> {
+fn package_tool_build(
+    manifest: &ToolManifest,
+    manifest_path: &Path,
+    python_metadata: Option<&agentpm_sdk::python::PythonReleaseMetadata>,
+) -> Result<(
+    PathBuf,
+    Option<agentpm_sdk::artifact::ToolPayloadDescriptor>,
+)> {
     // Root directory where manifest lives
     let root = manifest_path.parent().unwrap_or(Path::new("."));
     let out_dir = root.join("target").join("agentpm");
@@ -464,73 +541,173 @@ fn package_tool(manifest: &ToolManifest, manifest_path: &Path) -> Result<PathBuf
         &manifest.version,
         Some(&manifest.runtime),
     ));
-    write_artifact_atomically(&out_path, |tar| {
-        let mut member_count: usize = 0;
+    let metadata_file = agentpm_sdk::python::RESOLUTION_METADATA_FILE;
+    if python_metadata.is_some() && root.join(metadata_file).exists() {
+        bail!(
+            "{metadata_file} is reserved for generated Tool dependency metadata; remove the authored file before publishing"
+        );
+    }
+    let (ep_abs, ep_tar_name) = validate_and_locate_entrypoint(root, &manifest.entrypoint)?;
+    // The non-Python collector must use the same names for explicit paths,
+    // directory traversal, deduplication and generated-output exclusions.
+    let non_python_tar_name = |path: &Path| rel_to_tar_name(path.strip_prefix(".").unwrap_or(path));
+    let ep_tar_name = if manifest.runtime["type"] == "python" {
+        ep_tar_name
+    } else {
+        non_python_tar_name(Path::new(&ep_tar_name))
+    };
+    let (collected_files, collection_diagnostics) = if manifest.runtime["type"] == "python" {
+        let collected = collection::collect(
+            root,
+            &manifest.files,
+            &ep_tar_name,
+            python_metadata.is_some(),
+        )?;
+        (Some(collected.files), collected.diagnostics)
+    } else {
+        (None, Vec::new())
+    };
+    let descriptor = write_artifact_atomically_checked(
+        &out_path,
+        |tar| {
+            let mut member_count: usize = 0;
 
-        {
-            let mut header = tar::Header::new_gnu();
-            let manifest_bytes = fs::read(manifest_path)?;
-            header.set_size(manifest_bytes.len() as u64);
-            header.set_mode(0o644);
-            header.set_cksum();
+            {
+                let mut header = tar::Header::new_gnu();
+                let manifest_bytes = fs::read(manifest_path)?;
+                header.set_size(manifest_bytes.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
 
-            ensure_safe_tar_name("agent.json")?;
-            member_count += 1;
-            if member_count > MAX_TAR_ENTRIES {
-                bail!("too many files in package (> {MAX_TAR_ENTRIES})");
+                ensure_safe_tar_name("agent.json")?;
+                member_count += 1;
+                if member_count > MAX_TAR_ENTRIES {
+                    bail!("too many files in package (> {MAX_TAR_ENTRIES})");
+                }
+
+                tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
             }
 
-            tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
-        }
-
-        let (ep_abs, ep_tar_name) = validate_and_locate_entrypoint(root, &manifest.entrypoint)?;
-        append_checked(tar, &ep_abs, &ep_tar_name, &mut member_count)?;
-
-        let mut seen: HashSet<String> = HashSet::new();
-        seen.insert(ep_tar_name.clone());
-
-        for pat in &manifest.files {
-            let rel = Path::new(pat);
-            let abs = root.join(rel);
-            if !abs.exists() {
-                bail!(
-                    "manifest.files entry `{pat}` does not exist at {}. Create it or correct the literal file/directory path before publishing (globs are not expanded).",
-                    abs.display()
-                );
+            if let Some(metadata) = python_metadata {
+                metadata.validate()?;
+                let bytes = serde_json::to_vec_pretty(metadata)?;
+                if bytes.len() > agentpm_sdk::python::MAX_RESOLUTION_METADATA_BYTES {
+                    bail!("Python resolution metadata exceeds the Registry's 2 MiB limit");
+                }
+                let mut header = Header::new_gnu();
+                header.set_size(bytes.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                tar.append_data(&mut header, metadata_file, bytes.as_slice())?;
+                member_count += 1;
             }
 
-            if abs.is_file() {
-                let tar_name = rel_to_tar_name(rel);
-                if seen.insert(tar_name.clone()) {
-                    append_checked(tar, &abs, &tar_name, &mut member_count)?;
+            append_checked(tar, &ep_abs, &ep_tar_name, &mut member_count)?;
+
+            let mut seen: HashSet<String> = HashSet::new();
+            seen.insert(ep_tar_name.clone());
+            seen.insert("agent.json".into());
+            if python_metadata.is_some() {
+                seen.insert(metadata_file.into());
+            }
+
+            if let Some(files) = &collected_files {
+                for (tar_name, abs) in files {
+                    if seen.insert(tar_name.clone()) {
+                        append_checked(tar, abs, tar_name, &mut member_count)?;
+                    }
                 }
             } else {
-                for entry in WalkDir::new(&abs).into_iter().filter_map(|e| e.ok()) {
-                    let path_abs = entry.path();
-                    if path_abs.is_dir() {
-                        continue;
+                let collection_root = if root.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    root
+                };
+                for pat in &manifest.files {
+                    let rel = Path::new(pat);
+                    let abs = collection_root.join(rel);
+                    if !abs.exists() {
+                        bail!(
+                            "manifest.files entry `{pat}` does not exist at {}. Create it or correct the literal file/directory path before publishing (globs are not expanded).",
+                            abs.display()
+                        );
                     }
 
-                    let rel_path = match path_abs.strip_prefix(root) {
-                        Ok(r) => r.to_path_buf(),
-                        Err(_) => continue,
-                    };
-                    let tar_name = rel_to_tar_name(&rel_path);
+                    if abs.is_file() {
+                        let tar_name = non_python_tar_name(rel);
+                        if tar_name.starts_with("target/agentpm/") {
+                            continue;
+                        }
+                        if python_metadata.is_some() && tar_name == "agent.lock" {
+                            continue;
+                        }
+                        if seen.insert(tar_name.clone()) {
+                            append_checked(tar, &abs, &tar_name, &mut member_count)?;
+                        }
+                    } else {
+                        for entry in WalkDir::new(&abs).into_iter().filter_map(|e| e.ok()) {
+                            let path_abs = entry.path();
+                            if path_abs.is_dir() {
+                                continue;
+                            }
 
-                    if tar_name.starts_with("target/agentpm/") {
-                        continue;
-                    }
+                            let rel_path = match path_abs.strip_prefix(collection_root) {
+                                Ok(r) => r.to_path_buf(),
+                                Err(_) => continue,
+                            };
+                            let tar_name = non_python_tar_name(&rel_path);
 
-                    if seen.insert(tar_name.clone()) {
-                        append_checked(tar, path_abs, &tar_name, &mut member_count)?;
+                            if python_metadata.is_some() && tar_name == "agent.lock" {
+                                continue;
+                            }
+
+                            if tar_name.starts_with("target/agentpm/") {
+                                continue;
+                            }
+
+                            if seen.insert(tar_name.clone()) {
+                                append_checked(tar, path_abs, &tar_name, &mut member_count)?;
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        Ok(())
-    })?;
-    Ok(out_path)
+            Ok(())
+        },
+        |temporary| {
+            if manifest.runtime["type"] == "python" {
+                match payload::describe(temporary) {
+                    Ok(mut descriptor) => {
+                        descriptor.diagnostics.extend(collection_diagnostics);
+                        agentpm_sdk::artifact::sort_diagnostics(&mut descriptor.diagnostics);
+                        Ok(Some(descriptor))
+                    }
+                    Err(mut error) => {
+                        if let Some(failure) =
+                            error.downcast_mut::<agentpm_sdk::artifact::PayloadBuildFailure>()
+                        {
+                            failure.diagnostics.extend(collection_diagnostics);
+                            agentpm_sdk::artifact::sort_diagnostics(&mut failure.diagnostics);
+                        }
+                        Err(error).context("classifying Tool payload")
+                    }
+                }
+            } else {
+                Ok(None)
+            }
+        },
+    )?;
+    Ok((out_path, descriptor))
+}
+
+#[cfg(test)]
+fn package_tool_with_resolution(
+    manifest: &ToolManifest,
+    manifest_path: &Path,
+    python_metadata: Option<&agentpm_sdk::python::PythonReleaseMetadata>,
+) -> Result<PathBuf> {
+    package_tool_build(manifest, manifest_path, python_metadata).map(|(path, _)| path)
 }
 
 fn package_agent(manifest: &AgentManifest, manifest_path: &Path) -> Result<PathBuf> {
@@ -1594,23 +1771,35 @@ fn write_artifact_atomically<F>(out_path: &Path, build: F) -> Result<()>
 where
     F: FnOnce(&mut TarBuilder<GzEncoder<File>>) -> Result<()>,
 {
+    write_artifact_atomically_checked(out_path, build, |_| Ok(()))
+}
+
+fn write_artifact_atomically_checked<F, V, T>(out_path: &Path, build: F, validate: V) -> Result<T>
+where
+    F: FnOnce(&mut TarBuilder<GzEncoder<File>>) -> Result<()>,
+    V: FnOnce(&Path) -> Result<T>,
+{
     let tmp_path = artifact_temp_path(out_path);
-    let result: Result<()> = (|| {
+    let result: Result<T> = (|| {
         let f = fs::File::create(&tmp_path)
             .with_context(|| format!("creating {}", tmp_path.display()))?;
         let enc = GzEncoder::new(f, Compression::default());
         let mut tar = TarBuilder::new(enc);
         build(&mut tar)?;
         tar.finish()?;
-        Ok(())
+        // Close the complete gzip stream before inspecting or renaming it,
+        // including on Windows where an open file prevents replacement.
+        let encoder = tar.into_inner()?;
+        drop(encoder.finish()?);
+        validate(&tmp_path)
     })();
 
     match result {
-        Ok(()) => {
+        Ok(value) => {
             fs::rename(&tmp_path, out_path).with_context(|| {
                 format!("renaming {} -> {}", tmp_path.display(), out_path.display())
             })?;
-            Ok(())
+            Ok(value)
         }
         Err(err) => {
             let _ = fs::remove_file(&tmp_path);
@@ -1722,7 +1911,12 @@ fn ensure_safe_tar_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-// Normalize a relative Path into a forward-slash tar name (portable across OSes)
+// Convert path separators to a forward-slash tar name (portable across OSes).
+// NOTE: Path::components retains a leading `.`; this does not remove `./`.
+// Callers comparing names for deduplication or generated-output exclusions must
+// normalize that prefix consistently (see package_tool_build's non_python_tar_name).
+// If normalization moves here, audit all packaging callers and their archive-name
+// contracts rather than changing this shared helper as incidental cleanup.
 fn rel_to_tar_name(p: &Path) -> String {
     p.components()
         .map(|c| c.as_os_str().to_string_lossy())
@@ -2135,7 +2329,7 @@ mod tests {
         dir
     }
 
-    fn tar_entries(path: &Path) -> Vec<String> {
+    pub(super) fn tar_entries(path: &Path) -> Vec<String> {
         let f = File::open(path).unwrap();
         let gz = flate2::read::GzDecoder::new(f);
         let mut ar = tar::Archive::new(gz);
@@ -2165,6 +2359,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         }
     }
 
@@ -2471,6 +2666,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -2524,6 +2720,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -2975,6 +3172,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -3807,6 +4005,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -3872,6 +4071,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -3934,6 +4134,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -3993,6 +4194,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -4039,6 +4241,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         let err = args.run("https://example.com".into()).await.unwrap_err();
@@ -4086,6 +4289,7 @@ mod tests {
             key_id: None,
             token: Some("dummy-token".into()),
             namespace: None,
+            refresh_python: false,
         };
 
         let err = args.run("https://example.com".into()).await.unwrap_err();

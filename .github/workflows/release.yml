@@ -8,24 +8,28 @@ permissions:
   contents: write
 
 jobs:
+  targets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - id: targets
+        run: python3 scripts/check_resolver_targets.py --matrix >> "$GITHUB_OUTPUT"
+      - name: Verify deployed resolver inventory and mirrored bytes before release
+        run: python3 scripts/check_resolver_mirror.py --base-url https://api.agentpackagemanager.com
+
   build:
+    needs: targets
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
-      matrix:
-        include:
-          # Linux x86_64
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          # macOS Intel
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-          # macOS Apple Silicon
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          # Windows
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v4

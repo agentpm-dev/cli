@@ -1,0 +1,21 @@
+{
+  "generated": "2026-10-24T02:42:51.277460Z",
+  "lockfile_version": 3,
+  "packages": {
+    "tool:@fixture/component@0.1.0": {
+      "integrity": "28fefd2c323dc121f93c58d86efc9b009431e0ced8809b937e80e69d34977fae",
+      "kind": "tool",
+      "name": "@fixture/component",
+      "version": "0.1.0"
+    }
+  },
+  "roots": {
+    "local:skill": {
+      "name": "pre11b-skill",
+      "tools": [
+        "tool:@fixture/component@0.1.0"
+      ],
+      "version": "0.1.0"
+    }
+  }
+}
