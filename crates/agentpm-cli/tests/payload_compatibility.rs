@@ -16,6 +16,12 @@ impl Fixture {
             rand::random::<u128>()
         ));
         fs::create_dir_all(&root).unwrap();
+        // Windows known-folder lookup needs a real isolated profile/app-data
+        // tree before CLI startup; pointing USERPROFILE at a missing home can
+        // prevent ProjectDirs from resolving any config directories.
+        for directory in ["home/AppData/Roaming", "home/AppData/Local"] {
+            fs::create_dir_all(root.join(directory)).unwrap();
+        }
         fs::write(root.join("tool.py"), "print('{}')\n").unwrap();
         let manifest = json!({
             "$schema":"https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
@@ -39,6 +45,8 @@ impl Fixture {
             .current_dir(&self.0)
             .env("HOME", self.0.join("home"))
             .env("USERPROFILE", self.0.join("home"))
+            .env("APPDATA", self.0.join("home/AppData/Roaming"))
+            .env("LOCALAPPDATA", self.0.join("home/AppData/Local"))
             .env("XDG_CONFIG_HOME", self.0.join("home/config"))
             .env("XDG_DATA_HOME", self.0.join("home/data"))
             .env("AGENTPM_TELEMETRY", "0")
@@ -131,6 +139,12 @@ fn missing_declared_paths_and_embedded_wheels_fail_packaging() {
         }
         let output = fixture.command().arg("--dry-run").output().unwrap();
         assert!(!output.status.success(), "{}", text(&output));
+        let expected = if name.ends_with(".whl") {
+            "embedded archive not allowed in package: vendor/example.whl"
+        } else {
+            "manifest.files entry `missing.py` does not exist"
+        };
+        assert!(text(&output).contains(expected), "{}", text(&output));
         assert!(!text(&output).contains("Tool payload:"));
         assert!(
             !fixture

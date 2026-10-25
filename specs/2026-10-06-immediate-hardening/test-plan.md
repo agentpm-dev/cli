@@ -2156,6 +2156,27 @@ Earlier format/classifier results do not establish collection acceptance.
 Collection is implemented with its own evidence below. The earlier format-only
 record is historical; it does not substitute for collection verification.
 
+#### M12 Windows CLI Fixture Correction (2026-10-24, America/Denver)
+
+The operator reported six failures in the hosted Windows `payload_compatibility`
+suite: CLI startup could not determine config directories. Its fixture set
+`USERPROFILE` to an uncreated isolated home and did not supply isolated Windows
+app-data paths. The fixture now creates the profile's `AppData/Roaming` and
+`AppData/Local` directories before CLI startup and sets `APPDATA`/`LOCALAPPDATA`
+alongside the existing HOME/USERPROFILE/XDG child-process environment. This is
+a test-fixture correction, not a product config-directory fallback.
+
+The seventh test previously accepted any failed command; it now asserts the
+specific missing-manifest-path or blocked-embedded-wheel error, preventing a
+startup failure from masquerading as packaging coverage.
+
+Local verification on Apple Silicon macOS: all **7 payload integration tests**
+passed, as did workspace Clippy and Rust formatting. The local HTTP fixtures
+require loopback binding and ran outside the sandbox. A fresh hosted Windows
+rerun is required to verify the native known-folder behavior; local results do
+not close that acceptance gate. The operator has confirmed independent review
+complete; fresh hosted verification and manual acceptance remain outstanding.
+
 #### M12 Native-Inventory Review Fix Evidence (2026-10-24, America/Denver)
 
 Moved the existing native filename suffixes and literal `.so.` basename fragment
