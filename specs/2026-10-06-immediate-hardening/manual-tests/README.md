@@ -1,8 +1,8 @@
 # Immediate Hardening Manual Tests
 
 Run commands from the `agentpm` repository root unless a runbook says otherwise.
-Fixture setup helpers live in `scripts/`; their generated workspaces and results
-are disposable and gitignored.
+Fixture setup helpers live in `scripts/` or the runbook's `fixtures/` directory.
+Generated workspaces/results are disposable; each guide states their location.
 
 - [CLI scaffolding and lint quality (Milestone 8)](CLI_M8_MANUAL_TESTS.md)
 - [CLI messaging and exit codes (Milestone 9)](CLI_M9_MANUAL_TESTS.md): individual
@@ -28,3 +28,8 @@ are disposable and gitignored.
   changes and import-path isolation, then call the real Tool through Harness
   using a local scripted model. Includes an unpublished legacy vendoring probe;
   production and paid model services are not used.
+- [Python Tool payload compatibility (Milestone 12)](CLI_M12_MANUAL_TESTS.md):
+  portable/native classification, format errors, incidental collection and
+  explicit overrides, plus a local capture of publish descriptors/uploaded
+  archives. One terminal, isolated state, no backend/PAT/S3/publication; rechecks
+  disposable copies of both prepared examples without refreshing dependencies.

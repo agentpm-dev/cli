@@ -548,6 +548,14 @@ fn package_tool_build(
         );
     }
     let (ep_abs, ep_tar_name) = validate_and_locate_entrypoint(root, &manifest.entrypoint)?;
+    // The non-Python collector must use the same names for explicit paths,
+    // directory traversal, deduplication and generated-output exclusions.
+    let non_python_tar_name = |path: &Path| rel_to_tar_name(path.strip_prefix(".").unwrap_or(path));
+    let ep_tar_name = if manifest.runtime["type"] == "python" {
+        ep_tar_name
+    } else {
+        non_python_tar_name(Path::new(&ep_tar_name))
+    };
     let (collected_files, collection_diagnostics) = if manifest.runtime["type"] == "python" {
         let collected = collection::collect(
             root,
@@ -610,9 +618,14 @@ fn package_tool_build(
                     }
                 }
             } else {
+                let collection_root = if root.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    root
+                };
                 for pat in &manifest.files {
                     let rel = Path::new(pat);
-                    let abs = root.join(rel);
+                    let abs = collection_root.join(rel);
                     if !abs.exists() {
                         bail!(
                             "manifest.files entry `{pat}` does not exist at {}. Create it or correct the literal file/directory path before publishing (globs are not expanded).",
@@ -621,7 +634,10 @@ fn package_tool_build(
                     }
 
                     if abs.is_file() {
-                        let tar_name = rel_to_tar_name(rel);
+                        let tar_name = non_python_tar_name(rel);
+                        if tar_name.starts_with("target/agentpm/") {
+                            continue;
+                        }
                         if python_metadata.is_some() && tar_name == "agent.lock" {
                             continue;
                         }
@@ -635,11 +651,11 @@ fn package_tool_build(
                                 continue;
                             }
 
-                            let rel_path = match path_abs.strip_prefix(root) {
+                            let rel_path = match path_abs.strip_prefix(collection_root) {
                                 Ok(r) => r.to_path_buf(),
                                 Err(_) => continue,
                             };
-                            let tar_name = rel_to_tar_name(&rel_path);
+                            let tar_name = non_python_tar_name(&rel_path);
 
                             if python_metadata.is_some() && tar_name == "agent.lock" {
                                 continue;
@@ -1895,7 +1911,12 @@ fn ensure_safe_tar_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-// Normalize a relative Path into a forward-slash tar name (portable across OSes)
+// Convert path separators to a forward-slash tar name (portable across OSes).
+// NOTE: Path::components retains a leading `.`; this does not remove `./`.
+// Callers comparing names for deduplication or generated-output exclusions must
+// normalize that prefix consistently (see package_tool_build's non_python_tar_name).
+// If normalization moves here, audit all packaging callers and their archive-name
+// contracts rather than changing this shared helper as incidental cleanup.
 fn rel_to_tar_name(p: &Path) -> String {
     p.components()
         .map(|c| c.as_os_str().to_string_lossy())

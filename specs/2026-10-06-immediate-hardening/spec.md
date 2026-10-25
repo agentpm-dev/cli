@@ -1384,6 +1384,23 @@ Overrides do not bypass embedded wheel/archive prohibitions, safe-path checks,
 reserved metadata rules, entry limits, signature checks or classification.
 Collection decisions do not rewrite `agent.json` or `agent.lock`.
 
+**Authorized Node packaging correction from the manual walkthrough**
+
+The operator separately authorized repairing a pre-existing non-Python Tool
+collector bug exposed by `files: ["."]`: leading `./` names bypassed both
+deduplication and generated-output filtering. Normalize member names before
+those checks, including explicit file requests and entrypoint aliases. Treat an
+empty relative manifest parent as the current directory when traversing. Keep
+generated files under `target/agentpm/` out of the selected payload, including
+old archives and the in-progress temporary archive, and deduplicate overlapping
+manifest/entrypoint/directory selections. Repeated packaging must succeed.
+
+This is a narrow correction to non-Python Tool packaging, not an extension of
+Python-only omission/classification policy: Node still includes otherwise
+selected dotenv, Git and environment content and has no compatibility descriptor.
+Preserve ordinary embedded-archive failures and atomic preservation of a prior
+valid archive. Existing published bytes are unchanged.
+
 **Omission reporting and compatibility**
 
 Report skipped traversal paths and explicit overrides with actual relative

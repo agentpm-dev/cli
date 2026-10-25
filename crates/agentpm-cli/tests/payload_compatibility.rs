@@ -321,6 +321,130 @@ fn non_python_directory_collection_keeps_the_existing_behavior() {
 }
 
 #[test]
+fn non_python_directory_collection_normalizes_names_and_skips_generated_outputs() {
+    use std::collections::HashSet;
+
+    for manifest_form in ["default", "dotted", "absolute", "nested-relative"] {
+        let fixture = Fixture::new(
+            "node",
+            &[
+                ".",
+                "./agent.json",
+                "./tool.py",
+                "./assets",
+                "assets/data.json",
+                "./target/agentpm/unrelated.tar.gz.tmp",
+            ],
+        );
+        fixture.add("assets/data.json", b"{}\n");
+        fixture.add(".env", b"FIXTURE=1\n");
+        fixture.add(".git/readme.txt", b"intentional Node payload\n");
+        fixture.add(".venv/data.txt", b"intentional Node payload\n");
+        fixture.add("target/agentpm/unrelated.tar.gz.tmp", b"generated output\n");
+        fixture.add(
+            "target/agentpm/previous.tar.gz",
+            b"previous generated archive\n",
+        );
+        let manifest_path = fixture.0.join("agent.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["entrypoint"]["args"] = json!(["./tool.py"]);
+        let manifest_before = serde_json::to_vec(&manifest).unwrap();
+        fs::write(&manifest_path, &manifest_before).unwrap();
+
+        let run = || {
+            let mut command = fixture.command();
+            match manifest_form {
+                "dotted" => {
+                    command.args(["--manifest", "./agent.json"]);
+                }
+                "absolute" => {
+                    command.arg("--manifest").arg(&manifest_path);
+                }
+                "nested-relative" => {
+                    command
+                        .current_dir(fixture.0.parent().unwrap())
+                        .arg("--manifest")
+                        .arg(
+                            Path::new(".")
+                                .join(fixture.0.file_name().unwrap())
+                                .join("agent.json"),
+                        );
+                }
+                _ => {}
+            }
+            command.arg("--dry-run").output().unwrap()
+        };
+        let artifact = fixture
+            .0
+            .join("target/agentpm/payload-fixture-0.1.0-node20.tar.gz");
+        for attempt in 0..2 {
+            let output = run();
+            assert!(
+                output.status.success(),
+                "{manifest_form}, attempt {attempt}: {}",
+                text(&output)
+            );
+            assert!(!text(&output).contains("Tool payload:") && !text(&output).contains("Info:"));
+            let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(
+                fs::File::open(&artifact).unwrap(),
+            ));
+            let names: Vec<String> = archive
+                .entries()
+                .unwrap()
+                .map(|entry| {
+                    entry
+                        .unwrap()
+                        .path()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            assert_eq!(
+                names.len(),
+                names.iter().collect::<HashSet<_>>().len(),
+                "{names:?}"
+            );
+            assert!(
+                names
+                    .iter()
+                    .all(|name| !name.starts_with("./") && !name.starts_with("target/agentpm/")),
+                "{names:?}"
+            );
+            for name in [
+                "agent.json",
+                "tool.py",
+                "assets/data.json",
+                ".env",
+                ".git/readme.txt",
+                ".venv/data.txt",
+            ] {
+                assert!(
+                    names.iter().any(|member| member == name),
+                    "{manifest_form}: {names:?}"
+                );
+            }
+        }
+        assert_eq!(fs::read(&manifest_path).unwrap(), manifest_before);
+
+        // Generated-output filtering must not exempt ordinary payload archives.
+        let valid_archive = fs::read(&artifact).unwrap();
+        fixture.add("vendor/must-not-ship.whl", b"blocked payload archive\n");
+        let output = run();
+        assert!(!output.status.success(), "{}", text(&output));
+        assert!(
+            text(&output)
+                .contains("embedded archive not allowed in package: vendor/must-not-ship.whl"),
+            "{}",
+            text(&output)
+        );
+        assert_eq!(fs::read(&artifact).unwrap(), valid_archive);
+        assert_eq!(fs::read(&manifest_path).unwrap(), manifest_before);
+    }
+}
+
+#[test]
 fn mismatches_block_dry_and_live_republication_without_replacing_valid_artifact() {
     use std::net::TcpListener;
     for names in [["native.so", "icon.png"], ["icon.png", "native.so"]] {

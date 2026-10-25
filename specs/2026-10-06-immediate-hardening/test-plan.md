@@ -2156,6 +2156,99 @@ Earlier format/classifier results do not establish collection acceptance.
 Collection is implemented with its own evidence below. The earlier format-only
 record is historical; it does not substitute for collection verification.
 
+#### M12 Operator-Confirmed Hosted Acceptance
+
+After the Windows fixture correction below, the operator confirmed normal CI
+and all four updated Resolver Contract jobs passed: macOS ARM64, macOS x86_64,
+Linux x86_64 GNU and Windows x86_64 MSVC. This closes the M12 native hosted gate,
+including the expanded classifier/format inventory, collection and real CLI
+payload integration suites. Independent review is also operator-confirmed
+complete. Earlier pending-hosted/review notes describe historical verification
+states and are superseded by this confirmation; no independent retrieval of
+hosted logs is claimed here.
+
+Operator manual acceptance remains open. The prepared
+[M12 runbook](manual-tests/CLI_M12_MANUAL_TESTS.md) uses disposable Python/Node
+payloads, explicit-versus-incidental selection checks, atomic format failures,
+and a loopback publish capture, then rechecks isolated copies of both prepared
+dependency-bearing examples. No real Registry publication, S3 write, dependency
+refresh or paid model call is required. Completing the guide does not perform
+the separate Release Band 8 production example rollout.
+
+M12 runbook builder verification (local Apple Silicon macOS): all **19 literal
+shell blocks** were extracted from the guide and executed in order in a fresh
+zsh process. The guide's assertions passed, including three complete loopback
+init/upload/finalize exchanges, typed native/collection diagnostics, selected
+tar members, request-order equivalence, Node behavior, expected missing-path/
+wheel/signature failures, and byte-identical prior archives/no HTTP request on
+the live mismatch failure. Both prepared examples reused existing resolutions
+despite an invalid uv override, reported `any`, and retained authored manifest/
+lock bytes; no dependency refresh or actual publication occurred. Fixture Python
+formatting/lint and the policy documentation check passed. This verifies the
+guide and its inputs, not operator manual acceptance.
+
+Operator walkthrough correction: the required-entrypoint section incorrectly
+described an `any` result for `__pycache__/tool.py`. Its member-selection
+assertions passed during builder verification, but did not check that prose
+expectation. Installed-state classification correctly narrows the preserved
+entrypoint to the current target; required inclusion does not exempt its path.
+The guide now captures/asserts the concrete target, installed-state warning and
+omission/override information as well as selected members. The corrected block
+was rerun successfully with fresh fixtures on local Apple Silicon macOS. No
+classifier behavior changed; overall operator manual acceptance remains open.
+
+Operator Node walkthrough finding: the relative-manifest `files: ["."]` fixture
+also included the in-progress `target/agentpm/*.tar.gz.tmp` and duplicate manifest/
+entrypoint members. The non-Python collector retains leading `./` while its
+generated-output exclusion and deduplication keys assume normalized names.
+Source inspection of `1383c01^` confirms the relevant traversal/key logic
+predates M12. Node's absent compatibility descriptor and preserved dotenv/Git/
+environment content satisfy M12's unchanged-runtime boundary; the extra entries
+are an existing packaging defect, not intended archive contents. The runbook now
+initially recorded that limitation and kept this fixture unpublished. The
+operator then explicitly authorized fixing it before continuing manual testing.
+The correction/evidence below supersede that initial deferral; Python-specific
+collection policy still does not apply to Node.
+
+Authorized Node correction regression requirements:
+
+- Use the real CLI with default `agent.json`, dotted `./agent.json`, absolute
+  and nested-relative manifest paths. Include dotted explicit file/entrypoint
+  aliases, overlapping directory requests and a selected generated temp file.
+- Inspect actual archive members: no duplicate manifest/entrypoint/data names,
+  no leading `./`, and no generated output under `target/agentpm/`. Existing
+  archives/temp files must not break either the first or repeated packaging.
+- Preserve selected Node dotenv/Git/environment content, absence of Python
+  classification/omission diagnostics, and authored manifest bytes.
+- A real payload wheel outside the generated output tree still fails and
+  preserves the last valid archive byte-for-byte.
+- Rebuild and repeat the Node operator block in the same disposable workspace,
+  including when its existing archive came from the earlier buggy binary.
+  Fresh hosted confirmation for this correction remains required; the earlier
+  four-target success is evidence for the implementation before this fix.
+
+Authorized Node correction local evidence:
+
+- The new real-CLI regression failed before the fix because a leading `./`
+  caused an existing generated archive to be treated as a forbidden payload
+  archive. After the fix, all four manifest forms pass two successive builds,
+  normalized/deduplicated member checks, selected dotenv/Git/environment checks,
+  and the blocked-wheel/unchanged-previous-archive assertions.
+- `cargo test --workspace`: **1,193 passed, 5 ignored**; the payload integration
+  suite now has **8 passing tests**. Existing opt-in real-uv tests remain ignored
+  in the normal suite. Loopback fixtures ran outside the sandbox.
+- Workspace Clippy, Rust formatting, policy documentation verification and its
+  **2 tests**, documentation hooks and publish-guide MDX compilation passed.
+- The updated Node runbook block was executed with fresh disposable inputs and
+  an actual archive retained from the old buggy binary. Rebuilding replaced it
+  successfully; a second package operation also passed. The final archive has
+  six unique members (`agent.json`, `tool.js`, `README.md`, `.env`,
+  `.venv/data.txt`, `.git/config.json`) and no generated output. No real Registry
+  publication occurred. This is builder verification, not operator acceptance.
+- Fresh hosted runs and the operator's resumed manual confirmation remain open.
+  The correction changes generated archive bytes but does not modify authored
+  contracts, existing published artifacts or Python compatibility policy.
+
 #### M12 Windows CLI Fixture Correction (2026-10-24, America/Denver)
 
 The operator reported six failures in the hosted Windows `payload_compatibility`

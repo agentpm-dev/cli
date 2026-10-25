@@ -1161,7 +1161,7 @@ the `summarize-text`/`devwork-copilot` rollout remain Release Band 8 work.
 - [x] Preserve legacy Tool behavior with compatibility unknown/legacy rather than inventing `any`.
 - [x] Ensure local publish of a pure source Tool can produce `any`.
 - [x] Ensure local publish of a native payload claims only the detected current target.
-- [ ] Add tests for pure Python/data payload versus native payload classification on supported host families. These must actually execute on macOS and Windows, not only Linux — see the AgentPM CI matrix task in Milestone 16, and schedule it before relying on this coverage.
+- [x] Add tests for pure Python/data payload versus native payload classification on supported host families. These must actually execute on macOS and Windows, not only Linux — see the AgentPM CI matrix task in Milestone 16, and schedule it before relying on this coverage. The operator confirmed all four updated Resolver Contract jobs passed after the Windows fixture correction.
 
 M12 implementation/local verification (2026-10-24, America/Denver): completed
 Python Tool archives are classified without changing their bytes, manifests or
@@ -1172,10 +1172,11 @@ artifact inventory. No new release/storage/install model or standalone build
 command is introduced. Local Apple Silicon tests pass, including both prepared
 dependency-bearing examples. This is initial-classifier evidence, not acceptance
 of the revised §22 policies. Format and collection implementations have separate
-fresh local evidence below; M12/Band 8 acceptance remains open for independent
-review and fresh hosted platform/operator manual evidence. The suites are wired into
-all four native Resolver Contract jobs, but their new hosted execution and
-operator manual acceptance are still pending.
+fresh local evidence below. Independent review, normal CI and all four updated
+native Resolver Contract jobs are now operator-confirmed complete, including
+Windows after its fixture correction. M12 acceptance remains open for operator
+manual confirmation through `manual-tests/CLI_M12_MANUAL_TESTS.md`; Release Band 8
+production rollout remains separate.
 See the M12 evidence in `test-plan.md`.
 
 ### M12 format-policy follow-up — implementation and verification
@@ -1183,7 +1184,8 @@ See the M12 evidence in `test-plan.md`.
 The reviewed decisions in `spec.md` §22, "M12 portable format policy", were
 authorized for implementation. The items below record the expanded classifier;
 initial-classifier evidence above is historical. Directory collection policy
-is deliberately deferred, and fresh hosted/manual acceptance remains pending.
+was deferred during this phase and is now implemented below. Updated hosted
+verification is operator-confirmed complete; manual acceptance remains pending.
 
 - [x] Before classifier changes, introduce the authoritative portable-format
   inventory at `crates/agentpm-sdk/contracts/tool-payload-formats-v1.json`, as
@@ -1257,22 +1259,24 @@ is deliberately deferred, and fresh hosted/manual acceptance remains pending.
 - [x] Update product docs to explain the expanded format list, configuration/
   metadata exceptions, signature recognition limits, and the boundary between
   payload classification and author responsibility for code behavior.
-- [ ] Implement and run the follow-up cases in `test-plan.md`, including the
+- [x] Implement and run the follow-up cases in `test-plan.md`, including the
   four native hosted targets; retain initial tests as regression coverage and
   record fresh evidence rather than reusing the initial classifier's results.
 
 The format-policy phase changed no directory traversal/collection exclusions.
 The separately reviewed collection policy below is now implemented. See the
 separate fresh local verification records in `test-plan.md`; the
-combined platform-test item stays unchecked until all updated hosted jobs run
-successfully. Format-policy evidence does not satisfy the new collection tasks.
+combined platform-test item is now checked following the operator's confirmation
+of all four updated hosted jobs. Format-policy evidence does not substitute for
+the separate collection evidence.
 
 ### M12 collection-policy follow-up — implementation and verification
 
 The reviewed "M12 collection policy" in `spec.md` §22 was authorized for
 implementation. This is Python Tool collection only, not a general ignore system
 or a change to other kinds. Keep the previously implemented format policy intact.
-Fresh local evidence is separate from pending hosted/manual acceptance.
+Fresh local evidence is separate from operator-confirmed hosted success and
+pending manual acceptance.
 
 - [x] Add the reviewed minimal collection rules and shared installed-state
   vocabulary to the checked-in policy contract; derive classifier/collector
@@ -1319,9 +1323,26 @@ Fresh local evidence is separate from pending hosted/manual acceptance.
   operator manual acceptance. Initial/format-policy results do not check off
   any collection implementation or acceptance requirement.
 
-Collection implementation and local tests are complete. The final combined
-verification task remains open until updated hosted runs and operator acceptance
-are recorded. M12/Band 8 cannot be marked complete while those gates remain.
+Collection implementation, local tests and updated hosted runs are complete.
+The final combined verification task remains open for operator manual acceptance
+through the M12 runbook. M12 cannot be marked complete until that confirmation;
+Release Band 8 also retains its production rollout checklist below.
+
+### Authorized Node packaging correction from manual testing
+
+The operator explicitly authorized this pre-existing collector fix before
+resuming the Node runbook step. It does not extend Python collection policy.
+
+- [x] Normalize non-Python Tool member names before deduplication and generated-
+  output exclusions, including dotted explicit requests/entrypoint aliases and
+  empty relative manifest parents. Exclude old and in-progress build outputs.
+- [x] Add CLI archive regressions for default/dotted/absolute/nested-relative
+  manifest paths, overlapping requests and repeated packaging. Keep Node's
+  dotenv/Git/environment inclusion and ordinary blocked-archive/atomic-failure
+  protections. Update docs and the resumable Node runbook assertions.
+- [ ] Confirm fresh normal CI/native Resolver Contract runs for this correction
+  and operator acceptance of the rebuilt Node step. Earlier hosted confirmation
+  covers the implementation before this separately authorized correction.
 
 ## Release Band 8: Python Tool Dependency Contract
 Covered milestones: 11A-12.
