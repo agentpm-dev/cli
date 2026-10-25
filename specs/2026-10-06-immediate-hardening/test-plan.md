@@ -3330,6 +3330,18 @@ Black, isort, Flake8, Pylint, Bandit, pyupgrade and whitespace/conflict checks p
 Mypy still reports the same two errors in unchanged search code. No live database,
 S3 or hosted CI verification is claimed for this follow-up.
 
+#### M13B current acceptance status after review
+
+The operator confirmed independent review is complete, including the follow-up
+fixes above. This closes the review gate and supersedes the earlier review-pending
+notes. The operator also confirmed updated hosted normal CI, all four Resolver
+Contract jobs and the Registry PostgreSQL release-upload job pass. This supersedes
+the earlier hosted-verification limitations; results are operator-confirmed.
+Release Contract Parity failed as expected against CLI `main` before its contract
+changes are merged. Its Release Band 9 gate remains open for the post-merge run.
+Operator manual acceptance remains pending, along with the separate band-level
+deployment/storage/GuardDuty readiness gates.
+
 ### Canonicalization / stored-byte integrity / provenance
 
 Create shared canonicalization fixtures consumed by Rust and Python.

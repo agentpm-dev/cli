@@ -1636,11 +1636,13 @@ an optional scan-to-artifact association. Earlier applied migrations remain
 unchanged. The actual migration and Pyway numeric ordering are exercised on a
 disposable PostgreSQL instance; see `test-plan.md` for evidence and limitations.
 
-Acceptance remaining:
+Acceptance status:
 
-- [ ] Complete independent review of the M13B implementation.
-- [ ] Run updated normal CI and all four Resolver Contract jobs, including the
-      streaming HTTP fixtures, and the Registry PostgreSQL release-upload job.
+- [x] Complete independent review of the M13B implementation; operator confirmed review is finished, including the follow-up fixes.
+- [x] Run updated normal CI and all four Resolver Contract jobs, including the
+      streaming HTTP fixtures, and the Registry PostgreSQL release-upload job;
+      operator confirmed all pass. Release Contract Parity failed as expected
+      against pre-merge CLI `main`; its Release Band 9 gate remains open.
 - [ ] Complete operator manual acceptance of the gated release flow, interrupted
       uploads, finalization, cleanup and malware rollup. No operator acceptance
       is inferred from local automated verification.
