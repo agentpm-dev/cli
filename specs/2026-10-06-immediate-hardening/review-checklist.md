@@ -262,6 +262,10 @@
 - Confirm every target artifact receives malware-scan handling.
 - Confirm any infected target yanks/disables the logical version.
 - Confirm one clean artifact cannot make an incompletely scanned release look wholly clean.
+- Confirm all three malware call sites moved off version scope: the per-artifact S3 key replaces `tool_versions.s3_key` (NULL for new-format releases, while the scan row requires it), the one-scan-per-version early return no longer drops targets 2..N, and the detail rollup no longer reads a single scan row.
+- Confirm the scan row's artifact association is optional rather than required, so resolution-scoped scanning stays additive later.
+- Confirm no SBOM/Grype/pip-audit/OSV column was populated as a side effect. Those columns are unwritten schema; "existing vulnerability scanning" does not exist and cannot be regressed. Only the GuardDuty malware path is live.
+- Confirm no dependency vulnerability analysis was added. Declared Python dependencies are not in the archive, so archive scanning cannot cover them; that exposure lives in `PythonResolution` and belongs to Stage 2 Package Health.
 - Confirm the release reservation lifetime is chosen deliberately and outlives any single presigned PUT window, rather than inheriting the existing 900-second presign.
 - Confirm a presigned PUT can be re-issued for a pending child artifact without invalidating the release or already-uploaded siblings.
 - Confirm reservation expiry surfaces as an identifiable, actionable error rather than an opaque S3 or `409` response.

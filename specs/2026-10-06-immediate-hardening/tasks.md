@@ -1511,18 +1511,18 @@ can commit after restoring the declared inventory; see `test-plan.md`.
 
 Local verification and limits are recorded in `test-plan.md`. Acceptance gates:
 
-- [ ] Complete independent review and normal CI; run the updated native
-      Resolver Contract jobs covering release types and artifact preparation.
+- [x] Complete independent review; operator confirmed review is finished.
+- [x] Confirm normal CI passes; operator confirmed success.
+- [x] Run the updated native Resolver Contract jobs covering release types and
+      artifact preparation; operator confirmed all four target runs passed.
 - [x] Verify schema/vector parity and Registry contract tests locally across both
       working checkouts; evidence is recorded in `test-plan.md`. Hosted parity
       against CLI `main` is deferred to Release Band 9 below, after M13B and the
       CLI merge; it does not block completing M13A or starting M13B.
-- [ ] Complete the operator's M13A manual acceptance. Local startup/migration
-      recovery is confirmed; it does not replace the remaining walkthrough.
-- [ ] Before enabling the later new-format release flow, rehearse deployment
-      and verify permissions/retention for bucket-root `packages/` and staging
-      `uploads/` in each environment. No live S3 write/policy change or production
-      deployment is claimed by this implementation.
+- [x] Complete the operator's M13A manual acceptance. Operator confirmed all
+      tests in `manual-tests/RELEASE_M13A_MANUAL_TESTS.md` passed on 2026-10-25.
+      M13A is complete; Release Band 9 deployment/storage and hosted parity gates
+      remain open below.
 
 ## Milestone 13B: Multi-Artifact Upload, Finalize, and Scanning
 > Scope note: make the publish transaction work for N artifacts — per-artifact reservations and presigned PUTs under one logical release, streaming uploads, reconciled size limits, reservation expiry/cleanup, rate-limit and timeout fitness for CI, one atomic finalize, post-finalize immutability, and per-artifact malware scanning. Consumes the data model from 13A.
@@ -1532,6 +1532,7 @@ Local verification and limits are recorded in `test-plan.md`. Acceptance gates:
 > - Current publish buffers an entire artifact in memory (`tokio::fs::read`). New package/release upload should stream.
 > - Current client and server upload caps disagree (3 GB client vs ~1 GB server). Treat server policy as authoritative.
 > - Current malware scan model is asynchronous after publish. Preserve that timing, but create a scan per concrete target artifact and aggregate release-level status from the per-artifact results.
+> - **Only malware scanning exists.** GuardDuty object tags drive `malware_status` for every kind. The SBOM/Grype/pip-audit/OSV columns are unwritten schema, so "adapt scanning" means adapting the malware path and nothing else. Three concrete call sites need changing — the version-scoped `s3_key` passed to `_enqueue_scan`, its one-scan-per-version early return, and the single-row read behind `scan_malware_status`.
 > - M13A's deferred inventory trigger checks manifest/artifact-row consistency only. No FK/trigger links upload reservations to recorded versions or proves upload completeness; M13B must enforce that prerequisite in finalize.
 
 - [ ] Implement release init/resume that can return multiple per-artifact presigned PUT instructions without one-pending-upload collisions.
@@ -1573,10 +1574,15 @@ Local verification and limits are recorded in `test-plan.md`. Acceptance gates:
 - [ ] Adapt malware scanning:
   - [ ] enqueue one scan per `PackageVersionArtifact`;
   - [ ] associate scan row/result with concrete artifact (artifact FK preferred);
+  - [ ] keep that artifact association **optional** on the scan row rather than required, so a later resolution-scoped scan record is additive instead of a migration undoing this one. Stage 1 adds no such row;
+  - [ ] replace the version-scoped `s3_key` input with the per-artifact key. `_enqueue_scan` is handed `tool_versions.s3_key`, which V1.98's CHECK forces NULL for new-format releases, while `package_version_scans.s3_key` is `NOT NULL`;
+  - [ ] replace the one-scan-per-version guard. `_enqueue_scan` returns early when any scan row exists for the version, so without this change only the first target is ever enqueued;
+  - [ ] aggregate for the detail surface. `ToolsService` reads a single scan row into `scan_malware_status`; with N rows it needs a rollup. Keep the DTO field shape if possible so the website needs no change, and treat a shape change as a user-facing contract change;
   - [ ] preserve queued/running/unknown semantics;
   - [ ] if any artifact is infected, yank/disable the logical version;
   - [ ] never display the version as wholly clean unless all required artifact scan states justify it.
-- [ ] Do not wire existing unused SBOM/Grype columns as a side effect unless deliberately scoped.
+- [ ] Do not wire existing unused SBOM/Grype columns as a side effect unless deliberately scoped. They are unimplemented schema: nothing writes `sbom_cyclonedx`, `grype_summary`, `grype_findings`, `pip_audit_findings` or `osv_findings` today, so there is no existing vulnerability scanning to adapt or regress.
+- [ ] Do not add dependency vulnerability analysis here. Declared Python dependencies are not in the archive — wheels are fetched at install time — so archive scanning cannot cover them, and the exposure is described by the stored `PythonResolution`. That is a new capability for Stage 2's Package Health evidence model, not Stage 1 hardening. See spec §25.
 
 ## Release Band 9: Release Data Model and Multi-Artifact Publishing
 Covered milestones: 13A-13B.
@@ -1589,6 +1595,12 @@ This gives us the server-side capability for one immutable release composed of m
       IDs. Complete this gate before Registry deployment. Manual pre-merge
       dispatch may select a proposed CLI ref, but does not replace this main-ref
       release gate. This is a band-level gate, not an M13A completion prerequisite.
+- [ ] Rehearse deployment and verify permissions/retention for bucket-root
+      `packages/` and staging `uploads/` in dev and production before enabling
+      the later new-format release flow. This is a Release Band 9 readiness gate,
+      not an M13A completion prerequisite. No live S3 write/policy change or
+      production deployment is claimed by the M13A implementation; keep the
+      new-format publish path gated as required above.
 
 ## Milestone 14A: Canonical Signing Foundation
 > Scope note: build the cryptographic groundwork that every later integrity statement depends on — a typed Rust representation of the existing `agentpm.package.signature.v1` statement, RFC 8785/JCS canonicalization in both Rust and Python with shared cross-language test vectors, the canonical release-manifest content binding, and the release-level digest definition. Introduces no new statement types and changes no verification behavior.

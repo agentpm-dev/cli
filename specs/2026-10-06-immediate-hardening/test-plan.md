@@ -2927,10 +2927,16 @@ Verification totals and tooling:
   validation and compilation of the changed public MDX pass.
 - Resolver Contract path triggers/test steps now include the release models,
   shared fixtures and new-format archive helper on all four native runners.
-  Hosted execution is not claimed from local verification.
+  The operator confirmed all four updated hosted target runs passed: macOS ARM,
+  macOS Intel, Linux x86_64 and Windows x86_64. This is operator-reported hosted
+  evidence, separate from the local verification totals above.
 
-Remaining acceptance: independent review, normal/updated native CI, operator
-manual walkthrough and later environment-specific rollout/storage-policy checks.
+Independent review, normal CI, all four updated Resolver Contract runs and the
+operator manual walkthrough are complete, as confirmed by the operator.
+M13A acceptance is complete; the operator confirmed all manual tests passed
+on 2026-10-25.
+Hosted cross-repo parity and environment-specific deployment/storage-policy
+checks remain Release Band 9 gates, as recorded in `tasks.md`.
 The local migration recovery is operator-confirmed, but there were no live S3
 writes, bucket-policy changes, production deployment, new public publish/build
 workflow, source commits or pushes by the agent. The existing Node/Python SDK
@@ -2997,6 +3003,33 @@ checks pass. GitHub-hosted execution remains pending after these files are
 pushed and the corresponding authoritative CLI files are available at the
 selected ref. No workflow was dispatched and no commit/push was performed.
 
+#### M13A operator manual runbook
+
+`manual-tests/RELEASE_M13A_MANUAL_TESTS.md` is operator-accepted. It uses
+one macOS/zsh terminal, the existing Registry venv, shared contract vectors,
+focused primitive tests and a separate localhost-only PostgreSQL container.
+It applies the actual four migration files through the Pyway wrapper, checks
+a representative legacy row, then records and inspects a four-artifact version
+using mock S3. The data setup reuses the existing SQL test baseline; SQLAlchemy
+does not generate schema DDL. A deliberate finalized-artifact mutation fails,
+and the guide checks existing local API reads and browser navigation separately.
+
+The executable blocks were rehearsed sequentially: **4 Rust SDK tests**, **1
+Rust artifact-helper test**, **30 Registry contract/migration-order cases**, and
+**13 real-PostgreSQL cases** passed. Manual fixture SQL inspection and unchanged
+legacy-column comparison passed, canonical document bytes matched, a second
+Pyway migration run succeeded without changes, and the expected immutable UPDATE
+was rejected without altering the four artifact sizes. Local trending, search
+and package-detail API reads returned HTTP 200. The disposable container was
+stopped/removed. No application database writes, live S3 operations, real
+publication or deployment were performed during this rehearsal.
+
+The rehearsal above verifies the runbook commands. Separately, on 2026-10-25
+the operator confirmed all manual tests passed, including the walkthrough's
+local browser checks. M13A manual acceptance is complete. Hosted CLI-main parity
+and environment-specific deployment/storage readiness remain Release Band 9
+gates; this acceptance does not mark those later checks complete.
+
 ### Multi-artifact release / publish storage
 
 Automated cases:
@@ -3034,8 +3067,14 @@ Automated cases:
 - old client/new release produces clear unsupported-release-format error.
 - malware scanning:
   - one scan scheduled per target artifact;
+  - **verify by mutation that targets 2..N are actually enqueued.** The current `_enqueue_scan` returns early when any scan row exists for the version, so a test asserting "a scan exists" passes against the old one-per-version behavior; assert the row count equals the artifact count and that each row carries its own artifact key;
+  - a new-format release enqueues scans even though `tool_versions.s3_key` is NULL, using the per-artifact key;
   - all-clean state requires appropriate artifact results;
-  - infection of any artifact yanks/disables logical version.
+  - a release with one clean and one queued/failed/unknown artifact does not report clean on the package detail surface;
+  - infection of any artifact yanks/disables logical version;
+  - the legacy single-artifact scan path is unchanged: a legacy publish still enqueues exactly one version-scoped scan row and the poller still resolves it;
+  - the scan row's artifact association is nullable, so a row without one remains valid;
+  - no SBOM/Grype/pip-audit/OSV column is written. These are unwritten schema today, so assert they stay NULL rather than assuming a prior baseline.
 - release reservation outlives an individual presigned PUT window.
 - a presigned PUT can be re-issued for a still-pending child artifact without invalidating the release or already-uploaded siblings.
 - an expired release reservation produces an actionable, identifiable error rather than an opaque S3 or `409` failure.

@@ -1655,6 +1655,39 @@ For new-format releases:
 
 Do not treat SBOM/Grype columns that happen to exist in the current schema as implemented Stage 1 vulnerability scanning unless this work explicitly wires them into the flow.
 
+**What exists today, stated precisely.** Malware scanning is live: publish enqueues one
+`package_version_scans` row per version, and a poller reads the
+`GuardDutyMalwareScanStatus` S3 object tag and maps it onto `malware_status`. That is the
+whole implemented pipeline, and it runs for every package kind. The
+`sbom_cyclonedx`, `grype_summary`, `grype_findings`, `pip_audit_findings` and
+`osv_findings` columns exist in `V1.54` and on the ORM model, and **nothing writes
+them**. Vulnerability scanning is unimplemented schema, not a feature to adapt. Do not
+describe AgentPM as performing dependency vulnerability scanning on this basis.
+
+**The new model relocates the Python dependency vulnerability surface out of the
+artifact.** Declared Python dependencies are deliberately not bundled: wheels are
+acquired by AgentPM-managed `uv` at consumer install time rather than shipped in the
+release payload. So for a new-format dependency-bearing Python Tool, scanning the
+archive bytes says nothing about its dependency vulnerability exposure — those
+distributions are not in the archive. The authoritative description of that exposure is
+the stored `PythonResolution`, which records exact pinned versions and per-distribution
+digests, and is a better input for OSV/`pip-audit`-style analysis than an unpacked
+archive, without fetching or unpacking anything.
+
+Two consequences, neither of which adds Stage 1 scope:
+
+- Per-artifact malware scanning remains correct and sufficient for Stage 1. It answers
+  "are these shipped bytes infected", which is still the right question for payload
+  content, and it is unaffected by where dependencies live.
+- Resolution-scoped dependency analysis is a **new capability, not hardening**, and is
+  out of scope here. It belongs with Stage 2's Package Health evidence model rather than
+  being wired in as a side effect of multi-artifact scanning.
+
+Milestone 13B must therefore not foreclose it: when the scan schema gains its
+artifact association, keep that association optional rather than making every scan row
+require a concrete artifact, so a later resolution-scoped scan record is an additive
+change rather than a second migration undoing this one. Stage 1 adds no such row.
+
 ### 26. GitHub Actions v1 and package-build CLI
 
 The first official CI integration only needs to solve:

@@ -33,3 +33,8 @@ Generated workspaces/results are disposable; each guide states their location.
   explicit overrides, plus a local capture of publish descriptors/uploaded
   archives. One terminal, isolated state, no backend/PAT/S3/publication; rechecks
   disposable copies of both prepared examples without refreshing dependencies.
+- [Release and artifact data foundation (Milestone 13A)](RELEASE_M13A_MANUAL_TESTS.md):
+  inspect shared release documents, validate internal artifact/compatibility
+  primitives, apply the real migrations to a disposable PostgreSQL database,
+  inspect one version with four artifact rows, and check existing local pages
+  and search. One terminal; mock S3 only, no real publication or production writes.
