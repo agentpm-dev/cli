@@ -20,6 +20,7 @@ Verification must cover:
 - legacy Python Tool install;
 - target-aware multi-artifact publish/install;
 - release integrity/signing;
+- Python/Node SDK lockfile and managed Python Tool compatibility (M17);
 - GitHub Actions or equivalent CI flow.
 
 Where the repo already has canonical test commands, use those commands rather than inventing parallel verification.
@@ -2186,6 +2187,111 @@ preparation. Together with completed independent review and manual acceptance,
 tag publication, installation or production deployment is claimed yet. Earlier
 pending-CI notes below are historical and superseded by this confirmation.
 
+#### Release Band 8 Production Deployment Confirmation
+
+The operator confirmed the **CLI, Registry and Web production deployments are
+complete**, following the requested CLI → Registry → Web rollout sequence.
+This closes the deployment checklist item. It is operator-reported deployment
+evidence, not an independent installed-version, live metadata-contract or
+website-marker audit. The separate retry-fix CI evidence item is not inferred
+closed from this deployment confirmation.
+
+Prepared `summarize-text` **0.1.9** and `devwork-copilot` **0.1.7** publication,
+the subsequent real consumer install/lock/environment update, direct and Harness
+summarization, and legacy-version verification remain unchecked. No publication,
+paid model call, commit or GitHub push was performed while recording this update.
+
+#### Release Band 8 Production Example Smoke Verification
+
+This later evidence supersedes the unchecked publication/install/direct-run
+status in the earlier deployment and source-preparation records. The operator
+confirmed both `@zack/summarize-text@0.1.9` and
+`@zack/devwork-copilot@0.1.7` were published to production, then supplied a
+successful real install in `agentpm-examples/agent-app-devwork-python`, including
+Python environment preparation and install finalization.
+
+Read-only local inspection confirmed:
+
+- Installed CLI reports **0.1.37**. Consumer lockfile v4 selects Agent **0.1.7**
+  and Tool **0.1.9**, and the installed Agent manifest matches the prepared
+  source manifest.
+- The consumer lock's Python resolution, the installed `agentpm-python.json`
+  and the reviewed author lock agree, with resolution digest
+  `50d5696264f687684b7665fcafd3bcfd95cdbb669a5b55cfb434efe7b15fbd1e`.
+- The managed Apple Silicon environment has a matching readiness fingerprint
+  for uv **0.13.5** and Python **3.13**, and exactly **16** installed
+  distributions. The portable resolution contains **17**: Windows-only
+  `colorama` is correctly absent here. OpenAI and the native `pydantic-core`
+  and `jiter` modules import from the managed environment. No `_vendor`
+  directory exists in the installed Tool, and `.agentpm/` is Git-ignored.
+- The operator ran `agentpm run @zack/summarize-text@0.1.9` with supplied text
+  and a 50-word budget and reported `ok: true` with an actual summary. This is
+  operator-executed paid model evidence; the inspection made no model request.
+- A read-only production status-page request returned HTTP **200**, showing
+  CLI **v0.1.37** and `Release: 1d ago`, consistent with the checked-in
+  **2026-10-24** source date. The rendered page uses relative age rather than
+  exposing the literal ISO date. Successful real publication/install and the
+  matching installed metadata verify the deployed Registry contract.
+
+The initial production publish was blocked by a WAF false positive on the
+README sentence containing the inline Python entrypoint command. Rewording
+that sentence allowed the full credential-free metadata probe to reach Flask
+(expected HTTP **401** with request ID); the operator then confirmed successful
+signed publication. No firewall setting, signing key or token was changed.
+
+The Python SDK app pin, existing test and README now identify Agent **0.1.7**;
+its **5** unit tests and formatting checks pass. An offline metadata-loading
+check fails because the existing SDK accepts only lockfile v2/v3. Its direct
+Tool spawn path also does not select the CLI-managed Python environment. The
+operator explicitly requested no SDK changes now, deferring that compatibility
+work to Milestone 17. No successful SDK-app startup is
+claimed, and no SDK source or contract was changed.
+
+The operator subsequently supplied Harness run
+`agentpm-examples/agent-app-devwork-python/.agentpm-state/runs/run-18e1aa0d9a8fe390-5`.
+Read-only inspection of `events.jsonl` and `report.json` confirms:
+
+- Two real `@zack/summarize-text` invocation/completion pairs, in
+  `inspect-issue` and `draft-comment`, with source `agent_binding` and completed
+  status. The events occur at lines 29–30 and 52–53 respectively.
+- Preflight `ready`, `error_count: 0`, and terminal status `handed_off` after
+  the `resolve-or-handoff` phase. This is actual Harness Tool execution, not
+  merely a model-written summary.
+- The consumer lock selects only `@zack/summarize-text@0.1.9` and Agent
+  `@zack/devwork-copilot@0.1.7`. Exact versions are established from that
+  inspected install state; the action events identify the Tool by name only.
+  The report's Agent identity is `synthetic-agent@0.0.0`, so the report alone
+  is not an exact published-Agent identity assertion. Tool arguments/results
+  are redacted; no claim about their unredacted content is inferred.
+
+This closes the Harness invocation check independently of the deferred SDK
+app startup check. No run was re-executed and no additional model/API call was
+made while inspecting the evidence. Hosted verification of the resolver retry
+correction is also operator-confirmed complete. The only remaining Band 8
+check is the existing vendored production-version runtime smoke test.
+
+Legacy smoke attempt: the operator ran the installed
+`@zack/summarize-text@0.1.8` with the Apple Silicon Homebrew Python **3.13**.
+Failure artifacts under
+`agent-app-devwork-python/.agentpm/runs/run-20261025041211534-88813` show the
+original Tool entrypoint and vendored OpenAI/Pydantic modules loading, followed
+by `ImportError` from `pydantic-core`: incompatible architecture, `x86_64`
+versus the host's required ARM architecture. Read-only `file` inspection
+confirms both bundled `pydantic-core` and `jiter` extensions are Mach-O
+**x86_64**, not universal or ARM binaries. A matching Python minor version alone
+does not make these native libraries compatible.
+
+This demonstrates the old vendored execution path is still selected, but is
+not a successful legacy runtime smoke test. The specific failure is explained
+by the pre-existing Intel-only artifact; it does not establish a new CLI
+regression. The operator no longer has the Intel Mac. Keep this check
+**blocked by host availability**, requiring a compatible Intel macOS/Python
+3.13 host or an explicitly accepted verification exception to close. No
+Rosetta/emulation setup, package rewrite, vendor replacement, lock change or
+additional model call was performed. The new **0.1.9** managed-environment
+Tool remains successfully verified on Apple Silicon through direct CLI and
+Harness execution.
+
 #### Release Band 8 Post-Merge Resolver Spawn Race
 
 After the CLI merge, the operator reported Linux CI failing
@@ -2229,6 +2335,54 @@ The operator's green rerun used the pre-fix code. The new patch remains local,
 uncommitted and unpushed at handoff; hosted verification of the correction is
 still required before including it in a production CLI release. M12's completed
 review/manual acceptance stands; this is a subsequent release-hardening fix.
+
+Subsequent operator confirmation: **hosted CI verification of the resolver
+retry fix is complete**. This closes that Band 8 verification item and
+supersedes the earlier local-only/unpushed handoff status above. It is separate
+from the original pre-fix green rerun and does not identify a new published
+CLI version or imply an SDK release.
+
+#### Release Band 8 Example Source Preparation
+
+Prepared `agentpm-examples/agent-packages/devwork-python` as
+`devwork-copilot` **0.1.7**, adding exact direct dependency
+`@zack/summarize-text@0.1.9`. Bound the Tool to `inspect-issue` and
+`draft-comment`; the existing Loop keeps Tools disabled in `resolve-or-handoff`.
+The previous published Agent version remains unchanged. Read-only public
+Registry metadata showed the existing Agent at **0.1.6** and summarizer at
+**0.1.8** while selecting these prepared versions.
+
+The summarizer was already prepared as **0.1.9**. Its source manifest,
+`pyproject.toml` and reviewed `agent.lock` were retained byte-for-byte. The README
+now identifies CLI **0.1.37+** and defaults to reusing the reviewed resolution;
+refresh is an intentional dependency-update operation. The Agent README explains
+Tool-before-Agent publication, subsequent real consumer install, direct/Harness
+verification and credentials. The public Python-dependencies guide identifies
+the matching CLI floor. No internal milestone/stage/release-band terminology
+was added to the summarizer's published source or README.
+
+Verification:
+
+- Existing offline `uv` summarizer suite: **5 tests passed**, using the real
+  OpenAI client with mock HTTP transport and native Pydantic imports; no network
+  or paid model request occurred during those tests.
+- Both manifests passed real `agentpm lint --strict` against the local schema.
+- Fresh isolated copies passed strict CLI publication dry runs against a closed
+  loopback endpoint. A deliberately missing uv override confirmed reuse of the
+  summarizer's existing **17-distribution** resolution. Its archive reports
+  `any`, includes matching `agentpm-python.json`, and contains no author lock,
+  vendored environment or duplicate member. Authored Tool inputs stayed unchanged.
+- The Agent dry run packages version **0.1.7**, the exact Tool pin and both phase
+  bindings. It creates no author Tool lock or consumer install state. This is
+  source/packaging verification, not a claim of a live installed Agent graph or
+  successful Harness execution of the unpublished dependency version.
+
+Existing consumer pins/locks, templates and SDK demo apps were left intact.
+After Tool then Agent publication, run the documented real consumer install
+(the README uses `app-harness-minimal-agent`) and review its generated dependency
+request/lock. Direct paid summarization, an actual Harness Tool call and legacy
+production-version smoke verification remain unchecked rollout work. No commits,
+pushes, publication, consumer installation or paid model call were performed.
 
 #### M12 Operator Manual Acceptance
 
@@ -2768,6 +2922,55 @@ Test target behavior:
 - download client enforces explicit connect and idle/progress timeouts instead of `reqwest` defaults;
 - legacy package follows legacy install path.
 
+### SDK lockfile and managed Python Tool compatibility (M17)
+
+Implement these cases in both `agentpm-sdk-python` and `agentpm-sdk-node`.
+This section plans future work; the current SDK app startup failure remains a
+known limitation until M17 is implemented and verified.
+
+- Shared representative fixtures cover supported lockfile v2/v3/v4, installed
+  Agents and Skill-transitive Tools, local author roots, additive v4 fields,
+  malformed locks and an unsupported future version. Both SDKs consume the
+  same fixtures; require byte-identical lock contents before/after load/call.
+- Exact Agent **0.1.7** and Tool **0.1.9** remain selected when older installed
+  versions coexist. Installed Agent loading works without app `agent.json`;
+  a local author root is not exposed as an installed release. Exercise each
+  supported composition kind using the finalized M13–16 metadata contracts.
+- An offline mock-CLI fixture asserts argv, working directory, input transport,
+  project/lock context, exact Tool version, machine-envelope handling and
+  returned Tool data for each SDK. Cover a Tool returning `ok: false` separately
+  from a failed runner, malformed/incomplete machine output and nonzero exit.
+- With the real compatible CLI, install a test Tool whose code imports a
+  native dependency, then invoke it through each SDK's public callable/wrapper.
+  Confirm the interpreter, imported package paths and versions belong to the
+  verified managed environment, not app/global Python. Normal tests use a
+  deterministic no-model-cost Tool/provider; a separate operator production
+  summarizer smoke check may use credentials only when explicitly authorized.
+- Loading/invoking cannot install, re-resolve, rebuild or rewrite portable
+  state. Snapshot lock/install/environment state and assert no resolver/index
+  requests, provisioning or install finalization occur during SDK load/call.
+- Missing/old CLI, missing/not-ready/stale environment, changed interpreter,
+  tampered resolution/installed metadata and incompatible target fail closed
+  with repair guidance; no ambient-Python or older-Tool fallback occurs.
+- Required/entrypoint/caller env layering, paths with spaces, stdin JSON,
+  large/malformed output, stderr diagnostics, timeout and cancellation retain
+  documented behavior. Ambient `PYTHONPATH` shadow and `PYTHONHOME` do not
+  override managed execution. No key/token/passphrase leaks in captured output.
+- Legacy/no-dependency Python Tools, vendored native content and Node Tools
+  retain their previous runner behavior, including standalone use without a
+  CLI where previously supported. Optional adapters remain optional.
+- Run Python pytest/format/lint/mypy/package checks and Node test/lint/build/
+  declaration/ESM/CJS checks using their repo-native commands. Execute real
+  integration cases on supported Linux, macOS and Windows runners; fake target
+  strings alone do not establish portability. Record actual matrix evidence
+  and any unsupported SDK host explicitly before acceptance.
+- Verify Python and Node example consumers actually invoke the Tool through
+  their SDK wrapper, not merely through a separate direct CLI command. The
+  existing Python devwork app is the recorded regression case.
+- Check documented minimum SDK/CLI versions and install SDK distributions into
+  clean consumer environments for operator-confirmed release smoke checks.
+  Local builds or source overrides alone are not publication evidence.
+
 ### CI / headless signing
 
 Automated or integration cases:
@@ -2878,7 +3081,7 @@ for a newer release. This is an identity/consistency choice, not a claim of bett
 
 Accepted tradeoff: when the current docs version changes, the canonical target of a `latest`
 link changes too. Search signals may be distributed across version URLs over time instead of
-consolidating on an evergreen URL. Milestone 17 should carry this decision forward explicitly.
+consolidating on an evergreen URL. Milestone 18 should carry this decision forward explicitly.
 If evergreen discovery becomes the priority, reconsider canonicalizing both current concrete
 pages and their aliases to `/docs/latest/...`, while keeping historical pages self-canonical.
 Such a change must update metadata, sitemap selection, tests, and documented policy together;

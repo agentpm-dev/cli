@@ -1176,8 +1176,8 @@ fresh local evidence below. Independent review, normal CI and all four updated
 native Resolver Contract jobs are now operator-confirmed complete, including
 Windows after its fixture correction. The operator has now confirmed all manual
 tests pass, including the rebuilt Node step, and that final CI is all green.
-**M12 acceptance is complete.** Release Band 8 production rollout remains
-separate and unchecked below.
+**M12 acceptance is complete.** Release Band 8 production rollout and its
+remaining verification checks are tracked separately below.
 See the M12 evidence in `test-plan.md`.
 
 ### M12 format-policy follow-up — implementation and verification
@@ -1351,27 +1351,68 @@ resuming the Node runbook step. It does not extend Python collection policy.
   release/deployment remains operator-owned Release Band 8 work.
 
 ## Release Band 8: Python Tool Dependency Contract
+
 Covered milestones: 11A-12.
 This gives us the first-party Python dependency story working end to end for a single published artifact: declaration in `agent.json` with real lint validation, a pinned AgentPM-managed `uv` acquired from AgentPM-controlled storage and resolving to exact portable state, the fixed `PythonResolution` v1 contract with distribution digests, lockfile persistence with a forward-version guard, an AgentPM-managed per-Tool environment under `.agentpm/`, digest-verified wheel-only provisioning, dependency-bearing execution through `agentpm run`, and honest payload-compatibility classification. These four milestones are one band because any smaller cut ships a Tool that can declare dependencies it cannot install, or install dependencies it cannot verify are compatible with the consumer's target. Legacy vendored Tools keep working unchanged throughout. If schedule pressure demands an earlier partial release, the Milestone 11B lockfile forward-version guard is the only piece with standalone value — it is a correctness fix for a hazard that exists today.
 
 - [x] Prepare CLI **0.1.37** (`v0.1.37`) and the matching website status-page
-  release date **2026-10-24**. Keep SDK versions and the published **0.1.36**
-  APDS tolerance floor unchanged; verify crate/lockfile/binary/status marker.
-- [ ] Verify the post-merge resolver `ETXTBSY` correction in hosted CI before
-  including it in a production CLI release. The operator's successful rerun of
-  the original failing jobs confirms intermittency, not verification of the
-  new local retry patch. See the post-merge evidence in `test-plan.md`.
-- [ ] After the final required CI/native checks pass, operator publishes CLI
-  **0.1.37**, then deploys **Registry**, then **Web**, in that order. CLI tag
-  publication remains operator-owned. The CLI release workflow first verifies
-  the already-deployed uv inventory/mirrored bytes; do not bypass that gate.
-- [ ] Verify installed CLI reports **0.1.37**, the deployed Registry serves the
-  Python resolution/install metadata contract, and the deployed status page
-  advertises **0.1.37** with **2026-10-24**. Publish/install dependency-bearing
-  production Tool versions only after the Registry deployment is verified.
-- [ ] After the band prerequisites and CLI release are verified, publish the prepared `agentpm-examples/tools-python/summarize-text` **0.1.9** to the production Registry as `@zack/summarize-text`, using its reviewed `agent.lock` and declared Python dependencies rather than a vendored native tree.
-- [ ] Add exact `@zack/summarize-text@0.1.9` to `devwork-copilot`, install/update its consumer lock and managed environment, and verify an actual summarization via direct run and a Harness Tool call with `OPENAI_API_KEY`. Review any required Agent version bump/publication as part of that rollout; do not silently alter an immutable Agent release.
+      release date **2026-10-24**. Keep SDK versions and the published **0.1.36**
+      APDS tolerance floor unchanged; verify crate/lockfile/binary/status marker.
+- [x] Verify the post-merge resolver `ETXTBSY` correction in hosted CI. The
+      operator separately confirmed the correction's hosted CI verification is
+      complete. This supersedes the earlier pre-fix green rerun; it does not alone
+      establish which published CLI version includes the correction. See the
+      post-merge evidence in `test-plan.md`.
+- [x] After the final required CI/native checks pass, operator publishes CLI
+      **0.1.37**, then deploys **Registry**, then **Web**, in that order. CLI tag
+      publication remains operator-owned. The CLI release workflow first verifies
+      the already-deployed uv inventory/mirrored bytes; do not bypass that gate.
+      Operator confirmed production deployments of CLI, Registry and Web complete.
+      Installed-version/contract smoke checks and the separate retry-fix CI evidence
+      item remain independently tracked rather than inferred from deployment alone.
+- [x] Verify installed CLI reports **0.1.37**, the deployed Registry serves the
+      Python resolution/install metadata contract, and the deployed status page
+      advertises **0.1.37** with **2026-10-24**. Publish/install dependency-bearing
+      production Tool versions only after the Registry deployment is verified.
+      Installed CLI and real production publish/install metadata were verified;
+      the live status page reports **v0.1.37** with a relative release age consistent
+      with its source date **2026-10-24**. See the production smoke evidence in
+      `test-plan.md`.
+- [x] Prepare the examples locally: retain reviewed `summarize-text` **0.1.9**
+      source/dependency state; prepare `devwork-copilot` **0.1.7** with exact
+      `@zack/summarize-text@0.1.9` and explicit inspection/drafting Tool bindings.
+      Update requirements/publish/verification instructions and verify tests, strict
+      lint and isolated dry runs. No publication or consumer-lock fabrication.
+- [x] After the CLI/Registry deployment, publish the prepared `agentpm-examples/tools-python/summarize-text` **0.1.9** to the production Registry as `@zack/summarize-text`, using its reviewed `agent.lock` and declared Python dependencies rather than a vendored native tree. Operator confirmed successful publication; retry-fix hosted CI verification is separately confirmed complete above.
+- [x] After the Tool publication, publish prepared `@zack/devwork-copilot@0.1.7`
+      and install it into a consumer workspace, updating the real consumer lock and
+      managed environment. Operator installed it in `agent-app-devwork-python`;
+      local inspection confirmed Agent/Tool versions, the reviewed resolution and
+      the exact platform-applicable installed dependency inventory. Keep old
+      published Agent versions unchanged.
+- [x] Verify actual production summarization through direct
+      `agentpm run @zack/summarize-text@0.1.9` with `OPENAI_API_KEY`. Operator
+      supplied successful `ok: true` output and a real summary.
+- [x] Verify an actual `summarize-text@0.1.9` Tool call through Harness using
+      the published Agent **0.1.7**, rather than only a model-written summary.
+      Operator-provided run `run-18e1aa0d9a8fe390-5` contains two summarizer
+      invocation/completion pairs, zero reported errors and terminal status
+      `handed_off`. The consumer lock selects those Agent/Tool versions; see
+      the trace evidence and report-identity limitation in `test-plan.md`.
 - [ ] Confirm the existing vendored production Tool version still works for legacy consumers. Keep `validate-order` a dev Registry/manual-test example; no production publication is required for it.
+      **Blocked on available host:** the operator's `summarize-text@0.1.8` run
+      reaches its original vendored runner but fails importing Intel-only
+      `pydantic-core` on Apple Silicon. Binary inspection confirms bundled
+      `pydantic-core` and `jiter` are `x86_64`. Full success needs a compatible
+      Intel macOS/Python 3.13 host or an explicitly accepted verification
+      exception; do not mark this as passed or modify the immutable old package.
+
+The Python SDK demo app is pinned to Agent **0.1.7**, but its runtime check is
+blocked by SDK support for lockfile v4 and CLI-managed Python Tool environments.
+The operator explicitly deferred SDK changes to Milestone 17 below.
+This is not evidence of a successful SDK-app run and does not reopen M12's
+completed CLI/Registry acceptance. The independent Harness invocation is now
+verified above.
 
 ## Milestone 13A: Release and Artifact Data Model
 > Scope note: redefine what a published Tool release **is** — one immutable release composed of one or more target artifacts — and where its bytes live. Owns the canonical release-manifest contract, the three new publish/version artifact tables, the `PackageVersion` release-format discriminator, the legacy-column migration, the new immutable S3 layout, per-artifact self-description, and cross-artifact consistency validation. Does not change how uploads are performed (13B).
@@ -1808,7 +1849,45 @@ This is the band where the new release format becomes real for users. It gives u
 Covered milestones: 16.
 This gives us headless signing with encrypted AgentPM key material plus a noninteractive secret/passphrase source and reusable GitHub Actions patterns for building and publishing multi-target releases, including AgentPM's own cross-platform CI coverage. It follows Band 11 because there is no point automating the publication of signed multi-artifact releases until that format is consumer-installable and verifiable.
 
-## Milestone 17: Documentation and Migration Hardening
+## Milestone 17: SDK Lockfile and Managed Python Tool Compatibility
+
+> Scope note: bring the Python and Node SDKs into alignment with the installed-package and runtime contracts delivered by Milestones 11B–16. Both SDKs currently reject lockfile v4 and launch Python Tools directly, bypassing the CLI-managed dependency environment. Keep this deferred until this milestone; it is not a remaining M12 or Release Band 8 implementation item. Preserve existing public loading/callable APIs and legacy Tool behavior. Do not introduce another resolver, environment manager, lock format or registry protocol.
+> Dependencies: consume the finalized lock, local install, provenance and runtime behavior from Milestones 11B/11C and 13–16; implementation must use the exact sub-milestone contracts. Documentation and migration hardening follows as Milestone 18.
+> Implementation notes:
+>
+> - Cover both `agentpm-sdk-python` and `agentpm-sdk-node`: a Node consumer can invoke a Python Tool too.
+> - Read supported lockfile v2/v3/v4 shapes without rewriting them. Support v4 package and local-root lanes without treating a local author root as an installed release. Reject unsupported future versions with actionable errors.
+> - Reuse the CLI's authoritative managed execution path for dependency-bearing Python Tools, including machine-result handling. Do not duplicate Python resolution, environment fingerprinting, target/artifact selection or provenance verification in either SDK.
+> - Do not fix compatibility by lowering a lockfile version, copying dependencies into the app/global Python, setting an ambient interpreter override or silently falling back to the legacy runner.
+
+- [ ] Audit Python and Node SDK installed-package loaders, Agent/Skill composition, exported types, optional adapters and invocation paths against the finalized CLI contracts; record the supported SDK/CLI version matrix and any narrow CLI machine-output adjustment needed for delegation before implementation.
+- [ ] Add read-only lockfile v4 support in both SDKs, retaining existing v2/v3 behavior:
+  - [ ] validate the lock version before interpreting the payload; reject malformed and unsupported future versions;
+  - [ ] resolve exact installed Agent/Skill/Tool references from the lock rather than selecting another installed version;
+  - [ ] consume the portable Python resolution and relevant additive installed-package metadata without changing the fixed contract or moving local environment state into the lock;
+  - [ ] tolerate supported additive fields without rewriting/dropping them; do not accept arbitrary future lock versions;
+  - [ ] handle local author roots and all supported composition kinds without inventing dependency entries or requiring an app-level `agent.json` for an installed Agent.
+- [ ] Delegate dependency-bearing Python Tool execution to a compatible installed AgentPM CLI from both SDKs:
+  - [ ] preserve project/lock discovery, exact version, selected installed payload, input JSON and existing output/callable shapes;
+  - [ ] use the existing CLI machine interface and unwrap its result deliberately; preserve Tool-returned `ok`/`error` data separately from runner failures;
+  - [ ] use the verified managed environment and finalized target/integrity checks; never re-resolve, auto-install, rewrite the lock or rebuild a missing environment during an SDK call;
+  - [ ] report missing/old CLI, missing/stale environment, tampered metadata and incompatible target/interpreter with actionable errors; never fall back to an ambient Python;
+  - [ ] preserve documented caller/entrypoint environment layering, required variables, timeout/cancellation, stderr logging and secret redaction while retaining managed-runtime `PYTHONPATH`/`PYTHONHOME` isolation;
+  - [ ] keep existing no-dependency, legacy vendored and Node Tool invocation behavior; do not impose a CLI runtime dependency on previously standalone legacy calls.
+- [ ] Preserve Python typing/`py.typed`, Node ESM/CJS/declarations and optional framework adapters; do not introduce a breaking import or result-shape change to obtain runtime compatibility.
+- [ ] Add shared representative fixtures for lock v2/v3/v4, future-version rejection and Python Tool resolution; consume the same fixtures from both SDK suites rather than independent divergent literals.
+- [ ] Implement and run the SDK-specific cases in `test-plan.md`, including real CLI/managed-native-dependency execution from both Python and Node consumers, hosted Linux/macOS/Windows coverage, legacy regressions and no-model-cost fixtures. Run each repo's native tests, formatter, lint/typecheck/build checks.
+- [ ] Update the Python devwork app and a representative Node SDK consumer to exercise published Agent/Tool composition with a real consumer lock; verify actual invocation through the SDK wrapper, not only `agentpm run` separately. Preserve reviewed author state and existing immutable releases.
+- [ ] Update SDK READMEs and `agentpm-api/docs` with supported lock/CLI versions, managed-runtime prerequisites, installation/repair steps and verified examples. Record that old SDKs are not compatible merely because the CLI install succeeded.
+- [ ] Prepare tested SDK package versions, example dependency floors and matching website SDK status markers. Keep publication/deployment operator-owned; record release/install verification separately from local package/build checks.
+- [ ] After required checks pass, operator publishes the updated SDK packages and deploys matching documentation/status markers; verify clean consumers install the published SDK versions and invoke a dependency-bearing Python Tool. Record actual distribution versions and the Python/Node smoke results before closing the release band.
+
+## Release Band 13: SDK Lockfile and Managed Python Tool Compatibility
+
+Covered milestones: 17.
+Python and Node consumers can load current installed Agent compositions and call dependency-bearing Python Tools through the same managed runtime used by the CLI. This closes the SDK app gap recorded during Band 8 without delaying the already verified CLI/Registry rollout. Acceptance requires both SDKs, native dependency execution, legacy compatibility, documented version floors and separately confirmed SDK distribution smoke checks.
+
+## Milestone 18: Documentation and Migration Hardening
 > Scope note: finish Stage 1 by documenting the hardened discovery/CLI/analytics surfaces and the new Python Tool dependency, runtime-environment, portability, release, integrity, and CI models so authors can use the system without founder guidance. This milestone updates Stage 1-facing docs/examples only; it does not perform the Stage 2 category-language/IA rewrite or expand the feature set beyond earlier milestones.
 > Implementation notes:
 > - Clearly separate legacy Python Tools from new-format dependency-bearing Tools.
@@ -1895,8 +1974,9 @@ This gives us headless signing with encrypted AgentPM key material plus a nonint
 - [ ] Update CLI help text for new package/signing/install options.
 - [ ] Update registry/docs examples to use `agentpm-harness` Template execution surface where relevant.
 - [ ] Update feedback/help docs for product feedback versus reproducible GitHub bugs.
+- [ ] Carry forward Milestone 17's verified Python/Node SDK compatibility matrix and managed Tool examples; do not claim older SDKs support v4 or managed execution.
 - [ ] Ensure Stage 2 terminology work remains separate.
 
-## Release Band 13: Documentation and Migration Hardening
-Covered milestones: 17.
+## Release Band 14: Documentation and Migration Hardening
+Covered milestones: 18.
 This gives us Stage 1-facing documentation for the new dependency, release, signing, telemetry, and install surfaces, the migration guidance for authors and consumers moving from single-artifact to multi-artifact releases, updated CLI help text, and refreshed registry/docs examples. It is last because documentation written against surfaces that are still moving has to be rewritten; Stage 2 terminology work stays out of scope.

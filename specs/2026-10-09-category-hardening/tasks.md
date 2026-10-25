@@ -1421,7 +1421,7 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 
 **Implementation checklist**
 
-- [ ] Verify Stage 1 complete including its own M17 documentation and migration.
+- [ ] Verify Stage 1 complete including M17 SDK compatibility and M18 documentation and migration.
 - [ ] Record exact released CLI, lockfile, publish, Python portability, signing and search contracts.
 - [ ] Inventory CLI, website/Registry, Node/Python SDK, examples and owned READMEs.
 - [ ] Map docs Introduction/Quickstart/navigation and current Tool-first dead ends.
@@ -1514,7 +1514,7 @@ Covered milestones: 17A–17C.
 
 This gives the finished AgentPM ecosystem one accurate Agent Package-first documentation story across docs, CLI, Registry, SDKs and owned READMEs, based on stabilized Stage 1 and Stage 2 contracts. The whole stage is only complete after the high-risk lifecycle and UX matrices pass and Claude has reviewed the evidence.
 
-- [ ] Document that Stage 1, including its M17 docs work, was fully complete before M17A began.
+- [ ] Document that Stage 1, including its M18 docs work, was fully complete before M17A began.
 - [ ] Execute actual install/run/build/Template documentation commands, not just link checks.
 - [ ] Map S2-AC-01–22 and D01–D21 to concrete evidence and reviewed decisions.
 - [ ] Resolve blocking Claude findings and record deferred category-market questions and future-stage work.

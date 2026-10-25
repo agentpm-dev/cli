@@ -183,7 +183,7 @@ The implementation is split into **M1A–M17C**, including **M1A.1**, **M8B.1** 
 - [ ] Stage 1 Tool scaffolding and template Harness execution surface not broken by changing init default Agent.
 - [ ] Stage 1 CLI error/success/machine format remains functional; help changes don't inadvertently alter flags/subcommands.
 - [ ] Stage 1 technical SEO/canonical/indexing works after new category/reference routes; no accidental crawl of search queries.
-- [ ] **Final-doc gate:** Comprehensive documentation and AgentPM-owned README overhaul was **the last Stage 2 milestone** and started **after Stage 1 was entirely complete**, including Stage 1 M17. Normative APDS technical docs were allowed earlier; do not confuse them with final docs.
+- [ ] **Final-doc gate:** Comprehensive documentation and AgentPM-owned README overhaul was **the last Stage 2 milestone** and started **after Stage 1 was entirely complete**, including Stage 1 M17 SDK compatibility and M18 documentation. Normative APDS technical docs were allowed earlier; do not confuse them with final docs.
 
 ### 12. Legacy, privacy and adverse states
 

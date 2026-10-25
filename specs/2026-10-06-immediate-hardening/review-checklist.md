@@ -365,6 +365,34 @@
 - Confirm Stage 1 CI auth uses supported PAT/`AGENTPM_TOKEN` flow.
 - Confirm OIDC trusted publishing was not accidentally pulled into Stage 1.
 
+## SDK compatibility — Milestone 17
+
+- Confirm Python and Node SDKs both support read-only v2/v3/v4 locks and reject
+  unsupported future versions, without a lock downgrade or silent migration.
+- Confirm exact installed versions, all supported composition kinds and local
+  author roots are handled deliberately; no dependency or integrity value is
+  invented and no ambient installed version supersedes the requested one.
+- Confirm dependency-bearing Python Tools from both SDKs use the compatible
+  CLI's authoritative managed runner and finalized target/integrity checks.
+  Reject duplicate SDK resolution/provisioning/environment-selection logic.
+- Confirm missing/stale environment or missing/old CLI fails with repair
+  guidance, never global/app Python fallback, automatic install or lock rewrite.
+- Confirm machine-envelope handling preserves SDK callable/result shapes and
+  distinguishes Tool-returned errors from runner failures.
+- Confirm env isolation, required-env layering, stdin/stdout/stderr,
+  timeout/cancellation and secret handling retain the intended contracts.
+- Confirm no-dependency/legacy vendored Python and Node Tool behavior remains
+  supported without an unnecessary new CLI prerequisite.
+- Confirm shared compatibility fixtures and actual native-dependency execution
+  through both SDK wrappers, with Linux/macOS/Windows runner evidence rather
+  than only direct CLI tests or mocked target labels.
+- Confirm typing, Python optional adapters and Node ESM/CJS/type exports pass
+  repo-native verification; supported SDK/CLI floors and distribution smoke
+  evidence are recorded separately from local source/build checks.
+- Confirm SDK implementation was deferred from Band 8 to M17 and final
+  documentation/migration remains M18. Do not treat the known SDK app failure
+  as a passing runtime check or pull Stage 2 category work into this milestone.
+
 ## Regressions
 
 - Check install, publish, lint, run, new, export, namespace, keys, knowledge, memory, serve, login-adjacent behavior for unintended changes.
