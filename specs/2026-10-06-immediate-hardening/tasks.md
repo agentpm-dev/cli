@@ -1646,6 +1646,8 @@ Acceptance status:
 - [ ] Complete operator manual acceptance of the gated release flow, interrupted
       uploads, finalization, cleanup and malware rollup. No operator acceptance
       is inferred from local automated verification.
+      Runbook and checked-in archive/request helper are ready in
+      [`manual-tests/RELEASE_M13B_MANUAL_TESTS.md`](manual-tests/RELEASE_M13B_MANUAL_TESTS.md).
 
 ## Release Band 9: Release Data Model and Multi-Artifact Publishing
 Covered milestones: 13A-13B.

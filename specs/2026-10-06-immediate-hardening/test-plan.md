@@ -3342,6 +3342,35 @@ changes are merged. Its Release Band 9 gate remains open for the post-merge run.
 Operator manual acceptance remains pending, along with the separate band-level
 deployment/storage/GuardDuty readiness gates.
 
+#### M13B operator runbook ready; acceptance remains open
+
+[`manual-tests/RELEASE_M13B_MANUAL_TESTS.md`](manual-tests/RELEASE_M13B_MANUAL_TESTS.md)
+and its checked-in `fixtures/m13b/fixture.py` helper now provide one-terminal
+setup and explicit local-Registry/dev-S3 steps for portable, four-artifact and
+dependency-bearing releases, partial/corrupt upload recovery, renewed PUTs,
+receipt reuse, size guidance, immutable inventory, legacy publication/install,
+unsupported new-format consumption, real GuardDuty tags and scheduled cleanup.
+The helper generates read-only SQL scoped to reservation IDs; it never changes
+development DB rows or scan tags. Expiry, retained history, rollback/orphan,
+concurrency, parent-integrity and infected/missing-tag cases use the existing
+78-case disposable-PostgreSQL suite; the two Rust HTTP cases cover transfer
+retry/reopen and pre-transfer size rejection.
+
+Runbook verification used actual CLI lint and dry-run for all four generated
+manifests, then validated all six target archives and their canonical documents.
+The local dependency check reused a matching real prepared example resolution
+in its disposable author lock; the operator guide instead explicitly performs
+fresh resolution. The helper's init/resume/upload/finalize/error/renewal/storage
+and cleanup steps were exercised against the actual Flask release routes and
+forward-migrated disposable PostgreSQL, with auth and S3 replaced by fixtures.
+HTML read-gate responses are handled alongside JSON publish errors. This is
+fixture verification, not real HTTP authentication or AWS/GuardDuty acceptance;
+no development/production publication or external storage request was executed.
+
+Manual acceptance remains open until the operator completes and confirms the
+walkthrough. Release Band 9 main-ref parity, production coverage, deployment
+permissions/retention and request/concurrency/cost sizing remain separate gates.
+
 ### Canonicalization / stored-byte integrity / provenance
 
 Create shared canonicalization fixtures consumed by Rust and Python.
