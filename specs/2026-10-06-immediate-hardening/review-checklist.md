@@ -408,6 +408,22 @@
   documentation/migration remains M18. Do not treat the known SDK app failure
   as a passing runtime check or pull Stage 2 category work into this milestone.
 
+## Schema changes
+
+Apply these whenever a migration adds a column, constraint, index or trigger. Found the
+hard way in M13B: `V1.102` added a correct per-artifact unique index while `V1.55`'s
+pre-existing **unconditional** unique index on `tool_version_scans(tool_version_id)`
+still enforced one scan per version, so the second artifact's scan insert failed at
+finalize. The new constraint was reviewed in isolation and the table's existing ones
+were not.
+
+- **Enumerate every existing constraint, index and trigger on each table being changed, not just the ones being added.** A new constraint that is correct on its own can still conflict with an older one enforcing a now-obsolete rule.
+- Confirm a rule that moved from version scope to a narrower scope was *rescoped*, not merely supplemented. A replacement partial index should have a predicate that is the exact complement of its sibling, so coverage is complete with no double-enforcement and no gap.
+- Confirm the old rule is still enforced for the rows it should still cover — rescoping must not silently drop the legacy invariant.
+- Confirm migration tests replay the **real historical migrations** rather than a synthesized baseline. A hand-written baseline contains exactly the constraints its author remembered, so it cannot catch the ones they forgot; this is the same failure mode as validating a lockfile fixture the new code generated.
+- Confirm an `IntegrityError` surfaced to a client logs the constraint name and SQLSTATE, and does **not** log SQL parameters, which carry authored manifest content.
+- Confirm additive columns leave existing rows byte-identical, and that an already-applied migration's bytes were not edited (Pyway checksums) — upgrades belong in a new forward-only migration.
+
 ## Regressions
 
 - Check install, publish, lint, run, new, export, namespace, keys, knowledge, memory, serve, login-adjacent behavior for unintended changes.
@@ -437,6 +453,7 @@
 - Confirm cross-language canonicalization uses shared vectors.
 - Confirm multi-platform behavior was tested on real runners, not only mocked architecture strings.
 - Confirm legacy compatibility was actually exercised.
+- Confirm schema tests build their starting state from the real migration history, not a baseline written alongside the test. See **Schema changes**.
 - Confirm any unverifiable item is called out explicitly.
 
 ## Pattern adherence

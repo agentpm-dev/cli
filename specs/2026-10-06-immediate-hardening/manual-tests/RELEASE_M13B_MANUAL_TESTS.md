@@ -147,7 +147,7 @@ In **IntelliJ's local backend run configuration**, confirm:
 - The database is your **development** Registry database, not production.
 - `S3_BUCKET=agentpm-dev-tools`, `S3_PREFIX=tools`, and the normal dev AWS region
   and credentials are configured.
-- Migrations through **V1.103** have applied successfully. Leave old migration
+- Migrations through **V1.104** have applied successfully. Leave old migration
   checksums alone if startup reports a mismatch.
 - `MAX_UPLOAD_BYTES=1000000000` and `MAX_RELEASE_UPLOAD_BYTES=1000000000` are at
   their defaults for these specific limit expectations.
@@ -268,6 +268,16 @@ Final storage checks pass for all four targets and the canonical document.
 If an ordinary PUT URL expires while you pause, run `renew` for that target,
 then rerun its `upload`. Do not start a different release or rebuild its archives.
 There is no need to wait 15 minutes to exercise renewal.
+
+If this sequence previously reached `409 / release_conflict` with the message
+`Release changed concurrently; retry`, the pre-V1.104 database may still have
+V1.55's unconditional `uniq_tool_version_scan_one` index. That index incorrectly
+rejects the second artifact scan. Restart the local backend, confirm V1.104
+applies, and rerun `m13b_fixture finalize matrix`, then `storage matrix` and
+`sql matrix` using the same terminal/reservation. No new init or upload is needed
+while the reservation is valid. Existing final objects are verified and reused;
+do not remove immutable objects or edit migration checksums. The new backend log
+includes constraint names if a different integrity conflict remains.
 
 ## 5. Dependency-Bearing `any`, Size Guidance and Immutable Inventory
 
@@ -403,7 +413,7 @@ m13b_python -m pytest -v \
   tests/test_malware_rollup.py
 ```
 
-Expected: **78 cases pass with no skips**. These use actual forward Pyway SQL
+Expected: **80 cases pass with no skips**. These use actual forward Pyway SQL
 in randomly named disposable schemas, not ORM schema generation. They inspect:
 
 - Missing/corrupt uploads and no surviving published rows on failure.
@@ -418,6 +428,9 @@ in randomly named disposable schemas, not ORM schema generation. They inspect:
 - Scan/artifact parent constraints, legacy null associations, all-clean coverage,
   missing/queued/running/failed siblings, infected-artifact version yanking, and
   a missing-tag timeout with a useful warning emitted once.
+- The real historical scan table/index migrations, V1.104's scoped uniqueness,
+  and retrying the same four-artifact reservation after the old index caused
+  an HTTP conflict and complete database rollback.
 - Default-off and scope checks. No SBOM/vulnerability data is fabricated.
 
 These are fixture-backed regressions, not claims about real AWS failure injection.

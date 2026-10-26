@@ -3034,6 +3034,8 @@ gates; this acceptance does not mark those later checks complete.
 
 Automated cases:
 
+- schema tests build their starting state by replaying the **real historical migrations**, not a baseline written alongside the test. M13B's finalize failure was invisible because the hand-written baseline omitted `V1.55`'s unconditional unique index, so the tests ran against a schema that lacked the constraint breaking real databases.
+- for any rule rescoped from version level to a narrower level, both scopes are parameterized — the narrower rule allows the expected number of rows, and the legacy scope still allows exactly one.
 - legacy single-artifact publish still finalizes.
 - one-artifact new-format release finalizes.
 - multiple-target new-format release finalizes.
@@ -3370,6 +3372,60 @@ no development/production publication or external storage request was executed.
 Manual acceptance remains open until the operator completes and confirms the
 walkthrough. Release Band 9 main-ref parity, production coverage, deployment
 permissions/retention and request/concurrency/cost sizing remain separate gates.
+
+#### M13B manual discovery: historical scan-index conflict
+
+The operator's real four-artifact finalize failed with the route's generic
+409/`release_conflict`. V1.55's unconditional unique index
+`uniq_tool_version_scan_one` still limited every version to one scan, including
+artifact-linked rows. The representative test baseline had recreated the scan
+table without that historical index, masking the deployment failure.
+
+The baseline now applies the actual V1.54, V1.55 and V1.56 scan SQL. Before the
+fix, the existing one/four-artifact regression reproduced the error: **2 passed,
+2 failed**, with duplicate-key violations on `uniq_tool_version_scan_one` in
+both four-target cases. Forward migration V1.104 replaces that unconditional
+index with a partial unique index on version IDs only where `artifact_id IS NULL`.
+V1.102's per-artifact unique index remains authoritative for artifact-linked
+scans; null associations and the composite parent FK remain unchanged. Earlier
+applied SQL files are unchanged.
+
+The real HTTP/DB regression now creates the old index deliberately, attempts
+four-artifact finalize, checks the constraint name is logged and all version/
+artifact/scan writes roll back, then removes the reproduced old index and
+retries the same reservation and existing objects successfully. A repeated
+finalize retains exactly four artifacts/scans. Direct SQL regressions verify
+both duplicate legacy/version-only and duplicate artifact scans remain rejected.
+The actual Pyway subprocess upgrade now runs V1.98 through V1.104 and preserves
+the existing legacy scan. Integrity logging includes only operation, constraint
+name and SQLSTATE, preserving the public response without dumping SQL parameters.
+
+Verification: full API suite **600 passed**, **7 existing optional tests skipped**,
+**165 subtests passed**, with the corrected historical schema and forward SQL in
+disposable localhost PostgreSQL. Formatting, lint/security checks pass apart from
+the same two known mypy errors in unchanged search code. The manual runbook now
+requires V1.104 and its controlled set contains **80 cases**. Real dev recovery,
+independent review and Registry PostgreSQL CI for this follow-up remain pending;
+earlier acceptance evidence applies to the preceding revision. No application
+database or live S3 object was altered by this verification.
+
+#### M13B operator acceptance after the scan-index fix
+
+The operator confirmed all manual runbook steps now pass and that Claude reviewed
+and signed off on the V1.104 fix. This closes manual acceptance and the follow-up
+independent-review gate, including real development recovery of the previously
+blocked four-artifact release. The walkthrough's development upload, GuardDuty
+tag/scan and staging-cleanup checks are operator-confirmed; this supersedes the
+earlier manual/review-pending notes above.
+
+The operator subsequently confirmed the Registry PostgreSQL CI job passed with
+V1.104. Together with the confirmed normal/native CI, independent review and
+manual walkthrough, this completes M13B acceptance and supersedes the earlier
+post-fix CI-pending notes. Rust/native source is unchanged by the follow-up.
+Release Band 9's post-merge CLI-main parity,
+production/deployment storage permissions and retention, production GuardDuty
+coverage, capacity and scan-cost checks remain separate and unclosed. Development
+manual acceptance does not establish those production readiness results.
 
 ### Canonicalization / stored-byte integrity / provenance
 

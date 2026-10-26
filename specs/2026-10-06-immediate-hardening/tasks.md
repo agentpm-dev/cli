@@ -1574,6 +1574,7 @@ Local verification and limits are recorded in `test-plan.md`. Acceptance gates:
 - [x] Adapt malware scanning:
   - [x] enqueue one scan per `PackageVersionArtifact`;
   - [x] associate scan row/result with concrete artifact (artifact FK preferred);
+  - [x] replace V1.55's unconditional one-scan-per-version index in forward migration V1.104 with null-artifact-only version uniqueness; retain per-artifact uniqueness and exercise actual historical scan migrations in PostgreSQL fixtures;
   - [x] keep that artifact association **optional** on the scan row rather than required, so a later resolution-scoped scan record is additive instead of a migration undoing this one. Stage 1 adds no such row;
   - [x] enforce the artifact/version parent pairing with a composite FK in forward migration V1.103; reject mismatched inserts/updates and validate existing rows without reassignment, while preserving null associations and legacy scans;
   - [x] replace the version-scoped `s3_key` input with the per-artifact key. `_enqueue_scan` is handed `tool_versions.s3_key`, which V1.98's CHECK forces NULL for new-format releases, while `package_version_scans.s3_key` is `NOT NULL`;
@@ -1643,11 +1644,19 @@ Acceptance status:
       streaming HTTP fixtures, and the Registry PostgreSQL release-upload job;
       operator confirmed all pass. Release Contract Parity failed as expected
       against pre-merge CLI `main`; its Release Band 9 gate remains open.
-- [ ] Complete operator manual acceptance of the gated release flow, interrupted
-      uploads, finalization, cleanup and malware rollup. No operator acceptance
-      is inferred from local automated verification.
-      Runbook and checked-in archive/request helper are ready in
+- [x] Complete operator manual acceptance of the gated release flow, interrupted
+      uploads, finalization, cleanup and malware rollup; operator confirmed all
+      runbook steps pass after the V1.104 fix, including real development recovery.
+      Runbook and checked-in archive/request helper are in
       [`manual-tests/RELEASE_M13B_MANUAL_TESTS.md`](manual-tests/RELEASE_M13B_MANUAL_TESTS.md).
+- [x] Confirm the V1.104 scan-index recovery fix in independent review; operator
+      confirmed Claude reviewed and signed off on the fix.
+- [x] Confirm the Registry PostgreSQL CI job passes with V1.104; operator confirmed
+      the updated job passed. The Rust/native checks are unaffected by this fix.
+
+M13B acceptance is complete: implementation, independent review including the
+V1.104 fix, hosted checks and operator manual testing are all confirmed. The
+separate Release Band 9 gates below remain open.
 
 ## Release Band 9: Release Data Model and Multi-Artifact Publishing
 Covered milestones: 13A-13B.
@@ -1764,6 +1773,7 @@ This gives us a typed Rust representation of the existing `agentpm.package.signa
 > - Registry attestations cannot be verified today because the registry public key/history is not exposed. The explicit trust/key-history contract is the core of this milestone.
 > - Backfill and root-key establishment are sequenced **before** enforcement. Enforcing verification against an unpopulated key set would break every already-published version.
 
+- [ ] Before changing any existing table, enumerate its current constraints, indexes and triggers — not just the ones being added. M13B shipped a correct per-artifact unique index while `V1.55`'s unconditional unique index still enforced the superseded version-scoped rule, and the second artifact's scan insert failed at finalize. `tool_versions` already carries the `ck_tool_versions_release_storage` CHECK and three triggers from 13A, so this milestone is exposed to the same pattern. See the **Schema changes** section of `review-checklist.md`.
 - [ ] Add persistent `registry_signing_keys` model/table containing at least:
   - [ ] registry key ID;
   - [ ] algorithm;
