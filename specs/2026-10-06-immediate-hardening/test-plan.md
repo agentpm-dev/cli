@@ -3741,12 +3741,77 @@ Commands/results:
   assignment errors in unchanged `app/tools/application/search.py:1486,1856`;
   no new mypy errors were reported in the touched files.
 
-Hosted normal/native/parity CI, independent review, operator manual acceptance
-and deployment are not claimed. The Registry parity run against public CLI
+The operator confirmed independent review of 14A is complete with no findings.
+The operator subsequently confirmed hosted normal CI, the Registry PostgreSQL
+job and all Resolver Contract target jobs passed. This records operator-reported
+hosted results; no run URLs or checked revisions have been supplied here.
+Operator manual acceptance is now confirmed passed; deployment remains pending.
+The Registry parity run against public CLI
 `main` needs the authoritative contract update merged first; dispatch against a
-proposed CLI ref can check pre-merge coordination. Production
+proposed CLI ref can check pre-merge coordination. This main-ref parity check is
+an explicit Release Band 10 gate before Registry deployment, not a prerequisite
+for 14A manual testing. Record both checked commit IDs. The Registry PostgreSQL
+job can run before the CLI merge. Production
 `RELEASE_PUBLISH_ENABLED` remains disabled. New release statements, trust
 material and target-aware install acceptance belong to later milestones.
+
+Manual runbook: [`manual-tests/SIGNING_M14A_MANUAL_TESTS.md`](manual-tests/SIGNING_M14A_MANUAL_TESTS.md).
+All shell blocks passed `zsh -n`. Sections 1–4 were rehearsed from their actual
+commands: shared fixture inspection, intentional invalid cases, 11 focused Rust
+unit tests and 65 Python cases passed. The checked-in no-dependency Tool passes
+the real CLI lint/dry run, contains exactly `agent.json`, `tool.py` and `README.md`
+in its archive, and prints the expected JSON when invoked directly. Its Python
+source was formatted with Black and passes Flake8. The section 5 security
+inspection was rehearsed against synthetic signed responses and rejects missing
+author signatures or attestations; that rehearsal made no HTTP request. No real
+dev publish, signer registration, install, scan, production write or operator
+manual acceptance is claimed by this runbook preparation. Acceptance boxes stay
+unchecked until the operator runs the guide.
+
+During the operator's signed dev smoke, publication succeeded for
+`@zack/m14a-signing-20261027015908-37555@0.1.0` (package UUID
+`4938fce9-3863-43ce-854f-bc3e03ab31e7`, version row 85). The subsequent security
+read exposed an incorrect `/v1/tools/.../security` URL in the runbook. Corrected
+it to the registered `/tools/.../security` detail route; publication does not
+need repeating. Synthetic response rehearsal had not exercised routing. Actual
+security verification and consumer install/run acceptance remain pending.
+
+The corrected security read returned no stored author signatures, matching the
+operator's empty signature table/missing Signed badge. A read-only check of the
+local dev namespace's signer records confirmed that none matched the exported
+public key selected for the smoke test. This is the existing optional-signing
+behavior for an unregistered author key; the Registry attestation was present.
+The guide now supplies the standard dev signer-registration command and requires
+a fresh package name after registration, rather than retrying an immutable
+already-published version. Archive inspection filters by the current package
+name so the earlier attempt's archive cannot interfere. The corrected signed
+dev smoke and operator acceptance remain pending; no signer or database row was
+changed during diagnosis.
+
+#### Milestone 14A operator acceptance — passed
+
+The operator confirmed all M14A manual tests pass. This includes shared
+canonicalization/normalization and release-digest checks, legacy signature
+fixtures and focused tests, then a fresh signed development publication after
+registering the selected public key in the dev namespace. The operator supplied
+the successful real-archive author v1 verification and Registry-attestation
+presence output, then confirmed the remaining consumer install/machine-run
+checks passed. This closes the earlier pending manual/security-smoke notes;
+the first unsigned dev attempt remains historical test evidence.
+
+The saved `dev-security.json` was also inspected locally: successful package
+`@zack/m14a-signing-20261027021020-37555@0.1.0`, version row **86**, contains
+one author `agentpm.package.signature.v1` statement and
+`registry_attested=true`. Evidence is in
+`/var/folders/rk/2xd4x19d0z59ly99hyx9s5lw0000gn/T/agentpm-m14a.IsHb8t/evidence/dev-security.json`.
+
+Together with the clean independent review and confirmed normal CI, Registry
+PostgreSQL and all native Resolver Contract jobs, M14A is complete. The runbook
+acceptance checklist records the operator's confirmation. Release Band 10 still
+requires Registry contract parity against authoritative CLI `main` after merge,
+with both checked commit IDs recorded before Registry deployment. No Band 10
+deployment, production feature activation or later signing/verification work is
+claimed by this acceptance.
 
 Stored-byte verification cases:
 

@@ -1777,11 +1777,31 @@ Python-resolution normalization, release digest mutation tests, portable lock
 hex round-trip and required snapshot-parity checks pass locally. No new statement
 versions, trust material, verification policy, public workflow, schema/migration
 or feature-flag change is included. Local verification is recorded in the test
-plan; hosted CI, independent review and operator manual acceptance remain pending.
+plan. The operator confirmed independent review is complete with no findings.
+The operator also confirmed normal CI, the Registry PostgreSQL job and all
+Resolver Contract target jobs passed. The operator confirmed all M14A manual
+tests passed, including accepted legacy author signature verification and the
+consumer install/run. M14A is complete;
+Registry contract parity against CLI `main` remains the Band 10 gate below.
+
+Manual walkthrough: [`manual-tests/SIGNING_M14A_MANUAL_TESTS.md`](manual-tests/SIGNING_M14A_MANUAL_TESTS.md).
+It includes shared contract inspection and a checked-in no-dependency Tool for
+one signed legacy dev publish/security inspection/install/run. Local runbook
+sections and fixture packaging were rehearsed, and the operator subsequently
+completed the real signed dev smoke and confirmed full manual acceptance.
 
 ## Release Band 10: Canonical Signing Foundation
+
 Covered milestones: 14A.
 This gives us a typed Rust representation of the existing `agentpm.package.signature.v1` statement proven byte-identical to today's inline output, RFC 8785/JCS canonicalization in both Rust and Python, shared cross-language test vectors, and the canonical release-manifest content binding. It changes no verification behavior and introduces no new statement types, which is precisely why it is its own band: canonicalization disagreements between the two implementations are unrecoverable once v2 statements exist in production, so this ships and bakes before anything signs with it.
+
+- [ ] After the authoritative CLI contract changes are merged to public CLI
+      `main`, run the Registry's `Release Contract Parity` job for the Registry
+      revision to be shipped. Require a passing comparison of release/signing
+      snapshots and Python contract tests before Registry deployment; record both
+      checked commit IDs. This is a Band 10 release gate, not a prerequisite for
+      14A manual testing. The Registry PostgreSQL job can run earlier. A manual
+      dispatch against a proposed CLI ref does not replace the `main`-ref gate.
 
 ## Milestone 14B: Release-Level Signatures and Stored-Byte Integrity
 > Scope note: introduce the new release-level statements built on the 14A foundation — `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` bound to the release digest — plus trustworthy stored-byte verification before finalize, fail-closed attestation, cross-language key-ID normalization, and explicit historical-signer semantics. Server-side only; client verification material is Milestone 14C.
