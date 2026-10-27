@@ -1664,32 +1664,63 @@ This gives us the server-side capability for one immutable release composed of m
 
 - [x] Prepare CLI **0.1.38** (`v0.1.38`) and matching website status-page date
       **2026-10-26**; verify crate, Cargo lockfile, CLI binary and status marker.
-- [ ] After required checks pass, operator publishes CLI **0.1.38**, then deploys
+- [x] After required checks pass, operator publishes CLI **0.1.38**, then deploys
       **Registry**, then **Web**, in that order. Push/tag/publication and deployment
       remain operator-owned; complete CLI-main parity below before Registry
       deployment. Keep `RELEASE_PUBLISH_ENABLED=false` in Render throughout this
       band; deployment does not activate the new-format publish protocol.
-- [ ] Verify the installed CLI reports **0.1.38**, Registry startup/migrations
-      succeed and legacy publish/install still work with the release gate off,
-      and the deployed status page advertises **0.1.38** dated **2026-10-26**.
-- [ ] After M13B and the Release Band 9 CLI changes are merged to public CLI
+      Operator confirmed CLI, Registry and Web are deployed to production.
+- [x] Verify the installed CLI reports **0.1.38**; operator supplied the installed
+      binary's version and successful probe-manifest lint output.
+- [x] Confirm `RELEASE_PUBLISH_ENABLED=false` in production; operator verified
+      the setting. The new-format publish protocol remains gated.
+- [x] Confirm deployed Registry startup/migrations through V1.104 and legacy
+      publish/install. The production health endpoint returns HTTP 200; the
+      operator confirmed the migration and legacy-flow checks, and the disabled
+      release flag is separately confirmed above.
+- [x] Verify the deployed status page advertises **0.1.38**; a direct production
+      HTTP 200 read shows `Latest: v0.1.38` and `Release: 1d ago`, consistent with
+      the checked-in release date **2026-10-26**.
+- [x] After M13B and the Release Band 9 CLI changes are merged to public CLI
       `main`, run the Registry's `Release Contract Parity` CI job against that
       ref for the Registry revision to be shipped. It compares schema/vector
       snapshots and executes Python contract tests; record both checked commit
       IDs. Complete this gate before Registry deployment. Manual pre-merge
       dispatch may select a proposed CLI ref, but does not replace this main-ref
       release gate. This is a band-level gate, not an M13A completion prerequisite.
-- [ ] Rehearse deployment and verify permissions/retention for the configured
+      Confirmed successful [run 40258294740](https://github.com/agentpm-dev/registry/actions/runs/40258294740):
+      CLI `main` revision `1b321f09863fad7ed3f38872fb4952be6efcd806` against Registry
+      PR merge revision `9e0f5324576a8f64520d0dd646d75f8cde0e4f6b`
+      (source head `d5991535e895f8ff2c31b09cbfc615e8f7051625`). Both jobs pass;
+      operator subsequently confirmed all three production deployments.
+- [x] Verify storage permissions/retention for the configured
       `S3_PREFIX` final-object layout and staging `uploads/`, including real
       GuardDuty scanning/tagging in dev and production before enabling
       the later new-format release flow. This is a Release Band 9 readiness gate,
       not an M13A completion prerequisite. No live S3 write/policy change or
       production deployment is claimed by the M13A implementation; keep the
       new-format publish path gated as required above.
-- [ ] Size GuardDuty scan volume/cost before rollout: each release's artifact
+      Pre-deployment configuration inspection and credential setup are documented
+      in [`manual-tests/RELEASE_BAND9_READINESS.md`](manual-tests/RELEASE_BAND9_READINESS.md);
+      an inspection report alone does not close live production readiness.
+      Console policy/lifecycle/encryption/GuardDuty evidence and the completed
+      production probe now verify conditional writes, byte/checksum readback,
+      clean tags for archive/document, staging deletion and final preservation.
+      Registry startup/flag/legacy-flow confirmation remains separately tracked
+      above; this probe does not publish a new-format Registry version.
+- [x] Review and accept GuardDuty scan volume/cost before rollout: each release's artifact
       objects and total bytes plus the small `release.json` object are scanned
       under the protected prefix. Prefix alignment is not proof of AWS coverage;
       scanning remains asynchronous and does not block publication.
+      Operator confirmed cost is acceptable; no additional quantitative cost
+      model is required for this rollout, and no pricing estimate is claimed.
+
+Release Band 9 is complete: production deployments, CLI/status smoke, Registry
+migrations and legacy publish/install, CLI-main parity, real dev/production
+storage/GuardDuty verification and operator cost acceptance are confirmed.
+`RELEASE_PUBLISH_ENABLED=false` remains required. Hosted finalize capacity is
+not claimed verified; its before-enabling requirement is preserved as an
+unchecked Release Band 11 activation gate below.
 
 ## Milestone 14A: Canonical Signing Foundation
 > Scope note: build the cryptographic groundwork that every later integrity statement depends on — a typed Rust representation of the existing `agentpm.package.signature.v1` statement, RFC 8785/JCS canonicalization in both Rust and Python with shared cross-language test vectors, the canonical release-manifest content binding, and the release-level digest definition. Introduces no new statement types and changes no verification behavior.
@@ -1916,8 +1947,15 @@ This gives us a typed Rust representation of the existing `agentpm.package.signa
 - [ ] Do not add Rosetta/emulation handling in this milestone.
 
 ## Release Band 11: Release Integrity and Verifiable Target-Aware Installs
+
 Covered milestones: 14B–14C, 15.
 This is the band where the new release format becomes real for users. It gives us release-level `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` statements, trustworthy stored-byte verification before finalize, fail-closed attestation, the root-signed registry key set with its backfill and root-key prerequisite, client-side verification of release digest, author signature, and registry attestation, stricter `--require-signature`/`--require-attestation` semantics, and target-aware installation with runtime provisioning for the selected artifact. The gate from Band 9 lifts here and not before: publishers publish multi-artifact signed releases, and consumers select their target, verify the release cryptographically, and provision the right environment. This is the largest band in the stage and the one that cannot be subdivided — a cut that shipped target selection without verification would mean knowingly installing unverified releases, and a cut that shipped verification without target selection would mean a verifier with nothing installable to verify.
+
+- [ ] Before enabling `RELEASE_PUBLISH_ENABLED` in production, confirm hosted
+      finalize disk/request/concurrency capacity for the configured size limits.
+      This requirement is carried forward from the gated Band 9 rollout, not
+      marked satisfied by its tiny storage probe. Record resource/concurrency
+      assumptions and the relevant capacity evidence before activation.
 
 ## Milestone 16: Headless Signing and GitHub Actions Publishing
 > Scope note: make multi-target releases practical for maintainers by adding secure noninteractive signing plus a first official GitHub Actions workflow that packages target artifacts in parallel and performs one final atomic AgentPM publish. Follow existing AgentPM workflow conventions, but keep the package-build/publish protocol CI-provider-neutral. Stage 1 uses PAT auth for AgentPM registry CI; OIDC trusted publishing remains future work.
