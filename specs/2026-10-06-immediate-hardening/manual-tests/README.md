@@ -44,3 +44,8 @@ Generated workspaces/results are disposable; each guide states their location.
   upload recovery, limits, legacy compatibility and real GuardDuty/cleanup
   inspection. Destructive failures use disposable PostgreSQL and mock storage;
   production and public new-format activation remain unchanged.
+- [Release Band 9 storage/deployment readiness](RELEASE_BAND9_READINESS.md):
+  reload production AWS credentials through hidden prompts, collect read-only
+  S3/GuardDuty configuration, and distinguish pre-deployment inspection from
+  later production smoke/probe and capacity/cost checks. No AWS mutation is
+  performed by the inspection helper.

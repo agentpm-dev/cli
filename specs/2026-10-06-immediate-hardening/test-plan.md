@@ -3442,6 +3442,235 @@ contract parity must pass before Registry deployment, and Render must retain
 hosted post-bump CI run or production deployment. Existing SDK versions,
 historical release records and the 0.1.36 APDS tolerance floor are unchanged.
 
+#### Release Band 9 hosted parity after CLI-main merge
+
+The operator confirmed CLI changes reached `main` but CLI deployment/publication
+has not occurred, and both Registry jobs pass after rerunning them. GitHub run
+[40258294740](https://github.com/agentpm-dev/registry/actions/runs/40258294740)
+and its decoded job logs independently confirm:
+
+- Authoritative CLI checkout used `main`, revision
+  `1b321f09863fad7ed3f38872fb4952be6efcd806`.
+- Checked Registry PR merge revision:
+  `9e0f5324576a8f64520d0dd646d75f8cde0e4f6b`, merging source head
+  `d5991535e895f8ff2c31b09cbfc615e8f7051625`.
+- Release contract parity job `121929230136` succeeded: schema/shared vectors
+  agree and **34 tests passed**.
+- PostgreSQL upload/migration job `121929230564` succeeded: **210 tests passed**
+  and **8 subtests passed**.
+
+This closes the CLI-main parity gate for the tested Registry candidate and
+supersedes earlier expected-failure/pending notes. Preserve this revision linkage
+when shipping; later Registry changes need their corresponding checks. The
+deployment sequence remains CLI **0.1.38** → Registry → Web, with the release
+publish gate off. CLI release publication, Registry/Web deployment and the
+remaining production readiness/smoke checks are not inferred from CI success.
+
+#### Release Band 9 read-only storage inspection prepared
+
+The pre-deployment inspection is documented in
+[`manual-tests/RELEASE_BAND9_READINESS.md`](manual-tests/RELEASE_BAND9_READINESS.md),
+including hidden prompts for reloading production credentials in a new terminal.
+The checked-in inspection helper reads AWS identity, S3 configuration and
+GuardDuty plan scope/status/tagging; it performs no object or policy mutation.
+It saves a private local JSON report, excludes credentials and labels denied
+checks unverified. Runtime Registry permissions and real scan delivery remain
+explicitly unverified by configuration inspection alone.
+
+Offline boto3/botocore fixtures verify the API calls, GuardDuty pagination and
+bucket filtering, parsed policy JSON, denied/missing-credential handling, report
+permissions and refusal to overwrite existing evidence. Formatting and lint pass.
+The agent tool session has no AWS credentials, so actual production configuration
+inspection awaits the operator running this command in their credential-bearing
+terminal. No live AWS result, deployment or readiness completion is inferred.
+
+#### Release Band 9 production deployment and inspection status
+
+The operator confirmed CLI **0.1.38**, Registry and Web are deployed to production.
+This closes the deployment item and supersedes the earlier deployment-pending
+notes. Installed-version, deployed status date, Registry migration/legacy-flow
+smoke checks and confirmation of the disabled production release gate remain
+separate evidence requirements; deployment alone does not close them.
+
+The operator also ran the production storage configuration inspector. Every
+reported S3 configuration read returned `AccessDenied` and GuardDuty plan listing
+returned `AccessDeniedException`. These results establish that the inspection
+principal cannot read those settings; they do not establish whether object
+uploads work or whether production protection is correctly configured. No
+configuration check is marked passed. Continue with authorized AWS-console
+inspection, starting with the production bucket's lifecycle rules. Live tagging,
+permissions/retention, capacity and cost readiness remain open.
+
+#### Release Band 9 production lifecycle inspection
+
+The operator supplied the enabled lifecycle rules for production `agentpm-tools`:
+
+- `abort-mpu-7d`, filtered to `tools/`: no current-version expiration or
+  transition; noncurrent versions expire after 90 days while the three newest
+  noncurrent versions are retained; incomplete multipart uploads abort after
+  seven days.
+- `abort-mpu-1d`, filtered to `uploads/`: current objects expire after one day;
+  noncurrent versions have two-day expiration with no retained newer-version
+  count; incomplete multipart uploads abort after one day.
+
+These supplied rules preserve current final artifacts/documents and keep staging
+temporary, consistent with the intended layout and 24-hour reservation policy.
+This is operator-provided console evidence after API configuration reads were
+denied. Confirm no additional enabled all-bucket/overlapping rules shorten final
+object retention before closing the full lifecycle inspection. Effective IAM/KMS
+permissions, production GuardDuty configuration and real scan delivery remain
+unverified; the combined readiness gate stays open.
+
+The operator also supplied the production bucket policy. It denies insecure
+transport for the bucket and all objects, denies deletion/object-version deletion
+only under `tools/runtimes/uv/*`, and requires an `If-None-Match` header for
+resolver object creation under that same subtree. The resolver-specific denies
+do not cover `tools/<namespace>/<package>/<version>/release.json`, its target
+artifacts or staging `uploads/`; HTTPS requests to those paths are compatible
+with the supplied bucket policy. This deny-only policy does not itself grant
+the Registry's required object/tagging permissions. No policy change is needed
+based on this inspection, and effective identity/KMS access remains separate.
+
+Production GuardDuty console evidence is also operator-confirmed: bucket
+`agentpm-tools`, plan `22cd1106e031d5e12cf6`, status **Active**, protected prefix
+**`tools/`**, and **Tag scanned objects: Yes**. The operator corrected an initial
+`/tools` transcription; the confirmed prefix has no leading slash. The plan uses
+role `GuardDutyS3MalwareScanRole-6ed5a57b-4cfe-4777-b7ea-7f4fc8e63b00`.
+This configuration covers the intended nested final-artifact/document key layout;
+it does not establish actual production tag delivery or the Registry principal's
+ability to read those tags. Those live/identity checks remain open.
+
+The operator supplied the `agentpm-s3-writer` policy attached to IAM user
+`agentpm-reader-writer` (one direct managed policy, no permissions boundary shown).
+For `agentpm-tools`, it allows PutObject/GetObject/AbortMultipartUpload under
+`uploads/*` and `tools/*`, DeleteObject only under `uploads/*`, and
+GetObjectTagging/GetObjectVersionTagging under `tools/*`. ListBucket is allowed
+with `s3:prefix` matching `uploads/*` or `tools/*`. The supplied development
+policy is identical except for bucket `agentpm-dev-tools`; the prior completed
+dev walkthrough is evidence that this permission shape supports that environment.
+No IAM expansion is indicated by the policy comparison alone.
+
+Production effective-access verification remains open: confirm the terminal
+principal matches Render's configured identity, check missing-object HEAD
+responses (404 versus 403) using random absent keys, and inspect encryption/KMS
+if applicable before claiming full object access. The Registry fails closed on
+HEAD errors other than not-found in both legacy and guarded finalize. This
+preflight is read-only; no production object or policy change is authorized or
+claimed by the inspection.
+
+The operator ran the read-only missing-object HEAD preflight using production
+credentials. STS identified caller
+`arn:aws:iam::510092505185:user/agentpm-reader-writer`, matching the reviewed IAM
+user. Both the random `uploads/.../missing.tar.gz` key and the random
+`tools/zack/band9-check-.../0.0.0/artifacts/any/<digest>.tar.gz` key returned
+**HTTP 404**, not 403. This verifies missing-object detection for the inspected
+principal and paths; no ListBucket-policy change is indicated by this test.
+No object was created. Existing-object reads, conditional writes, tag reads,
+staging deletion, encryption/KMS and real production scan delivery remain
+separate checks; this preflight does not establish those permissions.
+
+The operator confirmed both production and development bucket defaults use
+**SSE-S3** (Amazon S3 managed keys), with SSE-C blocked. The console also displays
+Bucket Key enabled; that setting applies to SSE-KMS and does not change the
+selected SSE-S3 encryption mode. New release writes use the bucket default and
+need no additional KMS permissions for this configuration. No encryption change
+is indicated. Historical object encryption is not inferred from the current
+default. Configuration inspection and the missing-object preflight are recorded;
+existing-object read/conditional PUT, actual GuardDuty tag delivery/readback and
+staging delete still require live production evidence with the publish gate off.
+
+#### Release Band 9 bounded live-probe helper prepared
+
+The readiness guide now supplies explicit `prepare`, `upload`, `check` and
+`cleanup` steps for a tiny direct-S3 probe. Its unique UUID owns one staging key
+and two final keys under the real `tools/zack/<probe>/0.0.0/` release layout.
+The source manifest is linted with the CLI and the canonical release document
+validates the checked-in schema. Final payload bytes are bounded to 16 KiB;
+the helper checks the previously verified production caller ARN, conditional
+PUT responses, SHA-256 and SSE-S3 readback, and real scan-result tags on both
+final objects. Only its own staging key can be deleted, after both tags report
+clean; the final evidence is retained. No Registry rows, feature flags, bucket
+policies or tags are modified by the probe.
+
+Local verification used the actual CLI lint and release schema with fake AWS
+clients. It exercises a wrong caller before mutation, partial upload retry,
+failed checksum confirmation, repeat conditional-PUT rejection, pending and
+clean scan states, cleanup gating, staging-only deletion and retained final
+objects. Formatting and lint pass. This prepares the operator's live steps;
+no production object write or scan result is claimed before their execution.
+
+#### Release Band 9 production storage probe passed
+
+The operator completed prepare/lint, upload, scan-tag readback and staging cleanup
+using the reviewed production principal
+`arn:aws:iam::510092505185:user/agentpm-reader-writer`. Probe UUID:
+`c8e33c5e-cd5c-4a4e-9edf-0c5b038debc1`. The helper reported:
+
+- Installed CLI **0.1.38** and a successfully linted manifest.
+- A **491-byte** archive and **404-byte** canonical release document, with the
+  archive also stored temporarily under its UUID-owned `uploads/` key.
+- Successful conditional writes, readback, SHA-256 and SSE-S3 verification;
+  repeat create-only archive PUT rejected with **412**.
+- Both final archive and document tagged **`NO_THREATS_FOUND`** by real
+  production GuardDuty and read successfully by the inspected principal.
+- Its own staging object deleted, with both immutable final objects retained
+  and reverified. No Registry rows, flags or policies were changed.
+
+The local evidence file was independently read and confirms `phase: complete`,
+`scans_clean: true` and both clean results:
+`/var/folders/rk/2xd4x19d0z59ly99hyx9s5lw0000gn/T/agentpm-band9-probe.UToCEH/state.json`.
+Finals remain under
+`tools/zack/band9-storage-probe-c8e33c5ecd5c4a4e9edf0c5b038debc1/0.0.0/`;
+artifact digest is
+`sha256:8a86e88c53ac08c2f66d99e7863b08e7552f7f890b0d083f35624b8fac0b4b97`.
+Together with the supplied console configuration and prior dev manual acceptance,
+this closes the storage permission/retention/GuardDuty object-delivery check and
+supersedes the earlier production-probe-pending notes. It does not establish
+Registry scan-row/poller orchestration for a published new-format version.
+
+Direct unauthenticated production HTTPS reads also returned **200** from
+`https://api.agentpackagemanager.com/health` (`Healthy`) and
+`https://www.agentpackagemanager.com/status`. The visible CLI card reads
+`Latest: v0.1.38`, `Release: 1d ago`, consistent with the source date 2026-10-26.
+The browser tool could not fetch these endpoints; direct HTTPS requests supplied
+the evidence. Deployed migration/disabled-flag and legacy publish/install
+confirmation, plus hosted capacity and scan-cost sizing, remain open. No large
+or concurrent production load test is inferred from the tiny probe.
+
+#### Release Band 9 operator cost acceptance
+
+The operator confirmed cost is acceptable, closing the scan-volume/cost review
+item for this rollout without further analysis. This is an operator acceptance
+decision, not a claimed quantitative usage forecast or AWS pricing estimate.
+The production storage/GuardDuty probe remains passed; deployment smoke and
+hosted finalize capacity are tracked separately and are not inferred from cost
+acceptance.
+
+#### Release Band 9 production release gate confirmed
+
+The operator explicitly confirmed `RELEASE_PUBLISH_ENABLED=false` in production,
+closing the production flag check. The new-format publish flow remains disabled
+as required. Production health/status and storage-probe evidence are already
+recorded; migration/legacy publish-install confirmation and hosted finalize
+capacity remain separately tracked.
+
+#### Release Band 9 completion
+
+The operator explicitly confirmed deployed Registry startup/migrations through
+V1.104 and legacy publish/install. Together with the confirmed production release
+gate set to false, CLI 0.1.38, live status/health checks, CLI-main parity, reviewed
+storage configuration, successful real dev/production GuardDuty/object probes
+and operator cost acceptance, this completes Release Band 9.
+
+Hosted finalize disk/request/concurrency capacity has not been established by
+the tiny probe. The implementation's requirement is to verify that capacity
+before enabling the new-format publish flow; Band 9 ships it disabled. Its
+unchecked task is therefore retained under Release Band 11's production
+activation gate, with no requirement removed or result claimed. This supersedes
+the earlier notes treating capacity as an open Band 9 completion item. No Band
+11 activation, later signing/install implementation or production load test is
+included in this acceptance.
+
 ### Canonicalization / stored-byte integrity / provenance
 
 Create shared canonicalization fixtures consumed by Rust and Python.
