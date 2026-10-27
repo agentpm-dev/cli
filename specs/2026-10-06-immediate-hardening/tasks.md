@@ -1662,6 +1662,16 @@ separate Release Band 9 gates below remain open.
 Covered milestones: 13A-13B.
 This gives us the server-side capability for one immutable release composed of multiple target artifacts: the new release/artifact tables, the release-format discriminator, nullable legacy columns with the legacy read path preserved, the new immutable S3 layout, per-artifact reservations and presigned PUTs under one logical release, streaming uploads, reconciled size limits, reservation expiry and cleanup, CI-fit rate limits and timeouts, and one atomic finalize with per-artifact scanning. **The new-format publish path must remain gated and unadvertised at the end of this band**, because consumers cannot yet select or verify a target artifact — that arrives in Band 11. Shipping it here is still worthwhile: the migrations and the transactional upload rework are the highest-risk mechanical changes in the stage, and they get to deploy and bake with legacy publish/install behavior fully intact.
 
+- [x] Prepare CLI **0.1.38** (`v0.1.38`) and matching website status-page date
+      **2026-10-26**; verify crate, Cargo lockfile, CLI binary and status marker.
+- [ ] After required checks pass, operator publishes CLI **0.1.38**, then deploys
+      **Registry**, then **Web**, in that order. Push/tag/publication and deployment
+      remain operator-owned; complete CLI-main parity below before Registry
+      deployment. Keep `RELEASE_PUBLISH_ENABLED=false` in Render throughout this
+      band; deployment does not activate the new-format publish protocol.
+- [ ] Verify the installed CLI reports **0.1.38**, Registry startup/migrations
+      succeed and legacy publish/install still work with the release gate off,
+      and the deployed status page advertises **0.1.38** dated **2026-10-26**.
 - [ ] After M13B and the Release Band 9 CLI changes are merged to public CLI
       `main`, run the Registry's `Release Contract Parity` CI job against that
       ref for the Registry revision to be shipped. It compares schema/vector

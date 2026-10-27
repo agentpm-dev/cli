@@ -3427,6 +3427,21 @@ production/deployment storage permissions and retention, production GuardDuty
 coverage, capacity and scan-cost checks remain separate and unclosed. Development
 manual acceptance does not establish those production readiness results.
 
+#### Release Band 9 version preparation — 2026-10-26
+
+Prepared CLI **0.1.38** (`v0.1.38`) in its crate manifest and Cargo lockfile;
+the website status card now advertises that version with release date
+**2026-10-26**. Local offline/locked compilation and execution report
+`agentpm 0.1.38`. Crate/lockfile/status markers agree; Cargo formatting,
+web TypeScript checking, status-page ESLint/Prettier and diff whitespace checks
+pass. This metadata-only preparation adds no runtime behavior or new tests.
+
+The operator will push and publish/deploy **CLI → Registry → Web**. CLI-main
+contract parity must pass before Registry deployment, and Render must retain
+`RELEASE_PUBLISH_ENABLED=false`. Preparation does not claim a tag, publication,
+hosted post-bump CI run or production deployment. Existing SDK versions,
+historical release records and the 0.1.36 APDS tolerance floor are unchanged.
+
 ### Canonicalization / stored-byte integrity / provenance
 
 Create shared canonicalization fixtures consumed by Rust and Python.
