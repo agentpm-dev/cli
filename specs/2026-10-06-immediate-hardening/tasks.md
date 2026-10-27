@@ -1781,8 +1781,8 @@ plan. The operator confirmed independent review is complete with no findings.
 The operator also confirmed normal CI, the Registry PostgreSQL job and all
 Resolver Contract target jobs passed. The operator confirmed all M14A manual
 tests passed, including accepted legacy author signature verification and the
-consumer install/run. M14A is complete;
-Registry contract parity against CLI `main` remains the Band 10 gate below.
+consumer install/run. M14A is complete; passing Registry contract parity against
+CLI `main` and production deployment are recorded under Release Band 10 below.
 
 Manual walkthrough: [`manual-tests/SIGNING_M14A_MANUAL_TESTS.md`](manual-tests/SIGNING_M14A_MANUAL_TESTS.md).
 It includes shared contract inspection and a checked-in no-dependency Tool for
@@ -1795,13 +1795,24 @@ completed the real signed dev smoke and confirmed full manual acceptance.
 Covered milestones: 14A.
 This gives us a typed Rust representation of the existing `agentpm.package.signature.v1` statement proven byte-identical to today's inline output, RFC 8785/JCS canonicalization in both Rust and Python, shared cross-language test vectors, and the canonical release-manifest content binding. It changes no verification behavior and introduces no new statement types, which is precisely why it is its own band: canonicalization disagreements between the two implementations are unrecoverable once v2 statements exist in production, so this ships and bakes before anything signs with it.
 
-- [ ] After the authoritative CLI contract changes are merged to public CLI
+- [x] After the authoritative CLI contract changes are merged to public CLI
       `main`, run the Registry's `Release Contract Parity` job for the Registry
       revision to be shipped. Require a passing comparison of release/signing
       snapshots and Python contract tests before Registry deployment; record both
       checked commit IDs. This is a Band 10 release gate, not a prerequisite for
       14A manual testing. The Registry PostgreSQL job can run earlier. A manual
       dispatch against a proposed CLI ref does not replace the `main`-ref gate.
+
+Release Band 10 is complete. The operator confirmed CLI **0.1.39**, Registry
+and Web are deployed to production, all CI jobs pass, and production retains
+`RELEASE_PUBLISH_ENABLED=false`. Web status records v0.1.39 dated 2026-10-27.
+The Registry's post-merge push run
+[`40602748466`](https://github.com/agentpm-dev/registry/actions/runs/40602748466)
+was independently checked: parity against public CLI `main` passed **65 cases**
+for Registry `c38bf41a78bc755ce3f75c0e6acc7dd28e32dce3` and CLI
+`e6c0e42ba120320a7c381a8592f36432d9cb12b4`; the PostgreSQL job passed
+**210 tests and 8 subtests**. This closes the parity/deployment gate without
+enabling the new-format publish flow or implementing later milestones.
 
 ## Milestone 14B: Release-Level Signatures and Stored-Byte Integrity
 > Scope note: introduce the new release-level statements built on the 14A foundation — `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` bound to the release digest — plus trustworthy stored-byte verification before finalize, fail-closed attestation, cross-language key-ID normalization, and explicit historical-signer semantics. Server-side only; client verification material is Milestone 14C.

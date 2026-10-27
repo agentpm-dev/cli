@@ -3744,8 +3744,9 @@ Commands/results:
 The operator confirmed independent review of 14A is complete with no findings.
 The operator subsequently confirmed hosted normal CI, the Registry PostgreSQL
 job and all Resolver Contract target jobs passed. This records operator-reported
-hosted results; no run URLs or checked revisions have been supplied here.
-Operator manual acceptance is now confirmed passed; deployment remains pending.
+hosted results. Exact post-merge run URLs/revisions are recorded in the Release
+Band 10 acceptance below. Operator manual acceptance is confirmed passed;
+deployment acceptance is also recorded below.
 The Registry parity run against public CLI
 `main` needs the authoritative contract update merged first; dispatch against a
 proposed CLI ref can check pre-merge coordination. This main-ref parity check is
@@ -3807,11 +3808,37 @@ one author `agentpm.package.signature.v1` statement and
 
 Together with the clean independent review and confirmed normal CI, Registry
 PostgreSQL and all native Resolver Contract jobs, M14A is complete. The runbook
-acceptance checklist records the operator's confirmation. Release Band 10 still
-requires Registry contract parity against authoritative CLI `main` after merge,
-with both checked commit IDs recorded before Registry deployment. No Band 10
-deployment, production feature activation or later signing/verification work is
-claimed by this acceptance.
+acceptance checklist records the operator's confirmation. At M14A acceptance,
+Release Band 10 still required Registry parity against CLI `main` and production
+deployment; these are now closed by the separately recorded evidence below.
+No production feature activation or later signing/verification work is claimed
+by this acceptance.
+
+#### Release Band 10 production acceptance — complete
+
+On 2026-10-27, the operator confirmed CLI **0.1.39**, Registry and Web are
+deployed to production with all CI jobs passing. Production Registry retains
+`RELEASE_PUBLISH_ENABLED=false`; Web status was updated to CLI v0.1.39 and
+release date 2026-10-27. Deployment and feature-flag confirmation are
+operator-reported, not inferred from the local debug binary or CI logs.
+
+Independently read the Registry's post-merge push workflow
+[`40602748466`](https://github.com/agentpm-dev/registry/actions/runs/40602748466),
+which completed successfully for Registry `main`:
+
+- Registry revision: `c38bf41a78bc755ce3f75c0e6acc7dd28e32dce3`.
+- Authoritative CLI contract revision: `e6c0e42ba120320a7c381a8592f36432d9cb12b4`;
+  checkout logs explicitly select public CLI `main`.
+- Contract parity job `122534677081`: release schema/signing/shared vector
+  snapshots agree; **65 Python contract cases passed**.
+- PostgreSQL job `122534677271`: **210 tests and 8 subtests passed**.
+
+This satisfies the main-ref parity gate for the Registry merge revision and
+records both checked commit IDs. Earlier PR run `40433571414` also passed, but
+the post-merge run above is the release evidence. Together with completed M14A
+manual acceptance/review and the operator's production confirmation, Release
+Band 10 is complete. No new-format activation, new statement versions or later
+client verification is included; M14B is the next milestone.
 
 Stored-byte verification cases:
 
