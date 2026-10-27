@@ -1,5 +1,17 @@
 # Blog Brief
 
+## Milestone 14A Evidence
+
+Potential later engineering material: cryptographic compatibility depends on exact
+bytes, including unexpected Unicode keys. Shared RFC vectors exposed escaped-key
+and UTF-16 ordering errors in the old Rust JCS library; upgrading to 0.2.0 brought
+it into agreement with Python while preserving historical author v1 and Registry
+v2 serializers separately. Fixed signed fixtures, release-digest mutation tests
+and cross-repository parity checks provide local evidence. This delivers signing
+foundations only; new statements, client verification and operator release
+acceptance remain separate. This is evidence for future planning, not an article
+or a publication recommendation.
+
 ## Milestone 13A Evidence
 
 Potential later engineering material: introducing an explicit release format

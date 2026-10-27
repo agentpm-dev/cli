@@ -49,3 +49,9 @@ Generated workspaces/results are disposable; each guide states their location.
   S3/GuardDuty configuration, and distinguish pre-deployment inspection from
   later production smoke/probe and capacity/cost checks. No AWS mutation is
   performed by the inspection helper.
+- [Canonical signing foundation (Milestone 14A)](SIGNING_M14A_MANUAL_TESTS.md):
+  inspect shared canonical bytes, Unicode/timestamp/array normalization and
+  release digest mutations, verify historical signed fixtures in Rust/Python,
+  then publish one signed legacy Tool to dev and verify its accepted author
+  signature, install and run. One terminal, checked-in no-dependency fixture;
+  Registry parity against public CLI `main` remains a Release Band 10 gate.

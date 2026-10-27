@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
+  "kind": "tool",
+  "name": "m14a-signing-check",
+  "version": "0.1.0",
+  "description": "Disposable development-only legacy signing compatibility check.",
+  "entrypoint": { "command": "python3", "args": ["tool.py"] },
+  "runtime": { "type": "python", "version": "3.11" },
+  "files": ["tool.py", "README.md"],
+  "inputs": { "type": "object", "additionalProperties": false },
+  "outputs": {
+    "type": "object",
+    "properties": { "ok": { "type": "boolean" } },
+    "required": ["ok"],
+    "additionalProperties": false
+  },
+  "readme": "README.md",
+  "license": { "spdx": "MIT" }
+}

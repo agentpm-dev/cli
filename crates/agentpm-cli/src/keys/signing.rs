@@ -128,3 +128,46 @@ pub fn prompt_passphrase_with_fallback(prompt: &str) -> anyhow::Result<String> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentpm_sdk::signing::AuthorSignatureV1;
+    use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+
+    #[test]
+    fn legacy_fixture_signatures_verify_and_typed_publish_keeps_identical_signature() {
+        let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agentpm-sdk/contracts/signing-canonicalization-v1.fixtures.json"
+        ))
+        .unwrap();
+        for vector in fixtures["legacy"].as_array().unwrap() {
+            let public: [u8; 32] = B64
+                .decode(vector["publicKeyB64"].as_str().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap();
+            let key = VerifyingKey::from_bytes(&public).unwrap();
+            for (bytes_key, signature_key) in [
+                ("rustCanonical", "rustSignatureB64"),
+                ("pythonCanonical", "pythonSignatureB64"),
+            ] {
+                let bytes = vector[bytes_key].as_str().unwrap().as_bytes();
+                let signature = Signature::from_slice(
+                    &B64.decode(vector[signature_key].as_str().unwrap()).unwrap(),
+                )
+                .unwrap();
+                key.verify(bytes, &signature).unwrap();
+                let mut changed = bytes.to_vec();
+                changed.push(b' ');
+                assert!(key.verify(&changed, &signature).is_err());
+            }
+        }
+        let vector = &fixtures["legacy"][0];
+        let typed: AuthorSignatureV1 = serde_json::from_value(vector["statement"].clone()).unwrap();
+        // Public deterministic fixture seed; never used as a runtime or deployment key.
+        let seed: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let signature = SigningKey::from_bytes(&seed).sign(&typed.legacy_bytes().unwrap());
+        assert_eq!(B64.encode(signature.to_bytes()), vector["rustSignatureB64"]);
+    }
+}

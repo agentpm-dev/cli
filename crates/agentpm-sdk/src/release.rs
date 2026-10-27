@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 pub const RELEASE_TYPE: &str = "agentpm.package.release.v1";
 pub const ARTIFACT_METADATA_FILE: &str = "agentpm-artifact.json";
-const MAX_JCS_INTEGER: u64 = 9_007_199_254_740_991;
+const MAX_JCS_INTEGER: u64 = crate::canonical::MAX_SAFE_INTEGER;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -126,14 +126,16 @@ impl ReleaseManifest {
         self.validate()?;
         let mut value = self.clone();
         value.artifacts.sort_by_key(|a| a.target.as_str());
-        Ok(serde_jcs::to_vec(&value)?)
+        crate::canonical::contract_bytes(&serde_json::to_value(value)?)
     }
 
     pub fn digest(&self) -> Result<String> {
-        Ok(format!(
-            "sha256:{:x}",
-            Sha256::digest(self.canonical_bytes()?)
-        ))
+        Ok(format!("sha256:{}", self.digest_hex()?))
+    }
+
+    /// Portable agent.lock integrity uses bare lowercase hex, never a selected artifact digest.
+    pub fn digest_hex(&self) -> Result<String> {
+        Ok(format!("{:x}", Sha256::digest(self.canonical_bytes()?)))
     }
 }
 
@@ -156,36 +158,10 @@ pub struct ArtifactMetadata {
 
 pub fn manifest_digest(manifest: &Value) -> Result<String> {
     ensure!(manifest.is_object(), "manifest must be an object");
-    validate_manifest_numbers(manifest)?;
     Ok(format!(
         "sha256:{:x}",
-        Sha256::digest(serde_jcs::to_vec(manifest)?)
+        Sha256::digest(crate::canonical::canonical_bytes(manifest)?)
     ))
-}
-
-fn validate_manifest_numbers(value: &Value) -> Result<()> {
-    match value {
-        Value::Number(number) if number.is_u64() => ensure!(
-            number.as_u64().unwrap() <= MAX_JCS_INTEGER,
-            "manifest integer exceeds the interoperable JCS range"
-        ),
-        Value::Number(number) if number.is_i64() => ensure!(
-            number.as_i64().unwrap() >= -(MAX_JCS_INTEGER as i64),
-            "manifest integer exceeds the interoperable JCS range"
-        ),
-        Value::Array(values) => {
-            for item in values {
-                validate_manifest_numbers(item)?;
-            }
-        }
-        Value::Object(values) => {
-            for item in values.values() {
-                validate_manifest_numbers(item)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
 }
 
 #[cfg(test)]

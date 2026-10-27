@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "source": "https://www.rfc-editor.org/rfc/rfc8785#section-3.2",
+  "jcs": [
+    {
+      "name": "ascii-key-order",
+      "inputJson": " { \"z\" : 2, \"a\" : { \"y\":true,\"b\":null }, \"list\":[3,1,2] } ",
+      "canonical": "{\"a\":{\"b\":null,\"y\":true},\"list\":[3,1,2],\"z\":2}",
+      "sha256": "3c8ad09d230cb98ae8cdcfbac2d37377327a60508e62b4c1fa7e8b3957ee9395"
+    },
+    {
+      "name": "rfc8785-section-3.2.2-numbers",
+      "inputJson": "{\"numbers\":[333333333.33333329,1E30,4.50,2e-3,0.000000000000000000000000001],\"literals\":[null,true,false]}",
+      "canonical": "{\"literals\":[null,true,false],\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27]}",
+      "sha256": "f9ef8430c38ca3edd7fb96a698d14fdf39c74c63299627162d38b59af2af5abb"
+    },
+    {
+      "name": "utf16-key-order",
+      "inputJson": "{\"\\ue000\": \"private\", \"\\ud83d\\ude00\": \"astral\", \"\\u20ac\": \"euro\", \"\\r\": \"control\", \"1\": \"one\", \"\\u00f6\": \"o\", \"\\u0080\": \"next\", \"\\ufb33\": \"hebrew\"}",
+      "canonical": "{\"\\r\":\"control\",\"1\":\"one\",\"\":\"next\",\"ö\":\"o\",\"€\":\"euro\",\"😀\":\"astral\",\"\":\"private\",\"דּ\":\"hebrew\"}",
+      "sha256": "55469653daba5c62b8a84f977c40f3a05b5cf996ad945a4c19e7c11519726ab1"
+    },
+    {
+      "name": "unicode-preserved",
+      "inputJson": "{\"z\":\"e\\u0301\",\"a\":\"\\u00e9\",\"emoji\":\"\\ud83d\\ude00\",\"slash\":\"a/b\",\"control\":\"\\u000f\\n\"}",
+      "canonical": "{\"a\":\"é\",\"control\":\"\\u000f\\n\",\"emoji\":\"😀\",\"slash\":\"a/b\",\"z\":\"é\"}",
+      "sha256": "db4a8d57800c0517042064e57bca32ac930336582710842bba42efcfebc997d8"
+    },
+    {
+      "name": "number-boundaries",
+      "inputJson": "[0.0,-0.0,1e-7,1e-6,1e20,1e21,9007199254740991,-9007199254740991]",
+      "canonical": "[0,0,1e-7,0.000001,100000000000000000000,1e+21,9007199254740991,-9007199254740991]",
+      "sha256": "51d7ac41133a0d704fe52737d240e2c15953fd85cc146558a522d85ac99e9cc0"
+    }
+  ],
+  "timestamps": [
+    {
+      "input": "2026-10-26T06:34:56-06:00",
+      "normalized": "2026-10-26T12:34:56Z"
+    },
+    {
+      "input": "2026-10-26T12:34:56+00:00",
+      "normalized": "2026-10-26T12:34:56Z"
+    },
+    {
+      "input": "2026-10-26T12:34:56.123000000Z",
+      "normalized": "2026-10-26T12:34:56.123Z"
+    },
+    {
+      "input": "2026-10-27T02:04:56.123456789+13:30",
+      "normalized": "2026-10-26T12:34:56.123456789Z"
+    },
+    {
+      "input": "2026-10-26t12:34:56.000z",
+      "normalized": "2026-10-26T12:34:56Z"
+    }
+  ],
+  "invalidTimestamps": [
+    "2026-10-26T12:34:56",
+    "2026-10-26 12:34:56Z",
+    "2026-02-30T12:34:56Z",
+    "2026-10-26T12:34:60Z",
+    "2026-10-26T12:34:56.1234567891Z",
+    "2026-10-26T12:34:56+00:60",
+    "2026-10-26T12:34:56+24:00",
+    "0000-01-01T00:00:00Z",
+    "0001-01-01T00:00:00+01:00",
+    "9999-12-31T23:59:59-01:00"
+  ],
+  "invalidContracts": [
+    "{\"nested\":[1.5]}",
+    "{\"size\":9007199254740992}",
+    "{\"size\":-9007199254740992}"
+  ],
+  "legacy": [
+    {
+      "name": "author-v1",
+      "statement": {
+        "type": "agentpm.package.signature.v1",
+        "kind": "tool",
+        "name": "example",
+        "version": "1.2.0",
+        "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-10-26T12:34:56.123456+00:00"
+      },
+      "pythonCanonical": "{\"artifactDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"createdAt\":\"2026-10-26T12:34:56.123456+00:00\",\"kind\":\"tool\",\"name\":\"example\",\"type\":\"agentpm.package.signature.v1\",\"version\":\"1.2.0\"}",
+      "rustCanonical": "{\"artifactDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"createdAt\":\"2026-10-26T12:34:56.123456+00:00\",\"kind\":\"tool\",\"name\":\"example\",\"type\":\"agentpm.package.signature.v1\",\"version\":\"1.2.0\"}",
+      "publicKeyB64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+      "pythonSignatureB64": "tnmSEtxywnLJ40jKrp0LiFQ4n89+2QfV8AB7+0UYA9LcCzIA6j9A/BjqN/7r8Ts03EfC4cHwgDy/SvvhPqnFBg==",
+      "rustSignatureB64": "tnmSEtxywnLJ40jKrp0LiFQ4n89+2QfV8AB7+0UYA9LcCzIA6j9A/BjqN/7r8Ts03EfC4cHwgDy/SvvhPqnFBg=="
+    },
+    {
+      "name": "registry-v2",
+      "statement": {
+        "type": "agentpm.registry.attestation.v2",
+        "kind": "tool",
+        "namespace": "fixture",
+        "name": "example",
+        "version": "1.2.0",
+        "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "storedAt": "2026-10-26T12:34:56.123456+00:00",
+        "publishedByAccountId": "fixture-user",
+        "registryKeyId": "fixture-legacy-key"
+      },
+      "pythonCanonical": "{\"artifactDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"kind\":\"tool\",\"name\":\"example\",\"namespace\":\"fixture\",\"publishedByAccountId\":\"fixture-user\",\"registryKeyId\":\"fixture-legacy-key\",\"storedAt\":\"2026-10-26T12:34:56.123456+00:00\",\"type\":\"agentpm.registry.attestation.v2\",\"version\":\"1.2.0\"}",
+      "rustCanonical": "{\"artifactDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"kind\":\"tool\",\"name\":\"example\",\"namespace\":\"fixture\",\"publishedByAccountId\":\"fixture-user\",\"registryKeyId\":\"fixture-legacy-key\",\"storedAt\":\"2026-10-26T12:34:56.123456+00:00\",\"type\":\"agentpm.registry.attestation.v2\",\"version\":\"1.2.0\"}",
+      "publicKeyB64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+      "pythonSignatureB64": "v1OON+UnSGDRP5ZLWKkKui+2/J1IPB60mbS1W8J/hlnQBuzNUgSlwCd1gGBT+iLhrMgOt7WzC7Yp2vUPXQw5AA==",
+      "rustSignatureB64": "v1OON+UnSGDRP5ZLWKkKui+2/J1IPB60mbS1W8J/hlnQBuzNUgSlwCd1gGBT+iLhrMgOt7WzC7Yp2vUPXQw5AA=="
+    },
+    {
+      "name": "registry-v2-unicode",
+      "statement": {
+        "type": "agentpm.registry.attestation.v2",
+        "kind": "tool",
+        "namespace": "fixture",
+        "name": "example",
+        "version": "1.2.0",
+        "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "storedAt": "2026-10-26T12:34:56.123456+00:00",
+        "publishedByAccountId": "fixture-é😀",
+        "registryKeyId": "fixture-legacy-key"
+      },
+      "pythonCanonical": "{\"artifactDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"kind\":\"tool\",\"name\":\"example\",\"namespace\":\"fixture\",\"publishedByAccountId\":\"fixture-\\u00e9\\ud83d\\ude00\",\"registryKeyId\":\"fixture-legacy-key\",\"storedAt\":\"2026-10-26T12:34:56.123456+00:00\",\"type\":\"agentpm.registry.attestation.v2\",\"version\":\"1.2.0\"}",
+      "rustCanonical": "{\"artifactDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"kind\":\"tool\",\"name\":\"example\",\"namespace\":\"fixture\",\"publishedByAccountId\":\"fixture-é😀\",\"registryKeyId\":\"fixture-legacy-key\",\"storedAt\":\"2026-10-26T12:34:56.123456+00:00\",\"type\":\"agentpm.registry.attestation.v2\",\"version\":\"1.2.0\"}",
+      "publicKeyB64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+      "pythonSignatureB64": "Rbksg3SKWHsNd6UGzOeM5HNjMrjA1nVOejNbbV6rSkW3+zpHh/feZmhJLBvybhpMvwj4OqxMWdTEWvn8cDYpAQ==",
+      "rustSignatureB64": "4RAcFyAuU9ynhCfTZOgE3lv5rCG+Se4CifroiD8Y64j3v3LB7Ke5uec/NdyQuHe++wATkBKkilA9U++v52/JAg=="
+    }
+  ],
+  "pythonResolution": {
+    "input": {
+      "type": "agentpm.python-resolution.v1",
+      "python": {
+        "requires": ">=3.11"
+      },
+      "requirements": [
+        "zebra>=1",
+        "alpha>=1"
+      ],
+      "packages": [
+        {
+          "name": "zebra",
+          "version": "2.0",
+          "hashes": [
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          ]
+        },
+        {
+          "name": "alpha",
+          "version": "1.0",
+          "hashes": [
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ]
+        }
+      ]
+    },
+    "normalized": {
+      "type": "agentpm.python-resolution.v1",
+      "python": {
+        "requires": ">=3.11"
+      },
+      "requirements": [
+        "alpha>=1",
+        "zebra>=1"
+      ],
+      "packages": [
+        {
+          "name": "alpha",
+          "version": "1.0",
+          "hashes": [
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ]
+        },
+        {
+          "name": "zebra",
+          "version": "2.0",
+          "hashes": [
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          ]
+        }
+      ]
+    },
+    "canonical": "{\"packages\":[{\"hashes\":[\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"],\"name\":\"alpha\",\"version\":\"1.0\"},{\"hashes\":[\"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"],\"name\":\"zebra\",\"version\":\"2.0\"}],\"python\":{\"requires\":\">=3.11\"},\"requirements\":[\"alpha>=1\",\"zebra>=1\"],\"type\":\"agentpm.python-resolution.v1\"}",
+    "sha256": "9cc8779be7b22f9c61de42ee9d11d36be16538d2a9ac35fe299a0ba1bd78d8db"
+  }
+}

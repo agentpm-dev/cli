@@ -3687,6 +3687,132 @@ Required cases:
 - new timestamps are normalized to UTC RFC3339 `Z` form before canonicalization;
 - release digest matches in Rust/Python.
 
+#### Milestone 14A local implementation evidence
+
+The Rust SDK now owns `canonical.rs` and typed `signing::AuthorSignatureV1`;
+the Registry has corresponding `canonical.py` and historical
+`legacy_signing.py` helpers. Both consume the byte-identical checked-in
+`signing-canonicalization-v1.fixtures.json` snapshots alongside the existing
+`package-release-v1.fixtures.json` release vectors. No new signature statement
+versions or client verification behavior are implemented here.
+
+Verified locally:
+
+- Shared ASCII, Unicode/control-character keys, UTF-16 key ordering, key/whitespace
+  differences and RFC 8785 numeric examples produce the expected bytes/SHA-256.
+  The UTF-16/control-key fixture failed with `serde_jcs` 0.1.0 and passes with
+  0.2.0; the expected fixture was retained. Existing release/Python fixtures keep
+  their digests. Raw manifest floats remain supported; signed-contract floats
+  and unsafe integer inputs fail.
+- Artifact inventory order normalizes by target; Python requirements, packages
+  and hash arrays normalize under the v1 contract without mutating the input.
+  Registry upload validation still rejects non-normalized submitted resolutions.
+- New timestamps normalize offset/fraction spelling to UTC `Z` while preserving
+  nanoseconds; invalid dates, timezone-free input, leap seconds, excess precision
+  and out-of-range years fail in both languages. Legacy timestamps are untouched.
+- Typed author v1 output matches the old inline JSON for every current package
+  kind, Unicode and non-UTC timestamp examples. The shared deterministic legacy
+  Ed25519 fixture produces the same signature; Rust and Python verify fixed
+  legacy author v1 / Registry v2 signatures and reject changed bytes. A Unicode
+  Registry v2 fixture explicitly retains Python's historical ASCII escaping.
+  These are fixtures, not a claim of reading a live historical production row.
+- Changing identity, manifest/Python resolution digest, artifact target/digest/size
+  or inventory membership changes the release digest; existing validation rejects
+  unsupported format/content-type/type values. SDK plan → lock → frozen plan
+  retains the bare 64-character release hex and adds no selected artifact state.
+- Snapshot parity succeeds locally; a mutation test rejects edits/removal of
+  each required contract file. CLI CI executes that test; Registry parity CI
+  requires the signing snapshot and runs both Python contract suites. Native
+  resolver workflow coverage now includes the canonical/signing modules.
+
+Commands/results:
+
+- `cargo test --offline --locked --workspace --quiet`: **1,209 passed, 5 ignored**.
+- `cargo clippy --offline --locked --workspace --all-targets -- -D warnings`: passed.
+- `cargo fmt --all` and final formatter check: passed.
+- Registry `.venv/bin/python -B -m pytest -q --tb=short -x`, using an explicitly
+  configured disposable local PostgreSQL 16 database: **631 passed, 7 optional
+  skips, 165 subtests passed**. This includes release finalize, actual Pyway
+  migration and legacy publish/install regressions. The test container was removed.
+- `python3 scripts/check_release_contract.py --registry-root ../agentpm-api`
+  and `python3 -m unittest discover -s scripts -p test_release_contract.py -v`: passed.
+- Required Registry pre-commit hooks: formatting, isort, Flake8, Pylint, Bandit,
+  pyupgrade and file checks pass. Mypy still reports the two pre-existing
+  assignment errors in unchanged `app/tools/application/search.py:1486,1856`;
+  no new mypy errors were reported in the touched files.
+
+The operator confirmed independent review of 14A is complete with no findings.
+The operator subsequently confirmed hosted normal CI, the Registry PostgreSQL
+job and all Resolver Contract target jobs passed. This records operator-reported
+hosted results; no run URLs or checked revisions have been supplied here.
+Operator manual acceptance is now confirmed passed; deployment remains pending.
+The Registry parity run against public CLI
+`main` needs the authoritative contract update merged first; dispatch against a
+proposed CLI ref can check pre-merge coordination. This main-ref parity check is
+an explicit Release Band 10 gate before Registry deployment, not a prerequisite
+for 14A manual testing. Record both checked commit IDs. The Registry PostgreSQL
+job can run before the CLI merge. Production
+`RELEASE_PUBLISH_ENABLED` remains disabled. New release statements, trust
+material and target-aware install acceptance belong to later milestones.
+
+Manual runbook: [`manual-tests/SIGNING_M14A_MANUAL_TESTS.md`](manual-tests/SIGNING_M14A_MANUAL_TESTS.md).
+All shell blocks passed `zsh -n`. Sections 1–4 were rehearsed from their actual
+commands: shared fixture inspection, intentional invalid cases, 11 focused Rust
+unit tests and 65 Python cases passed. The checked-in no-dependency Tool passes
+the real CLI lint/dry run, contains exactly `agent.json`, `tool.py` and `README.md`
+in its archive, and prints the expected JSON when invoked directly. Its Python
+source was formatted with Black and passes Flake8. The section 5 security
+inspection was rehearsed against synthetic signed responses and rejects missing
+author signatures or attestations; that rehearsal made no HTTP request. No real
+dev publish, signer registration, install, scan, production write or operator
+manual acceptance is claimed by this runbook preparation. Acceptance boxes stay
+unchecked until the operator runs the guide.
+
+During the operator's signed dev smoke, publication succeeded for
+`@zack/m14a-signing-20261027015908-37555@0.1.0` (package UUID
+`4938fce9-3863-43ce-854f-bc3e03ab31e7`, version row 85). The subsequent security
+read exposed an incorrect `/v1/tools/.../security` URL in the runbook. Corrected
+it to the registered `/tools/.../security` detail route; publication does not
+need repeating. Synthetic response rehearsal had not exercised routing. Actual
+security verification and consumer install/run acceptance remain pending.
+
+The corrected security read returned no stored author signatures, matching the
+operator's empty signature table/missing Signed badge. A read-only check of the
+local dev namespace's signer records confirmed that none matched the exported
+public key selected for the smoke test. This is the existing optional-signing
+behavior for an unregistered author key; the Registry attestation was present.
+The guide now supplies the standard dev signer-registration command and requires
+a fresh package name after registration, rather than retrying an immutable
+already-published version. Archive inspection filters by the current package
+name so the earlier attempt's archive cannot interfere. The corrected signed
+dev smoke and operator acceptance remain pending; no signer or database row was
+changed during diagnosis.
+
+#### Milestone 14A operator acceptance — passed
+
+The operator confirmed all M14A manual tests pass. This includes shared
+canonicalization/normalization and release-digest checks, legacy signature
+fixtures and focused tests, then a fresh signed development publication after
+registering the selected public key in the dev namespace. The operator supplied
+the successful real-archive author v1 verification and Registry-attestation
+presence output, then confirmed the remaining consumer install/machine-run
+checks passed. This closes the earlier pending manual/security-smoke notes;
+the first unsigned dev attempt remains historical test evidence.
+
+The saved `dev-security.json` was also inspected locally: successful package
+`@zack/m14a-signing-20261027021020-37555@0.1.0`, version row **86**, contains
+one author `agentpm.package.signature.v1` statement and
+`registry_attested=true`. Evidence is in
+`/var/folders/rk/2xd4x19d0z59ly99hyx9s5lw0000gn/T/agentpm-m14a.IsHb8t/evidence/dev-security.json`.
+
+Together with the clean independent review and confirmed normal CI, Registry
+PostgreSQL and all native Resolver Contract jobs, M14A is complete. The runbook
+acceptance checklist records the operator's confirmation. Release Band 10 still
+requires Registry contract parity against authoritative CLI `main` after merge,
+with both checked commit IDs recorded before Registry deployment. No Band 10
+deployment, production feature activation or later signing/verification work is
+claimed by this acceptance.
+
 Stored-byte verification cases:
 
 - client-declared metadata hash that does not match stored bytes cannot finalize a new release;

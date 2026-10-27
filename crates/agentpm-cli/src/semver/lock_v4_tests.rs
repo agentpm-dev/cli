@@ -9,6 +9,48 @@ fn resolution() -> PythonResolution {
 }
 
 #[test]
+fn release_integrity_roundtrips_as_portable_hex_without_selected_artifact_state() {
+    let vectors: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../agentpm-sdk/contracts/package-release-v1.fixtures.json"
+    ))
+    .unwrap();
+    let release: agentpm_sdk::release::ReleaseManifest =
+        serde_json::from_value(vectors["vectors"][1]["release"].clone()).unwrap();
+    let integrity = release.digest_hex().unwrap();
+    let response: agentpm_sdk::models::install::ResolveResponse = serde_json::from_value(json!({"items":[{
+        "kind":"tool","name":release.name,"version":release.version,"integrity":integrity,"python_resolution":resolution()
+    }]})).unwrap();
+    let plan: ResolvePlan = response.into();
+    let lock = lock_from_plan(&plan, &[]);
+    let bytes = serde_json::to_vec(&lock).unwrap();
+    let wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let package = wire["packages"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    assert_eq!(package["integrity"], integrity);
+    let fields = package.as_object().unwrap();
+    assert_eq!(fields.len(), 5);
+    for field in [
+        "target",
+        "artifactDigest",
+        "artifact_integrity",
+        "selected_artifact",
+        "selected_target",
+    ] {
+        assert!(!fields.contains_key(field));
+    }
+    let lock: Lock = serde_json::from_slice(&bytes).unwrap();
+    let desired = DesiredSet {
+        items: vec![PackageRequirement::tool(&release.name, "*")],
+    };
+    let frozen = ResolvePlan::from_lock(&desired, &lock).unwrap();
+    assert_eq!(frozen.items[0].integrity, integrity);
+}
+
+#[test]
 fn future_versions_and_unknown_fields_are_rejected_before_shape_conversion() {
     for shape in [json!({"dependencies":{}}), json!({"packages":{}})] {
         let mut value = shape;
