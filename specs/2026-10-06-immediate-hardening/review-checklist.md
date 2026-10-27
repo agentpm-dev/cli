@@ -287,6 +287,8 @@
 
 ## Integrity and signing
 
+- For 14A, inspect `canonical.rs`, `signing.rs`, server `canonical.py`/`legacy_signing.py` and the shared signing fixture. Verify the `serde_jcs` 0.1.0 → 0.2.0 update fixes escaped/non-BMP key ordering against the unchanged RFC expectations, with no legacy serializer migration.
+- Confirm the existing parity gate now requires the signing fixture as well as release fixtures, and its mutation test rejects changed/missing snapshots. Hosted CI and operator acceptance are separate from local fixture evidence.
 - Confirm legacy author signature v1 has a typed representation whose serialization is byte-identical to existing signatures.
 - Confirm release manifest binds:
   - identity/version/release format;

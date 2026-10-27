@@ -21,6 +21,11 @@ on:
       - 'crates/agentpm-sdk/src/artifact/**'
       - 'crates/agentpm-sdk/src/release.rs'
       - 'crates/agentpm-sdk/src/release/**'
+      - 'crates/agentpm-sdk/src/canonical.rs'
+      - 'crates/agentpm-sdk/src/canonical/**'
+      - 'crates/agentpm-sdk/src/signing.rs'
+      - 'crates/agentpm-sdk/src/signing/**'
+      - 'crates/agentpm-sdk/contracts/signing-canonicalization-v1.fixtures.json'
       - 'crates/agentpm-sdk/src/client.rs'
       - 'crates/agentpm-sdk/src/client/**'
       - 'crates/agentpm-sdk/tests/release_upload.rs'
@@ -96,6 +101,8 @@ jobs:
           cargo test -p agentpm-sdk target::tests
           cargo test -p agentpm-sdk artifact::
           cargo test -p agentpm-sdk release::
+          cargo test -p agentpm-sdk canonical::
+          cargo test -p agentpm-sdk signing::
           cargo test -p agentpm-sdk --test release_upload
           cargo test -p agentpm-cli --bin agentpm commands::publish::payload
           cargo test -p agentpm-cli --bin agentpm commands::publish::collection

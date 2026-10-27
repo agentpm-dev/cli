@@ -1723,48 +1723,61 @@ not claimed verified; its before-enabling requirement is preserved as an
 unchecked Release Band 11 activation gate below.
 
 ## Milestone 14A: Canonical Signing Foundation
+
 > Scope note: build the cryptographic groundwork that every later integrity statement depends on — a typed Rust representation of the existing `agentpm.package.signature.v1` statement, RFC 8785/JCS canonicalization in both Rust and Python with shared cross-language test vectors, the canonical release-manifest content binding, and the release-level digest definition. Introduces no new statement types and changes no verification behavior.
 >
 > Split from 14B/14C because this is pure, provable foundation: a typed v1 that round-trips byte-identically with today's inline `json!` output, plus a canonicalizer with passing vectors, is shippable on its own and makes the rest of Milestone 14 far less risky. Getting canonicalization wrong after v2 statements exist in production is unrecoverable.
 >
 > Implementation notes:
+>
 > - There is no Rust signature statement type today; v1 is an inline `json!` object. Introduce a typed v1 representation first and prove byte compatibility with existing signatures before defining anything new.
 > - Legacy author signatures are `agentpm.package.signature.v1`; legacy registry attestations are already `agentpm.registry.attestation.v2`. Historical serialization/verification logic for both must be preserved verbatim — old releases must stay verifiable forever.
 > - Do not define a separate AgentPM-specific canonical JSON dialect. RFC 8785/JCS is the contract, and both implementations must agree on the published vectors before anything signs with it.
 
-- [ ] Introduce typed Rust representation for legacy `agentpm.package.signature.v1`:
-  - [ ] preserve camelCase wire fields exactly;
-  - [ ] replace inline `json!` construction;
-  - [ ] add byte-for-byte fixture proving serialized bytes match current behavior.
-- [ ] Introduce corresponding typed/server validation helpers rather than open-coded dict-key checks where practical.
-- [ ] Define canonical release manifest content binding:
-  - [ ] kind;
-  - [ ] namespace/name;
-  - [ ] version;
-  - [ ] release format version;
-  - [ ] manifest digest;
-  - [ ] Python resolution digest when present;
-  - [ ] sorted complete artifact inventory;
-  - [ ] target/digest/size/content type per artifact.
-- [ ] Define release-level SHA-256 as hash of canonical release-manifest bytes.
-- [ ] Keep `LockedPackage.integrity` as a bare 64-char lowercase hex value for the release digest.
-- [ ] **Do not** add selected artifact target/integrity to portable `agent.lock`.
-- [ ] Implement **RFC 8785/JCS** as the canonical JSON contract for all new release-level cryptographic objects; do not define a separate AgentPM canonical-JSON profile:
-  - [ ] use RFC 8785 semantics for UTF-8/Unicode, object keys, whitespace, and number serialization;
-  - [ ] normalize set-like arrays before JCS because JCS does not reorder arrays;
-  - [ ] sort release artifacts lexicographically by canonical target;
-  - [ ] sort `PythonResolution.requirements` and `.packages` by the v1 contract;
-  - [ ] normalize new statement timestamps to UTC RFC3339 `Z` form before canonicalization;
-  - [ ] avoid floating-point values in release/signature/key-set contracts;
-  - [ ] use shared Rust/Python RFC 8785 vectors rather than relying on serializer coincidence.
-- [ ] Implement canonicalizer in Rust.
-- [ ] Implement canonicalizer in Python/server.
-- [ ] Add shared cross-language test vectors including:
-  - [ ] ASCII;
-  - [ ] non-ASCII Unicode;
-  - [ ] key-order differences;
-  - [ ] artifact-order normalization.
-- [ ] Preserve historical serialization/verification logic for legacy author v1 and registry attestation v2.
+- [x] Introduce typed Rust representation for legacy `agentpm.package.signature.v1`:
+  - [x] preserve camelCase wire fields exactly;
+  - [x] replace inline `json!` construction;
+  - [x] add byte-for-byte fixture proving serialized bytes match current behavior.
+- [x] Introduce corresponding typed/server validation helpers rather than open-coded dict-key checks where practical.
+- [x] Define canonical release manifest content binding:
+  - [x] kind;
+  - [x] namespace/name;
+  - [x] version;
+  - [x] release format version;
+  - [x] manifest digest;
+  - [x] Python resolution digest when present;
+  - [x] sorted complete artifact inventory;
+  - [x] target/digest/size/content type per artifact.
+- [x] Define release-level SHA-256 as hash of canonical release-manifest bytes.
+- [x] Keep `LockedPackage.integrity` as a bare 64-char lowercase hex value for the release digest.
+- [x] **Do not** add selected artifact target/integrity to portable `agent.lock`.
+- [x] Implement **RFC 8785/JCS** as the canonical JSON contract for all new release-level cryptographic objects; do not define a separate AgentPM canonical-JSON profile:
+  - [x] use RFC 8785 semantics for UTF-8/Unicode, object keys, whitespace, and number serialization;
+  - [x] normalize set-like arrays before JCS because JCS does not reorder arrays;
+  - [x] sort release artifacts lexicographically by canonical target;
+  - [x] sort `PythonResolution.requirements` and `.packages` by the v1 contract;
+  - [x] normalize new statement timestamps to UTC RFC3339 `Z` form before canonicalization;
+  - [x] avoid floating-point values in release/signature/key-set contracts;
+  - [x] use shared Rust/Python RFC 8785 vectors rather than relying on serializer coincidence.
+- [x] Implement canonicalizer in Rust.
+- [x] Implement canonicalizer in Python/server.
+- [x] Add shared cross-language test vectors including:
+  - [x] ASCII;
+  - [x] non-ASCII Unicode;
+  - [x] key-order differences;
+  - [x] artifact-order normalization.
+- [x] Preserve historical serialization/verification logic for legacy author v1 and registry attestation v2.
+
+Implementation evidence: typed legacy author v1 now replaces the inline publish
+statement; its bytes and deterministic Ed25519 signature match the historical
+fixture. Shared RFC/Unicode vectors exposed incorrect escaped-key/UTF-16
+ordering in `serde_jcs` 0.1.0, corrected by updating to 0.2.0. The existing
+release schema and sorted inventory remain authoritative. Shared timestamp and
+Python-resolution normalization, release digest mutation tests, portable lock
+hex round-trip and required snapshot-parity checks pass locally. No new statement
+versions, trust material, verification policy, public workflow, schema/migration
+or feature-flag change is included. Local verification is recorded in the test
+plan; hosted CI, independent review and operator manual acceptance remain pending.
 
 ## Release Band 10: Canonical Signing Foundation
 Covered milestones: 14A.

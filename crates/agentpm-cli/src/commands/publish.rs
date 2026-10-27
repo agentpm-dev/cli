@@ -19,6 +19,7 @@ use crate::manifest::{
 use crate::prelude::*;
 use crate::semver::types::declares_python_dependencies;
 use crate::ui::Step;
+use agentpm_sdk::signing::AuthorSignatureV1;
 use anyhow::{anyhow, bail};
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
@@ -421,19 +422,14 @@ impl PublishArgs {
             let signing_key = SigningKey::from_bytes(&sk_arr);
 
             // Minimal statement (server checks name/version/digest)
-            let statement = serde_json::json!({
-                "type": "agentpm.package.signature.v1",
-                "kind": manifest_kind(&publish_manifest),
-                "name": manifest_name(&publish_manifest),
-                "version": manifest_version(&publish_manifest),
-                "artifactDigest": format!("sha256:{sha256_hex}"),
-                "createdAt": chrono::Utc::now().to_rfc3339(),
-            });
-
-            // The server verifies against sorted-key JSON bytes. This matches
-            // serde_json's default map serialization in this crate as long as
-            // we do not enable serde_json's preserve_order feature.
-            let statement_bytes = serde_json::to_vec(&statement)?;
+            let statement = AuthorSignatureV1::new(
+                manifest_kind(&publish_manifest).into(),
+                manifest_name(&publish_manifest).into(),
+                manifest_version(&publish_manifest).into(),
+                format!("sha256:{sha256_hex}"),
+                chrono::Utc::now().to_rfc3339(),
+            );
+            let statement_bytes = statement.legacy_bytes()?;
             let sig = signing_key.sign(&statement_bytes);
             let signature_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
 

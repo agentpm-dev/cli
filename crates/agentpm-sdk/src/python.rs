@@ -264,7 +264,7 @@ impl PythonResolution {
         &self.0.python.requires
     }
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        Ok(serde_jcs::to_vec(self)?)
+        crate::canonical::contract_bytes(&serde_json::to_value(self)?)
     }
     pub fn digest(&self) -> Result<String> {
         Ok(format!("{:x}", Sha256::digest(self.canonical_bytes()?)))

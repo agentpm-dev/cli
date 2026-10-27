@@ -3687,6 +3687,67 @@ Required cases:
 - new timestamps are normalized to UTC RFC3339 `Z` form before canonicalization;
 - release digest matches in Rust/Python.
 
+#### Milestone 14A local implementation evidence
+
+The Rust SDK now owns `canonical.rs` and typed `signing::AuthorSignatureV1`;
+the Registry has corresponding `canonical.py` and historical
+`legacy_signing.py` helpers. Both consume the byte-identical checked-in
+`signing-canonicalization-v1.fixtures.json` snapshots alongside the existing
+`package-release-v1.fixtures.json` release vectors. No new signature statement
+versions or client verification behavior are implemented here.
+
+Verified locally:
+
+- Shared ASCII, Unicode/control-character keys, UTF-16 key ordering, key/whitespace
+  differences and RFC 8785 numeric examples produce the expected bytes/SHA-256.
+  The UTF-16/control-key fixture failed with `serde_jcs` 0.1.0 and passes with
+  0.2.0; the expected fixture was retained. Existing release/Python fixtures keep
+  their digests. Raw manifest floats remain supported; signed-contract floats
+  and unsafe integer inputs fail.
+- Artifact inventory order normalizes by target; Python requirements, packages
+  and hash arrays normalize under the v1 contract without mutating the input.
+  Registry upload validation still rejects non-normalized submitted resolutions.
+- New timestamps normalize offset/fraction spelling to UTC `Z` while preserving
+  nanoseconds; invalid dates, timezone-free input, leap seconds, excess precision
+  and out-of-range years fail in both languages. Legacy timestamps are untouched.
+- Typed author v1 output matches the old inline JSON for every current package
+  kind, Unicode and non-UTC timestamp examples. The shared deterministic legacy
+  Ed25519 fixture produces the same signature; Rust and Python verify fixed
+  legacy author v1 / Registry v2 signatures and reject changed bytes. A Unicode
+  Registry v2 fixture explicitly retains Python's historical ASCII escaping.
+  These are fixtures, not a claim of reading a live historical production row.
+- Changing identity, manifest/Python resolution digest, artifact target/digest/size
+  or inventory membership changes the release digest; existing validation rejects
+  unsupported format/content-type/type values. SDK plan → lock → frozen plan
+  retains the bare 64-character release hex and adds no selected artifact state.
+- Snapshot parity succeeds locally; a mutation test rejects edits/removal of
+  each required contract file. CLI CI executes that test; Registry parity CI
+  requires the signing snapshot and runs both Python contract suites. Native
+  resolver workflow coverage now includes the canonical/signing modules.
+
+Commands/results:
+
+- `cargo test --offline --locked --workspace --quiet`: **1,209 passed, 5 ignored**.
+- `cargo clippy --offline --locked --workspace --all-targets -- -D warnings`: passed.
+- `cargo fmt --all` and final formatter check: passed.
+- Registry `.venv/bin/python -B -m pytest -q --tb=short -x`, using an explicitly
+  configured disposable local PostgreSQL 16 database: **631 passed, 7 optional
+  skips, 165 subtests passed**. This includes release finalize, actual Pyway
+  migration and legacy publish/install regressions. The test container was removed.
+- `python3 scripts/check_release_contract.py --registry-root ../agentpm-api`
+  and `python3 -m unittest discover -s scripts -p test_release_contract.py -v`: passed.
+- Required Registry pre-commit hooks: formatting, isort, Flake8, Pylint, Bandit,
+  pyupgrade and file checks pass. Mypy still reports the two pre-existing
+  assignment errors in unchanged `app/tools/application/search.py:1486,1856`;
+  no new mypy errors were reported in the touched files.
+
+Hosted normal/native/parity CI, independent review, operator manual acceptance
+and deployment are not claimed. The Registry parity run against public CLI
+`main` needs the authoritative contract update merged first; dispatch against a
+proposed CLI ref can check pre-merge coordination. Production
+`RELEASE_PUBLISH_ENABLED` remains disabled. New release statements, trust
+material and target-aware install acceptance belong to later milestones.
+
 Stored-byte verification cases:
 
 - client-declared metadata hash that does not match stored bytes cannot finalize a new release;
