@@ -19,6 +19,12 @@ on:
       - 'crates/agentpm-sdk/src/python.rs'
       - 'crates/agentpm-sdk/src/artifact.rs'
       - 'crates/agentpm-sdk/src/artifact/**'
+      - 'crates/agentpm-sdk/src/release.rs'
+      - 'crates/agentpm-sdk/src/release/**'
+      - 'crates/agentpm-sdk/src/client.rs'
+      - 'crates/agentpm-sdk/src/client/**'
+      - 'crates/agentpm-sdk/tests/release_upload.rs'
+      - 'crates/agentpm-sdk/contracts/package-release-v1.*.json'
       - 'crates/agentpm-sdk/contracts/tool-payload-formats-v1.json'
       - 'scripts/check_payload_formats.py'
       - 'scripts/test_payload_formats.py'
@@ -89,8 +95,11 @@ jobs:
         run: |
           cargo test -p agentpm-sdk target::tests
           cargo test -p agentpm-sdk artifact::
+          cargo test -p agentpm-sdk release::
+          cargo test -p agentpm-sdk --test release_upload
           cargo test -p agentpm-cli --bin agentpm commands::publish::payload
           cargo test -p agentpm-cli --bin agentpm commands::publish::collection
+          cargo test -p agentpm-cli --bin agentpm commands::publish::release_artifact
           cargo test -p agentpm-cli --test payload_compatibility
       - name: Verify native managed Python environments
         shell: bash

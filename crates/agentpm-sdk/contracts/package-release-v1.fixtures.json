@@ -1,0 +1,108 @@
+{
+  "vectors": [
+    {
+      "name": "portable",
+      "manifest": {
+        "kind": "tool",
+        "name": "example",
+        "version": "1.2.0",
+        "description": "Café ☕ — portable source",
+        "runtime": {
+          "type": "python",
+          "version": "3.11"
+        }
+      },
+      "manifestCanonical": "{\"description\":\"Café ☕ — portable source\",\"kind\":\"tool\",\"name\":\"example\",\"runtime\":{\"type\":\"python\",\"version\":\"3.11\"},\"version\":\"1.2.0\"}",
+      "pythonResolution": null,
+      "release": {
+        "type": "agentpm.package.release.v1",
+        "kind": "tool",
+        "name": "@fixture/example",
+        "version": "1.2.0",
+        "manifestDigest": "sha256:6009f664a13685db5f4ceb763e3554825ddcbb09e7101edeb53b5de2bbe60142",
+        "artifacts": [
+          {
+            "target": "any",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 12345,
+            "contentType": "application/gzip",
+            "format": "tar.gz"
+          }
+        ]
+      },
+      "canonical": "{\"artifacts\":[{\"contentType\":\"application/gzip\",\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"format\":\"tar.gz\",\"size\":12345,\"target\":\"any\"}],\"kind\":\"tool\",\"manifestDigest\":\"sha256:6009f664a13685db5f4ceb763e3554825ddcbb09e7101edeb53b5de2bbe60142\",\"name\":\"@fixture/example\",\"type\":\"agentpm.package.release.v1\",\"version\":\"1.2.0\"}",
+      "digest": "sha256:cf655b03e0ef7d526b2766ddc176b619e37dbf417db1eda13231312e02f622a7"
+    },
+    {
+      "name": "four-targets",
+      "manifest": {
+        "kind": "tool",
+        "name": "example",
+        "version": "1.2.0",
+        "description": "Café ☕ — portable source",
+        "runtime": {
+          "type": "python",
+          "version": "3.11",
+          "dependencies": ["foo>=1"]
+        }
+      },
+      "manifestCanonical": "{\"description\":\"Café ☕ — portable source\",\"kind\":\"tool\",\"name\":\"example\",\"runtime\":{\"dependencies\":[\"foo>=1\"],\"type\":\"python\",\"version\":\"3.11\"},\"version\":\"1.2.0\"}",
+      "pythonResolution": {
+        "type": "agentpm.python-resolution.v1",
+        "python": {
+          "requires": ">=3.11"
+        },
+        "requirements": ["foo>=1"],
+        "packages": [
+          {
+            "name": "foo",
+            "version": "1.2.0",
+            "hashes": [
+              "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          }
+        ]
+      },
+      "release": {
+        "type": "agentpm.package.release.v1",
+        "kind": "tool",
+        "name": "@fixture/example",
+        "version": "1.2.0",
+        "manifestDigest": "sha256:0f4db368f074ad7b692a49c536846c23592ef62ea2add2bcf9eb1dc11fc51162",
+        "artifacts": [
+          {
+            "target": "x86_64-unknown-linux-gnu",
+            "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "size": 12345,
+            "contentType": "application/gzip",
+            "format": "tar.gz"
+          },
+          {
+            "target": "x86_64-pc-windows-msvc",
+            "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "size": 12345,
+            "contentType": "application/gzip",
+            "format": "tar.gz"
+          },
+          {
+            "target": "x86_64-apple-darwin",
+            "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 12345,
+            "contentType": "application/gzip",
+            "format": "tar.gz"
+          },
+          {
+            "target": "aarch64-apple-darwin",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 12345,
+            "contentType": "application/gzip",
+            "format": "tar.gz"
+          }
+        ],
+        "pythonResolutionDigest": "sha256:bb2a7f68ec4189dda399a5d205959315432a0723738019243ca23310082f58a8"
+      },
+      "canonical": "{\"artifacts\":[{\"contentType\":\"application/gzip\",\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"format\":\"tar.gz\",\"size\":12345,\"target\":\"aarch64-apple-darwin\"},{\"contentType\":\"application/gzip\",\"digest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"format\":\"tar.gz\",\"size\":12345,\"target\":\"x86_64-apple-darwin\"},{\"contentType\":\"application/gzip\",\"digest\":\"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"format\":\"tar.gz\",\"size\":12345,\"target\":\"x86_64-pc-windows-msvc\"},{\"contentType\":\"application/gzip\",\"digest\":\"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"format\":\"tar.gz\",\"size\":12345,\"target\":\"x86_64-unknown-linux-gnu\"}],\"kind\":\"tool\",\"manifestDigest\":\"sha256:0f4db368f074ad7b692a49c536846c23592ef62ea2add2bcf9eb1dc11fc51162\",\"name\":\"@fixture/example\",\"pythonResolutionDigest\":\"sha256:bb2a7f68ec4189dda399a5d205959315432a0723738019243ca23310082f58a8\",\"type\":\"agentpm.package.release.v1\",\"version\":\"1.2.0\"}",
+      "digest": "sha256:e1907be36089012a0bab879bf2c44dcc30e841ce2acfbf774edd48cce6737895"
+    }
+  ]
+}

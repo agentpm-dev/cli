@@ -262,12 +262,27 @@
 - Confirm every target artifact receives malware-scan handling.
 - Confirm any infected target yanks/disables the logical version.
 - Confirm one clean artifact cannot make an incompletely scanned release look wholly clean.
+- Confirm all three malware call sites moved off version scope: the per-artifact S3 key replaces `tool_versions.s3_key` (NULL for new-format releases, while the scan row requires it), the one-scan-per-version early return no longer drops targets 2..N, and the detail rollup no longer reads a single scan row.
+- Confirm the scan row's artifact association is optional rather than required, so resolution-scoped scanning stays additive later.
+- Confirm the composite scan/artifact FK enforces a shared parent version on inserts and updates, preserves null associations, and validates existing rows without silent reassignment.
+- Confirm no SBOM/Grype/pip-audit/OSV column was populated as a side effect. Those columns are unwritten schema; "existing vulnerability scanning" does not exist and cannot be regressed. Only the GuardDuty malware path is live.
+- Confirm no dependency vulnerability analysis was added. Declared Python dependencies are not in the archive, so archive scanning cannot cover them; that exposure lives in `PythonResolution` and belongs to Stage 2 Package Health.
+- Confirm new-format final objects sit under the configured `S3_PREFIX`, not a bucket-root prefix. GuardDuty Malware Protection is prefix-scoped to `tools/`, so a bucket-root layout silently leaves every artifact unscanned. Check for a test asserting keys fall inside the configured prefix.
+- Confirm the `clean` rollup is count-based against `package_version_artifacts` rather than status-based, that `status` never rolls up to null (the Security view reads null as "Scan: not run"), that `notes` are not concatenated, and that a legacy single-scan version rolls up to exactly its current values.
+- Confirm the rollup is computed server-side once rather than duplicated between the read DTO and any install-side consumer.
+- Confirm full scan-row coverage is not described as scan completion; result/progress aggregation is independent and in-progress statuses remain visible.
+- Confirm the three flat scan DTO fields are unchanged; per-artifact detail is M14C's, alongside the target-artifact inventory. A shape change here touches eight kind pages and their tests.
+- Confirm the poller's timeout branch now logs. It sets `failed`/`unknown` after `SCAN_MAX_WAIT_MIN` with no log today, so an out-of-scope prefix looks identical to a genuine scanner failure. Check the missing-tag path is tested.
 - Confirm the release reservation lifetime is chosen deliberately and outlives any single presigned PUT window, rather than inheriting the existing 900-second presign.
 - Confirm a presigned PUT can be re-issued for a pending child artifact without invalidating the release or already-uploaded siblings.
 - Confirm reservation expiry surfaces as an identifiable, actionable error rather than an opaque S3 or `409` response.
 - Confirm publish rate limits were audited against worst-case multi-target CI usage including presign re-issues and retries.
 - Confirm registry-API timeouts are separated from artifact-transfer timeouts rather than one total-duration cap covering the S3 PUT.
 - Confirm the finalize destination-exists check distinguishes genuine not-found from other S3 errors, and that `AccessDenied` no longer reads as "object absent".
+- Confirm the aggregate release budget is enforced before reservation/storage and rechecked before publication; `max_total_bytes` is retained in the typed init response.
+- Confirm every storage operation runs outside a DB transaction, only one temporary artifact snapshot is retained, and package/reservation locks protect only the final metadata transaction.
+- Confirm finalize reauthorizes and revalidates complete reservation intent, expiry, signing policy and both budgets after transfer, including identical concurrent completion and changed-intent failures.
+- Confirm fresh conditional PUTs require matching explicit S3 SHA-256 responses without a second GET; existing objects and conditional-write race winners still undergo stored-byte hashing. ETags must not substitute for SHA-256.
 - Confirm resume state is either surfaced in the client's typed response or removed from the wire, with no documented-but-ignored field, and that release-level resume is visible to the client.
 
 ## Integrity and signing
@@ -393,6 +408,22 @@
   documentation/migration remains M18. Do not treat the known SDK app failure
   as a passing runtime check or pull Stage 2 category work into this milestone.
 
+## Schema changes
+
+Apply these whenever a migration adds a column, constraint, index or trigger. Found the
+hard way in M13B: `V1.102` added a correct per-artifact unique index while `V1.55`'s
+pre-existing **unconditional** unique index on `tool_version_scans(tool_version_id)`
+still enforced one scan per version, so the second artifact's scan insert failed at
+finalize. The new constraint was reviewed in isolation and the table's existing ones
+were not.
+
+- **Enumerate every existing constraint, index and trigger on each table being changed, not just the ones being added.** A new constraint that is correct on its own can still conflict with an older one enforcing a now-obsolete rule.
+- Confirm a rule that moved from version scope to a narrower scope was *rescoped*, not merely supplemented. A replacement partial index should have a predicate that is the exact complement of its sibling, so coverage is complete with no double-enforcement and no gap.
+- Confirm the old rule is still enforced for the rows it should still cover — rescoping must not silently drop the legacy invariant.
+- Confirm migration tests replay the **real historical migrations** rather than a synthesized baseline. A hand-written baseline contains exactly the constraints its author remembered, so it cannot catch the ones they forgot; this is the same failure mode as validating a lockfile fixture the new code generated.
+- Confirm an `IntegrityError` surfaced to a client logs the constraint name and SQLSTATE, and does **not** log SQL parameters, which carry authored manifest content.
+- Confirm additive columns leave existing rows byte-identical, and that an already-applied migration's bytes were not edited (Pyway checksums) — upgrades belong in a new forward-only migration.
+
 ## Regressions
 
 - Check install, publish, lint, run, new, export, namespace, keys, knowledge, memory, serve, login-adjacent behavior for unintended changes.
@@ -422,6 +453,7 @@
 - Confirm cross-language canonicalization uses shared vectors.
 - Confirm multi-platform behavior was tested on real runners, not only mocked architecture strings.
 - Confirm legacy compatibility was actually exercised.
+- Confirm schema tests build their starting state from the real migration history, not a baseline written alongside the test. See **Schema changes**.
 - Confirm any unverifiable item is called out explicitly.
 
 ## Pattern adherence

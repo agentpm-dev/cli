@@ -1,3 +1,5 @@
+pub mod release_upload;
+
 use crate::error::{ApiErrorBody, Result, SdkError};
 use crate::models::device::{DevicePollReq, DeviceStartReq};
 use crate::models::install::{InstallInitResponse, ResolveRequest, ResolveResponse};
@@ -17,6 +19,7 @@ use url::Url;
 #[derive(Clone)]
 pub struct AgentPmClient {
     http: Client,
+    transfer_http: Client,
     base_url: String,
     token: Option<String>,
 }
@@ -31,6 +34,12 @@ impl AgentPmClient {
                 .timeout(Duration::from_secs(600))
                 .user_agent("agentpm-cli/0.1")
                 .no_gzip()
+                .build()?,
+            transfer_http: Client::builder()
+                .connect_timeout(Duration::from_secs(30))
+                .read_timeout(Duration::from_secs(120))
+                .redirect(reqwest::redirect::Policy::none())
+                .user_agent("agentpm-cli/0.1")
                 .build()?,
             base_url: base_url.into(),
             token: None,
@@ -105,16 +114,6 @@ impl AgentPmClient {
         _suggested_filename: &str, // used only for logs/errors; S3 key is determined server-side
         finalize_extra: Option<serde_json::Value>,
     ) -> SdkResult<PublishReceipt> {
-        // Read artifact (MVP: buffer; TODO: streaming variant can come later)
-        let bytes = tokio::fs::read(&artifact_path).await.map_err(|e| {
-            SdkError::Other(format!(
-                "reading artifact {}: {}",
-                artifact_path.as_ref().display(),
-                e
-            ))
-        })?;
-        let size_bytes = bytes.len() as u64;
-
         // --- Step 1: init ---
         let init_url = format!("{}/v1/tools/publish/init", self.api_base());
         let init_resp = self
@@ -130,47 +129,13 @@ impl AgentPmClient {
             .await
             .map_err(SdkError::Http)?;
 
-        // Optional guard: respect max_bytes if present
-        if let Some(max) = init.max_bytes
-            && size_bytes > max
-        {
-            return Err(SdkError::Other(format!(
-                "artifact size {} exceeds max_bytes {} (server policy)",
-                size_bytes, max
-            )));
-        }
-
-        // --- Step 2: presigned PUT to S3 ---
-        // Build headers exactly as server specified
-        let mut hdrs = HeaderMap::new();
-        for (k, v) in init.headers.iter() {
-            let name = HeaderName::from_bytes(k.as_bytes()).map_err(|e| {
-                SdkError::Other(format!("invalid presigned header name {}: {}", k, e))
-            })?;
-            let val = HeaderValue::from_str(v).map_err(|e| {
-                SdkError::Other(format!("invalid presigned header value for {}: {}", k, e))
-            })?;
-            hdrs.insert(name, val);
-        }
-
-        let s3_put = self
-            .http
-            .put(&init.put_url)
-            .headers(hdrs)
-            .body(bytes)
-            .send()
-            .await
-            .map_err(SdkError::Http)?;
-
-        let status = s3_put.status();
-        if !status.is_success() {
-            // S3 errors are XML; surface the text for debuggability
-            let txt = s3_put.text().await.unwrap_or_default();
-            return Err(SdkError::Other(format!(
-                "S3 PUT failed: {} {}",
-                status, txt
-            )));
-        }
+        self.stream_artifact(
+            &init.put_url,
+            &init.headers,
+            artifact_path.as_ref(),
+            init.max_bytes.unwrap_or(u64::MAX),
+        )
+        .await?;
 
         // --- Step 3: finalize ---
         let finalize_url = format!("{}/v1/tools/publish/finalize", self.api_base());
@@ -196,11 +161,14 @@ impl AgentPmClient {
             .map_err(SdkError::Http)?;
 
         let finalize_resp = self.ensure_success(finalize_resp).await?;
-        let receipt = finalize_resp
+        let mut receipt = finalize_resp
             .json::<PublishReceipt>()
             .await
             .map_err(SdkError::Http)?;
 
+        if init.resumed {
+            receipt.message = format!("{} (resumed existing upload)", receipt.message);
+        }
         Ok(receipt)
     }
 

@@ -17,6 +17,8 @@ pub struct PublishReceipt {
 
 #[derive(Debug, Deserialize)]
 pub struct InitPublish {
+    #[serde(default)]
+    pub resumed: bool,
     pub upload_id: String,
     #[serde(default)]
     pub kind: PackageKind,

@@ -2292,6 +2292,35 @@ additional model call was performed. The new **0.1.9** managed-environment
 Tool remains successfully verified on Apple Silicon through direct CLI and
 Harness execution.
 
+Subsequent legacy smoke verification: the operator identified other vendored
+production Tools and proposed sentiment analysis. The already-installed
+`@zack/sentiment-analysis@0.1.5` in
+`agentpm-examples/agent-app-support-assistant-workspace` was executed using
+CLI **0.1.37**, Apple Silicon Python **3.13**, telemetry disabled and the
+existing legacy runtime path:
+
+```bash
+AGENTPM_TELEMETRY=0 AGENTPM_PYTHON=/opt/homebrew/opt/python@3.13/bin/python3.13 \
+  agentpm run @zack/sentiment-analysis@0.1.5 --machine \
+  --input '{"text":"I love this tool. It works beautifully!"}'
+```
+
+The process exited **0** and returned `status: success`, exact Tool version
+**0.1.5**, and output `ok: true`, `label: positive`, `compound: 0.8478`.
+The installed manifest has no declared Python dependencies and no
+`agentpm-python.json`; isolated import inspection confirms VADER loads from
+the installed Tool's `sentiment_analysis/_vendor/` directory. Its vendor tree
+also contains two `charset_normalizer` native extensions, so it is not asserted
+to contain exclusively pure Python files; successful execution establishes
+that those files do not block this legacy Tool on the tested host.
+
+No API key, model call, package install/publication, lock rewrite, vendor
+replacement or SDK change was needed. This supplies the successful existing
+vendored-production Tool smoke evidence and closes the last Band 8 check.
+The prior Intel-only summarizer failure remains documented as an artifact/host
+limitation, not a passing native-legacy test. **Band 8 acceptance is complete**;
+SDK compatibility remains deferred to M17.
+
 #### Release Band 8 Post-Merge Resolver Spawn Race
 
 After the CLI merge, the operator reported Linux CI failing
@@ -2793,10 +2822,220 @@ Remaining acceptance gates:
   cross-compile or verify a foreign native binary's actual ABI. Legacy storage
   and installation continue unchanged; target-aware enforcement is later scope.
 
+### M13A release/artifact foundation — local verification
+
+Implementation completed locally on 2026-10-25. This is the additive data and
+storage foundation only; the multi-artifact publish transaction remains M13B,
+signing/provenance remains M14, target-aware installation remains M15, and the
+new build/CI publishing workflow remains M16. Node/Python SDKs remain unchanged.
+
+Implemented/verified:
+
+- Typed Rust and Pydantic `agentpm.package.release.v1` models, JSON Schema and
+  shared checked-in vectors. Canonical release arrays sort by target, duplicate
+  targets fail, digest fields require full lowercase `sha256:` values, optional
+  Python resolution digests are omitted rather than null, and private upload/
+  machine fields are rejected. Vectors cover `any`, all four concrete targets,
+  a bound Python resolution and non-ASCII manifest content. Rust uses existing
+  `serde_jcs`; the Registry adds pinned `rfc8785==0.1.4`. Manifest integer-domain
+  checks agree across languages; legacy signing serialization is unchanged.
+- The authoritative schema/vectors live under the Rust SDK's `contracts/`;
+  Registry snapshots are byte-identical. Both language suites assert the same
+  expected canonical bytes and digests. `check_release_contract.py` succeeds
+  across the two checkouts and fails on a deliberately changed snapshot.
+  Registry tests compare sibling files when available. The initial check was
+  manual-only; the review follow-up below adds a dedicated Registry CI job
+  that checks out both repositories and executes the check automatically.
+- The three fixed SQLAlchemy models/tables, nullable legacy scalar columns,
+  explicit release format/digest/document, per-release target uniqueness and
+  reservation metadata are implemented. The new format stores null scalar
+  artifact fields and normalized child artifacts; legacy rows preserve their
+  previous scalar authority. No existing row is reinterpreted or backfilled.
+- Internal persistence constructs canonical `release.json`, binds manifest/
+  resolution/identity, and creates normalized version/artifact rows. S3 writes
+  are conditional create-only; exact-byte retries succeed, different existing
+  bytes fail, and authorization errors are not treated as missing objects.
+  These tests use a mocked S3 client, not live writes. Payload-byte verification
+  and cross-store finalize/recovery orchestration remain later work.
+- New object keys use bucket-root `packages/<namespace>/<name>/<version>/`,
+  target directories and full artifact digests. Legacy `S3_PREFIX`/keys remain
+  unchanged. UUID-based staging stays under `uploads/`. Expired reservations
+  may share a deterministic final key with a later reservation; their temporary
+  keys remain distinct. This avoids making retained reservation history block a
+  retry. This is a model invariant, not implementation of the M13B retry API.
+- An internal CLI preparation helper creates a separate, atomic new-format
+  archive containing `agentpm-artifact.json` target/format metadata while
+  preserving the original archive. Existing `agent.json` and optional
+  `agentpm-python.json` are retained. No descriptor contains its own archive
+  digest. Opt-in Registry validation binds archive identity, manifest,
+  Python resolution and target descriptor to the expected release. Existing
+  publish commands do not invoke this helper or create a new-format release.
+- Install resolve and init reject any explicit unsupported release format with
+  HTTP 409/`unsupported_release_format`, even if legacy scalar fields happen
+  to be present. No install session or S3 URL is created. Legacy security reads
+  reject new-format records rather than reporting a null/artifact-mislabeled
+  digest. Existing legacy publish/install/metadata regressions remain passing.
+
+Migration recovery and database evidence:
+
+- The operator's local backend applied V1.98 while it was being developed and
+  then correctly refused a changed checksum. The exact applied V1.98 was
+  recovered at **EAF4B273** and frozen. V1.99 (**8FB2F27D**) carries function/
+  inventory hardening; the operator confirmed the backend starts successfully
+  after that recovery. No migration-history row/checksum was edited.
+- The final reservation-key correction is a forward V1.100 migration, not an
+  edit to V1.98/V1.99. Its operator startup/deployment confirmation is separate
+  from the earlier V1.99 restart confirmation.
+- **Seven** real PostgreSQL tests apply the actual V1.98 → V1.99 → V1.100 SQL to
+  representative pre-migration tables and legacy data in fresh random schemas
+  of a disposable localhost-only PostgreSQL 16 container. They assert preserved
+  legacy values, explicit storage-shape constraints, four target reservations,
+  duplicate/pending-reservation conflicts, one- and four-artifact ORM persistence,
+  exact immutable document bytes, immutable published metadata/associations,
+  yank updates, rejection of a pending-state bypass, incomplete-inventory failure
+  at commit and expired-reservation final-key reuse. SQLAlchemy never generates
+  schema DDL. These are not a full historical-migration/deployment rehearsal.
+- Crossing V1.100 exposed Pyway 0.3.32's two-digit/string sorting limit. The
+  app now delegates to the same Pyway CLI through `run_migrations.py`, changing
+  only numeric ordering; stored version strings, filenames, checksum validation
+  and SQL execution remain unchanged. A real CLI subprocess applies the three
+  migrations to a fresh representative schema and verifies all three Pyway
+  history records. Three additional tests cover numeric ordering of actual
+  repository migration names/dict records, app invocation/password redaction,
+  and the unchanged CLI help interface. No history rewrite or dependency
+  upgrade is used to hide the ordering boundary.
+
+Verification totals and tooling:
+
+- Rust workspace: **1,200 passed**, **5 existing opt-in tests ignored**;
+  includes four new Rust SDK release tests and one new-format archive test.
+  Workspace Clippy `-D warnings` and Rust formatting pass.
+- Full API suite: **519 passed**, **7 existing optional tests skipped**, with
+  **165 subtests passed**. The final PostgreSQL suite separately passed all
+  **7** cases using the complete three-migration sequence. Earlier final
+  focused contract/upgrade verification passed **31** cases before adding the
+  integer-domain and expired-reservation regressions; those additions are
+  included in the full final suite. No new M13A DB case was skipped in this
+  explicitly configured run.
+- Required API Black, isort, Flake8, Pylint, Bandit, pyupgrade and whitespace/
+  conflict hooks run. The cached Bandit environment's missing `pbr` dependency
+  was repaired without changing hook configuration. The full mypy hook still
+  reports two existing errors in unchanged `app/tools/application/search.py`
+  at lines 1486 and 1856. Focused mypy with silent dependency following passes
+  the eleven touched implementation/test/entrypoint modules; the full hook is not claimed
+  green. Required formatting, shared-contract/payload checks, workflow YAML
+  validation and compilation of the changed public MDX pass.
+- Resolver Contract path triggers/test steps now include the release models,
+  shared fixtures and new-format archive helper on all four native runners.
+  The operator confirmed all four updated hosted target runs passed: macOS ARM,
+  macOS Intel, Linux x86_64 and Windows x86_64. This is operator-reported hosted
+  evidence, separate from the local verification totals above.
+
+Independent review, normal CI, all four updated Resolver Contract runs and the
+operator manual walkthrough are complete, as confirmed by the operator.
+M13A acceptance is complete; the operator confirmed all manual tests passed
+on 2026-10-25.
+Hosted cross-repo parity and environment-specific deployment/storage-policy
+checks remain Release Band 9 gates, as recorded in `tasks.md`.
+The local migration recovery is operator-confirmed, but there were no live S3
+writes, bucket-policy changes, production deployment, new public publish/build
+workflow, source commits or pushes by the agent. The existing Node/Python SDK
+compatibility gap stays deferred to M17.
+
+#### M13A review follow-up: deferred child inventory checks
+
+Review demonstrated that a committed pending version could gain, change or
+lose artifacts without revalidating its manifest: the original deferred check
+ran only on parent writes. V1.101 adds an artifact-table constraint trigger for
+INSERT/UPDATE/DELETE, sharing one inventory-validation function with the parent
+trigger. Reparenting checks both old and new parent identities; existing parent
+row locking and published immutability remain intact. Checks remain deferred
+and validate the final transaction state, so valid assembly/repair transactions
+are allowed.
+
+The SQL was first exercised as a draft outside the backend-watched migration
+directory, then added as a forward migration. V1.98/V1.99/V1.100 retain their
+original checksums **EAF4B273**, **8FB2F27D** and **3484543A**. No migration
+history or existing inconsistent draft row was rewritten. Existing bad drafts
+must be made consistent before later mutation/publication can commit.
+
+Six additional real-PostgreSQL regression cases cover inconsistent pending
+inserts, updates and deletes; a valid final state after a transient mismatch;
+and moves that invalidate only the old or only the new parent. DML itself
+succeeds before the invalid transaction is rejected at commit, confirming
+deferral rather than an accidental immediate constraint failure. The full
+13-case PostgreSQL suite and three Pyway ordering/invocation tests pass with
+V1.98 → V1.99 → V1.100 → V1.101, including a real CLI upgrade/history test.
+Full API regression suite: **525 passed**, **7 existing optional tests skipped**,
+with **165 subtests passed**. Formatting and API static checks are run on the
+changed tests; the pre-existing full-hook mypy failures in unchanged search
+code remain separately documented above. No Rust or public API workflow
+change is part of this follow-up.
+
+#### M13A review follow-up: automatic cross-repo contract parity
+
+Added `agentpm-api/.github/workflows/release-contract.yml`. It runs on Registry
+pull requests and pushes to `main`, checking out the Registry and public
+`agentpm-dev/cli` `main` side by side. The job invokes the existing
+`check_release_contract.py --registry-root registry`, then runs the Registry
+release-contract tests against those shared schema/vectors. The checkout layout
+also enables the tests' sibling-source comparison rather than silently taking
+their standalone fallback. Contents permissions are read-only, checkout
+credentials are not persisted, and no cross-repo secret, live database or
+service key is needed. Both checked revision hashes appear in the job log.
+
+Coordinated contract changes merge to CLI `main` first; no CLI publication or
+deployment is required for that ordering. Manual workflow dispatch accepts a
+public CLI branch/tag/commit for pre-merge verification of both proposed changes.
+That diagnostic run does not replace the required main-ref parity check for the
+Registry revision being released. The operator confirmed that the CLI changes
+will reach `main` only after M13B, as part of Release Band 9. The hosted main-ref
+check is therefore tracked under that band's pre-Registry-deployment gates,
+not as an M13A completion or M13B start prerequisite. Local cross-checkout parity
+and contract tests provide the M13A evidence while the hosted gate stays open.
+
+Local verification: the CI parity command succeeds and rejects deliberate
+schema and fixture drift independently. All **27** Registry contract tests pass
+with a cleared environment and developer dotenv loading disabled, using only
+the workflow's dummy test signing key. Workflow YAML, checkout paths, read-only
+permissions and command wiring were checked; YAML/docs formatting and diff
+checks pass. GitHub-hosted execution remains pending after these files are
+pushed and the corresponding authoritative CLI files are available at the
+selected ref. No workflow was dispatched and no commit/push was performed.
+
+#### M13A operator manual runbook
+
+`manual-tests/RELEASE_M13A_MANUAL_TESTS.md` is operator-accepted. It uses
+one macOS/zsh terminal, the existing Registry venv, shared contract vectors,
+focused primitive tests and a separate localhost-only PostgreSQL container.
+It applies the actual four migration files through the Pyway wrapper, checks
+a representative legacy row, then records and inspects a four-artifact version
+using mock S3. The data setup reuses the existing SQL test baseline; SQLAlchemy
+does not generate schema DDL. A deliberate finalized-artifact mutation fails,
+and the guide checks existing local API reads and browser navigation separately.
+
+The executable blocks were rehearsed sequentially: **4 Rust SDK tests**, **1
+Rust artifact-helper test**, **30 Registry contract/migration-order cases**, and
+**13 real-PostgreSQL cases** passed. Manual fixture SQL inspection and unchanged
+legacy-column comparison passed, canonical document bytes matched, a second
+Pyway migration run succeeded without changes, and the expected immutable UPDATE
+was rejected without altering the four artifact sizes. Local trending, search
+and package-detail API reads returned HTTP 200. The disposable container was
+stopped/removed. No application database writes, live S3 operations, real
+publication or deployment were performed during this rehearsal.
+
+The rehearsal above verifies the runbook commands. Separately, on 2026-10-25
+the operator confirmed all manual tests passed, including the walkthrough's
+local browser checks. M13A manual acceptance is complete. Hosted CLI-main parity
+and environment-specific deployment/storage readiness remain Release Band 9
+gates; this acceptance does not mark those later checks complete.
+
 ### Multi-artifact release / publish storage
 
 Automated cases:
 
+- schema tests build their starting state by replaying the **real historical migrations**, not a baseline written alongside the test. M13B's finalize failure was invisible because the hand-written baseline omitted `V1.55`'s unconditional unique index, so the tests ran against a schema that lacked the constraint breaking real databases.
+- for any rule rescoped from version level to a narrower level, both scopes are parameterized — the narrower rule allows the expected number of rows, and the legacy scope still allows exactly one.
 - legacy single-artifact publish still finalizes.
 - one-artifact new-format release finalizes.
 - multiple-target new-format release finalizes.
@@ -2813,6 +3052,7 @@ Automated cases:
 - mismatched manifest digest rejected.
 - mismatched Python resolution digest rejected.
 - one failed/missing upload leaves release unpublished.
+- M13B finalize rejects each missing, pending or failed reservation child even when the proposed release manifest and artifact inventory agree. Verify no published version or finalized artifact rows survive; the M13A database constraints do not enforce reservation completeness or stored-byte verification.
 - finalization creates one logical version + N artifact rows atomically.
 - legacy `PackageVersion.sha_256/size_bytes/s3_key` rows remain populated/readable.
 - new `agentpm.package.release.v1` rows have legacy scalar artifact columns `NULL`, populate the release-level digest field, and use child artifact rows as the only authoritative target-artifact source.
@@ -2820,6 +3060,8 @@ Automated cases:
 - finalized artifact inventory is immutable.
 - adding artifact to finalized version rejected.
 - expired/failed staged objects can be cleaned up safely.
+- M13B enforces release expiry and its chosen reservation-history retention policy; repeated cleanup preserves active reservations and finalized objects, including when an expired reservation shares a deterministic final key with a later reservation.
+- a rollback after storing `release.json` leaves the release unpublished despite object presence; identical-byte retry succeeds, different-byte retry fails without overwriting, and the chosen recovery behavior is tested.
 - legacy S3/read path remains valid.
 - new S3 target object keys include canonical target + full digest.
 - upload implementation streams rather than buffers complete artifact in memory (unit/integration evidence as appropriate).
@@ -2827,14 +3069,378 @@ Automated cases:
 - old client/new release produces clear unsupported-release-format error.
 - malware scanning:
   - one scan scheduled per target artifact;
+  - **verify by mutation that targets 2..N are actually enqueued.** The current `_enqueue_scan` returns early when any scan row exists for the version, so a test asserting "a scan exists" passes against the old one-per-version behavior; assert the row count equals the artifact count and that each row carries its own artifact key;
+  - a new-format release enqueues scans even though `tool_versions.s3_key` is NULL, using the per-artifact key;
   - all-clean state requires appropriate artifact results;
-  - infection of any artifact yanks/disables logical version.
+  - a release with one clean and one queued/failed/unknown artifact does not report clean on the package detail surface;
+  - infection of any artifact yanks/disables logical version;
+  - the legacy single-artifact scan path is unchanged: a legacy publish still enqueues exactly one version-scoped scan row and the poller still resolves it;
+  - the scan row's artifact association is nullable, so a row without one remains valid;
+  - no SBOM/Grype/pip-audit/OSV column is written. These are unwritten schema today, so assert they stay NULL rather than assuming a prior baseline.
 - release reservation outlives an individual presigned PUT window.
 - a presigned PUT can be re-issued for a still-pending child artifact without invalidating the release or already-uploaded siblings.
 - an expired release reservation produces an actionable, identifiable error rather than an opaque S3 or `409` failure.
 - worst-case registry call count for a supported multi-target release stays within the effective publish rate-limit budget, including presign re-issues and one retried matrix job.
 - an S3 error other than not-found on the finalize destination-exists check fails finalize instead of being treated as "object absent" and triggering a copy; `AccessDenied` specifically is covered.
 - resume state is observable by the client — a resumed reservation is distinguishable from a fresh one, or the flag is absent from the response entirely.
+
+### M13B implementation and local verification
+
+Implemented locally on 2026-10-25. Independent review, updated hosted CI and
+operator manual acceptance remain open. The implementation keeps
+`RELEASE_PUBLISH_ENABLED=false` by default and accepts Python Tools only on the
+separate `/v1/tools/publish/releases/...` endpoint family. Existing publish paths
+retain legacy storage/format; shared Rust transport now streams every package
+kind. Install and Security new-format gates remain intact. No new signature
+statements, public package/build command, target selection, external SDK change
+or dependency vulnerability analysis is included.
+
+Implemented and exercised:
+
+- Complete intended inventory is stored on the reservation; init/resume returns
+  distinct child upload instructions, observable resume state, authoritative
+  limits and reservation/PUT expiries. Child renewal preserves sibling objects.
+  The policy is 24-hour reservations, 900-second maximum PUTs capped by remaining
+  reservation time, and 30-day history retention after expiry. Expired requests
+  fail with HTTP 410/`release_expired` and an actionable retry instruction.
+- Namespace authorization, reservation ownership, Python-only kind restrictions,
+  size bounds, unique target inventory and manifest/resolution binding are
+  enforced. A default-off HTTP test and PAT scope rejection cover the guard.
+  A real Flask/SQLAlchemy transaction fixture exercises failed finalize rollback,
+  successful finalization and idempotent committed receipt recovery.
+- Finalize validates every reserved upload before creating any version rows.
+  Bounded disk snapshots are independently hashed, checked for size, and validated
+  against the expected archive manifest, Python resolution and target descriptor.
+  Snapshot bytes are used for conditional final-object writes so staging cannot
+  change between verification and publication. Final bytes are checked again.
+  Publisher-controlled S3 metadata is insufficient evidence. This supplies the
+  byte checking required by this transaction; release signing/attestation remains
+  later work, not an implicit implementation of the rest of M14B.
+- Missing/corrupt/wrong-size/descriptor-mismatched uploads and access-denied final
+  storage fail without surviving version/artifact/scan rows. Exact orphan
+  `release.json` retries recover after DB rollback; different existing bytes fail
+  with `release_document_conflict`, remain untouched, and require the original
+  inventory or a new version. Object presence is not publication authority.
+- One and four-artifact versions finalize with null legacy scalar columns and
+  one immutable logical version. A dependency-bearing Tool also finalizes as a
+  single `any` artifact with its exact resolution bound to the release. Each
+  artifact has its own scan row, nullable
+  artifact association and object key. The four-target case asserts both row
+  count and exact associations. Injecting the old one-scan-per-version guard
+  **causes that case to fail as expected**, proving targets 2..N are covered.
+- The existing GuardDuty worker yanks the whole version on an infected artifact.
+  Rollup stays unknown/non-clean with queued, running, failed or missing siblings;
+  all required scans must be completed clean. Legacy scan queueing remains one
+  row with a null artifact association. SBOM/Grype/pip-audit/OSV fields stay NULL.
+  The new-format Security compatibility gate remains until later verification;
+  the reusable rollup preserves existing DTO field shapes.
+- Five-minute scheduled cleanup deletes only validated reservation-owned staging
+  keys, rotates by updated-at to avoid retained-history starvation, expires
+  pending reservations and removes history after retention. Active reservations
+  and immutable final keys survive. Storage errors roll back DB cleanup for
+  retry; repeated cleanup remains safe. Package-before-reservation lock ordering
+  and rereading under lock avoid stale cleanup decisions.
+- Rust uploads stream bounded chunks, reopen the file for retries and keep PAT
+  authorization off storage requests. A sparse/large-file fixture verifies that
+  server policy rejects oversize before transfer. The transfer client has no
+  fixed total 600-second ceiling: connect/read and progress-idle checks are
+  separate from the Registry API client. Legacy `resumed` is deserialized and
+  surfaced in the publication receipt note. The independent CLI 3 GiB cap is
+  removed; both legacy and guarded init/finalize enforce the same server policy.
+- Dedicated release endpoint rate limits are cost 1, 60/minute and 600/hour.
+  Four job init/resumes + four renewals + two finalize attempts use 10 Registry
+  requests, or 20 with a full repeat; the schema maximum fits within 24.
+  Legacy limits are preserved. Legacy AccessDenied during final-object HEAD
+  now fails explicitly instead of being treated as object absence; a regression
+  asserts that no copy or version write follows that failure.
+
+Forward Pyway migration V1.102 adds the intended reservation document and nullable
+scan-to-artifact FK with a partial unique index. Earlier migration files remain
+unchanged. The real upgrade test now runs V1.98 → V1.99 → V1.100 → V1.101 → V1.102
+and confirms five history records, legacy preservation and numerical ordering.
+The migration was exercised as a draft against a disposable database before
+being placed in the backend-watched migration directory. No database-history
+checksum was changed, and SQLAlchemy never generated schema DDL.
+
+Verification:
+
+- Full Rust workspace: **1,202 passed**, **5 existing opt-in tests ignored**.
+  Final two streaming HTTP tests pass after the idle-period adjustment and
+  Windows-sized fixture correction. Workspace Clippy `-D warnings` and Rust
+  formatting pass.
+- Full API suite: **547 passed**, **7 existing optional tests skipped**,
+  **165 subtests passed**. Final targeted release/migration/order verification:
+  **38 cases**, all covered by the full passing suite, with no skipped PostgreSQL case. Tests use an explicitly supplied
+  disposable localhost database and in-memory storage, including real HTTP
+  route/database transaction boundaries. No application database or live S3
+  writes were used for verification.
+- API Black, isort, Flake8, Pylint, Bandit, pyupgrade, whitespace/end-of-file and
+  merge-conflict hooks pass. Full-hook mypy still reports the two existing errors
+  in unchanged `app/tools/application/search.py` at 1486 and 1856; it is not
+  claimed green. Updated workflow YAML, contract parity, docs formatting and MDX
+  compilation are checked separately.
+- The native Resolver Contract workflow now includes SDK transport paths/tests.
+  The API workflow adds a separate PostgreSQL release-upload/migration job, which
+  does not require public CLI `main` to run. The original cross-repo parity job
+  still requires the later CLI merge. No hosted execution is inferred from these
+  local results.
+
+Remaining gates and risks: independent review, hosted normal/native/API jobs and
+operator manual acceptance. Release Band 9 additionally retains CLI-main parity,
+deployment rehearsal and real dev/prod storage/GuardDuty coverage checks. The
+new protocol must stay gated until verified target-aware consumption exists.
+The subsequent bounded-finalization follow-up below supersedes the original
+sum-of-artifacts snapshot disk requirement; server concurrency/request capacity
+still requires verification.
+Immutable orphan final objects are retained; exact retries recover, while changed
+release documents intentionally require the original inventory or a new version.
+Real storage permissions/lifecycle, managed-service timeouts and actual GuardDuty
+integration are not established by mocked storage tests. No commit, push,
+deployment, public activation or paid service call is part of this implementation.
+
+#### M13B review follow-up: protected storage prefix and precise scan rollup
+
+Implemented the operator-approved spec additions before independent review.
+Release documents and final artifact objects now use
+`<S3_PREFIX>/<namespace>/<name>/<version>/`, with `release.json` beside the
+`artifacts/<target>/<full-digest>.tar.gz` subtree. This supersedes the initial
+M13A bucket-root `packages/` layout recorded above. A shared prefix helper is
+used by legacy publication, managed resolver downloads and the release key
+builders. Missing/blank settings default to `tools`; surrounding slashes are
+normalized and explicit nonempty custom prefixes are honored. Historical object
+keys/objects are not rewritten. Staging remains under `uploads/`, and final
+objects still use conditional create-only PUTs rather than a staging copy.
+
+Tests cover default, missing, blank, slash-normalized and custom prefix values;
+legacy tarball, release document and target artifact keys remain distinct under
+one namespace/package/version directory. Actual storage-format XOR constraints
+and refusal to replace a legacy version remain covered by the PostgreSQL tests.
+One- and four-artifact release finalization is exercised under both the default
+and custom configured prefixes, checking persisted keys and scan associations.
+Resolver tests verify that the same prefix normalization reaches presigned keys.
+
+The shared domain rollup now follows the revised precedence exactly. Malware
+results are count-based against expected artifact IDs: infected, suspicious,
+all expected rows clean, otherwise unknown. Progress is independently failed if
+any failed, complete only if all expected scans complete, running if any running,
+otherwise queued. New-format records never roll up to null progress, including
+when no scans were enqueued. Aggregate notes are omitted; raw artifact notes are
+not concatenated into UI text. Legacy one-row results/notes and historical
+legacy no-scan behavior are preserved. No new per-artifact DTO array or new-format
+Security/install activation is introduced; those remain later scope.
+
+The existing missing-tag timeout now explicitly logs a warning with scan ID,
+version ID, bucket and object key, pointing operators at prefix coverage,
+permissions and scanner health. A real-PostgreSQL regression runs queued →
+running → missing-tag wait → failed/unknown, asserts the timeout note and warning,
+and confirms completed timeout rows do not emit duplicate warnings on later polls.
+This reuses the existing timeout, not a new alerting service.
+
+Verification: full API suite **577 passed**, **7 existing optional tests skipped**,
+**165 subtests passed**, with all new database cases enabled against a disposable
+localhost database and mock storage. Focused non-DB verification passed **97
+cases** and **11 subtests**. The existing `PackageSecurity.test.tsx` suite passed
+all **8** package-kind cases, preserving the flat read DTO/rendering contract
+without web source changes. Required API formatting, Flake8, Pylint, Bandit,
+pyupgrade and whitespace/conflict hooks pass; full-hook mypy still reports the
+two documented errors in unchanged search code. Rust source/contracts are
+unchanged by this follow-up, so the earlier Rust workspace evidence is retained.
+The API PostgreSQL workflow explicitly includes the new rollup and resolver
+regressions. No applied migration was edited, no data/object relocation or live
+S3/GuardDuty operation was performed, and the release flow remains default-off.
+
+The operator confirmed that the dev bucket `agentpm-dev-tools` already has
+GuardDuty monitoring with the same configuration as production. Use that bucket
+for real new-format upload/tag/poller checks during manual acceptance. This is
+operator-confirmed configuration context, not evidence that those new objects
+have already been scanned or tagged.
+
+Operator gates stay open in Release Band 9: confirm actual scanning/tagging in
+dev and production, and size scan volume/cost for the artifact objects, their
+bytes and `release.json`. Prefix-aware code tests establish key placement, not
+AWS protection-plan coverage. Scanning is asynchronous and does not block publish.
+Independent review, updated hosted CI and manual acceptance remain pending.
+
+#### M13B review follow-up: aggregate budget, transaction boundaries and checksums
+
+Implemented review findings 1 and 2 together. `MAX_RELEASE_UPLOAD_BYTES` defaults
+to 1,000,000,000 bytes across all artifacts, independently of the existing
+per-artifact cap. Init rejects excess totals before reservation/storage and
+returns `max_total_bytes`; the Rust response type retains this additive field.
+Finalize rechecks both current budgets before transfer and before publication.
+
+The equal 1 GB defaults are deliberate: artifact-first checking gives the more
+specific single-file error, and the independently configurable artifact bound
+matters if the total is raised. This clarification changes comments and policy
+documentation only; limits and validation order are unchanged. Aggregate tuning
+must revisit transfer/request/concurrency capacity; transfer-time DB locks and
+sum-of-artifacts snapshot disk are no longer part of the implementation.
+
+An initial read/auth/validation captures detached intent, then releases its DB
+transaction/connection. Storage verification and create-only writes, including
+`release.json`, run outside DB transactions with one temporary snapshot open at
+a time. The final package/reservation locks protect only reauthorization,
+unchanged intent/inventory, expiry/policy/size revalidation and atomic DB rows.
+This supersedes the earlier sum-of-artifacts snapshot approach. Fresh final PUTs
+require matching explicit S3 SHA-256 request/response checksums and avoid a second
+GET; existing objects and conditional-write race winners are still downloaded
+and hashed. ETags are never treated as SHA-256 evidence.
+
+Fifteen added cases cover aggregate rejection before side effects, policy
+rechecks, one-snapshot usage, no active DB transaction during every storage
+HEAD/GET/PUT, and acquisition of the package lock from another PostgreSQL
+connection using `FOR UPDATE NOWAIT` during those calls. They also cover expiry,
+permission, inventory and budget changes during transfer, identical concurrent
+finalization, absent/mismatched checksum responses, correct/different conditional
+PUT winners, and rejection without discarding caller-owned uncommitted work.
+Fresh writes assert a single staging GET and the explicit checksum header.
+
+Verification: full API suite **592 passed**, **7 existing optional tests skipped**,
+**165 subtests passed**, with database cases enabled on a disposable localhost
+PostgreSQL instance and mock storage. Rust upload tests **2 passed**; workspace
+Clippy with warnings denied passed. API formatting/security/lint hooks pass
+except the same two pre-existing mypy errors in unchanged search code. Hosted
+and real-S3 checksum behavior are not claimed by these tests. Per-request disk
+is bounded by the largest accepted artifact, at most the smaller size cap;
+concurrent finalizers may duplicate bounded work, so live concurrency/disk/request
+capacity and GuardDuty gates remain pending alongside review/manual acceptance.
+
+#### M13B review follow-up: scan parent integrity and coverage naming
+
+Forward Pyway migration V1.103 adds a composite foreign key from scan
+`(artifact_id, tool_version_id)` to artifact `(artifact_id, package_version_id)`.
+A supporting unique constraint permits PostgreSQL to enforce the pair. The
+association stays nullable; legacy version-only scans are unchanged. Earlier
+migration files are not edited. Existing mismatches fail migration validation
+visibly rather than being silently reassigned.
+
+Database regressions reject mismatched inserts and updates of either association
+column, prove a matching scan persists, retain null associations, and demonstrate
+that applying the actual migration to pre-existing mismatched data fails without
+rewriting it. The real Pyway subprocess now applies V1.98 through V1.103 in order
+and preserves a pre-existing legacy scan. An additional rollup regression confirms
+an unrelated artifact row cannot supply missing coverage.
+
+The rollup's `has_full_coverage` name and comment now distinguish row existence
+from scan completion. Result/progress rules are unchanged; the existing synthetic
+clean-results/running-progress case remains covered.
+
+Verification: focused migration, ordering, rollup and release-publish tests
+**78 passed**; full API suite **598 passed**, **7 existing optional tests skipped**,
+**165 subtests passed**, using disposable localhost PostgreSQL and mock storage.
+Black, isort, Flake8, Pylint, Bandit, pyupgrade and whitespace/conflict checks pass.
+Mypy still reports the same two errors in unchanged search code. No live database,
+S3 or hosted CI verification is claimed for this follow-up.
+
+#### M13B current acceptance status after review
+
+The operator confirmed independent review is complete, including the follow-up
+fixes above. This closes the review gate and supersedes the earlier review-pending
+notes. The operator also confirmed updated hosted normal CI, all four Resolver
+Contract jobs and the Registry PostgreSQL release-upload job pass. This supersedes
+the earlier hosted-verification limitations; results are operator-confirmed.
+Release Contract Parity failed as expected against CLI `main` before its contract
+changes are merged. Its Release Band 9 gate remains open for the post-merge run.
+Operator manual acceptance remains pending, along with the separate band-level
+deployment/storage/GuardDuty readiness gates.
+
+#### M13B operator runbook ready; acceptance remains open
+
+[`manual-tests/RELEASE_M13B_MANUAL_TESTS.md`](manual-tests/RELEASE_M13B_MANUAL_TESTS.md)
+and its checked-in `fixtures/m13b/fixture.py` helper now provide one-terminal
+setup and explicit local-Registry/dev-S3 steps for portable, four-artifact and
+dependency-bearing releases, partial/corrupt upload recovery, renewed PUTs,
+receipt reuse, size guidance, immutable inventory, legacy publication/install,
+unsupported new-format consumption, real GuardDuty tags and scheduled cleanup.
+The helper generates read-only SQL scoped to reservation IDs; it never changes
+development DB rows or scan tags. Expiry, retained history, rollback/orphan,
+concurrency, parent-integrity and infected/missing-tag cases use the existing
+78-case disposable-PostgreSQL suite; the two Rust HTTP cases cover transfer
+retry/reopen and pre-transfer size rejection.
+
+Runbook verification used actual CLI lint and dry-run for all four generated
+manifests, then validated all six target archives and their canonical documents.
+The local dependency check reused a matching real prepared example resolution
+in its disposable author lock; the operator guide instead explicitly performs
+fresh resolution. The helper's init/resume/upload/finalize/error/renewal/storage
+and cleanup steps were exercised against the actual Flask release routes and
+forward-migrated disposable PostgreSQL, with auth and S3 replaced by fixtures.
+HTML read-gate responses are handled alongside JSON publish errors. This is
+fixture verification, not real HTTP authentication or AWS/GuardDuty acceptance;
+no development/production publication or external storage request was executed.
+
+Manual acceptance remains open until the operator completes and confirms the
+walkthrough. Release Band 9 main-ref parity, production coverage, deployment
+permissions/retention and request/concurrency/cost sizing remain separate gates.
+
+#### M13B manual discovery: historical scan-index conflict
+
+The operator's real four-artifact finalize failed with the route's generic
+409/`release_conflict`. V1.55's unconditional unique index
+`uniq_tool_version_scan_one` still limited every version to one scan, including
+artifact-linked rows. The representative test baseline had recreated the scan
+table without that historical index, masking the deployment failure.
+
+The baseline now applies the actual V1.54, V1.55 and V1.56 scan SQL. Before the
+fix, the existing one/four-artifact regression reproduced the error: **2 passed,
+2 failed**, with duplicate-key violations on `uniq_tool_version_scan_one` in
+both four-target cases. Forward migration V1.104 replaces that unconditional
+index with a partial unique index on version IDs only where `artifact_id IS NULL`.
+V1.102's per-artifact unique index remains authoritative for artifact-linked
+scans; null associations and the composite parent FK remain unchanged. Earlier
+applied SQL files are unchanged.
+
+The real HTTP/DB regression now creates the old index deliberately, attempts
+four-artifact finalize, checks the constraint name is logged and all version/
+artifact/scan writes roll back, then removes the reproduced old index and
+retries the same reservation and existing objects successfully. A repeated
+finalize retains exactly four artifacts/scans. Direct SQL regressions verify
+both duplicate legacy/version-only and duplicate artifact scans remain rejected.
+The actual Pyway subprocess upgrade now runs V1.98 through V1.104 and preserves
+the existing legacy scan. Integrity logging includes only operation, constraint
+name and SQLSTATE, preserving the public response without dumping SQL parameters.
+
+Verification: full API suite **600 passed**, **7 existing optional tests skipped**,
+**165 subtests passed**, with the corrected historical schema and forward SQL in
+disposable localhost PostgreSQL. Formatting, lint/security checks pass apart from
+the same two known mypy errors in unchanged search code. The manual runbook now
+requires V1.104 and its controlled set contains **80 cases**. Real dev recovery,
+independent review and Registry PostgreSQL CI for this follow-up remain pending;
+earlier acceptance evidence applies to the preceding revision. No application
+database or live S3 object was altered by this verification.
+
+#### M13B operator acceptance after the scan-index fix
+
+The operator confirmed all manual runbook steps now pass and that Claude reviewed
+and signed off on the V1.104 fix. This closes manual acceptance and the follow-up
+independent-review gate, including real development recovery of the previously
+blocked four-artifact release. The walkthrough's development upload, GuardDuty
+tag/scan and staging-cleanup checks are operator-confirmed; this supersedes the
+earlier manual/review-pending notes above.
+
+The operator subsequently confirmed the Registry PostgreSQL CI job passed with
+V1.104. Together with the confirmed normal/native CI, independent review and
+manual walkthrough, this completes M13B acceptance and supersedes the earlier
+post-fix CI-pending notes. Rust/native source is unchanged by the follow-up.
+Release Band 9's post-merge CLI-main parity,
+production/deployment storage permissions and retention, production GuardDuty
+coverage, capacity and scan-cost checks remain separate and unclosed. Development
+manual acceptance does not establish those production readiness results.
+
+#### Release Band 9 version preparation — 2026-10-26
+
+Prepared CLI **0.1.38** (`v0.1.38`) in its crate manifest and Cargo lockfile;
+the website status card now advertises that version with release date
+**2026-10-26**. Local offline/locked compilation and execution report
+`agentpm 0.1.38`. Crate/lockfile/status markers agree; Cargo formatting,
+web TypeScript checking, status-page ESLint/Prettier and diff whitespace checks
+pass. This metadata-only preparation adds no runtime behavior or new tests.
+
+The operator will push and publish/deploy **CLI → Registry → Web**. CLI-main
+contract parity must pass before Registry deployment, and Render must retain
+`RELEASE_PUBLISH_ENABLED=false`. Preparation does not claim a tag, publication,
+hosted post-bump CI run or production deployment. Existing SDK versions,
+historical release records and the 0.1.36 APDS tolerance floor are unchanged.
 
 ### Canonicalization / stored-byte integrity / provenance
 
