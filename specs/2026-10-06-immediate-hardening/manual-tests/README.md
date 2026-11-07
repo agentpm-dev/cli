@@ -68,3 +68,10 @@ Generated workspaces/results are disposable; each guide states their location.
   and tamper checks, strict signed legacy install and Security UI inspection.
   Persistent dev trust state survives cleanup; production bootstrap and CLI-main
   parity remain Release Band 11 gates.
+- [Verified target-aware installation (Milestone 15)](INSTALL_M15_MANUAL_TESTS.md):
+  reuse the established dev trust root, explicitly publish signed portable and
+  target-inventory fixtures, then use the actual CLI for strict verified
+  installs, native dependency execution, frozen locks, cache/state repair and
+  failure-before-finalize checks. Includes a local scripted Harness model,
+  legacy vendoring and bounded download/extraction tests. Production bootstrap,
+  CLI-main parity and production-chain acceptance remain Band 11 gates.

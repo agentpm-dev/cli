@@ -2097,14 +2097,20 @@ Implementation checkmarks do not claim the following acceptance steps:
 - [x] Independent review of Milestone 15 and resolution of any findings.
       User confirmed review passed with no remaining findings. The signed-release
       end-to-end acceptance gap is explicitly retained under Band 11 below.
-- [ ] Hosted CLI CI and all four native Resolver Contract runners pass for the
+- [x] Hosted CLI CI and all four native Resolver Contract runners pass for the
       revision under review; Registry PostgreSQL job passes with target-install
-      coverage. Registry parity against authoritative CLI main remains the
-      separate Release Band 11 gate below.
-- [ ] Operator manual testing of a root-trusted, signed new-format release:
+      coverage. User confirmed all CI jobs except Registry Release Contract
+      Parity passed. Parity against authoritative CLI main remains the separate,
+      unchecked Release Band 11 gate below.
+- [x] Operator manual testing of a root-trusted, signed new-format release:
       exact/any selection, install/run/Harness with actual dependencies, frozen
       lock reuse, failure/repair and legacy regression checks. Use the existing
       dev trust bootstrap; no production activation is claimed here.
+      User confirmed all steps passed in
+      [`manual-tests/INSTALL_M15_MANUAL_TESTS.md`](manual-tests/INSTALL_M15_MANUAL_TESTS.md).
+      This closes M15's dev manual acceptance, including real signed-release
+      installation and execution; production-chain verification remains the
+      separate unchecked Band 11 gate.
 
 ## Release Band 11: Release Integrity and Verifiable Target-Aware Installs
 

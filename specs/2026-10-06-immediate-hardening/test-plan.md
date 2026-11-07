@@ -4268,12 +4268,34 @@ Test target behavior:
 Independent review: user confirmed no remaining findings. The signed-release
 end-to-end acceptance gap is recorded explicitly in the Band 11 gate below.
 
-Remaining acceptance: fresh hosted CI/native runners and
-Registry PostgreSQL coverage, and the operator's complete dev signed-new-format
-install/run/Harness/frozen/failure-repair checks. Production root bootstrap,
-main-ref Registry contract parity and activation remain Release Band 11 gates;
-local automated tests do not satisfy them. M15's new tests are wired into the
-existing native Resolver Contract and Registry PostgreSQL jobs.
+Hosted verification: user confirmed all CI jobs passed except Registry Release
+Contract Parity, including CLI CI, all four native Resolver Contract runners and
+the Registry PostgreSQL job. Main-ref parity remains an unchecked Band 11 gate.
+
+M15 dev manual acceptance: user confirmed all runbook steps passed, including
+real root-trusted signed new-format exact/any installs, native dependency
+execution, Harness, frozen lock reuse, cache/local-state repair, provisioning
+failure before finalize, structured incompatibility errors and legacy regression
+checks. The observed changed-target rejection returned machine error and exit 1,
+followed by the runbook's repair checks. M15 implementation, independent review,
+hosted CI and dev manual acceptance are complete. Production root bootstrap,
+main-ref Registry contract parity and activation remain separate Release Band 11
+gates. M15's new tests are wired into the existing native Resolver Contract and
+Registry PostgreSQL jobs.
+
+Manual walkthrough prepared in
+[`INSTALL_M15_MANUAL_TESTS.md`](manual-tests/INSTALL_M15_MANUAL_TESTS.md), with
+checked-in explicit dev-only publication/inspection fixtures and reuse of the
+existing scripted Harness provider. Offline fixture validation passed **10/10**,
+including real CLI dry-run packaging, signed inventory validation, audit mutation
+checks, renewal invariants and proof that refreshing multiple upload URLs never
+uploads a later target accidentally. All four generated Tool manifests and the
+consumer pass real CLI strict lint. Shell syntax for all 23 command blocks and
+Python syntax for all seven embedded snippets pass. Python fixtures are formatted
+with Black. Those offline preparation checks did not publish to the live
+Registry/dev S3; the later operator confirmation above records the completed
+live dev walkthrough. Fixture target labels are not native builds/execution on
+four hosts and do not satisfy production-chain acceptance.
 
 Band 11 additionally requires an observed end-to-end production-chain install
 using the shipped CLI and a real signed new-format release, after its operator
