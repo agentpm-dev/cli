@@ -77,7 +77,9 @@ name = "agentpm-sdk"
 version = "0.1.17"
 dependencies = [
  "anyhow",
+ "base64 0.21.7",
  "chrono",
+ "ed25519-dalek",
  "futures-util",
  "pep440_rs",
  "pep508_rs",

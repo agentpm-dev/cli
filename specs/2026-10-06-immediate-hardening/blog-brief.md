@@ -1,5 +1,18 @@
 # Blog Brief
 
+## Milestone 14C Evidence
+
+Potential later engineering material: a signing badge becomes meaningful to a
+consumer only when the key itself has an authenticated origin. An offline root
+signs a complete public-key inventory; the CLI authenticates it, retains retired
+keys for historical verification, and rejects tampered network/cache material.
+The implementation exports a historical v2 attestation from disposable PostgreSQL
+after public-key backfill and verifies it through the Rust consumer, preserving
+legacy Unicode bytes. New-format Security displays release/artifact facts without
+claiming browser verification. Real root bootstrap/pinning, catalogue acceptance,
+review and rollout remain open; do not describe the official trust chain as live
+until those operator steps pass. Engineering evidence only, not an article draft.
+
 ## Milestone 14B Evidence
 
 Potential later engineering material: bind an author's signature to one logical

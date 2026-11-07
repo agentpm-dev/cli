@@ -693,6 +693,7 @@ mod tests {
             size: None,
             content_type: None,
             signing: None,
+            verification: None,
             runtime: None,
         };
 

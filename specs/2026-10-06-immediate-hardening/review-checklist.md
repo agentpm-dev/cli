@@ -287,6 +287,30 @@
 
 ## Integrity and signing
 
+- For 14C, inspect V1.105 and the PostgreSQL before/after inventory of existing
+  constraints/indexes/triggers. Only the new public-key table/history trigger is
+  added; applied migrations and existing signing/version invariants stay intact.
+- Verify offline root custody: `registry_root.py` must not start Flask, access a
+  database/network or install a root secret in the backend. Audit the eventual
+  official public pin separately; empty roots/test keys cannot satisfy release CI.
+- Confirm the key-set endpoint checks the root signature, exact Registry origin,
+  timestamps, complete persisted/history inventory and active configured key,
+  returning 503 without unsigned/partial payloads on any failure.
+- Confirm a persisted legacy v2 attestation is exported after verified key
+  backfill and accepted by the actual Rust consumer, preserving historical JSON
+  bytes/Unicode. Distinguish that disposable-DB evidence from a real catalogue smoke.
+- Check root-authenticated cache scope/expiry/reverification, invalid-200 rejection,
+  unknown signing IDs, retired-key history and tamper cases. No arbitrary key
+  delivered beside a signature may become trusted.
+- Check shared install-client enforcement for install, template creation and
+  export, plus explicit CLI flags. Counts/booleans cannot satisfy requirements;
+  plan substitution and missing/duplicate inventory must fail before installation.
+- Verify full new-format Security fields and all legacy page/parser regressions,
+  including missing/null/present `revoked_ts`. The UI displays recorded provenance,
+  not browser cryptographic verification or retroactive compromise invalidation.
+- Keep M15 target negotiation/provisioning and M16 publishing out of this diff.
+  Operator root generation/pinning/backfill/delivery, manual review and hosted CI
+  remain real acceptance requirements, not checked off by public fixtures.
 - For 14B, inspect `release_signing.py`, both finalize paths, Rust `signing/release.rs`
   and signed HTTP receipt handling. Check the exact v2/v3 fields, normalized
   timestamps, full release binding and unchanged legacy statement bytes against

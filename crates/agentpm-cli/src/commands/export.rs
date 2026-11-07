@@ -1491,6 +1491,7 @@ json.dump({"upper": payload.get("message", "").upper()}, sys.stdout)
                     size: Some(state.artifact.len() as u64),
                     content_type: Some("application/gzip".to_string()),
                     signing: None,
+                    verification: None,
                     runtime: None,
                 }],
             }),

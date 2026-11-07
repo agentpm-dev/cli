@@ -8,6 +8,8 @@ CONTRACT_FILES = (
     "package-release-v1.fixtures.json",
     "signing-canonicalization-v1.fixtures.json",
     "release-signing-v1.fixtures.json",
+    "registry-provenance-v1.fixtures.json",
+    "registry-trust-roots-v1.json",
 )
 
 

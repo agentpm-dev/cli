@@ -86,6 +86,8 @@ pub struct PackageArtifact {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signing: Option<SigningSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<crate::provenance::Provenance>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<Runtime>,

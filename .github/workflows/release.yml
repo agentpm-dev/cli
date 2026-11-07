@@ -21,6 +21,8 @@ jobs:
           python-version: '3.11'
       - id: targets
         run: python3 scripts/check_resolver_targets.py --matrix >> "$GITHUB_OUTPUT"
+      - name: Require audited official Registry root before shipping client verification
+        run: python3 scripts/check_registry_bootstrap.py --release
       - name: Verify deployed resolver inventory and mirrored bytes before release
         run: python3 scripts/check_resolver_mirror.py --base-url https://api.agentpackagemanager.com
 

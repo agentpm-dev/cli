@@ -1,0 +1,369 @@
+{
+  "version": 1,
+  "now": "2026-11-06T14:00:00Z",
+  "roots": [
+    {
+      "registry": "https://api.fixture.invalid",
+      "rootKeyId": "fixture-root-1",
+      "publicKeyB64": "GX9rI+FshTLGq8g4+s1ep4m+DHaykgM0A5v6iz02jWE="
+    }
+  ],
+  "keyset": {
+    "statement": {
+      "type": "agentpm.registry.keyset.v1",
+      "registry": "https://api.fixture.invalid",
+      "issuedAt": "2026-11-06T13:00:00Z",
+      "expiresAt": "2026-12-06T13:00:00Z",
+      "keys": [
+        {
+          "keyId": "fixture-legacy-key",
+          "algo": "ed25519",
+          "publicKeyB64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+          "createdAt": "2025-01-01T00:00:00Z",
+          "activatedAt": "2025-01-01T00:00:00Z",
+          "retiredAt": "2026-11-01T00:00:00Z"
+        },
+        {
+          "keyId": "fixture-registry-key",
+          "algo": "ed25519",
+          "publicKeyB64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+          "createdAt": "2025-01-01T00:00:00Z",
+          "activatedAt": "2025-01-01T00:00:00Z"
+        }
+      ]
+    },
+    "rootKeyId": "fixture-root-1",
+    "algo": "ed25519",
+    "signatureB64": "zQ0ehxa1a1GnyIVlHiClfkxFEHIfBQ+SBAF+fW/7ikVcMD1dFwcrUsz368UcnKyNi0aay3Czd5Ke2uFHyucECQ=="
+  },
+  "canonical": "{\"expiresAt\":\"2026-12-06T13:00:00Z\",\"issuedAt\":\"2026-11-06T13:00:00Z\",\"keys\":[{\"activatedAt\":\"2025-01-01T00:00:00Z\",\"algo\":\"ed25519\",\"createdAt\":\"2025-01-01T00:00:00Z\",\"keyId\":\"fixture-legacy-key\",\"publicKeyB64\":\"A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=\",\"retiredAt\":\"2026-11-01T00:00:00Z\"},{\"activatedAt\":\"2025-01-01T00:00:00Z\",\"algo\":\"ed25519\",\"createdAt\":\"2025-01-01T00:00:00Z\",\"keyId\":\"fixture-registry-key\",\"publicKeyB64\":\"A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=\"}],\"registry\":\"https://api.fixture.invalid\",\"type\":\"agentpm.registry.keyset.v1\"}",
+  "vectors": [
+    {
+      "name": "portable",
+      "artifact": {
+        "kind": "tool",
+        "name": "@fixture/example",
+        "version": "1.2.0",
+        "integrity": "cf655b03e0ef7d526b2766ddc176b619e37dbf417db1eda13231312e02f622a7",
+        "presigned_url": "https://storage.fixture.invalid/test.tar.gz",
+        "size": 12345,
+        "content_type": "application/gzip",
+        "signing": {
+          "mode": "required",
+          "min_author_signatures": 1,
+          "author_signatures_present": 1,
+          "registry_attested": true
+        },
+        "verification": {
+          "mode": "required",
+          "min_author_signatures": 1,
+          "manifest": {
+            "kind": "tool",
+            "name": "example",
+            "version": "1.2.0",
+            "description": "Café ☕ — portable source",
+            "runtime": {
+              "type": "python",
+              "version": "3.11"
+            }
+          },
+          "release": {
+            "type": "agentpm.package.release.v1",
+            "kind": "tool",
+            "name": "@fixture/example",
+            "version": "1.2.0",
+            "manifestDigest": "sha256:6009f664a13685db5f4ceb763e3554825ddcbb09e7101edeb53b5de2bbe60142",
+            "artifacts": [
+              {
+                "target": "any",
+                "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 12345,
+                "contentType": "application/gzip",
+                "format": "tar.gz"
+              }
+            ]
+          },
+          "authors": [
+            {
+              "algo": "ed25519",
+              "public_key_b64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+              "signature_b64": "syVxiW0LefkTbzU0mvtG4gQwQNlDq3oTs0hbzQ0dinR2PqIHeehnb7rodPOmbKQR/HeWQr1jXXEaQ5SmNNqWBQ==",
+              "statement_json": {
+                "type": "agentpm.package.signature.v2",
+                "kind": "tool",
+                "name": "@fixture/example",
+                "version": "1.2.0",
+                "releaseDigest": "sha256:cf655b03e0ef7d526b2766ddc176b619e37dbf417db1eda13231312e02f622a7",
+                "createdAt": "2026-11-06T13:00:00Z"
+              },
+              "signer_id": "fixture-author",
+              "is_active": false,
+              "revoked_ts": "2026-11-06T14:00:00Z"
+            }
+          ],
+          "registry_attestation": {
+            "algo": "ed25519",
+            "signature_b64": "pLieVvaP9NrphjU7DEIqoh6TjU13Zwr3vvASy8afIZazGrIbQ+hnqft5mq4+nxfamOPCZw5dxqfQ91P1rSU6AQ==",
+            "statement_json": {
+              "type": "agentpm.registry.attestation.v3",
+              "kind": "tool",
+              "name": "@fixture/example",
+              "version": "1.2.0",
+              "releaseDigest": "sha256:cf655b03e0ef7d526b2766ddc176b619e37dbf417db1eda13231312e02f622a7",
+              "storedAt": "2026-11-06T13:00:00Z",
+              "publishedByAccountId": "fixture-é😀",
+              "registryKeyId": "fixture-registry-key"
+            },
+            "registry_key_id": "fixture-registry-key"
+          },
+          "registry_keyset_path": "/v1/registry/signing-keys"
+        }
+      }
+    },
+    {
+      "name": "four-targets",
+      "artifact": {
+        "kind": "tool",
+        "name": "@fixture/example",
+        "version": "1.2.0",
+        "integrity": "e1907be36089012a0bab879bf2c44dcc30e841ce2acfbf774edd48cce6737895",
+        "presigned_url": "https://storage.fixture.invalid/test.tar.gz",
+        "size": 12345,
+        "content_type": "application/gzip",
+        "signing": {
+          "mode": "required",
+          "min_author_signatures": 1,
+          "author_signatures_present": 1,
+          "registry_attested": true
+        },
+        "verification": {
+          "mode": "required",
+          "min_author_signatures": 1,
+          "manifest": {
+            "kind": "tool",
+            "name": "example",
+            "version": "1.2.0",
+            "description": "Café ☕ — portable source",
+            "runtime": {
+              "type": "python",
+              "version": "3.11",
+              "dependencies": [
+                "foo>=1"
+              ]
+            }
+          },
+          "release": {
+            "type": "agentpm.package.release.v1",
+            "kind": "tool",
+            "name": "@fixture/example",
+            "version": "1.2.0",
+            "manifestDigest": "sha256:0f4db368f074ad7b692a49c536846c23592ef62ea2add2bcf9eb1dc11fc51162",
+            "artifacts": [
+              {
+                "target": "x86_64-unknown-linux-gnu",
+                "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "size": 12345,
+                "contentType": "application/gzip",
+                "format": "tar.gz"
+              },
+              {
+                "target": "x86_64-pc-windows-msvc",
+                "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "size": 12345,
+                "contentType": "application/gzip",
+                "format": "tar.gz"
+              },
+              {
+                "target": "x86_64-apple-darwin",
+                "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "size": 12345,
+                "contentType": "application/gzip",
+                "format": "tar.gz"
+              },
+              {
+                "target": "aarch64-apple-darwin",
+                "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 12345,
+                "contentType": "application/gzip",
+                "format": "tar.gz"
+              }
+            ],
+            "pythonResolutionDigest": "sha256:bb2a7f68ec4189dda399a5d205959315432a0723738019243ca23310082f58a8"
+          },
+          "authors": [
+            {
+              "algo": "ed25519",
+              "public_key_b64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+              "signature_b64": "qepcbOof3kbgeFsZybPpVktjbMC5tedBDdfuut73yZx6cDJ9PaP0UqUwQ8bBCbcZRJiOOToKKt1Psv2HCqm4DA==",
+              "statement_json": {
+                "type": "agentpm.package.signature.v2",
+                "kind": "tool",
+                "name": "@fixture/example",
+                "version": "1.2.0",
+                "releaseDigest": "sha256:e1907be36089012a0bab879bf2c44dcc30e841ce2acfbf774edd48cce6737895",
+                "createdAt": "2026-11-06T13:00:00Z"
+              },
+              "signer_id": "fixture-author",
+              "is_active": false,
+              "revoked_ts": "2026-11-06T14:00:00Z"
+            }
+          ],
+          "registry_attestation": {
+            "algo": "ed25519",
+            "signature_b64": "S1bU/BzVHCZdWQ65Gj/NhiouKHfXxjm4xhcIKfhHZY32ExE48CUgcI4Z1qoNOEn/ZVsPtKfka33+7iH7zi8uAg==",
+            "statement_json": {
+              "type": "agentpm.registry.attestation.v3",
+              "kind": "tool",
+              "name": "@fixture/example",
+              "version": "1.2.0",
+              "releaseDigest": "sha256:e1907be36089012a0bab879bf2c44dcc30e841ce2acfbf774edd48cce6737895",
+              "storedAt": "2026-11-06T13:00:00Z",
+              "publishedByAccountId": "fixture-é😀",
+              "registryKeyId": "fixture-registry-key"
+            },
+            "registry_key_id": "fixture-registry-key"
+          },
+          "registry_keyset_path": "/v1/registry/signing-keys"
+        },
+        "python_resolution": {
+          "type": "agentpm.python-resolution.v1",
+          "python": {
+            "requires": ">=3.11"
+          },
+          "requirements": [
+            "foo>=1"
+          ],
+          "packages": [
+            {
+              "name": "foo",
+              "version": "1.2.0",
+              "hashes": [
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "registry-v2",
+      "artifact": {
+        "kind": "tool",
+        "name": "@fixture/example",
+        "version": "1.2.0",
+        "integrity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "presigned_url": "https://storage.fixture.invalid/legacy.tar.gz",
+        "signing": {
+          "mode": "required",
+          "min_author_signatures": 1,
+          "author_signatures_present": 1,
+          "registry_attested": true
+        },
+        "verification": {
+          "mode": "required",
+          "min_author_signatures": 1,
+          "manifest": {
+            "kind": "tool",
+            "name": "example",
+            "version": "1.2.0"
+          },
+          "authors": [
+            {
+              "algo": "ed25519",
+              "public_key_b64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+              "signature_b64": "tnmSEtxywnLJ40jKrp0LiFQ4n89+2QfV8AB7+0UYA9LcCzIA6j9A/BjqN/7r8Ts03EfC4cHwgDy/SvvhPqnFBg==",
+              "statement_json": {
+                "type": "agentpm.package.signature.v1",
+                "kind": "tool",
+                "name": "example",
+                "version": "1.2.0",
+                "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "createdAt": "2026-10-26T12:34:56.123456+00:00"
+              },
+              "signer_id": "fixture-author",
+              "is_active": false,
+              "revoked_ts": "2026-11-06T14:00:00Z"
+            }
+          ],
+          "registry_attestation": {
+            "algo": "ed25519",
+            "signature_b64": "v1OON+UnSGDRP5ZLWKkKui+2/J1IPB60mbS1W8J/hlnQBuzNUgSlwCd1gGBT+iLhrMgOt7WzC7Yp2vUPXQw5AA==",
+            "statement_json": {
+              "type": "agentpm.registry.attestation.v2",
+              "kind": "tool",
+              "namespace": "fixture",
+              "name": "example",
+              "version": "1.2.0",
+              "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "storedAt": "2026-10-26T12:34:56.123456+00:00",
+              "publishedByAccountId": "fixture-user",
+              "registryKeyId": "fixture-legacy-key"
+            },
+            "registry_key_id": "fixture-legacy-key"
+          },
+          "registry_keyset_path": "/v1/registry/signing-keys"
+        }
+      }
+    },
+    {
+      "name": "registry-v2-unicode",
+      "artifact": {
+        "kind": "tool",
+        "name": "@fixture/example",
+        "version": "1.2.0",
+        "integrity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "presigned_url": "https://storage.fixture.invalid/legacy.tar.gz",
+        "signing": {
+          "mode": "required",
+          "min_author_signatures": 1,
+          "author_signatures_present": 1,
+          "registry_attested": true
+        },
+        "verification": {
+          "mode": "required",
+          "min_author_signatures": 1,
+          "manifest": {
+            "kind": "tool",
+            "name": "example",
+            "version": "1.2.0"
+          },
+          "authors": [
+            {
+              "algo": "ed25519",
+              "public_key_b64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+              "signature_b64": "tnmSEtxywnLJ40jKrp0LiFQ4n89+2QfV8AB7+0UYA9LcCzIA6j9A/BjqN/7r8Ts03EfC4cHwgDy/SvvhPqnFBg==",
+              "statement_json": {
+                "type": "agentpm.package.signature.v1",
+                "kind": "tool",
+                "name": "example",
+                "version": "1.2.0",
+                "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "createdAt": "2026-10-26T12:34:56.123456+00:00"
+              },
+              "signer_id": "fixture-author",
+              "is_active": false,
+              "revoked_ts": "2026-11-06T14:00:00Z"
+            }
+          ],
+          "registry_attestation": {
+            "algo": "ed25519",
+            "signature_b64": "Rbksg3SKWHsNd6UGzOeM5HNjMrjA1nVOejNbbV6rSkW3+zpHh/feZmhJLBvybhpMvwj4OqxMWdTEWvn8cDYpAQ==",
+            "statement_json": {
+              "type": "agentpm.registry.attestation.v2",
+              "kind": "tool",
+              "namespace": "fixture",
+              "name": "example",
+              "version": "1.2.0",
+              "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "storedAt": "2026-10-26T12:34:56.123456+00:00",
+              "publishedByAccountId": "fixture-é😀",
+              "registryKeyId": "fixture-legacy-key"
+            },
+            "registry_key_id": "fixture-legacy-key"
+          },
+          "registry_keyset_path": "/v1/registry/signing-keys"
+        }
+      }
+    }
+  ]
+}

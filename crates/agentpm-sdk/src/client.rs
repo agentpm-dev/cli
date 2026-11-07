@@ -1,3 +1,4 @@
+mod provenance;
 pub mod release_upload;
 
 use crate::error::{ApiErrorBody, Result, SdkError};
@@ -213,6 +214,46 @@ impl AgentPmClient {
             .json::<InstallInitResponse>()
             .await
             .map_err(SdkError::Http)?;
+
+        let mut seen = std::collections::BTreeSet::new();
+        for artifact in &resolve_resp.artifacts {
+            let requested = plan
+                .items
+                .iter()
+                .find(|item| {
+                    item.kind == artifact.kind
+                        && item.name == artifact.name
+                        && item.version == artifact.version
+                })
+                .ok_or_else(|| {
+                    SdkError::Other("Registry returned an unrequested package".into())
+                })?;
+            if !seen.insert((artifact.kind.as_str(), &artifact.name, &artifact.version))
+                || requested.integrity != artifact.integrity
+            {
+                return Err(SdkError::Other(
+                    "Install integrity/package inventory differs from the lock/resolve plan".into(),
+                ));
+            }
+            if requested.python_resolution != artifact.python_resolution {
+                return Err(SdkError::Other("Python resolution differs from the lock/resolve plan; run `agentpm install` without `--frozen` to regenerate agent.lock v4".into()));
+            }
+        }
+        if seen.len() != plan.items.len() {
+            return Err(SdkError::Other(
+                "Registry install response has missing packages".into(),
+            ));
+        }
+
+        // Shared consumers (install, template creation and export) must not
+        // bypass namespace-required signatures or ignore supplied author proof.
+        self.verify_install_provenance(
+            &resolve_resp.artifacts,
+            crate::provenance::VerificationPolicy::default(),
+            None,
+        )
+        .await
+        .map_err(|error| SdkError::Other(format!("{error:#}")))?;
 
         Ok(resolve_resp)
     }

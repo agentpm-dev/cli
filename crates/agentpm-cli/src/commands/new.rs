@@ -3385,6 +3385,16 @@ mod tests {
                 _ => return Err(StatusCode::BAD_REQUEST),
             }
         }
+        // The real Registry resolve graph emits each concrete package once,
+        // including Tools shared by explicit roots and transitive Agent roots.
+        let mut seen = std::collections::BTreeSet::new();
+        items.retain(|item| {
+            seen.insert((
+                item["kind"].as_str().unwrap().to_owned(),
+                item["name"].as_str().unwrap().to_owned(),
+                item["version"].as_str().unwrap().to_owned(),
+            ))
+        });
         let response = json!({ "items": items });
         Ok(Response::builder()
             .status(StatusCode::OK)

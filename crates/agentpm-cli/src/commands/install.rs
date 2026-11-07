@@ -27,6 +27,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+#[path = "install/provenance_tests.rs"]
+mod provenance_tests;
+
 #[derive(clap::Parser, Debug, Clone)]
 pub struct InstallArgs {
     // Path to the manifest (agent.json)
@@ -52,9 +56,13 @@ pub struct InstallArgs {
     #[clap(long)]
     pub quiet: bool,
 
-    /// Fail install if the registry attestation is missing for any artifact
+    /// Require a cryptographically verified Registry attestation for every package
     #[clap(long)]
     pub require_attestation: bool,
+
+    /// Require at least one valid trusted author signature for every package
+    #[clap(long)]
+    pub require_signature: bool,
 
     /// Personal Access Token for headless auth (overrides env/file)
     #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
@@ -202,9 +210,13 @@ impl InstallArgs {
                     && item.name == artifact.name
                     && item.version == artifact.version
             });
-            if let Some(item) = locked
-                && item.python_resolution != artifact.python_resolution
-            {
+            let item = locked.ok_or_else(|| anyhow!("Registry returned an unrequested package"))?;
+            if item.integrity != artifact.integrity {
+                return Err(anyhow!(
+                    "Install integrity differs from the lock/resolve plan"
+                ));
+            }
+            if item.python_resolution != artifact.python_resolution {
                 return Err(anyhow!(
                     "Python resolution differs from the lock/resolve plan; run `agentpm install` without `--frozen` to regenerate agent.lock v4"
                 ));
@@ -216,30 +228,26 @@ impl InstallArgs {
             }
         }
 
-        if self.require_attestation {
-            let mut missing: Vec<String> = Vec::new();
-
-            for a in &init.artifacts {
-                let att_ok = a
-                    .signing
-                    .as_ref()
-                    .map(|s| s.registry_attested)
-                    .unwrap_or(false); // treat absence as not attested
-
-                if !att_ok {
-                    // name is already "@ns/tool"
-                    missing.push(format!("{}@{}", a.name, a.version));
-                }
-            }
-
-            if !missing.is_empty() {
-                s.err("failed");
-                let list = missing.join(", ");
-                return Err(anyhow::anyhow!(
-                    "Registry attestation required but missing for: {list}"
-                ));
-            }
+        let returned: BTreeSet<_> = init
+            .artifacts
+            .iter()
+            .map(|a| (a.kind.as_str(), &a.name, &a.version))
+            .collect();
+        if returned.len() != init.artifacts.len() || returned.len() != plan.items.len() {
+            return Err(anyhow!(
+                "Registry install response has missing or duplicate packages"
+            ));
         }
+        client
+            .verify_install_provenance(
+                &init.artifacts,
+                agentpm_sdk::provenance::VerificationPolicy {
+                    require_signature: self.require_signature,
+                    require_attestation: self.require_attestation,
+                },
+                Some(&cfg.config_dir.join("registry-keysets")),
+            )
+            .await?;
 
         s.ok("");
 
@@ -4544,6 +4552,7 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
             token: None,
         };
 
@@ -4626,6 +4635,7 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
             token: Some("secret-token".to_string()),
         };
 
@@ -4664,6 +4674,7 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
             token: None,
         };
 
@@ -4753,6 +4764,7 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
             token: None,
         };
 
@@ -4875,6 +4887,7 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
             token: None,
         };
 
@@ -5069,6 +5082,7 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
             token: None,
         };
 
@@ -5202,6 +5216,7 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
             token: None,
         };
 
@@ -5367,6 +5382,7 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
             token: None,
         };
 
@@ -5630,6 +5646,7 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
             token: None,
         };
 
