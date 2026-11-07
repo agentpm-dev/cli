@@ -55,3 +55,10 @@ Generated workspaces/results are disposable; each guide states their location.
   then publish one signed legacy Tool to dev and verify its accepted author
   signature, install and run. One terminal, checked-in no-dependency fixture;
   Registry parity against public CLI `main` remains a Release Band 10 gate.
+- [Release-level signatures and stored-byte integrity (Milestone 14B)](SIGNING_M14B_MANUAL_TESTS.md):
+  one-terminal local/dev signed releases, distinct rejection errors, authentic
+  cross-release replay, corrupt-byte recovery and ordinary signer revocation;
+  read-only inspection verifies actual author v2/Registry v3 rows. Includes
+  dependency binding, legacy CLI compatibility and isolated PostgreSQL failure
+  checks. Uses disposable dev signers; production activation and CLI-main
+  contract parity remain Release Band 11 gates.

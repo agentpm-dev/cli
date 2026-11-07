@@ -3911,13 +3911,84 @@ unsigned release fails. No compromise-invalidation policy is invented.
 2026-11-06, including the cross-release replay regression follow-up. The Web
 `revoked_ts` retention reminder is explicitly tracked under M14C.
 
-**Still pending:** hosted Registry/CLI/native CI, coordinated
-parity against the eventual CLI `main` revision, and operator manual acceptance.
-No live AWS/production publication, feature activation, new Security/read surface,
+**Hosted CI (operator-reported):** all CLI CI jobs passed, and the Registry's
+`Release uploads and migrations (PostgreSQL)` job passed. `Release Contract
+Parity` currently fails as expected before the authoritative CLI changes reach
+public CLI `main`. No workflow URL or checked commit IDs were supplied with this
+confirmation; these results are not independently reverified here.
+
+**Release gate still pending:** passing coordinated parity
+against the eventual CLI `main` revision. The parity rerun is an explicit Release
+Band 11 gate before Registry deployment, with both checked commit IDs recorded;
+it does not block M14B manual testing.
+No production publication, production feature activation, new Security/read surface,
 registry trust-anchor/key-history endpoint or consumer cryptographic verification
 is claimed. The latter verification cases below belong to 14C. Existing ordinary
 CLI publishing remains legacy; typed Rust transport is available for the gated
 signed protocol without introducing the later public release-building workflow.
+
+#### Milestone 14B manual walkthrough prepared
+
+[`manual-tests/SIGNING_M14B_MANUAL_TESTS.md`](manual-tests/SIGNING_M14B_MANUAL_TESTS.md)
+and `manual-tests/fixtures/m14b/` provide a one-terminal dev-only walkthrough.
+The helper reuses the M13B validated archive/presigned transport, saves exact
+author envelopes for retries, and inspects actual stored signing rows through
+loopback-only read-only PostgreSQL connections. Two disposable development
+signers make unregistered/inactive-key and historical revocation checks explicit;
+the normal CLI key is reserved for the legacy smoke. A hidden local prompt derives
+only the existing dev Registry key's public half for diagnostic crypto checks;
+neither the backend signing key nor a consumer trust anchor is changed.
+
+Rehearsed locally: actual CLI lint/dry-run for generated portable, matrix and
+legacy source, validated `any`/four-target archive construction, and zsh syntax
+for all **19** shell blocks (after splitting each case's preparation). The combined controlled signing/helper suite passes
+**73 tests** on disposable PostgreSQL 16, including actual read-only inspection of
+four artifact rows with one author/Registry pair before/after ordinary revocation.
+The documented Rust signed-transport command passes **2 tests**. Black/isort,
+Flake8 and diff whitespace checks pass for the new Python helpers.
+
+Follow-up: a missing case `request.json` now reports that case's exact build,
+package and sign commands instead of a raw `FileNotFoundError`; it does not
+silently build another case or regenerate keys. The eight local helper tests pass
+with this prerequisite check, and all 19 shell blocks pass zsh syntax validation.
+
+No real Registry request, signer registration/revocation, development S3 upload,
+live dependency-mirror resolution or legacy consumer install/run was performed
+for this rehearsal. The subsequent operator acceptance below closes those manual
+outcomes. Contract parity remains an explicit Release Band 11 gate.
+
+#### Milestone 14B operator acceptance — passed
+
+The operator confirmed all manual tests in
+[`SIGNING_M14B_MANUAL_TESTS.md`](manual-tests/SIGNING_M14B_MANUAL_TESTS.md)
+passed, including rejected signing requests without publication, real one/four-target
+signatures and Registry attestations, corruption/replay recovery, ordinary
+revocation and exact historical retry, dependency-bearing publication with the
+secondary signer, legacy CLI signing/install/run, controlled failure tests, both
+disposable signer revocations and restoration of the disabled local release gate.
+Production remains disabled. This is operator-reported acceptance; no production
+publication or new consumer verification is inferred.
+
+Saved public receipts were read from
+`/var/folders/rk/2xd4x19d0z59ly99hyx9s5lw0000gn/T/agentpm-m14b.vxPRfa`:
+
+| Case | Development reference | Version ID | Release digest |
+| --- | --- | --- | --- |
+| Portable | `@zack/m14b-check-20261107012649-db6b4b0f@0.1.0` | 87 | `sha256:1f4f49b71c2eb2422c42e13fb14d98f8a53f377d0fb4f4fa1d3d4509021d8385` |
+| Four targets | `@zack/m14b-check-20261107012649-db6b4b0f@0.1.1` | 88 | `sha256:9c87ffb34777ce5e3b0d5c151b424cc5e006e4771ac173b9f9b488d00e5965cc` |
+| Dependencies | `@zack/m14b-check-20261107012649-db6b4b0f@0.1.2` | 89 | `sha256:2ccfc578470b765edd2572d5096150c17f8b8dda2143d998a667af95cf1404ec` |
+
+All three share development package UUID `5cc4185f-0bfa-4b6b-b493-d434005197dc`.
+The operator supplied successful matrix and dependency inspection output, including
+one author v2 and one Registry v3 verifying against four/one artifacts respectively.
+The dependency retry preserves its receipt/digest. Historical evidence is saved
+separately from current signer activation. No PAT, private seed, database URL or
+presigned upload URL is included here.
+
+Together with independent review, local verification and the confirmed CLI CI /
+Registry PostgreSQL job, M14B is complete. Coordinated CLI-main contract parity,
+deployment and activation prerequisites remain under Release Band 11. M14C and
+M15 requirements are unchanged.
 
 Stored-byte verification cases:
 

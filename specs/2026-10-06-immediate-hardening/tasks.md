@@ -1848,9 +1848,10 @@ enabling the new-format publish flow or implementing later milestones.
   - [x] if registry signing key/config is unavailable or attestation persistence fails, leave release unpublished;
   - [x] legacy behavior may remain compatible for legacy releases.
 
-**Implementation status (2026-11-06):** independent review passed, as confirmed
-by the operator after the replay-test follow-up. These
-checkboxes record implemented behavior and local tests, not operator acceptance.
+**Status: complete.** Independent review passed, as confirmed by the operator
+after the replay-test follow-up, and the operator subsequently confirmed all
+M14B manual tests passed. The implementation checklist is supported by
+local verification, hosted CI confirmation and recorded manual acceptance.
 The gated finalize protocol saves author v2 and Registry v3 in the existing
 version-scoped tables in the same metadata transaction. Authorization/policy and
 signer/config changes during unlocked storage are rechecked before publication.
@@ -1865,9 +1866,23 @@ suite against disposable PostgreSQL **690 passed, 7 skipped, 165 subtests passed
 Rust format/Clippy and local cross-repo contract parity pass. Applicable Registry
 hooks pass except two existing mypy errors in unchanged
 `app/tools/application/search.py:1486,1856`. See `test-plan.md` for evidence and
-scope limits. Hosted CI/native jobs, the coordinated CLI-main
-parity gate and operator manual acceptance remain unclaimed. No version bump,
-deployment or feature-flag activation is included; production remains gated.
+scope limits. The operator confirmed all CLI CI jobs and the Registry's
+`Release uploads and migrations (PostgreSQL)` job passed. Registry contract
+parity currently fails while the authoritative CLI contract changes are not on
+public CLI `main`; its required passing rerun is tracked under Release Band 11.
+M14B operator manual acceptance is complete. No version bump, deployment or
+production feature-flag activation is included; production remains gated.
+
+Manual walkthrough: [`manual-tests/SIGNING_M14B_MANUAL_TESTS.md`](manual-tests/SIGNING_M14B_MANUAL_TESTS.md).
+The checked-in helper reuses the dev-only M13B archive/transport path, creates
+disposable signer keys, and verifies actual author v2/Registry v3 rows through
+read-only local DB connections. Local archive/shell rehearsal, **73 focused
+Python cases** including helper inspection/revocation, and **2 Rust transport
+tests** pass. The operator completed the real local-Registry/dev-bucket
+publication, signer registration/revocation, dependency-mirror resolution, legacy
+consumption, controlled failure checks and final cleanup/gate restoration, and
+confirmed all manual outcomes passed. Hosted contract parity remains a Release
+Band 11 gate, not an open M14B completion item.
 
 ## Milestone 14C: Registry Trust Anchor and Client Verification
 > Scope note: make releases independently verifiable by a consumer. Owns the persistent `registry_signing_keys` model, the root-signed registry key set (`agentpm.registry.keyset.v1` served from `GET /v1/registry/signing-keys`), the attestation-key backfill, the root-key operational prerequisite, the public Security/read DTO evolution, the install verification payload, and client-side verification of release digest, author signature, and registry attestation — including the stricter `--require-signature` / `--require-attestation` semantics and tamper tests.
@@ -2017,6 +2032,14 @@ deployment or feature-flag activation is included; production remains gated.
 Covered milestones: 14B–14C, 15.
 This is the band where the new release format becomes real for users. It gives us release-level `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` statements, trustworthy stored-byte verification before finalize, fail-closed attestation, the root-signed registry key set with its backfill and root-key prerequisite, client-side verification of release digest, author signature, and registry attestation, stricter `--require-signature`/`--require-attestation` semantics, and target-aware installation with runtime provisioning for the selected artifact. The gate from Band 9 lifts here and not before: publishers publish multi-artifact signed releases, and consumers select their target, verify the release cryptographically, and provision the right environment. This is the largest band in the stage and the one that cannot be subdivided — a cut that shipped target selection without verification would mean knowingly installing unverified releases, and a cut that shipped verification without target selection would mean a verifier with nothing installable to verify.
 
+- [ ] After the authoritative CLI contract changes are merged to public CLI
+      `main`, rerun the Registry's `Release Contract Parity` job for the Registry
+      revision to be shipped. Require passing schema/signing/shared-vector
+      comparisons and Python contract tests before Registry deployment; record
+      both checked commit IDs. Passing this job is a release gate, not a
+      prerequisite for M14B manual testing. A manual dispatch against a proposed
+      CLI ref does not replace this `main`-ref release gate. Keep the production
+      release flow gated until all Band 11 activation prerequisites are met.
 - [ ] Before enabling `RELEASE_PUBLISH_ENABLED` in production, confirm hosted
       finalize disk/request/concurrency capacity for the configured size limits.
       This requirement is carried forward from the gated Band 9 rollout, not
