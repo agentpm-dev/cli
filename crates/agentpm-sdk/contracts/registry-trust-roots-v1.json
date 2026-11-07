@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "roots": [
+    {
+      "registry": "https://api.agentpackagemanager.com",
+      "rootKeyId": "agentpm-root-1",
+      "publicKeyB64": "4zqdwdtAFBKuJquiw21pQcV58meYjylVVUxQv+ipgE4="
+    }
+  ]
+}

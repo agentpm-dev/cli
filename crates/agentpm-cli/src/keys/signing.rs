@@ -136,6 +136,37 @@ mod tests {
     use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
     #[test]
+    fn release_signature_vectors_and_key_id_agree_with_registry() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agentpm-sdk/contracts/release-signing-v1.fixtures.json"
+        ))
+        .unwrap();
+        let public = fixture["publicKeyB64"].as_str().unwrap();
+        assert_eq!(
+            crate::commands::keys::key_id_from_pub_b64(public).unwrap(),
+            fixture["keyId"]
+        );
+        let bytes: [u8; 32] = B64.decode(public).unwrap().try_into().unwrap();
+        let key = VerifyingKey::from_bytes(&bytes).unwrap();
+        for vector in fixture["vectors"].as_array().unwrap() {
+            let bytes = vector["canonical"].as_str().unwrap().as_bytes();
+            let sig = Signature::from_slice(
+                &B64.decode(vector["signatureB64"].as_str().unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+            key.verify(bytes, &sig).unwrap();
+            let mut changed: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+            changed["releaseDigest"] = format!("sha256:{}", "f".repeat(64)).into();
+            assert!(key.verify(&serde_jcs_for_test(&changed), &sig).is_err());
+        }
+    }
+
+    fn serde_jcs_for_test(value: &serde_json::Value) -> Vec<u8> {
+        agentpm_sdk::canonical::contract_bytes(value).unwrap()
+    }
+
+    #[test]
     fn legacy_fixture_signatures_verify_and_typed_publish_keeps_identical_signature() {
         let fixtures: serde_json::Value = serde_json::from_str(include_str!(
             "../../../agentpm-sdk/contracts/signing-canonicalization-v1.fixtures.json"

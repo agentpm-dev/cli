@@ -2,6 +2,65 @@ use super::*;
 use serde_json::{Value, json};
 
 #[test]
+fn release_statements_match_shared_jcs_and_bind_one_logical_release() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../contracts/release-signing-v1.fixtures.json"
+    ))
+    .unwrap();
+    for vector in fixtures["vectors"].as_array().unwrap() {
+        let release: crate::release::ReleaseManifest =
+            serde_json::from_value(vector["release"].clone()).unwrap();
+        let bytes = if vector["statement"]["type"] == AUTHOR_SIGNATURE_V2 {
+            let value: AuthorSignatureV2 =
+                serde_json::from_value(vector["statement"].clone()).unwrap();
+            let constructed =
+                AuthorSignatureV2::new(&release, "2026-11-06T06:00:00-07:00").unwrap();
+            assert_eq!(value, constructed);
+            value.canonical_bytes().unwrap()
+        } else {
+            let value: RegistryAttestationV3 =
+                serde_json::from_value(vector["statement"].clone()).unwrap();
+            let constructed = RegistryAttestationV3::new(
+                &release,
+                "2026-11-06T06:00:00-07:00",
+                "fixture-é😀",
+                "fixture-registry-key",
+            )
+            .unwrap();
+            assert_eq!(value, constructed);
+            value.canonical_bytes().unwrap()
+        };
+        assert_eq!(bytes, vector["canonical"].as_str().unwrap().as_bytes());
+    }
+}
+
+#[test]
+fn release_author_rejects_invalid_wire_before_signing() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../contracts/release-signing-v1.fixtures.json"
+    ))
+    .unwrap();
+    for (field, value) in [
+        ("type", json!("future")),
+        ("name", json!("example")),
+        ("version", json!("1.0")),
+        ("releaseDigest", json!("bad")),
+        ("createdAt", json!("2026-11-06T13:00:00+00:00")),
+        ("createdAt", json!(null)),
+        ("unknown", json!(true)),
+    ] {
+        let mut wire = fixture["vectors"][0]["statement"].clone();
+        wire[field] = value;
+        assert!(
+            serde_json::from_value::<AuthorSignatureV2>(wire)
+                .map(|s| s.canonical_bytes().is_err())
+                .unwrap_or(true),
+            "{field}"
+        );
+    }
+}
+
+#[test]
 fn typed_author_v1_is_byte_identical_to_original_inline_statement() {
     let vectors: Value = serde_json::from_str(include_str!(
         "../../contracts/signing-canonicalization-v1.fixtures.json"

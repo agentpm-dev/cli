@@ -1,4 +1,4 @@
-//! Upload transport only; release-building commands and signing come later.
+//! Upload transport, including signed finalize; release-building commands come later.
 use super::*;
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -75,12 +75,47 @@ impl AgentPmClient {
     }
 
     pub async fn finalize_release(&self, release_id: &str) -> SdkResult<PublishReceipt> {
+        self.finalize_release_request(release_id, &serde_json::json!({}))
+            .await
+    }
+
+    pub async fn finalize_signed_release(
+        &self,
+        release_id: &str,
+        signatures: &[crate::signing::ReleaseAuthorSignature],
+    ) -> SdkResult<PublishReceipt> {
+        if signatures.is_empty() {
+            return Err(SdkError::Other(
+                "At least one author signature is required".into(),
+            ));
+        }
+        let receipt = self
+            .finalize_release_request(
+                release_id,
+                &serde_json::json!({
+                    "require_signature": true, "author_signatures": signatures
+                }),
+            )
+            .await?;
+        if receipt.author_signatures_accepted.unwrap_or(0) == 0 {
+            return Err(SdkError::Other(
+                "Registry did not confirm an accepted author signature".into(),
+            ));
+        }
+        Ok(receipt)
+    }
+
+    async fn finalize_release_request(
+        &self,
+        release_id: &str,
+        body: &Value,
+    ) -> SdkResult<PublishReceipt> {
         let response = self
             .auth(self.http.post(format!(
                 "{}/v1/tools/publish/releases/{release_id}/finalize",
                 self.api_base()
             )))
-            .json(&serde_json::json!({}))
+            .json(body)
             .send()
             .await?;
         Ok(self.ensure_success(response).await?.json().await?)

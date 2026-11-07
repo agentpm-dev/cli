@@ -17,7 +17,7 @@ use crate::workspace::{
     read_workspace_metadata,
 };
 use crate::{
-    io::download::{InstallRoots, download_and_extract_all},
+    io::download::{InstallRoots, download_and_extract_with_client},
     io::fs,
     ui::Step,
 };
@@ -26,6 +26,13 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+
+#[cfg(test)]
+#[path = "install/provenance_tests.rs"]
+mod provenance_tests;
+
+mod compatibility;
+use compatibility::compatibility_recovery;
 
 #[derive(clap::Parser, Debug, Clone)]
 pub struct InstallArgs {
@@ -52,9 +59,17 @@ pub struct InstallArgs {
     #[clap(long)]
     pub quiet: bool,
 
-    /// Fail install if the registry attestation is missing for any artifact
+    /// Require a cryptographically verified Registry attestation for every package
     #[clap(long)]
     pub require_attestation: bool,
+
+    /// Require at least one valid trusted author signature for every package
+    #[clap(long)]
+    pub require_signature: bool,
+
+    /// Emit a structured JSON result; never prompt for compatibility recovery
+    #[clap(long)]
+    pub machine: bool,
 
     /// Personal Access Token for headless auth (overrides env/file)
     #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
@@ -63,11 +78,35 @@ pub struct InstallArgs {
 
 impl InstallArgs {
     pub async fn run(&self, base_url: String) -> Result<()> {
+        let result = self.run_inner(base_url).await;
+        if self.machine {
+            let value = match &result {
+                Ok(()) => serde_json::json!({"schema_version": 1, "status": "success"}),
+                Err(error) => {
+                    let api = error
+                        .chain()
+                        .find_map(|cause| cause.downcast_ref::<agentpm_sdk::SdkError>());
+                    let (code, details) = match api {
+                        Some(agentpm_sdk::SdkError::Api { body, .. }) => (
+                            body.code.as_deref().unwrap_or("install_failed"),
+                            body.details.clone(),
+                        ),
+                        _ => ("install_failed", None),
+                    };
+                    serde_json::json!({"schema_version": 1, "status": "error", "error": {"category": code, "message": format!("{error:#}"), "details": details}})
+                }
+            };
+            println!("{value}");
+        }
+        result
+    }
+
+    async fn run_inner(&self, base_url: String) -> Result<()> {
         let cfg = Config::load(base_url.clone())?;
 
         // Quiet if the user asked OR stderr is not a terminal (piped/redirected)
         let auto_quiet = !std::io::stderr().is_terminal();
-        let quiet = self.quiet || auto_quiet;
+        let quiet = self.quiet || auto_quiet || self.machine;
 
         // 0) Load PAT (login is not required, but send in incase private repo; for MVP we use cached token)
         let mut s = Step::new("Reading credentials", quiet);
@@ -153,7 +192,7 @@ impl InstallArgs {
             validate_frozen_lock_compatibility(&lock, manifest_value.as_ref(), &desired)?;
         }
 
-        let plan = if desired.items.is_empty() {
+        let mut plan = if desired.items.is_empty() {
             ResolvePlan { items: Vec::new() }
         } else if self.frozen {
             ResolvePlan::from_lock(&desired, &lock)?
@@ -166,7 +205,7 @@ impl InstallArgs {
         };
         s.ok("");
 
-        let precomputed_next_lock =
+        let mut precomputed_next_lock =
             if !self.frozen && self.spec.is_none() && workspace_metadata.is_none() {
                 Some(build_updated_lock(
                     &lock,
@@ -195,16 +234,56 @@ impl InstallArgs {
             return Ok(());
         }
         let mut s = Step::new("Requesting download URLs", quiet);
-        let init = client.install_init(&plan_to_sdk_resolve(&plan)).await?; // includes per-artifact presigned URL + expected hash
+        let policy = agentpm_sdk::provenance::VerificationPolicy {
+            require_signature: self.require_signature,
+            require_attestation: self.require_attestation,
+        };
+        let key_cache = cfg.config_dir.join("registry-keysets");
+        let sdk_plan = plan_to_sdk_resolve(&plan);
+        let consumer = crate::python_environment::install_context(&sdk_plan)?;
+        let init = match client
+            .install_init_for_consumer(&sdk_plan, consumer, policy, Some(&key_cache))
+            .await
+        {
+            Ok(init) => init,
+            Err(error) => {
+                let replacement = compatibility_recovery(
+                    &error,
+                    &desired,
+                    self.frozen || project_root.join("agent.lock").exists(),
+                    self.machine,
+                )?;
+                let Some(request) = replacement else {
+                    return Err(error.into());
+                };
+                let response = client.resolve_install(&request).await?;
+                ensure_supported_install_kinds(&response)?;
+                let context = crate::python_environment::install_context(&response)?;
+                plan = response.into();
+                precomputed_next_lock = None;
+                client
+                    .install_init_for_consumer(
+                        &plan_to_sdk_resolve(&plan),
+                        context,
+                        policy,
+                        Some(&key_cache),
+                    )
+                    .await?
+            }
+        };
         for artifact in &init.artifacts {
             let locked = plan.items.iter().find(|item| {
                 item.kind == artifact.kind
                     && item.name == artifact.name
                     && item.version == artifact.version
             });
-            if let Some(item) = locked
-                && item.python_resolution != artifact.python_resolution
-            {
+            let item = locked.ok_or_else(|| anyhow!("Registry returned an unrequested package"))?;
+            if item.integrity != artifact.integrity {
+                return Err(anyhow!(
+                    "Install integrity differs from the lock/resolve plan"
+                ));
+            }
+            if item.python_resolution != artifact.python_resolution {
                 return Err(anyhow!(
                     "Python resolution differs from the lock/resolve plan; run `agentpm install` without `--frozen` to regenerate agent.lock v4"
                 ));
@@ -216,29 +295,18 @@ impl InstallArgs {
             }
         }
 
-        if self.require_attestation {
-            let mut missing: Vec<String> = Vec::new();
-
-            for a in &init.artifacts {
-                let att_ok = a
-                    .signing
-                    .as_ref()
-                    .map(|s| s.registry_attested)
-                    .unwrap_or(false); // treat absence as not attested
-
-                if !att_ok {
-                    // name is already "@ns/tool"
-                    missing.push(format!("{}@{}", a.name, a.version));
-                }
-            }
-
-            if !missing.is_empty() {
-                s.err("failed");
-                let list = missing.join(", ");
-                return Err(anyhow::anyhow!(
-                    "Registry attestation required but missing for: {list}"
-                ));
-            }
+        let returned: BTreeSet<_> = init
+            .artifacts
+            .iter()
+            .map(|a| (a.kind.as_str(), &a.name, &a.version))
+            .collect();
+        if returned.len() != init.artifacts.len() || returned.len() != plan.items.len() {
+            return Err(anyhow!(
+                "Registry install response has missing or duplicate packages"
+            ));
+        }
+        for artifact in &init.artifacts {
+            crate::python_environment::validate_install_runtime(artifact)?;
         }
 
         s.ok("");
@@ -263,7 +331,7 @@ impl InstallArgs {
             &profiles_dir,
             &loops_dir,
         ])?;
-        download_and_extract_all(
+        download_and_extract_with_client(
             &init,
             &dl_dir,
             InstallRoots {
@@ -277,6 +345,7 @@ impl InstallArgs {
             },
             self.refresh,
             quiet,
+            Some(&client),
         )
         .await?;
         s.ok("");
@@ -4544,6 +4613,8 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
+            machine: false,
             token: None,
         };
 
@@ -4626,6 +4697,8 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
+            machine: false,
             token: Some("secret-token".to_string()),
         };
 
@@ -4664,6 +4737,8 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
+            machine: false,
             token: None,
         };
 
@@ -4753,6 +4828,8 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
+            machine: false,
             token: None,
         };
 
@@ -4875,6 +4952,8 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
+            machine: false,
             token: None,
         };
 
@@ -5069,6 +5148,8 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
+            machine: false,
             token: None,
         };
 
@@ -5202,6 +5283,8 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
+            machine: false,
             token: None,
         };
 
@@ -5367,6 +5450,8 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
+            machine: false,
             token: None,
         };
 
@@ -5630,6 +5715,8 @@ mod tests {
             update_range: false,
             quiet: true,
             require_attestation: false,
+            require_signature: false,
+            machine: false,
             token: None,
         };
 
@@ -5825,22 +5912,26 @@ mod tests {
         for item in req["items"].as_array().unwrap_or(&empty) {
             let kind = item["kind"].as_str().unwrap();
             let name = item["name"].as_str().unwrap();
-            let (url, integrity) = match (kind, name) {
+            let (url, integrity, size) = match (kind, name) {
                 ("tool", "@zack/echo") => (
                     format!("{}/artifact/echo", state.base_url),
                     state.echo_sha.as_str(),
+                    state.echo_tar.len(),
                 ),
                 ("tool", "@zack/review") => (
                     format!("{}/artifact/review", state.base_url),
                     state.review_sha.as_str(),
+                    state.review_tar.len(),
                 ),
                 ("tool", "@zack/translate") => (
                     format!("{}/artifact/translate", state.base_url),
                     state.translate_sha.as_str(),
+                    state.translate_tar.len(),
                 ),
                 ("agent", "@zack/support-agent") => (
                     format!("{}/artifact/agent", state.base_url),
                     state.agent_sha.as_str(),
+                    state.agent_tar.len(),
                 ),
                 _ => return Err(StatusCode::BAD_REQUEST),
             };
@@ -5850,7 +5941,7 @@ mod tests {
                 "version":item["version"],
                 "integrity":integrity,
                 "presigned_url":url,
-                "size":12,
+                "size":size,
                 "content_type":"application/gzip"
             }));
         }
@@ -5913,7 +6004,7 @@ mod tests {
                 "version": item["version"],
                 "integrity": state.tool_sha,
                 "presigned_url": format!("{}/artifact/private-tool", state.base_url),
-                "size": 12,
+                "size": state.tool_tar.len(),
                 "content_type":"application/gzip"
             }]
         });
@@ -5985,7 +6076,7 @@ mod tests {
                 "version": item["version"],
                 "integrity": state.skill_sha,
                 "presigned_url": format!("{}/artifact/direct-skill", state.base_url),
-                "size": 12,
+                "size": state.skill_tar.len(),
                 "content_type":"application/gzip"
             }]
         });
@@ -6011,7 +6102,7 @@ mod tests {
                 "version": item["version"],
                 "integrity": state.knowledge_sha,
                 "presigned_url": format!("{}/artifact/direct-knowledge", state.base_url),
-                "size": 12,
+                "size": state.knowledge_tar.len(),
                 "content_type":"application/gzip"
             }]
         });
@@ -6122,7 +6213,7 @@ mod tests {
                 "version": item["version"],
                 "integrity": state.memory_sha,
                 "presigned_url": format!("{}/artifact/direct-memory", state.base_url),
-                "size": 12,
+                "size": state.memory_tar.len(),
                 "content_type":"application/gzip"
             }]
         });
@@ -6148,7 +6239,7 @@ mod tests {
                 "version": item["version"],
                 "integrity": state.profile_sha,
                 "presigned_url": format!("{}/artifact/direct-profile", state.base_url),
-                "size": 12,
+                "size": state.profile_tar.len(),
                 "content_type":"application/gzip"
             }]
         });
@@ -6174,7 +6265,7 @@ mod tests {
                 "version": item["version"],
                 "integrity": state.loop_sha,
                 "presigned_url": format!("{}/artifact/direct-loop", state.base_url),
-                "size": 12,
+                "size": state.loop_tar.len(),
                 "content_type":"application/gzip"
             }]
         });

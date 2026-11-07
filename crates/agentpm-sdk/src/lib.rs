@@ -3,6 +3,7 @@ pub mod canonical;
 pub mod client;
 pub mod error;
 pub mod models;
+pub mod provenance;
 pub mod python;
 pub mod release;
 pub mod signing;

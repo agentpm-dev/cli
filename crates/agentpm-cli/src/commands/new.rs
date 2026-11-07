@@ -3385,6 +3385,16 @@ mod tests {
                 _ => return Err(StatusCode::BAD_REQUEST),
             }
         }
+        // The real Registry resolve graph emits each concrete package once,
+        // including Tools shared by explicit roots and transitive Agent roots.
+        let mut seen = std::collections::BTreeSet::new();
+        items.retain(|item| {
+            seen.insert((
+                item["kind"].as_str().unwrap().to_owned(),
+                item["name"].as_str().unwrap().to_owned(),
+                item["version"].as_str().unwrap().to_owned(),
+            ))
+        });
         let response = json!({ "items": items });
         Ok(Response::builder()
             .status(StatusCode::OK)
@@ -3434,7 +3444,17 @@ mod tests {
                 "version":item["version"],
                 "integrity":integrity,
                 "presigned_url":url,
-                "size":12,
+                "size":match kind {
+                    "template" => state.template_tar.len(),
+                    "tool" => state.tool_tar.len(),
+                    "agent" => state.agent_tar.len(),
+                    "knowledge" => state.knowledge_tar.len(),
+                    "memory" => state.memory_tar.len(),
+                    "profile" => state.profile_tar.len(),
+                    "loop" if item["name"].as_str() == Some("@zack/reviewer-loop") => state.reviewer_loop_tar.len(),
+                    "loop" => state.loop_tar.len(),
+                    _ => unreachable!(),
+                },
                 "content_type":"application/gzip"
             }));
         }

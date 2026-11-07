@@ -3840,6 +3840,322 @@ manual acceptance/review and the operator's production confirmation, Release
 Band 10 is complete. No new-format activation, new statement versions or later
 client verification is included; M14B is the next milestone.
 
+#### Milestone 14B implementation and local verification
+
+On 2026-11-06, implemented release-level author v2 and Registry v3 on the gated
+finalize protocol, preserving legacy author v1 / Registry v2 serialization.
+`release-signing-v1.fixtures.json` is a fixture-collection version, not another
+statement type. Identical snapshots in both repos contain portable/four-target
+bindings, canonical bytes, fixed Ed25519 signatures, Unicode provenance and the
+same 16-character author display fingerprint. The existing parity gate now
+requires this snapshot and runs the Python signing statement tests.
+
+Verified locally:
+
+- `cargo test --offline --locked --workspace --quiet`: **1,215 passed, 5 ignored**
+  across unit, integration and documentation test executables. Includes new
+  shared statement/crypto fixtures, original legacy `--sign` bytes/explicit intent
+  and signed HTTP transport tests rejecting omitted/zero server acceptance.
+- `cargo clippy --offline --locked --workspace --all-targets -- -D warnings` and
+  `cargo fmt --all --check`: passed.
+- Registry `.venv/bin/python -B -m pytest -q --tb=short -x`, with the dedicated
+  `AGENTPM_M13A_TEST_DATABASE_URL` pointing only at disposable PostgreSQL 16:
+  **690 passed, 7 skipped, 165 subtests passed**. A public deterministic fixture
+  signing key supplies the legacy test environment; no production key is used.
+  The release fixture applies the actual V1.52 signing DDL and release migrations,
+  with no ORM-generated schema or new production migration.
+- `scripts/check_release_contract.py --registry-root ../agentpm-api` and its
+  unittest mutation suite: passed; missing/changed signing snapshots fail parity.
+- Applicable Registry pre-commit hooks: Black, isort, Flake8, Pylint, Bandit,
+  pyupgrade and whitespace/conflict checks pass. Mypy still reports the two
+  existing assignment errors in unchanged `app/tools/application/search.py`
+  at lines 1486 and 1856. The full hook run is **not** claimed green.
+
+New PostgreSQL/HTTP cases in `test_release_signing.py` cover all namespace modes,
+one/four-target releases with Python dependencies, one trusted signature despite
+`min_author_signatures=3`, real author/Registry cryptography, unsupported
+algorithm/type, identity/digest mismatch, malformed/noncanonical statements,
+unregistered/inactive keys, bad signatures and duplicate envelopes. Legacy
+service rejection tests assert no final-object copy or version insert occurs.
+
+Follow-up replay regressions (2026-11-06): the two signing suites passed
+**55 tests** against disposable PostgreSQL after adding five cases. Authentic
+author-v2 and Registry-v3 statements/signatures verify for their original release
+but fail binding to the other portable/four-target release in either direction,
+even with identical kind/name/version and a shared artifact digest. Moving the
+original signature onto the other release's correctly bound statement also fails
+Ed25519 verification. An HTTP finalize test honestly signs a single-target release
+A, then submits that unchanged envelope against release B with an additional
+target. Their identity, manifest, Python resolution and first artifact are the
+same. B returns `422 / signature_identity_mismatch` before storage, leaves the
+reservation pending with no publication/signing rows, and accepts a correctly
+signed B retry. Registry replay coverage exercises statement binding/crypto only;
+consumer verification remains 14C. No production code changed for these tests.
+
+Missing/invalid Registry configuration fails before storage; signing-row
+persistence failure rolls back version/artifact/signature/attestation publication
+and allows retry of the same reservation. Changes to namespace policy, signer
+activation or Registry configuration during storage are rechecked after transfer.
+Stored-byte corruption cannot finalize; existing independently verified SHA-256,
+size and conditional-PUT behavior remains covered by the 13B tests. No trust is
+added in publisher metadata or ETags.
+
+One author signature is stored per logical release, not per artifact. Ordinary
+revocation preserves accepted historical signature bytes and permits an exact
+completed retry while rejecting a newly published signature from that key.
+Current activation/revocation metadata remains separate. Completed retries cannot
+attach new signatures retroactively, and an explicitly signed retry of an
+unsigned release fails. No compromise-invalidation policy is invented.
+
+**Independent review:** the operator confirmed M14B review fully passed on
+2026-11-06, including the cross-release replay regression follow-up. The Web
+`revoked_ts` retention reminder is explicitly tracked under M14C.
+
+**Hosted CI (operator-reported):** all CLI CI jobs passed, and the Registry's
+`Release uploads and migrations (PostgreSQL)` job passed. `Release Contract
+Parity` currently fails as expected before the authoritative CLI changes reach
+public CLI `main`. No workflow URL or checked commit IDs were supplied with this
+confirmation; these results are not independently reverified here.
+
+**Release gate still pending:** passing coordinated parity
+against the eventual CLI `main` revision. The parity rerun is an explicit Release
+Band 11 gate before Registry deployment, with both checked commit IDs recorded;
+it does not block M14B manual testing.
+No production publication, production feature activation, new Security/read surface,
+registry trust-anchor/key-history endpoint or consumer cryptographic verification
+is claimed. The latter verification cases below belong to 14C. Existing ordinary
+CLI publishing remains legacy; typed Rust transport is available for the gated
+signed protocol without introducing the later public release-building workflow.
+
+#### Milestone 14B manual walkthrough prepared
+
+[`manual-tests/SIGNING_M14B_MANUAL_TESTS.md`](manual-tests/SIGNING_M14B_MANUAL_TESTS.md)
+and `manual-tests/fixtures/m14b/` provide a one-terminal dev-only walkthrough.
+The helper reuses the M13B validated archive/presigned transport, saves exact
+author envelopes for retries, and inspects actual stored signing rows through
+loopback-only read-only PostgreSQL connections. Two disposable development
+signers make unregistered/inactive-key and historical revocation checks explicit;
+the normal CLI key is reserved for the legacy smoke. A hidden local prompt derives
+only the existing dev Registry key's public half for diagnostic crypto checks;
+neither the backend signing key nor a consumer trust anchor is changed.
+
+Rehearsed locally: actual CLI lint/dry-run for generated portable, matrix and
+legacy source, validated `any`/four-target archive construction, and zsh syntax
+for all **19** shell blocks (after splitting each case's preparation). The combined controlled signing/helper suite passes
+**73 tests** on disposable PostgreSQL 16, including actual read-only inspection of
+four artifact rows with one author/Registry pair before/after ordinary revocation.
+The documented Rust signed-transport command passes **2 tests**. Black/isort,
+Flake8 and diff whitespace checks pass for the new Python helpers.
+
+Follow-up: a missing case `request.json` now reports that case's exact build,
+package and sign commands instead of a raw `FileNotFoundError`; it does not
+silently build another case or regenerate keys. The eight local helper tests pass
+with this prerequisite check, and all 19 shell blocks pass zsh syntax validation.
+
+No real Registry request, signer registration/revocation, development S3 upload,
+live dependency-mirror resolution or legacy consumer install/run was performed
+for this rehearsal. The subsequent operator acceptance below closes those manual
+outcomes. Contract parity remains an explicit Release Band 11 gate.
+
+#### Milestone 14B operator acceptance — passed
+
+The operator confirmed all manual tests in
+[`SIGNING_M14B_MANUAL_TESTS.md`](manual-tests/SIGNING_M14B_MANUAL_TESTS.md)
+passed, including rejected signing requests without publication, real one/four-target
+signatures and Registry attestations, corruption/replay recovery, ordinary
+revocation and exact historical retry, dependency-bearing publication with the
+secondary signer, legacy CLI signing/install/run, controlled failure tests, both
+disposable signer revocations and restoration of the disabled local release gate.
+Production remains disabled. This is operator-reported acceptance; no production
+publication or new consumer verification is inferred.
+
+Saved public receipts were read from
+`/var/folders/rk/2xd4x19d0z59ly99hyx9s5lw0000gn/T/agentpm-m14b.vxPRfa`:
+
+| Case | Development reference | Version ID | Release digest |
+| --- | --- | --- | --- |
+| Portable | `@zack/m14b-check-20261107012649-db6b4b0f@0.1.0` | 87 | `sha256:1f4f49b71c2eb2422c42e13fb14d98f8a53f377d0fb4f4fa1d3d4509021d8385` |
+| Four targets | `@zack/m14b-check-20261107012649-db6b4b0f@0.1.1` | 88 | `sha256:9c87ffb34777ce5e3b0d5c151b424cc5e006e4771ac173b9f9b488d00e5965cc` |
+| Dependencies | `@zack/m14b-check-20261107012649-db6b4b0f@0.1.2` | 89 | `sha256:2ccfc578470b765edd2572d5096150c17f8b8dda2143d998a667af95cf1404ec` |
+
+All three share development package UUID `5cc4185f-0bfa-4b6b-b493-d434005197dc`.
+The operator supplied successful matrix and dependency inspection output, including
+one author v2 and one Registry v3 verifying against four/one artifacts respectively.
+The dependency retry preserves its receipt/digest. Historical evidence is saved
+separately from current signer activation. No PAT, private seed, database URL or
+presigned upload URL is included here.
+
+Together with independent review, local verification and the confirmed CLI CI /
+Registry PostgreSQL job, M14B is complete. Coordinated CLI-main contract parity,
+deployment and activation prerequisites remain under Release Band 11. M14C and
+M15 requirements are unchanged.
+
+#### Milestone 14C implementation and local verification
+
+Independent review passed with no findings, as confirmed by the operator.
+The operator approved the offline-root
+custody model: an encrypted root file stays with the operator, the Registry
+serves a pre-signed public key inventory, and no root secret enters Render/CI.
+The operator has now confirmed all M14C manual tests passed, including real dev
+root generation/custody, public pins, existing-key backfill and signed public-list
+delivery. Both audited development manifests contain the real loopback dev pin.
+Production root/bootstrap remains open. Release checking intentionally rejects
+the dev pin; production-only audited pins and production delivery/verification
+are still required before shipping, and are not satisfied by fixture material.
+
+Implemented:
+
+- V1.105 adds immutable Registry public-key history. The PostgreSQL test enumerates
+  existing signing/version/artifact constraints, indexes and triggers before/after
+  migration and verifies no existing definition changed. Applied migrations remain
+  untouched. Old public keys cannot be replaced/deleted or unretired.
+- `GET /v1/registry/signing-keys` validates the root signature, Registry origin,
+  validity, exact complete DB inventory, historical IDs and current configured key.
+  Configuration, expiry, unknown roots, tampering and partial inventories fail 503.
+- Explicit operator tools verify existing attestation history before idempotent
+  current-key backfill, export public inventory, retire keys without deletion,
+  and generate encrypted offline roots/sign public lists. The offline script
+  does not start Flask, read backend config, contact a DB/network or install secrets.
+- Shared Rust consumer validation covers the logical release, manifest/Python
+  resolution binding, actual author/Registry statements and full keys. Namespace
+  `required` and `--require-signature` enforce one signature; `--require-attestation`
+  authenticates legacy v2 as well as new v3, replacing boolean/count acceptance.
+  Shared install-init consumption includes template creation/export, so those paths
+  cannot bypass required signatures. Response identities/integrities/resolutions
+  and exact package coverage must agree with the requested plan.
+- Public roots, key-set bytes and release/legacy proof vectors are checked across
+  both repos. Caches are scoped to origin, only written after root verification,
+  and authenticated/date-checked on reuse. Invalid 200 responses neither overwrite
+  the cache nor hide behind fallback. Unknown IDs and expired/tampered cache fail.
+- New-format Tool Security shows full release and per-artifact digests, target/size
+  and scan information. Legacy artifact digests remain separate. All eight Security
+  parsers/pages retain missing/null/present `revoked_ts` and distinguish current
+  signer revocation from historical recorded signatures. Browser verification and
+  Package Health scoring are not implemented.
+
+Verified locally:
+
+- Rust workspace: **1,223 passed, 6 ignored** (five pre-existing CLI real-uv cases
+  plus the explicit PostgreSQL-to-Rust handoff test described below).
+- Registry full suite using only disposable PostgreSQL 16:
+  **709 passed, 7 skipped, 165 subtests passed**.
+  The final focused trust/root rerun also passed: **14 passed**, including the
+  explicit-null retirement rejection and offline-root tooling.
+- Web: **255 tests passed**; typecheck and lint pass (six pre-existing unused-variable
+  warnings). Production `pnpm build` passed in a private temporary source copy using
+  existing dependencies, preserving the running dev server's `.next` directory.
+- Rust formatting/Clippy, Python formatting/static checks and local contract parity
+  are recorded at handoff. Applicable Registry hooks pass except the two existing
+  mypy assignment errors in unchanged `app/tools/application/search.py:1486,1856`.
+  Full hook success is not claimed.
+- `check_registry_bootstrap.py`, its mutation tests and the release-parity mutation
+  suite pass. `check_registry_bootstrap.py --release` fails intentionally with
+  `official Registry root bootstrap/pinning is incomplete; do not release this CLI yet`.
+
+Historical consumer-path regression was also run explicitly:
+
+1. The real PostgreSQL fixture contains a published legacy version. Its valid v2
+   attestation is persisted **before** public-key backfill, using the historical
+   serializer, a Unicode publisher identity and a historical extension containing
+   a float whose Python/Rust JSON spellings differ. Legacy proof carries the exact
+   signed bytes; the client checks their parsed statement binding before crypto.
+2. `test_existing_legacy_attestation_is_backfilled_and_exported_for_actual_client_verification`
+   verifies and backfills its public key, produces a root-signed complete key set,
+   and exports public install proof when `AGENTPM_M14C_PERSISTED_PROOF` is set.
+3. With the same public file, ran
+   `cargo test --offline --locked -p agentpm-sdk provenance::tests::persisted_legacy_v2_attestation_verifies_through_the_consumer_path -- --ignored --exact`:
+   **1 passed**. The new Rust verifier authenticates the root/key set and accepts
+   the actual saved legacy attestation with `require_attestation=true`.
+
+The handoff file used was `/private/tmp/agentpm-m14c-persisted-proof.json`; it
+contains only fixture public roots/keys/statements/signatures. No production
+catalogue, actual root custody, live key endpoint/bootstrap or deployed CLI was
+verified by that disposable-DB regression. Golden vectors additionally cover a
+retired Registry key and currently revoked author; legitimate old signatures pass.
+Tamper cases cover key-set/root/origin, cached bytes/expiry, release inventory/target,
+manifest/resolution/release digests, author and Registry statements/signatures and
+unknown keys. Both languages reject an explicitly null retirement field rather
+than silently removing it before checking the signature. Existing download/cache
+hash tests continue protecting artifact bytes.
+Real install-command HTTP fixtures reject count/boolean-only claims before download,
+finalize or lock creation. Shared-client HTTP tests reject plan substitution,
+missing packages and namespace-required-signature downgrade. Template mocks were
+corrected to emit the deduplicated graph the real resolver already returns.
+
+**Hosted CI:** the operator confirmed CLI CI, all four native Resolver Contract
+jobs, Registry Release uploads and migrations (PostgreSQL), and Web CI passed on
+the PR branches. Registry Release Contract Parity is the expected remaining
+failure because the matching authoritative CLI contracts are not on public CLI
+`main` yet. Rerun it for the Registry revision to be shipped after that merge;
+this report does not claim a main-ref parity pass or a deployment.
+
+**Still open for Band 11:** eventual CLI-main parity; production root generation
+and custody/backup; production public pins with dev entries removed from both
+release manifests; production-key backfill, signed public-list delivery and
+actual production legacy-catalogue verification. Final hosted CI must cover the
+revision shipped, including manual-test follow-up fixes. See
+`agentpm-api/app/tools/domain/tools/REGISTRY_TRUST.md` for the ordered bootstrap.
+Dev bootstrap/manual acceptance is complete and unblocks M15's real new-format
+end-to-end installation tests. Production bootstrap is required before Release
+Band 11 ships the stricter verifier.
+
+The [M14C operator runbook](manual-tests/SIGNING_M14C_MANUAL_TESTS.md) and its
+checked-in `fixtures/m14c` helpers are prepared. Seven helper checks passed,
+including actual V1.105-backed idempotent key seeding and historical proof export
+against disposable PostgreSQL; nonlocal DB refusal, read-only inspection,
+public-only pinning/conflict protection and isolated tamper copies are covered.
+The generated source passed `agentpm lint`, the standalone fixture consumer of
+the real Rust SDK compiled offline, and the runbook's zsh blocks passed syntax
+checking. No actual operator root, real dev DB backfill, served key list,
+production pin/configuration or live manual acceptance is claimed by preparation.
+
+During operator dev bootstrap, read-only catalogue inspection found 18 original
+`agentpm.registry.attestation.v1` rows and one
+`agentpm.package.attestation.v1` row alongside v2/v3. The initial backfill
+incorrectly rejected these historical names. Backfill and the Rust consumer now
+recognize the two explicit v1 forms while preserving original serialized bytes,
+missing-kind-as-Tool semantics, namespace/name/version/digest binding and full
+signature verification. Unknown types and invalid signatures still fail closed.
+No real stored row, existing root pin or private key was changed by this fix.
+Focused verification: **18 Registry trust/root tests passed** with disposable
+PostgreSQL; **5 Rust provenance tests passed, 1 handoff test ignored**; SDK Clippy
+passed. Required Registry hooks pass except the two unchanged search.py mypy
+errors; final formatting is checked. The operator subsequently confirmed the dev
+seed retry and the remaining manual tests passed.
+
+The bootstrap release gate was tightened after review: ordinary CI permits valid
+exact-origin dev pins, but release mode permits only the official production
+HTTPS origin. Tests include an official root plus HTTP dev, HTTPS loopback,
+IPv6 loopback and HTTPS staging roots; every combined release is rejected while
+development checks pass. Fixture public keys are forbidden for every origin.
+Malformed schemes, paths, credentials, queries/fragments and ports are rejected.
+The four checker tests pass, the actual current dev-pin manifest passes ordinary
+CI checking, and release checking fails as intended. The checker does not mutate
+the manifest or delete dev pins. Removing them from both audited copies is an
+explicit Band 11 source/release gate; the current local pin remains available for
+M14C/M15 manual verification.
+
+**Operator manual acceptance (2026-11-07): all tests passed.** This includes
+encrypted dev root generation/custody and matching audited public pins;
+backfill of the existing dev signing key without rewriting old v1/v2/v3
+attestations; a root-authenticated live key endpoint/cache; existing legacy v2
+proof and actual CLI install; and the signed four-artifact M14B release proof.
+The selected old package was
+`@zack/m14b-check-20261107012649-db6b4b0f-legacy@0.1.3`; the new-format matrix was
+`@zack/m14b-check-20261107012649-db6b4b0f@0.1.1`.
+All six modified copies were rejected and the untouched original still passed.
+The target mutation was rejected at duplicate-target inventory validation, before
+signature verification. Security UI/historical signer status, strict signed
+legacy publish/install/run and controlled cache/policy regressions also passed.
+Manual follow-ups added original v1 attestation compatibility, Security layout
+polish, shared breadcrumb truncation and the production-only release pin gate.
+Keep persistent dev trust files and renew the signed list before expiry. No
+production bootstrap, production activation or main-ref hosted parity pass is
+claimed by this development acceptance.
+No version bump, push, deployment, production mutation or release-gate activation
+is included. M15 target selection/download/provisioning and M16 publication stay
+out of scope; new-format installation remains gated.
+
 Stored-byte verification cases:
 
 - client-declared metadata hash that does not match stored bytes cannot finalize a new release;
@@ -3909,6 +4225,89 @@ Test target behavior:
 - a presigned GET expiring mid-install produces an actionable error rather than a bare transport failure;
 - download client enforces explicit connect and idle/progress timeouts instead of `reqwest` defaults;
 - legacy package follows legacy install path.
+
+#### M15 implementation evidence — 2026-11-07
+
+- Rust workspace suite: **1,231 passed, 6 ignored**. Existing legacy install,
+  frozen-lock, export/new, runner and Harness coverage remains green. After the
+  final renewal/local-state hardening, focused SDK install-provenance tests
+  passed **2/2**, and download/extraction tests passed **13/13**. The latter
+  include real HTTP expiry/renewal, corrupt-cache revalidation, size/hash/
+  truncation/idle failures and preservation of previous cache/payload bytes.
+- Registry full suite: **723 passed, 7 skipped, 165 subtests passed** against
+  disposable PostgreSQL. Final focused target-install coverage passed **12/12**,
+  including exact-before-any, one URL, full inventory, logical digest negotiation,
+  invalid target/Python context, incompatible Python floor, selected-row versus
+  inventory mismatch, session ownership/access, expiry and renewal identity.
+- Actual pinned `uv 0.13.5` and Homebrew Python 3.13 on aarch64 macOS:
+  `python_environment::tests --include-ignored --test-threads=1` passed **10/10**.
+  This includes native-wheel CLI/Harness execution, provisioning-before-finalize,
+  frozen lock preservation, missing wheel/hash/unrecorded dependency failures,
+  interrupted environment repair and interpreter fingerprint checks. These
+  existing real-uv cases are not evidence of a full signed new-format manual
+  install or of execution on other hosts.
+- SDK selection fixtures cover all four supported consumer targets, exact/any
+  precedence and descriptor membership. The real CLI compatibility fixture
+  verifies JSON/nonzero failure, no prompt/version change and no lock/finalize
+  on an incompatible exact request. Cache identities also distinguish kind,
+  version, target, digest and names that collided under hyphen concatenation.
+- `cargo fmt --all -- --check` and workspace/all-target Clippy with warnings
+  denied pass. Local release-contract parity and ordinary bootstrap validation
+  pass with the existing dev root. API pre-commit formatting/lint/security hooks
+  pass except the two existing mypy errors in `application/search.py` (lines
+  1486 and 1856); these unchanged search typing errors are not marked fixed.
+- Limits under test/documentation: 120-minute install session, 10-minute GET,
+  30-second connect/progress idle timeout, one same-session URL renewal attempt,
+  15,000 extracted entries and 2 GiB total decompressed tar bytes. Tests inject
+  small limits/idle intervals to exercise boundaries without giant fixtures or
+  long sleeps. Renewal never extends the original install deadline.
+- No portable lock/manifest schema, database migration, external Python/Node
+  SDK or production feature flag changes are included. Target selection and
+  managed-runtime fingerprints remain machine-local.
+
+Independent review: user confirmed no remaining findings. The signed-release
+end-to-end acceptance gap is recorded explicitly in the Band 11 gate below.
+
+Hosted verification: user confirmed all CI jobs passed except Registry Release
+Contract Parity, including CLI CI, all four native Resolver Contract runners and
+the Registry PostgreSQL job. Main-ref parity remains an unchecked Band 11 gate.
+
+M15 dev manual acceptance: user confirmed all runbook steps passed, including
+real root-trusted signed new-format exact/any installs, native dependency
+execution, Harness, frozen lock reuse, cache/local-state repair, provisioning
+failure before finalize, structured incompatibility errors and legacy regression
+checks. The observed changed-target rejection returned machine error and exit 1,
+followed by the runbook's repair checks. M15 implementation, independent review,
+hosted CI and dev manual acceptance are complete. Production root bootstrap,
+main-ref Registry contract parity and activation remain separate Release Band 11
+gates. M15's new tests are wired into the existing native Resolver Contract and
+Registry PostgreSQL jobs.
+
+Manual walkthrough prepared in
+[`INSTALL_M15_MANUAL_TESTS.md`](manual-tests/INSTALL_M15_MANUAL_TESTS.md), with
+checked-in explicit dev-only publication/inspection fixtures and reuse of the
+existing scripted Harness provider. Offline fixture validation passed **10/10**,
+including real CLI dry-run packaging, signed inventory validation, audit mutation
+checks, renewal invariants and proof that refreshing multiple upload URLs never
+uploads a later target accidentally. All four generated Tool manifests and the
+consumer pass real CLI strict lint. Shell syntax for all 23 command blocks and
+Python syntax for all seven embedded snippets pass. Python fixtures are formatted
+with Black. Those offline preparation checks did not publish to the live
+Registry/dev S3; the later operator confirmation above records the completed
+live dev walkthrough. Fixture target labels are not native builds/execution on
+four hosts and do not satisfy production-chain acceptance.
+
+Band 11 additionally requires an observed end-to-end production-chain install
+using the shipped CLI and a real signed new-format release, after its operator
+bootstrap/parity/capacity prerequisites. Record root/key-set verification,
+Registry v3 and author v2 verification, full-inventory binding, exact-target or
+`any` selection, the single payload's digest, managed provisioning and execution.
+Cover exact-before-any and fallback with suitable releases, retaining logical
+integrity in the portable lock. In-memory `PackageArtifact` cases and separately
+passing verification tests do not close this gate. A genuine local end-to-end
+install can already use the existing dev root and served dev key set; that
+manual acceptance does not prove the deployed production chain. Removing the
+dev pin is a CLI release requirement, not a local-testing prerequisite.
 
 ### SDK lockfile and managed Python Tool compatibility (M17)
 

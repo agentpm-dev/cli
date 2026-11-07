@@ -1818,35 +1818,71 @@ enabling the new-format publish flow or implementing later milestones.
 > Scope note: introduce the new release-level statements built on the 14A foundation — `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` bound to the release digest — plus trustworthy stored-byte verification before finalize, fail-closed attestation, cross-language key-ID normalization, and explicit historical-signer semantics. Server-side only; client verification material is Milestone 14C.
 > Implementation notes:
 > - New-format signatures attach naturally to `PackageVersion` (the logical release), not to each target artifact.
-> - Current server finalize compares publisher-declared SHA against publisher-set S3 metadata, which is publisher-controlled. New release finalize needs a trustworthy stored-byte source.
+> - Legacy server finalize compares publisher-declared SHA against publisher-set S3 metadata, which is publisher-controlled. The gated new-release path already independently streams/hashes stored bytes in 13B; preserve that trusted source when adding signatures.
 > - Rust and Python display the same author key with different truncated key IDs (16 vs 12 chars). Match cryptographically by full public key and normalize display separately.
 > - A normal signer revocation after publication should not retroactively make a cryptographically valid historical release unsigned. Distinguish revocation from compromise.
 
-- [ ] Introduce new release-level author signature type, expected `agentpm.package.signature.v2`, binding release digest/identity.
-- [ ] Introduce new release-level registry attestation type, expected `agentpm.registry.attestation.v3`, binding release digest plus registry provenance facts.
-- [ ] Keep signatures/attestations attached to logical `PackageVersion`; do not create one author signature per target.
-- [ ] Improve publish signature diagnostics:
-  - [ ] distinguish unsupported algo/type;
-  - [ ] identity/digest mismatch;
-  - [ ] unregistered/inactive signer at publish;
-  - [ ] invalid Ed25519 signature;
-  - [ ] if user supplied `--sign`, rejection must fail publish rather than silently downgrade to unsigned.
-- [ ] Preserve namespace signing modes `off|optional|required`.
-- [ ] Preserve effective Stage 1 threshold: `required` means at least one valid trusted author signature.
-- [ ] Explicitly defer dynamic `min_author_signatures`/N-of-M enforcement.
-- [ ] Normalize key-ID display algorithm/length across Rust/Python.
-- [ ] Use full `public_key_b64` for signer matching/verification, not truncated key ID.
-- [ ] Define historical signer semantics:
-  - [ ] signature accepted while signer was authorized remains cryptographically/historically valid after normal revocation;
-  - [ ] expose current `is_active`/`revoked_ts` separately;
-  - [ ] do not invent retroactive compromise revocation in Stage 1.
-- [ ] Add trustworthy stored-byte verification before new release finalization:
-  - [ ] use S3/storage checksum if it provides trusted SHA-256 in the presigned flow; otherwise independently stream/hash the staged object;
-  - [ ] require declared digest == trusted stored digest == release-manifest digest reference;
-  - [ ] continue independently checking stored size.
-- [ ] Make new-format registry attestation fail closed:
-  - [ ] if registry signing key/config is unavailable or attestation persistence fails, leave release unpublished;
-  - [ ] legacy behavior may remain compatible for legacy releases.
+- [x] Introduce new release-level author signature type, expected `agentpm.package.signature.v2`, binding release digest/identity.
+- [x] Introduce new release-level registry attestation type, expected `agentpm.registry.attestation.v3`, binding release digest plus registry provenance facts.
+- [x] Keep signatures/attestations attached to logical `PackageVersion`; do not create one author signature per target.
+- [x] Improve publish signature diagnostics:
+  - [x] distinguish unsupported algo/type;
+  - [x] identity/digest mismatch;
+  - [x] unregistered/inactive signer at publish;
+  - [x] invalid Ed25519 signature;
+  - [x] if user supplied `--sign`, rejection must fail publish rather than silently downgrade to unsigned.
+- [x] Preserve namespace signing modes `off|optional|required`.
+- [x] Preserve effective Stage 1 threshold: `required` means at least one valid trusted author signature.
+- [x] Explicitly defer dynamic `min_author_signatures`/N-of-M enforcement.
+- [x] Normalize key-ID display algorithm/length across Rust/Python.
+- [x] Use full `public_key_b64` for signer matching/verification, not truncated key ID.
+- [x] Define historical signer semantics:
+  - [x] signature accepted while signer was authorized remains cryptographically/historically valid after normal revocation;
+  - [x] expose current `is_active`/`revoked_ts` separately;
+  - [x] do not invent retroactive compromise revocation in Stage 1.
+- [x] Add trustworthy stored-byte verification before new release finalization:
+  - [x] use S3/storage checksum if it provides trusted SHA-256 in the presigned flow; otherwise independently stream/hash the staged object;
+  - [x] require declared digest == trusted stored digest == release-manifest digest reference;
+  - [x] continue independently checking stored size.
+- [x] Make new-format registry attestation fail closed:
+  - [x] if registry signing key/config is unavailable or attestation persistence fails, leave release unpublished;
+  - [x] legacy behavior may remain compatible for legacy releases.
+
+**Status: complete.** Independent review passed, as confirmed by the operator
+after the replay-test follow-up, and the operator subsequently confirmed all
+M14B manual tests passed. The implementation checklist is supported by
+local verification, hosted CI confirmation and recorded manual acceptance.
+The gated finalize protocol saves author v2 and Registry v3 in the existing
+version-scoped tables in the same metadata transaction. Authorization/policy and
+signer/config changes during unlocked storage are rechecked before publication.
+Completed signed retries require the exact previously accepted envelope, including
+after normal revocation; a retry cannot attach a signature to an unsigned release.
+Legacy `--sign` retains v1 bytes but now requires explicit server acceptance.
+Shared Rust/Python fixtures and the existing contract-parity workflow include the
+new statement types and the 16-character author display fingerprint.
+
+Local verification: full Rust workspace **1,215 passed, 5 ignored**; full Registry
+suite against disposable PostgreSQL **690 passed, 7 skipped, 165 subtests passed**.
+Rust format/Clippy and local cross-repo contract parity pass. Applicable Registry
+hooks pass except two existing mypy errors in unchanged
+`app/tools/application/search.py:1486,1856`. See `test-plan.md` for evidence and
+scope limits. The operator confirmed all CLI CI jobs and the Registry's
+`Release uploads and migrations (PostgreSQL)` job passed. Registry contract
+parity currently fails while the authoritative CLI contract changes are not on
+public CLI `main`; its required passing rerun is tracked under Release Band 11.
+M14B operator manual acceptance is complete. No version bump, deployment or
+production feature-flag activation is included; production remains gated.
+
+Manual walkthrough: [`manual-tests/SIGNING_M14B_MANUAL_TESTS.md`](manual-tests/SIGNING_M14B_MANUAL_TESTS.md).
+The checked-in helper reuses the dev-only M13B archive/transport path, creates
+disposable signer keys, and verifies actual author v2/Registry v3 rows through
+read-only local DB connections. Local archive/shell rehearsal, **73 focused
+Python cases** including helper inspection/revocation, and **2 Rust transport
+tests** pass. The operator completed the real local-Registry/dev-bucket
+publication, signer registration/revocation, dependency-mirror resolution, legacy
+consumption, controlled failure checks and final cleanup/gate restoration, and
+confirmed all manual outcomes passed. Hosted contract parity remains a Release
+Band 11 gate, not an open M14B completion item.
 
 ## Milestone 14C: Registry Trust Anchor and Client Verification
 > Scope note: make releases independently verifiable by a consumer. Owns the persistent `registry_signing_keys` model, the root-signed registry key set (`agentpm.registry.keyset.v1` served from `GET /v1/registry/signing-keys`), the attestation-key backfill, the root-key operational prerequisite, the public Security/read DTO evolution, the install verification payload, and client-side verification of release digest, author signature, and registry attestation — including the stricter `--require-signature` / `--require-attestation` semantics and tamper tests.
@@ -1854,71 +1890,134 @@ enabling the new-format publish flow or implementing later milestones.
 > The server-side trust anchor and the client-side verification are one deliverable, not two: the key set exists only so clients can verify, and client verification cannot ship without it. Shipping either half alone would mean either an unused endpoint or a verifier with no trust root.
 >
 > Implementation notes:
-> - Current install receives only counts/booleans. New verification requires the actual statement/signature/public-key material.
-> - Registry attestations cannot be verified today because the registry public key/history is not exposed. The explicit trust/key-history contract is the core of this milestone.
+> - Starting point: install received only counts/booleans. New verification requires the actual statement/signature/public-key material.
+> - Registry attestations previously could not be verified because public key/history was not exposed. The implementation below adds that contract; actual operator bootstrap remains required before release.
 > - Backfill and root-key establishment are sequenced **before** enforcement. Enforcing verification against an unpopulated key set would break every already-published version.
 
-- [ ] Before changing any existing table, enumerate its current constraints, indexes and triggers — not just the ones being added. M13B shipped a correct per-artifact unique index while `V1.55`'s unconditional unique index still enforced the superseded version-scoped rule, and the second artifact's scan insert failed at finalize. `tool_versions` already carries the `ck_tool_versions_release_storage` CHECK and three triggers from 13A, so this milestone is exposed to the same pattern. See the **Schema changes** section of `review-checklist.md`.
-- [ ] Add persistent `registry_signing_keys` model/table containing at least:
-  - [ ] registry key ID;
-  - [ ] algorithm;
-  - [ ] full public key;
-  - [ ] activation/creation metadata;
-  - [ ] retirement metadata/status;
-  - [ ] historical keys retained for old attestations.
+- [x] Before changing any existing table, enumerate its current constraints, indexes and triggers — not just the ones being added. M13B shipped a correct per-artifact unique index while `V1.55`'s unconditional unique index still enforced the superseded version-scoped rule, and the second artifact's scan insert failed at finalize. `tool_versions` already carries the `ck_tool_versions_release_storage` CHECK and three triggers from 13A, so this milestone is exposed to the same pattern. See the **Schema changes** section of `review-checklist.md`.
+- [x] Add persistent `registry_signing_keys` model/table containing at least:
+  - [x] registry key ID;
+  - [x] algorithm;
+  - [x] full public key;
+  - [x] activation/creation metadata;
+  - [x] retirement metadata/status;
+  - [x] historical keys retained for old attestations.
 - [ ] Implement the fixed official-registry trust-anchor design: **root-signed registry key set**.
-  - [ ] expose `GET /v1/registry/signing-keys`;
-  - [ ] return a versioned key-set payload with type `agentpm.registry.keyset.v1`;
-  - [ ] include active and retired/historical attestation signing keys required for old release verification;
-  - [ ] canonicalize the key-set payload with RFC 8785/JCS;
-  - [ ] sign the key set with a separate registry root Ed25519 key;
+  - [x] expose `GET /v1/registry/signing-keys`;
+  - [x] return a versioned key-set payload with type `agentpm.registry.keyset.v1`;
+  - [x] include active and retired/historical attestation signing keys required for old release verification;
+  - [x] canonicalize the key-set payload with RFC 8785/JCS;
+  - [x] sign the key set with a separate registry root Ed25519 key;
   - [ ] ship/pin the official registry root public key (or small versioned root key ring) in the CLI as the bootstrap trust anchor;
-  - [ ] verify the root signature before accepting any key from the endpoint;
-  - [ ] allow local caching only after successful root verification;
-  - [ ] select attestation keys by `registryKeyId` from the verified key set;
-  - [ ] reject unknown key IDs and invalid/untrusted key-set signatures;
-  - [ ] keep retired signing keys available for historical verification;
-  - [ ] treat root-key rotation as a separate rare bootstrap/CLI-update concern; dynamic root rotation is out of Stage 1.
-- [ ] **Backfill the existing attestation signing key before enforcing verification.** Every already-published version has a `RegistryAttestation` recording the current `REGISTRY_KEY_ID` (default `apm-prod-1`); if that key ID is absent from the signed key set, `--require-attestation` regresses from passing to failing for the entire back catalogue:
-  - [ ] seed the public half of the currently configured attestation key into `registry_signing_keys` as an active key;
-  - [ ] include it in the first published key set and every later one;
-  - [ ] confirm an **existing** `agentpm.registry.attestation.v2` row verifies end-to-end through the new client verification path, not merely that legacy server-side behavior is unchanged;
-  - [ ] state in docs/spec that `--require-attestation` covers legacy single-artifact releases as well as new-format releases.
-- [ ] **Establish the registry root key as an operational prerequisite, sequenced before enforcement:**
-  - [ ] generate the root Ed25519 keypair as a deliberate documented step before enabling the key-set endpoint;
-  - [ ] define and document root private-key custody and how key-set signing is performed; do not reuse the current pattern of a plain env-var read behind a log-and-continue failure path;
+  - [x] verify the root signature before accepting any key from the endpoint;
+  - [x] allow local caching only after successful root verification;
+  - [x] select attestation keys by `registryKeyId` from the verified key set;
+  - [x] reject unknown key IDs and invalid/untrusted key-set signatures;
+  - [x] keep retired signing keys available for historical verification;
+  - [x] treat root-key rotation as a separate rare bootstrap/CLI-update concern; dynamic root rotation is out of Stage 1.
+  - [x] permit exact-origin dev pins for development/manual testing, reject public
+    fixture roots for every origin, and enforce production-only audited root pins
+    in release CI even when the official root is present alongside a dev pin.
+- [ ] **Backfill the existing attestation signing key before enforcing verification** (dev complete; production remains a Band 11 gate). Every already-published version has a `RegistryAttestation` recording the current `REGISTRY_KEY_ID` (default `apm-prod-1`); if that key ID is absent from the signed key set, `--require-attestation` regresses from passing to failing for the entire back catalogue:
+  - [ ] seed the public half of the currently configured attestation key into `registry_signing_keys` as an active key (dev verified; production pending);
+  - [ ] include it in the first published key set and every later one (dev verified; production pending);
+  - [x] confirm an **existing** `agentpm.registry.attestation.v2` row verifies end-to-end through the new client verification path, not merely that legacy server-side behavior is unchanged;
+  - [x] state in docs/spec that `--require-attestation` covers legacy single-artifact releases as well as new-format releases.
+- [ ] **Establish the registry root key as an operational prerequisite, sequenced before enforcement** (dev complete; production remains a Band 11 gate):
+  - [ ] generate the root Ed25519 keypair as a deliberate documented step before enabling the key-set endpoint (dev complete; production pending);
+  - [x] define and document root private-key custody and how key-set signing is performed; do not reuse the current pattern of a plain env-var read behind a log-and-continue failure path;
   - [ ] respect the bootstrap order — root keypair → seed existing attestation keys → root-signed key set → CLI shipped with pinned root public key → only then enforce `--require-attestation`;
-  - [ ] make `GET /v1/registry/signing-keys` **fail closed** when a valid root signature cannot be produced, rather than serving an unsigned or partial key set;
+  - [x] make `GET /v1/registry/signing-keys` **fail closed** when a valid root signature cannot be produced, rather than serving an unsigned or partial key set;
   - [ ] keep the pinned root public key auditable in the repository rather than injected at build time from an opaque source, and treat changing it as requiring a CLI release.
-- [ ] Evolve the public Security/read DTO for new-format versions so the web UI can inspect release-level integrity/provenance and target artifacts without using truncated digests as verification inputs; keep legacy responses compatible.
-- [ ] Update and verify the existing Tool Security/detail surface for new-format versions using the release/artifact data from Milestones 13A–13B and signing foundation/statements from Milestones 14A–14B, without Package Health scoring:
-  - [ ] expose the release-level digest;
-  - [ ] expose release-level author-signature/registry-attestation state;
-  - [ ] expose the available target-artifact inventory and per-artifact digest/scan state where useful;
-  - [ ] verify legacy versions continue rendering their existing single-artifact Security data on the same surface.
-- [ ] Extend install/init verification payload to include:
-  - [ ] canonical release manifest/release digest;
-  - [ ] author signature + statement + full public key + signer status;
-  - [ ] namespace signing mode/effective threshold;
-  - [ ] registry attestation statement/signature/key ID;
-  - [ ] trusted registry-key lookup/reference material.
-- [ ] Do not depend on the current Security DTO's truncated display digest for install verification.
-- [ ] Implement client-side release-digest verification.
-- [ ] Implement client-side author-signature verification.
-- [ ] Implement client-side registry-attestation verification.
-- [ ] Add `--require-signature`:
-  - [ ] enforce ≥1 valid trusted author signature regardless of optional/off namespace mode.
-- [ ] Change `--require-attestation` semantics to cryptographically verified attestation rather than server boolean.
-- [ ] When namespace mode is `required`, client verification also enforces the effective one-signature policy.
-- [ ] Add tamper tests for:
-  - [ ] artifact bytes;
-  - [ ] artifact target/list;
-  - [ ] manifest digest;
-  - [ ] Python resolution digest;
-  - [ ] release digest;
-  - [ ] author statement/signature;
-  - [ ] registry statement/signature;
-  - [ ] wrong/untrusted registry key.
+- [x] Evolve the public Security/read DTO for new-format versions so the web UI can inspect release-level integrity/provenance and target artifacts without using truncated digests as verification inputs; keep legacy responses compatible.
+  - [x] Retain the Registry's optional/nullable `revoked_ts` in Web `src/types/tools.ts` (`AuthorSignature`) and the associated `authorSignatureSchema` parsers in `src/lib/get-*.ts`; currently those parsers strip the unlisted field. Test timestamp retention plus missing/null legacy values, and display current revocation separately from historical signature validity.
+- [x] Update and verify the existing Tool Security/detail surface for new-format versions using the release/artifact data from Milestones 13A–13B and signing foundation/statements from Milestones 14A–14B, without Package Health scoring:
+  - [x] expose the release-level digest;
+  - [x] expose release-level author-signature/registry-attestation state;
+  - [x] expose the available target-artifact inventory and per-artifact digest/scan state where useful;
+  - [x] verify legacy versions continue rendering their existing single-artifact Security data on the same surface.
+- [x] Extend install/init verification payload to include:
+  - [x] canonical release manifest/release digest;
+  - [x] author signature + statement + full public key + signer status;
+  - [x] namespace signing mode/effective threshold;
+  - [x] registry attestation statement/signature/key ID;
+  - [x] trusted registry-key lookup/reference material.
+- [x] Do not depend on the current Security DTO's truncated display digest for install verification.
+- [x] Implement client-side release-digest verification.
+- [x] Implement client-side author-signature verification.
+- [x] Implement client-side registry-attestation verification.
+- [x] Add `--require-signature`:
+  - [x] enforce ≥1 valid trusted author signature regardless of optional/off namespace mode.
+- [x] Change `--require-attestation` semantics to cryptographically verified attestation rather than server boolean.
+- [x] When namespace mode is `required`, client verification also enforces the effective one-signature policy.
+- [x] Add tamper tests for:
+  - [x] artifact bytes;
+  - [x] artifact target/list;
+  - [x] manifest digest;
+  - [x] Python resolution digest;
+  - [x] release digest;
+  - [x] author statement/signature;
+  - [x] registry statement/signature;
+  - [x] wrong/untrusted registry key.
+
+- [x] Complete the real dev bootstrap and operator manual acceptance using
+  `manual-tests/SIGNING_M14C_MANUAL_TESTS.md`; operator confirmed all tests passed.
+  - [x] Generate the distinct encrypted dev root, follow custody/backup steps and
+    pin only its public key in both audited development manifests.
+  - [x] Verify/backfill the existing dev attestation key and serve the offline-root-
+    signed complete public inventory from the local Registry.
+  - [x] Verify an already-published legacy v2 package through the actual CLI,
+    including cryptographic attestation enforcement.
+  - [x] Verify the existing four-artifact release with the actual Rust consumer,
+    reject all six tampered copies and accept the unchanged original.
+  - [x] Verify historical signer status, new/legacy Security pages, signed legacy
+    publish/strict install/run, and controlled cache/policy regressions.
+
+**Implementation status:** development implementation, root bootstrap and manual
+acceptance are complete; M15 can proceed. Independent review passed with no findings, as
+confirmed by the operator. The operator also confirmed CLI CI, all four Resolver
+Contracts, Registry PostgreSQL uploads/migrations and Web CI passed on the PRs.
+Registry Release Contract Parity remains pending against public CLI `main`, as
+expected before the coordinated merge. Production root bootstrap and release
+acceptance remain Band 11 gates. The operator approved
+an **offline encrypted root** and a **pre-signed public key list**; the server
+never receives the root private key. V1.105 adds immutable public-key history
+without altering existing signing/version constraints. A verified, idempotent
+`flask --app run registry seed-current-key` command, public inventory export,
+offline root-generation/signing tool and retirement command are implemented.
+The unchecked official-root/bootstrap/backfill items above now apply to
+production; fixture keys and the completed dev setup do not satisfy them.
+
+The audited `registry-trust-roots-v1.json` copies now contain the real loopback
+dev public pin for local testing. CLI release CI's
+`check_registry_bootstrap.py --release` intentionally rejects this development
+pin. Before release, complete production bootstrap and remove dev/non-production
+entries from both audited manifests, retaining the official production root/ring.
+Do not release the stricter verifier before production backfill/key-list delivery
+is ready. The operator sequence and custody/renewal
+policy are documented in `agentpm-api/app/tools/domain/tools/REGISTRY_TRUST.md`.
+
+Install/init adds complete verification material; shared Rust client consumption
+covers install, template creation and export, with explicit signature/attestation
+requirements on `install`. Root-verified cache bytes are rechecked on read;
+invalid 200 responses never become trusted cache entries. New-format proof
+verification is implemented, while new-format install/target negotiation remains
+gated for M15. The Tool Security surface now displays logical release integrity,
+artifacts and scan state. All existing Security fetchers retain revocation
+metadata and distinguish current activation from historical signature validity.
+No `agent.json`, portable lockfile, external Python/Node SDK, version bump,
+production deployment or feature-flag activation change is included.
+
+Local verification and outstanding acceptance are recorded in `test-plan.md`.
+Production root/bootstrap verification and the coordinated CLI-main parity/release
+gates remain open. The completed dev bootstrap provides the actual authenticated
+key endpoint needed for M15's new-format end-to-end install tests.
+
+The completed operator walkthrough is recorded in
+[`manual-tests/SIGNING_M14C_MANUAL_TESTS.md`](manual-tests/SIGNING_M14C_MANUAL_TESTS.md),
+with checked-in dev-only helpers and a consumer of the actual Rust verifier.
+Operator acceptance, rather than fixture preparation alone, closes dev bootstrap
+and manual testing. Production root/backfill/delivery remain unclaimed.
 
 ## Milestone 15: Target-Aware Installation and Runtime Provisioning
 > Scope note: consume the new release model safely on the client: choose one compatible target artifact, verify the release and payload, cache/extract it without collisions, provision the AgentPM-managed Python environment, and fail deterministically when compatibility or archive safety checks fail. Preserve the legacy install path and do not add Rosetta/emulation or silently change locked versions.
@@ -1934,72 +2033,143 @@ enabling the new-format publish flow or implementing later milestones.
 > - Current extraction silently skips symlink/hardlink entries and has no decompressed-size cap. Harden this while changing the install path.
 > - Dependency provisioning adds a new install failure stage; do not finalize the install session as successful until the local runtime environment is ready.
 
-- [ ] Detect canonical current target using the Milestone 11A target identifier/detection mapping.
-- [ ] Resolve the Tool's Python interpreter using existing family/minimum-version/`AGENTPM_PYTHON` rules before provisioning dependencies.
-- [ ] Extend install-init request with target/runtime context needed for selection.
-- [ ] Read/verify new release metadata:
-  - [ ] logical release digest;
-  - [ ] canonical artifact inventory;
-  - [ ] Python resolution;
-  - [ ] provenance material from Milestone 14C.
-- [ ] Have install-init return/presign only the selected concrete artifact for the consumer while still exposing available target metadata for diagnostics.
-- [ ] Select exact target first.
-- [ ] Fall back to `any` only when a portable artifact is present.
-- [ ] Verify release-level integrity before trusting artifact metadata.
-- [ ] Verify selected artifact appears exactly in the verified release manifest.
-- [ ] Stream-download selected artifact.
-- [ ] Validate received size against expected artifact size where practical.
-- [ ] Recompute selected artifact SHA-256 and compare to the verified release manifest.
-- [ ] Redesign cache identity to prevent collisions across:
-  - [ ] kind;
-  - [ ] namespace/name;
-  - [ ] version;
-  - [ ] target;
-  - [ ] artifact digest.
-- [ ] Preserve cache re-verification before reuse.
-- [ ] Define install-side expiry and timeout behavior:
-  - [ ] keep the install session valid through dependency provisioning, not only through artifact download (today the session TTL and presigned GET are both 10 minutes, sized for one small tarball);
-  - [ ] make a mid-install presigned-GET expiry produce an actionable error, and re-obtainable without restarting the whole install where practical;
-  - [ ] set deliberate connect and idle/progress timeouts on the download client, which currently uses `reqwest` defaults with no explicit timeout;
-  - [ ] record the chosen session and URL lifetimes in the spec rather than inheriting 10 minutes.
-- [ ] Keep extracted Tool directory version-terminal if no correctness issue requires a target segment; only one target payload is active per local install.
-- [ ] Store selected target/artifact digest/runtime-environment fingerprint in machine-local `.agentpm/` state if persistence is needed.
-- [ ] Harden archive extraction:
-  - [ ] reject unsupported symlink/hardlink entries explicitly instead of silently skipping them;
-  - [ ] retain traversal/absolute-path protection;
-  - [ ] enforce decompressed total-byte cap;
-  - [ ] enforce entry-count cap on extraction;
-  - [ ] ensure failed extraction cannot leave a seemingly complete install directory.
-- [ ] Provision dependencies after payload extraction:
-  - [ ] create/reuse Milestone-11C managed Python environment;
-  - [ ] replay the stored `PythonResolution` through AgentPM-managed `uv`, hash-verified against the recorded digests, without re-resolving;
-  - [ ] keep the wheel-only rule — no source builds — and surface the no-compatible-wheel error for the selected target;
-  - [ ] call the Milestone-11A resolver acquisition component; do not re-implement acquisition, PATH discovery, or verification here;
-  - [ ] verify environment fingerprint.
-- [ ] Only finalize the install session as successful after payload + dependency environment are ready.
-- [ ] Preserve legacy install/download/extract path for legacy releases.
-- [ ] Add actionable no-compatible-artifact error:
-  - [ ] requested target;
-  - [ ] available targets;
-  - [ ] selected Tool version.
-- [ ] Implement interactive recovery only for supported alternatives:
-  - [ ] a compatible newer version may be offered only for an unpinned/non-exact request;
-  - [ ] require explicit confirmation.
-- [ ] Do not silently install incompatible artifact.
-- [ ] Do not silently change a locked/exact version.
-- [ ] In headless mode, fail deterministically with structured error.
-- [ ] Do not add Rosetta/emulation handling in this milestone.
+- [x] Detect canonical current target using the Milestone 11A target identifier/detection mapping.
+- [x] Resolve the Tool's Python interpreter using existing family/minimum-version/`AGENTPM_PYTHON` rules before provisioning dependencies.
+- [x] Extend install-init request with target/runtime context needed for selection.
+- [x] Read/verify new release metadata:
+  - [x] logical release digest;
+  - [x] canonical artifact inventory;
+  - [x] Python resolution;
+  - [x] provenance material from Milestone 14C.
+- [x] Have install-init return/presign only the selected concrete artifact for the consumer while still exposing available target metadata for diagnostics.
+- [x] Select exact target first.
+- [x] Fall back to `any` only when a portable artifact is present.
+- [x] Verify release-level integrity before trusting artifact metadata.
+- [x] Verify selected artifact appears exactly in the verified release manifest.
+- [x] Stream-download selected artifact.
+- [x] Validate received size against expected artifact size where practical.
+- [x] Recompute selected artifact SHA-256 and compare to the verified release manifest.
+- [x] Redesign cache identity to prevent collisions across:
+  - [x] kind;
+  - [x] namespace/name;
+  - [x] version;
+  - [x] target;
+  - [x] artifact digest.
+- [x] Preserve cache re-verification before reuse.
+- [x] Define install-side expiry and timeout behavior:
+  - [x] keep the install session valid through dependency provisioning, not only through artifact download (today the session TTL and presigned GET are both 10 minutes, sized for one small tarball);
+  - [x] make a mid-install presigned-GET expiry produce an actionable error, and re-obtainable without restarting the whole install where practical;
+  - [x] set deliberate connect and idle/progress timeouts on the download client, which currently uses `reqwest` defaults with no explicit timeout;
+  - [x] record the chosen session and URL lifetimes in the spec rather than inheriting 10 minutes.
+- [x] Keep extracted Tool directory version-terminal if no correctness issue requires a target segment; only one target payload is active per local install.
+- [x] Store selected target/artifact digest/runtime-environment fingerprint in machine-local `.agentpm/` state if persistence is needed.
+- [x] Harden archive extraction:
+  - [x] reject unsupported symlink/hardlink entries explicitly instead of silently skipping them;
+  - [x] retain traversal/absolute-path protection;
+  - [x] enforce decompressed total-byte cap;
+  - [x] enforce entry-count cap on extraction;
+  - [x] ensure failed extraction cannot leave a seemingly complete install directory.
+- [x] Provision dependencies after payload extraction:
+  - [x] create/reuse Milestone-11C managed Python environment;
+  - [x] replay the stored `PythonResolution` through AgentPM-managed `uv`, hash-verified against the recorded digests, without re-resolving;
+  - [x] keep the wheel-only rule — no source builds — and surface the no-compatible-wheel error for the selected target;
+  - [x] call the Milestone-11A resolver acquisition component; do not re-implement acquisition, PATH discovery, or verification here;
+  - [x] verify environment fingerprint.
+- [x] Only finalize the install session as successful after payload + dependency environment are ready.
+- [x] Preserve legacy install/download/extract path for legacy releases.
+- [x] Add actionable no-compatible-artifact error:
+  - [x] requested target;
+  - [x] available targets;
+  - [x] selected Tool version.
+- [x] Implement interactive recovery only for supported alternatives:
+  - [x] a compatible newer version may be offered only for an unpinned/non-exact request;
+  - [x] require explicit confirmation.
+- [x] Do not silently install incompatible artifact.
+- [x] Do not silently change a locked/exact version.
+- [x] In headless mode, fail deterministically with structured error.
+- [x] Do not add Rosetta/emulation handling in this milestone.
+
+Implementation verification (2026-11-07): local Rust workspace and Registry
+suites pass, with focused final renewal/extraction checks and actual pinned-uv
+native-wheel tests. See the M15 evidence in `test-plan.md` for counts and limits.
+Implementation checkmarks do not claim the following acceptance steps:
+
+- [x] Independent review of Milestone 15 and resolution of any findings.
+      User confirmed review passed with no remaining findings. The signed-release
+      end-to-end acceptance gap is explicitly retained under Band 11 below.
+- [x] Hosted CLI CI and all four native Resolver Contract runners pass for the
+      revision under review; Registry PostgreSQL job passes with target-install
+      coverage. User confirmed all CI jobs except Registry Release Contract
+      Parity passed. Parity against authoritative CLI main remains the separate,
+      unchecked Release Band 11 gate below.
+- [x] Operator manual testing of a root-trusted, signed new-format release:
+      exact/any selection, install/run/Harness with actual dependencies, frozen
+      lock reuse, failure/repair and legacy regression checks. Use the existing
+      dev trust bootstrap; no production activation is claimed here.
+      User confirmed all steps passed in
+      [`manual-tests/INSTALL_M15_MANUAL_TESTS.md`](manual-tests/INSTALL_M15_MANUAL_TESTS.md).
+      This closes M15's dev manual acceptance, including real signed-release
+      installation and execution; production-chain verification remains the
+      separate unchecked Band 11 gate.
 
 ## Release Band 11: Release Integrity and Verifiable Target-Aware Installs
 
 Covered milestones: 14B–14C, 15.
+Release preparation: CLI `0.1.40` and the Web status entry dated `2026-11-07`
+are prepared locally. This does not record a tag, publication, deployment or
+production activation. Merge CLI contracts to `main` for Registry parity first;
+release the CLI only after production trust delivery is verified.
+
 This is the band where the new release format becomes real for users. It gives us release-level `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` statements, trustworthy stored-byte verification before finalize, fail-closed attestation, the root-signed registry key set with its backfill and root-key prerequisite, client-side verification of release digest, author signature, and registry attestation, stricter `--require-signature`/`--require-attestation` semantics, and target-aware installation with runtime provisioning for the selected artifact. The gate from Band 9 lifts here and not before: publishers publish multi-artifact signed releases, and consumers select their target, verify the release cryptographically, and provision the right environment. This is the largest band in the stage and the one that cannot be subdivided — a cut that shipped target selection without verification would mean knowingly installing unverified releases, and a cut that shipped verification without target selection would mean a verifier with nothing installable to verify.
 
+- [ ] Complete M14C's operator root generation/custody, audited public pin,
+      existing attestation-key backfill and signed public key-list delivery
+      before shipping stricter client verification. Require
+      `scripts/check_registry_bootstrap.py --release` to pass and verify an
+      already-published legacy v2 attestation through the deployed trust chain.
+      Before tagging the CLI, remove development/non-production root entries from
+      both audited manifest copies; release mode accepts only the official
+      `https://api.agentpackagemanager.com` origin. Preserve dev root custody and
+      public files for local testing; do not silently filter pins at build time.
+      Fixtures/empty pins do not satisfy this gate; keep production new-format
+      publication disabled until the remaining Band 11 prerequisites pass.
+      Progress: operator confirmed production root files were generated. Both
+      audited manifests now pin only `agentpm-root-1` for the official production
+      origin, matching the operator's public file; development pins were removed
+      from these release manifests while external dev files were left intact.
+      Release-mode bootstrap validation, all four bootstrap-checker tests and
+      local cross-repo contract parity pass for these public pins.
+      Root custody/offline backup confirmation, production attestation-key
+      backfill, signed key-list delivery and deployed-chain verification remain
+      open. Public pin validation alone does not complete this bootstrap gate.
+- [ ] After the authoritative CLI contract changes are merged to public CLI
+      `main`, rerun the Registry's `Release Contract Parity` job for the Registry
+      revision to be shipped. Require passing schema/signing/shared-vector
+      comparisons and Python contract tests before Registry deployment; record
+      both checked commit IDs. Passing this job is a release gate, not a
+      prerequisite for M14B manual testing. A manual dispatch against a proposed
+      CLI ref does not replace this `main`-ref release gate. Keep the production
+      release flow gated until all Band 11 activation prerequisites are met.
 - [ ] Before enabling `RELEASE_PUBLISH_ENABLED` in production, confirm hosted
       finalize disk/request/concurrency capacity for the configured size limits.
       This requirement is carried forward from the gated Band 9 rollout, not
       marked satisfied by its tiny storage probe. Record resource/concurrency
       assumptions and the relevant capacity evidence before activation.
+- [ ] Before declaring Band 11 accepted, exercise the shipped CLI against a
+      real signed new-format release through the deployed production trust
+      chain: pinned official root → root-signed served key set → Registry v3
+      attestation and author v2 signature → full release inventory → selected
+      artifact bytes → managed environment → successful Tool execution.
+      Verify exact-target precedence and portable `any` fallback using suitable
+      releases, only the selected payload is downloaded, and the portable lock
+      retains logical release integrity. Record CLI/Registry revisions, release
+      identities, host target, selected artifact digests and observed results.
+      Arrange any production smoke publication/activation only after the root,
+      parity and capacity prerequisites above; do not enable it as part of M15
+      implementation. Synthetic selection fixtures and separate verification
+      tests do not satisfy this end-to-end release gate. The existing dev root
+      can independently support M15's genuine local signed-release manual test;
+      production bootstrap is not a prerequisite for that local test.
 
 ## Milestone 16: Headless Signing and GitHub Actions Publishing
 > Scope note: make multi-target releases practical for maintainers by adding secure noninteractive signing plus a first official GitHub Actions workflow that packages target artifacts in parallel and performs one final atomic AgentPM publish. Follow existing AgentPM workflow conventions, but keep the package-build/publish protocol CI-provider-neutral. Stage 1 uses PAT auth for AgentPM registry CI; OIDC trusted publishing remains future work.

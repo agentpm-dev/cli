@@ -167,6 +167,95 @@ fn inspect(command: &str, inventory: bool) -> Result<Interpreter> {
     Ok(interpreter)
 }
 
+pub(crate) fn install_context(
+    plan: &agentpm_sdk::models::install::ResolveResponse,
+) -> Result<Value> {
+    let mut context = serde_json::json!({"target": Target::current()?});
+    if let Some(resolution) = plan
+        .items
+        .iter()
+        .find_map(|item| item.python_resolution.as_ref())
+    {
+        let minimum = resolution
+            .requires()
+            .strip_prefix(">=")
+            .context("unsupported Python minimum constraint")?;
+        let runtime = crate::runner::RuntimeDecl {
+            runtime_type: "python".into(),
+            version: Some(minimum.into()),
+            dependencies: None,
+        };
+        let command = resolve_interpreter_command("python3", Some(&runtime), &HashMap::new())
+            .or_else(|error| {
+                if std::env::var("AGENTPM_PYTHON").is_ok() {
+                    Err(error)
+                } else {
+                    resolve_interpreter_command("python", Some(&runtime), &HashMap::new())
+                }
+            })?;
+        let interpreter = inspect(&command, false)?;
+        for item in &plan.items {
+            if let Some(resolution) = &item.python_resolution {
+                resolution.packages_for_environment(&interpreter.markers)?;
+            }
+        }
+        context["python"] = serde_json::json!({"version": interpreter.version, "implementation": interpreter.markers["implementation_name"], "architecture": interpreter.markers["platform_machine"]});
+    }
+    Ok(context)
+}
+
+pub(crate) fn validate_install_runtime(artifact: &PackageArtifact) -> Result<()> {
+    if artifact.selected_artifact.is_none() {
+        return Ok(());
+    }
+    let proof = artifact
+        .verification
+        .as_ref()
+        .context("missing verified Tool manifest")?;
+    let manifest: RunnerManifest = serde_json::from_value(proof.manifest.clone())?;
+    ensure!(
+        manifest.kind == "tool"
+            && manifest
+                .runtime
+                .as_ref()
+                .is_some_and(|r| r.runtime_type == "python"),
+        "new-format runtime must be Python Tool"
+    );
+    let command = resolve_interpreter_command(
+        &manifest.entrypoint.command,
+        manifest.runtime.as_ref(),
+        &HashMap::new(),
+    )?;
+    let inspected = inspect(&command, false)?;
+    let selected = artifact.selected_artifact.as_ref().unwrap().target;
+    if selected != Target::Any {
+        let triple = selected.as_str();
+        let platform = inspected.markers["sys_platform"]
+            .as_str()
+            .unwrap_or_default();
+        let architecture = inspected.markers["platform_machine"]
+            .as_str()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let platform_matches = (triple.ends_with("apple-darwin") && platform == "darwin")
+            || (triple.ends_with("linux-gnu") && platform == "linux")
+            || (triple.ends_with("windows-msvc") && platform == "win32");
+        let architecture_matches = if triple.starts_with("aarch64") {
+            architecture == "arm64" || architecture == "aarch64"
+        } else {
+            architecture == "x86_64" || architecture == "amd64"
+        };
+        ensure!(
+            platform_matches && architecture_matches,
+            "Python interpreter platform/architecture differs from selected artifact {selected}; select a matching interpreter with AGENTPM_PYTHON"
+        );
+    }
+    if let Some(resolution) = &artifact.python_resolution {
+        resolution.packages_for_environment(&inspected.markers)?;
+    }
+    Ok(())
+}
+
 fn has_dependencies(manifest: &RunnerManifest) -> bool {
     manifest.runtime.as_ref().is_some_and(|runtime| {
         runtime.runtime_type == "python"

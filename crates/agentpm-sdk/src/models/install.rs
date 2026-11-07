@@ -86,11 +86,70 @@ pub struct PackageArtifact {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signing: Option<SigningSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<crate::provenance::Provenance>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<Runtime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub python_resolution: Option<crate::python::PythonResolution>,
+    /// Machine-selected payload; integrity above remains the logical release digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_artifact: Option<crate::release::ReleaseArtifact>,
+}
+
+impl PackageArtifact {
+    pub fn payload_integrity(&self) -> &str {
+        self.selected_artifact
+            .as_ref()
+            .map_or(self.integrity.as_str(), |a| {
+                a.digest.strip_prefix("sha256:").unwrap_or("")
+            })
+    }
+
+    /// Call only after authenticating the complete release through provenance.
+    pub fn verify_selection(&self, target: crate::target::Target) -> anyhow::Result<()> {
+        use anyhow::ensure;
+        let release = self.verification.as_ref().and_then(|p| p.release.as_ref());
+        let Some(release) = release else {
+            ensure!(
+                self.selected_artifact.is_none(),
+                "selected payload has no verified release"
+            );
+            return Ok(());
+        };
+        let selected = self
+            .selected_artifact
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("new-format release has no selected artifact"))?;
+        let expected = release
+            .artifacts
+            .iter()
+            .find(|a| a.target == target)
+            .or_else(|| {
+                release
+                    .artifacts
+                    .iter()
+                    .find(|a| a.target == crate::target::Target::Any)
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no compatible artifact for {}@{} on {target}",
+                    self.name,
+                    self.version
+                )
+            })?;
+        ensure!(
+            selected == expected,
+            "selected artifact differs from verified release or exact-target preference"
+        );
+        ensure!(
+            self.size == Some(selected.size)
+                && self.content_type.as_deref() == Some(selected.content_type.as_str()),
+            "selected artifact size/content type differs from verified inventory"
+        );
+        Ok(())
+    }
 }
 
 pub type ResolveReqItem = PackageRequirement;
@@ -100,6 +159,91 @@ pub type InstallArtifact = PackageArtifact;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_payload_is_exact_first_and_bound_to_complete_inventory() {
+        use crate::target::Target;
+        let value: serde_json::Value = serde_json::from_str(include_str!(
+            "../../contracts/registry-provenance-v1.fixtures.json"
+        ))
+        .unwrap();
+        let mut artifact: PackageArtifact =
+            serde_json::from_value(value["vectors"][1]["artifact"].clone()).unwrap();
+        let release = artifact
+            .verification
+            .as_ref()
+            .unwrap()
+            .release
+            .as_ref()
+            .unwrap();
+        let selected = release
+            .artifacts
+            .iter()
+            .find(|a| a.target == Target::current().unwrap())
+            .unwrap()
+            .clone();
+        artifact.selected_artifact = Some(selected.clone());
+        artifact.size = Some(selected.size);
+        artifact.content_type = Some(selected.content_type.clone());
+        artifact
+            .verify_selection(Target::current().unwrap())
+            .unwrap();
+        assert_ne!(artifact.payload_integrity(), artifact.integrity);
+        let mut changed = artifact.clone();
+        changed.selected_artifact.as_mut().unwrap().digest = format!("sha256:{}", "f".repeat(64));
+        assert!(
+            changed
+                .verify_selection(Target::current().unwrap())
+                .is_err()
+        );
+        let mut changed = artifact.clone();
+        changed.size = Some(selected.size + 1);
+        assert!(
+            changed
+                .verify_selection(Target::current().unwrap())
+                .is_err()
+        );
+        let mut changed = artifact.clone();
+        changed.selected_artifact = None;
+        assert!(
+            changed
+                .verify_selection(Target::current().unwrap())
+                .is_err()
+        );
+        let mut portable: PackageArtifact =
+            serde_json::from_value(value["vectors"][0]["artifact"].clone()).unwrap();
+        let any = portable
+            .verification
+            .as_ref()
+            .unwrap()
+            .release
+            .as_ref()
+            .unwrap()
+            .artifacts[0]
+            .clone();
+        portable.selected_artifact = Some(any.clone());
+        portable.size = Some(any.size);
+        portable.content_type = Some(any.content_type.clone());
+        for target in Target::SUPPORTED {
+            portable.verify_selection(*target).unwrap();
+        }
+        // Even a legitimately listed portable artifact cannot override an exact match.
+        artifact
+            .verification
+            .as_mut()
+            .unwrap()
+            .release
+            .as_mut()
+            .unwrap()
+            .artifacts
+            .push(any.clone());
+        artifact.selected_artifact = Some(any);
+        assert!(
+            artifact
+                .verify_selection(Target::current().unwrap())
+                .is_err()
+        );
+    }
 
     #[test]
     fn install_dto_defaults_missing_kind_to_tool() {

@@ -139,7 +139,7 @@ impl ReleaseManifest {
     }
 }
 
-fn valid_component(value: &str) -> bool {
+pub(crate) fn valid_component(value: &str) -> bool {
     (1..=64).contains(&value.len())
         && value.as_bytes()[0].is_ascii_lowercase()
         && value

@@ -1,5 +1,30 @@
 # Blog Brief
 
+## Milestone 14C Evidence
+
+Potential later engineering material: a signing badge becomes meaningful to a
+consumer only when the key itself has an authenticated origin. An offline root
+signs a complete public-key inventory; the CLI authenticates it, retains retired
+keys for historical verification, and rejects tampered network/cache material.
+The implementation exports a historical v2 attestation from disposable PostgreSQL
+after public-key backfill and verifies it through the Rust consumer, preserving
+legacy Unicode bytes. New-format Security displays release/artifact facts without
+claiming browser verification. Real root bootstrap/pinning, catalogue acceptance,
+review and rollout remain open; do not describe the official trust chain as live
+until those operator steps pass. Engineering evidence only, not an article draft.
+
+## Milestone 14B Evidence
+
+Potential later engineering material: bind an author's signature to one logical
+release rather than each platform archive, and make explicit signing intent fail
+visibly instead of becoming an unsigned success. Local PostgreSQL and shared
+Rust/Python crypto fixtures cover atomic author/Registry provenance, authorization
+changes during unlocked storage and ordinary revocation without rewriting signed
+history. Reuse the independently verified stored-byte path; publisher metadata is
+not integrity evidence. This is server acceptance, not independent consumer trust:
+root-signed key history/client verification, operator acceptance and deployment
+remain separate. Evidence for later planning only, not an article or content plan.
+
 ## Milestone 14A Evidence
 
 Potential later engineering material: cryptographic compatibility depends on exact
@@ -118,3 +143,17 @@ storage interacts with database rollback, and why one clean target cannot stand
 in for the complete release. Keep any public walkthrough deferred until signing,
 verification and target-aware consumption are available; local fixtures and
 mocked storage do not establish production rollout or actual GuardDuty coverage.
+
+## Milestone 15 Evidence
+
+Potential engineering material: selecting one platform payload while verifying
+the entire signed release, keeping logical lock integrity separate from local
+artifact/cache identity, and treating download, extraction and dependency
+provisioning as distinct failure stages before install completion. Local tests
+exercise URL expiry/renewal, corrupted caches, malicious archives, machine-mode
+compatibility failures, real Registry rows and pinned-uv native-wheel execution.
+Hosted native CI and a complete operator install of a signed new-format release
+remain acceptance work; production trust bootstrap and activation remain release
+gates. Do not describe the local implementation as a production rollout or a
+completed cross-platform guarantee. This is evidence for later content planning,
+not an article draft.

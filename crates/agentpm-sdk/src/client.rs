@@ -1,3 +1,4 @@
+mod provenance;
 pub mod release_upload;
 
 use crate::error::{ApiErrorBody, Result, SdkError};
@@ -153,6 +154,11 @@ impl AgentPmClient {
             }
         }
 
+        let require_signature = finalize_body["require_signature"].as_bool() == Some(true)
+            || finalize_body["author_signatures"]
+                .as_array()
+                .is_some_and(|s| !s.is_empty());
+
         let finalize_resp = self
             .auth(self.http.post(finalize_url))
             .json(&finalize_body)
@@ -166,6 +172,10 @@ impl AgentPmClient {
             .await
             .map_err(SdkError::Http)?;
 
+        if require_signature && receipt.author_signatures_accepted.unwrap_or(0) == 0 {
+            return Err(SdkError::Other("Registry did not confirm an accepted author signature. Check the published version's signing state and Registry support before retrying with a new version.".into()));
+        }
+
         if init.resumed {
             receipt.message = format!("{} (resumed existing upload)", receipt.message);
         }
@@ -176,7 +186,7 @@ impl AgentPmClient {
         let url = format!("{}/v1/tools/install/resolve", self.api_base());
         let resp = self
             .auth(self.http.post(url))
-            .json(desired)
+            .json(&serde_json::json!({"items": desired.items, "release_format": crate::release::RELEASE_TYPE}))
             .send()
             .await
             .map_err(SdkError::Http)?;
@@ -191,10 +201,20 @@ impl AgentPmClient {
     }
 
     pub async fn install_init(&self, plan: &ResolveResponse) -> SdkResult<InstallInitResponse> {
+        self.install_init_for_consumer(plan, serde_json::json!({"target": crate::target::Target::current().map_err(|e| SdkError::Other(e.to_string()))?}), crate::provenance::VerificationPolicy::default(), None).await
+    }
+
+    pub async fn install_init_for_consumer(
+        &self,
+        plan: &ResolveResponse,
+        consumer: Value,
+        policy: crate::provenance::VerificationPolicy,
+        cache: Option<&Path>,
+    ) -> SdkResult<InstallInitResponse> {
         let url = format!("{}/v1/tools/install/init", self.api_base());
         let resp = self
             .auth(self.http.post(url))
-            .json(plan)
+            .json(&serde_json::json!({"items": plan.items, "release_format": crate::release::RELEASE_TYPE, "consumer": consumer}))
             .send()
             .await
             .map_err(SdkError::Http)?;
@@ -205,7 +225,112 @@ impl AgentPmClient {
             .await
             .map_err(SdkError::Http)?;
 
+        self.validate_install_response(plan, &resolve_resp, &consumer, policy, cache)
+            .await?;
         Ok(resolve_resp)
+    }
+
+    async fn validate_install_response(
+        &self,
+        plan: &ResolveResponse,
+        resolve_resp: &InstallInitResponse,
+        consumer: &Value,
+        policy: crate::provenance::VerificationPolicy,
+        cache: Option<&Path>,
+    ) -> SdkResult<()> {
+        let mut seen = std::collections::BTreeSet::new();
+        for artifact in &resolve_resp.artifacts {
+            let requested = plan
+                .items
+                .iter()
+                .find(|item| {
+                    item.kind == artifact.kind
+                        && item.name == artifact.name
+                        && item.version == artifact.version
+                })
+                .ok_or_else(|| {
+                    SdkError::Other("Registry returned an unrequested package".into())
+                })?;
+            if !seen.insert((artifact.kind.as_str(), &artifact.name, &artifact.version))
+                || requested.integrity != artifact.integrity
+            {
+                return Err(SdkError::Other(
+                    "Install integrity/package inventory differs from the lock/resolve plan".into(),
+                ));
+            }
+            if requested.python_resolution != artifact.python_resolution {
+                return Err(SdkError::Other("Python resolution differs from the lock/resolve plan; run `agentpm install` without `--frozen` to regenerate agent.lock v4".into()));
+            }
+        }
+        if seen.len() != plan.items.len() {
+            return Err(SdkError::Other(
+                "Registry install response has missing packages".into(),
+            ));
+        }
+
+        // Shared consumers (install, template creation and export) must not
+        // bypass namespace-required signatures or ignore supplied author proof.
+        self.verify_install_provenance(&resolve_resp.artifacts, policy, cache)
+            .await
+            .map_err(|error| SdkError::Other(format!("{error:#}")))?;
+
+        let target: crate::target::Target = serde_json::from_value(consumer["target"].clone())?;
+        if target == crate::target::Target::Any {
+            return Err(SdkError::Other("consumer target must be concrete".into()));
+        }
+        for artifact in &resolve_resp.artifacts {
+            artifact
+                .verify_selection(target)
+                .map_err(|e| SdkError::Other(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub async fn install_renew(
+        &self,
+        original: &InstallInitResponse,
+    ) -> SdkResult<InstallInitResponse> {
+        let response = self
+            .auth(
+                self.http
+                    .post(format!("{}/v1/tools/install/renew", self.api_base())),
+            )
+            .json(&serde_json::json!({"session_id": original.session_id}))
+            .send()
+            .await?;
+        let renewed: InstallInitResponse = self.ensure_success(response).await?.json().await?;
+        if renewed.session_id != original.session_id
+            || renewed.artifacts.len() != original.artifacts.len()
+        {
+            return Err(SdkError::Other(
+                "renewal changed the install session/inventory".into(),
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for artifact in &renewed.artifacts {
+            if !seen.insert((artifact.kind.as_str(), &artifact.name, &artifact.version)) {
+                return Err(SdkError::Other(
+                    "renewal returned duplicate packages".into(),
+                ));
+            }
+            let Some(old) = original.artifacts.iter().find(|old| {
+                old.kind == artifact.kind
+                    && old.name == artifact.name
+                    && old.version == artifact.version
+            }) else {
+                return Err(SdkError::Other("renewal substituted a package".into()));
+            };
+            let mut left = serde_json::to_value(old)?;
+            let mut right = serde_json::to_value(artifact)?;
+            left.as_object_mut().unwrap().remove("presigned_url");
+            right.as_object_mut().unwrap().remove("presigned_url");
+            if left != right {
+                return Err(SdkError::Other(
+                    "renewal changed verified artifact metadata; retry install".into(),
+                ));
+            }
+        }
+        Ok(renewed)
     }
 
     pub async fn install_finalize(&self, session_id: &str) -> SdkResult<()> {

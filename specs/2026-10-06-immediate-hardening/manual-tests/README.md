@@ -55,3 +55,23 @@ Generated workspaces/results are disposable; each guide states their location.
   then publish one signed legacy Tool to dev and verify its accepted author
   signature, install and run. One terminal, checked-in no-dependency fixture;
   Registry parity against public CLI `main` remains a Release Band 10 gate.
+- [Release-level signatures and stored-byte integrity (Milestone 14B)](SIGNING_M14B_MANUAL_TESTS.md):
+  one-terminal local/dev signed releases, distinct rejection errors, authentic
+  cross-release replay, corrupt-byte recovery and ordinary signer revocation;
+  read-only inspection verifies actual author v2/Registry v3 rows. Includes
+  dependency binding, legacy CLI compatibility and isolated PostgreSQL failure
+  checks. Uses disposable dev signers; production activation and CLI-main
+  contract parity remain Release Band 11 gates.
+- [Registry trust bootstrap and consumer verification (Milestone 14C)](SIGNING_M14C_MANUAL_TESTS.md):
+  real encrypted offline dev root and public pins, verified current-key backfill,
+  signed public-list delivery, old-catalogue CLI verification, new-format proof
+  and tamper checks, strict signed legacy install and Security UI inspection.
+  Persistent dev trust state survives cleanup; production bootstrap and CLI-main
+  parity remain Release Band 11 gates.
+- [Verified target-aware installation (Milestone 15)](INSTALL_M15_MANUAL_TESTS.md):
+  reuse the established dev trust root, explicitly publish signed portable and
+  target-inventory fixtures, then use the actual CLI for strict verified
+  installs, native dependency execution, frozen locks, cache/state repair and
+  failure-before-finalize checks. Includes a local scripted Harness model,
+  legacy vendoring and bounded download/extraction tests. Production bootstrap,
+  CLI-main parity and production-chain acceptance remain Band 11 gates.

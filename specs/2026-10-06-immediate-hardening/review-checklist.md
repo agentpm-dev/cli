@@ -287,6 +287,48 @@
 
 ## Integrity and signing
 
+- For 14C, inspect V1.105 and the PostgreSQL before/after inventory of existing
+  constraints/indexes/triggers. Only the new public-key table/history trigger is
+  added; applied migrations and existing signing/version invariants stay intact.
+- Verify offline root custody: `registry_root.py` must not start Flask, access a
+  database/network or install a root secret in the backend. Audit the eventual
+  official public pin separately; empty roots/test keys cannot satisfy release CI.
+- Confirm the key-set endpoint checks the root signature, exact Registry origin,
+  timestamps, complete persisted/history inventory and active configured key,
+  returning 503 without unsigned/partial payloads on any failure.
+- Confirm a persisted legacy v2 attestation is exported after verified key
+  backfill and accepted by the actual Rust consumer, preserving historical JSON
+  bytes/Unicode. Distinguish that disposable-DB evidence from a real catalogue smoke.
+- Check root-authenticated cache scope/expiry/reverification, invalid-200 rejection,
+  unknown signing IDs, retired-key history and tamper cases. No arbitrary key
+  delivered beside a signature may become trusted.
+- Check shared install-client enforcement for install, template creation and
+  export, plus explicit CLI flags. Counts/booleans cannot satisfy requirements;
+  plan substitution and missing/duplicate inventory must fail before installation.
+- Verify full new-format Security fields and all legacy page/parser regressions,
+  including missing/null/present `revoked_ts`. The UI displays recorded provenance,
+  not browser cryptographic verification or retroactive compromise invalidation.
+- Keep M15 target negotiation/provisioning and M16 publishing out of this diff.
+  Operator root generation/pinning/backfill/delivery, manual review and hosted CI
+  remain real acceptance requirements, not checked off by public fixtures.
+- For 14B, inspect `release_signing.py`, both finalize paths, Rust `signing/release.rs`
+  and signed HTTP receipt handling. Check the exact v2/v3 fields, normalized
+  timestamps, full release binding and unchanged legacy statement bytes against
+  the shared `release-signing-v1.fixtures.json` snapshots.
+- Confirm explicit author submissions fail rather than being dropped in every
+  namespace mode; a signed client requires positive server acceptance. Check the
+  distinct algorithm/type, identity/digest, unregistered/inactive and bad-crypto
+  errors. Required still means one trusted signature, not the stored N-of-M value.
+- Confirm new finalize rechecks author authorization/policy and Registry signing
+  configuration after unlocked storage, using namespace → package → reservation
+  → signer lock order. Signing metadata, version/artifacts, scans and reservation
+  must commit atomically; configuration/insert failure leaves no published version.
+- Confirm exact completed retries use accepted historical signatures without
+  filtering by current activation, and cannot attach new signatures to an existing
+  unsigned release. Current `is_active`/`revoked_ts` remain separate metadata.
+- Confirm 14B preserves 13B's independently hashed stored bytes/size and checksum
+  confirmations, without trusting publisher metadata or adding another fresh-object
+  GET. No trust-anchor, consumer verification or new-format Security UI is claimed.
 - For 14A, inspect `canonical.rs`, `signing.rs`, server `canonical.py`/`legacy_signing.py` and the shared signing fixture. Verify the `serde_jcs` 0.1.0 → 0.2.0 update fixes escaped/non-BMP key ordering against the unchanged RFC expectations, with no legacy serializer migration.
 - Confirm the existing parity gate now requires the signing fixture as well as release fixtures, and its mutation test rejects changed/missing snapshots. Hosted CI and operator acceptance are separate from local fixture evidence.
 - Confirm legacy author signature v1 has a typed representation whose serialization is byte-identical to existing signatures.
@@ -356,6 +398,19 @@
 - Confirm a presigned GET expiring mid-install produces an actionable error.
 - Confirm the download client sets explicit connect and idle/progress timeouts instead of using `reqwest` defaults.
 - Confirm legacy install path remains intact.
+- Confirm capability negotiation does not let older clients treat a logical
+  release digest as a payload digest, and selected size/content type/descriptor
+  exactly match the verified full inventory before download.
+- Confirm URL renewal preserves the session ID/deadline, rejects duplicate or
+  changed package metadata, and rechecks current ownership/access without
+  re-resolving or silently changing a selected version.
+- Confirm the documented 120-minute session, 10-minute URL, 30-second connection
+  and idle timeouts, one renewal retry, 15,000-entry and 2-GiB extraction limits
+  match implementation and failure tests.
+- Confirm missing or inconsistent new-format local selection state fails at
+  execution, while legacy payloads without such state keep their prior behavior.
+- Confirm recovery candidates stay within the original request and cannot cause
+  exact/frozen/locked/machine/noninteractive installs to prompt or upgrade.
 
 ## Headless signing and CI
 

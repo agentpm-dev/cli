@@ -11,11 +11,16 @@ on:
       - 'crates/agentpm-cli/src/runner.rs'
       - 'crates/agentpm-cli/src/harness_plan.rs'
       - 'crates/agentpm-cli/src/commands/install.rs'
+      - 'crates/agentpm-cli/src/commands/install/**'
+      - 'crates/agentpm-cli/tests/target_install.rs'
       - 'crates/agentpm-cli/src/commands/publish.rs'
       - 'crates/agentpm-cli/src/commands/publish/**'
       - 'crates/agentpm-cli/tests/python_resolution.rs'
       - 'crates/agentpm-cli/tests/payload_compatibility.rs'
       - 'crates/agentpm-cli/src/io/download.rs'
+      - 'crates/agentpm-cli/src/io/download/**'
+      - 'crates/agentpm-sdk/src/models/install.rs'
+      - 'crates/agentpm-sdk/tests/install_provenance.rs'
       - 'crates/agentpm-sdk/src/python.rs'
       - 'crates/agentpm-sdk/src/artifact.rs'
       - 'crates/agentpm-sdk/src/artifact/**'
@@ -25,7 +30,12 @@ on:
       - 'crates/agentpm-sdk/src/canonical/**'
       - 'crates/agentpm-sdk/src/signing.rs'
       - 'crates/agentpm-sdk/src/signing/**'
+      - 'crates/agentpm-sdk/src/provenance.rs'
+      - 'crates/agentpm-sdk/src/provenance/**'
+      - 'crates/agentpm-sdk/tests/registry_key_cache.rs'
+      - 'crates/agentpm-sdk/contracts/registry-*.json'
       - 'crates/agentpm-sdk/contracts/signing-canonicalization-v1.fixtures.json'
+      - 'crates/agentpm-sdk/contracts/release-signing-v1.fixtures.json'
       - 'crates/agentpm-sdk/src/client.rs'
       - 'crates/agentpm-sdk/src/client/**'
       - 'crates/agentpm-sdk/tests/release_upload.rs'
@@ -99,6 +109,12 @@ jobs:
         shell: bash
         run: |
           cargo test -p agentpm-sdk target::tests
+          cargo test -p agentpm-sdk models::install::tests
+          cargo test -p agentpm-sdk --test install_provenance
+          cargo test -p agentpm-sdk --test registry_key_cache
+          cargo test -p agentpm-cli --bin agentpm io::download::
+          cargo test -p agentpm-cli --bin agentpm commands::install::compatibility
+          cargo test -p agentpm-cli --test target_install
           cargo test -p agentpm-sdk artifact::
           cargo test -p agentpm-sdk release::
           cargo test -p agentpm-sdk canonical::
