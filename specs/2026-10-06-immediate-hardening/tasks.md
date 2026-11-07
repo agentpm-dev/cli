@@ -2115,6 +2115,11 @@ Implementation checkmarks do not claim the following acceptance steps:
 ## Release Band 11: Release Integrity and Verifiable Target-Aware Installs
 
 Covered milestones: 14B–14C, 15.
+Release preparation: CLI `0.1.40` and the Web status entry dated `2026-11-07`
+are prepared locally. This does not record a tag, publication, deployment or
+production activation. Merge CLI contracts to `main` for Registry parity first;
+release the CLI only after production trust delivery is verified.
+
 This is the band where the new release format becomes real for users. It gives us release-level `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` statements, trustworthy stored-byte verification before finalize, fail-closed attestation, the root-signed registry key set with its backfill and root-key prerequisite, client-side verification of release digest, author signature, and registry attestation, stricter `--require-signature`/`--require-attestation` semantics, and target-aware installation with runtime provisioning for the selected artifact. The gate from Band 9 lifts here and not before: publishers publish multi-artifact signed releases, and consumers select their target, verify the release cryptographically, and provision the right environment. This is the largest band in the stage and the one that cannot be subdivided — a cut that shipped target selection without verification would mean knowingly installing unverified releases, and a cut that shipped verification without target selection would mean a verifier with nothing installable to verify.
 
 - [ ] Complete M14C's operator root generation/custody, audited public pin,
@@ -2128,6 +2133,15 @@ This is the band where the new release format becomes real for users. It gives u
       public files for local testing; do not silently filter pins at build time.
       Fixtures/empty pins do not satisfy this gate; keep production new-format
       publication disabled until the remaining Band 11 prerequisites pass.
+      Progress: operator confirmed production root files were generated. Both
+      audited manifests now pin only `agentpm-root-1` for the official production
+      origin, matching the operator's public file; development pins were removed
+      from these release manifests while external dev files were left intact.
+      Release-mode bootstrap validation, all four bootstrap-checker tests and
+      local cross-repo contract parity pass for these public pins.
+      Root custody/offline backup confirmation, production attestation-key
+      backfill, signed key-list delivery and deployed-chain verification remain
+      open. Public pin validation alone does not complete this bootstrap gate.
 - [ ] After the authoritative CLI contract changes are merged to public CLI
       `main`, rerun the Registry's `Release Contract Parity` job for the Registry
       revision to be shipped. Require passing schema/signing/shared-vector
