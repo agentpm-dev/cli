@@ -1954,6 +1954,53 @@ Requirements:
 - the download client currently uses `reqwest` defaults with no explicit timeout; set deliberate connect and idle/progress timeouts rather than leaving transfers unbounded;
 - state the chosen session and URL lifetimes explicitly rather than inheriting 10 minutes.
 
+Milestone 15 implementation contract:
+
+- Resolve/init negotiate `release_format: "agentpm.package.release.v1"`.
+  Init supplies the canonical concrete consumer target and, when dependencies
+  require inspection, the selected Python version, implementation and
+  architecture. Interpreter paths are not sent. Older clients retain the
+  upgrade-required response for new-format releases.
+- Install responses retain logical release integrity in `integrity` and put the
+  selected complete descriptor in `selected_artifact`. Before downloading, the
+  consumer verifies the full release/provenance and checks that this descriptor
+  equals the exact-target entry, or the `any` entry only if no exact entry exists.
+  Outer size/content type must agree with that entry.
+- Install sessions last **120 minutes**, including dependency provisioning;
+  selected GET URLs last **10 minutes**. `POST /v1/tools/install/renew` rechecks
+  session ownership, expiry, current access and pinned package metadata, returning
+  new URLs for the same session and inventory without extending its deadline.
+  The CLI retries an expired/denied GET once through this endpoint. A second
+  denial or expired session tells the consumer to retry installation; completion
+  of an expired pending session fails rather than recording success.
+- Downloads use a **30-second connection timeout** and **30-second progress/idle
+  timeout**, including waiting for response headers. There is no fixed overall
+  transfer timeout while progress continues. Byte count and SHA-256 must match
+  before a unique temporary download replaces a cache entry.
+- Cache filenames hash a structured tuple of kind, namespace/name, version,
+  selected target and payload digest. Cache reuse rechecks the payload digest and
+  size. For new releases, the embedded manifest and build descriptor must also
+  agree with the verified proof before extraction becomes active.
+- The extracted payload remains at its existing version-terminal directory.
+  A sibling `.<version>.selection.json` in the package's `.agentpm/` directory
+  records the consumer target, selected descriptor and logical release identity;
+  runtime fingerprints remain in the existing managed-environment state.
+  Execution rejects missing/inconsistent selection state or a changed consumer
+  target for a new-format payload, with reinstall guidance. Portable lock fields
+  remain unchanged.
+- Extraction stages into a fresh sibling directory. It permits regular files
+  and directories only, rejects links and special entries, and caps each archive
+  at **15,000 extracted entries** and **2 GiB of total decompressed tar bytes**
+  (including headers/padding). Traversal, absolute and Windows-style unsafe paths
+  fail. Failure removes the stage and preserves any previous complete payload;
+  successful validation replaces the directory atomically.
+- `install --machine` emits a versioned success/error JSON envelope. Compatibility
+  errors include the requested version/target and available targets. A newer
+  compatible stable version can be offered only for a fresh install without an
+  existing lock, within the original non-exact requested range, on an interactive
+  terminal with explicit confirmation. Exact, frozen, locked, machine and
+  noninteractive installs do not prompt or change versions.
+
 ### 28. Legacy Python Tool compatibility
 
 Legacy Python Tool versions:

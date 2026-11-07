@@ -4226,6 +4226,67 @@ Test target behavior:
 - download client enforces explicit connect and idle/progress timeouts instead of `reqwest` defaults;
 - legacy package follows legacy install path.
 
+#### M15 implementation evidence — 2026-11-07
+
+- Rust workspace suite: **1,231 passed, 6 ignored**. Existing legacy install,
+  frozen-lock, export/new, runner and Harness coverage remains green. After the
+  final renewal/local-state hardening, focused SDK install-provenance tests
+  passed **2/2**, and download/extraction tests passed **13/13**. The latter
+  include real HTTP expiry/renewal, corrupt-cache revalidation, size/hash/
+  truncation/idle failures and preservation of previous cache/payload bytes.
+- Registry full suite: **723 passed, 7 skipped, 165 subtests passed** against
+  disposable PostgreSQL. Final focused target-install coverage passed **12/12**,
+  including exact-before-any, one URL, full inventory, logical digest negotiation,
+  invalid target/Python context, incompatible Python floor, selected-row versus
+  inventory mismatch, session ownership/access, expiry and renewal identity.
+- Actual pinned `uv 0.13.5` and Homebrew Python 3.13 on aarch64 macOS:
+  `python_environment::tests --include-ignored --test-threads=1` passed **10/10**.
+  This includes native-wheel CLI/Harness execution, provisioning-before-finalize,
+  frozen lock preservation, missing wheel/hash/unrecorded dependency failures,
+  interrupted environment repair and interpreter fingerprint checks. These
+  existing real-uv cases are not evidence of a full signed new-format manual
+  install or of execution on other hosts.
+- SDK selection fixtures cover all four supported consumer targets, exact/any
+  precedence and descriptor membership. The real CLI compatibility fixture
+  verifies JSON/nonzero failure, no prompt/version change and no lock/finalize
+  on an incompatible exact request. Cache identities also distinguish kind,
+  version, target, digest and names that collided under hyphen concatenation.
+- `cargo fmt --all -- --check` and workspace/all-target Clippy with warnings
+  denied pass. Local release-contract parity and ordinary bootstrap validation
+  pass with the existing dev root. API pre-commit formatting/lint/security hooks
+  pass except the two existing mypy errors in `application/search.py` (lines
+  1486 and 1856); these unchanged search typing errors are not marked fixed.
+- Limits under test/documentation: 120-minute install session, 10-minute GET,
+  30-second connect/progress idle timeout, one same-session URL renewal attempt,
+  15,000 extracted entries and 2 GiB total decompressed tar bytes. Tests inject
+  small limits/idle intervals to exercise boundaries without giant fixtures or
+  long sleeps. Renewal never extends the original install deadline.
+- No portable lock/manifest schema, database migration, external Python/Node
+  SDK or production feature flag changes are included. Target selection and
+  managed-runtime fingerprints remain machine-local.
+
+Independent review: user confirmed no remaining findings. The signed-release
+end-to-end acceptance gap is recorded explicitly in the Band 11 gate below.
+
+Remaining acceptance: fresh hosted CI/native runners and
+Registry PostgreSQL coverage, and the operator's complete dev signed-new-format
+install/run/Harness/frozen/failure-repair checks. Production root bootstrap,
+main-ref Registry contract parity and activation remain Release Band 11 gates;
+local automated tests do not satisfy them. M15's new tests are wired into the
+existing native Resolver Contract and Registry PostgreSQL jobs.
+
+Band 11 additionally requires an observed end-to-end production-chain install
+using the shipped CLI and a real signed new-format release, after its operator
+bootstrap/parity/capacity prerequisites. Record root/key-set verification,
+Registry v3 and author v2 verification, full-inventory binding, exact-target or
+`any` selection, the single payload's digest, managed provisioning and execution.
+Cover exact-before-any and fallback with suitable releases, retaining logical
+integrity in the portable lock. In-memory `PackageArtifact` cases and separately
+passing verification tests do not close this gate. A genuine local end-to-end
+install can already use the existing dev root and served dev key set; that
+manual acceptance does not prove the deployed production chain. Removing the
+dev pin is a CLI release requirement, not a local-testing prerequisite.
+
 ### SDK lockfile and managed Python Tool compatibility (M17)
 
 Implement these cases in both `agentpm-sdk-python` and `agentpm-sdk-node`.

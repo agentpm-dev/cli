@@ -2033,61 +2033,78 @@ and manual testing. Production root/backfill/delivery remain unclaimed.
 > - Current extraction silently skips symlink/hardlink entries and has no decompressed-size cap. Harden this while changing the install path.
 > - Dependency provisioning adds a new install failure stage; do not finalize the install session as successful until the local runtime environment is ready.
 
-- [ ] Detect canonical current target using the Milestone 11A target identifier/detection mapping.
-- [ ] Resolve the Tool's Python interpreter using existing family/minimum-version/`AGENTPM_PYTHON` rules before provisioning dependencies.
-- [ ] Extend install-init request with target/runtime context needed for selection.
-- [ ] Read/verify new release metadata:
-  - [ ] logical release digest;
-  - [ ] canonical artifact inventory;
-  - [ ] Python resolution;
-  - [ ] provenance material from Milestone 14C.
-- [ ] Have install-init return/presign only the selected concrete artifact for the consumer while still exposing available target metadata for diagnostics.
-- [ ] Select exact target first.
-- [ ] Fall back to `any` only when a portable artifact is present.
-- [ ] Verify release-level integrity before trusting artifact metadata.
-- [ ] Verify selected artifact appears exactly in the verified release manifest.
-- [ ] Stream-download selected artifact.
-- [ ] Validate received size against expected artifact size where practical.
-- [ ] Recompute selected artifact SHA-256 and compare to the verified release manifest.
-- [ ] Redesign cache identity to prevent collisions across:
-  - [ ] kind;
-  - [ ] namespace/name;
-  - [ ] version;
-  - [ ] target;
-  - [ ] artifact digest.
-- [ ] Preserve cache re-verification before reuse.
-- [ ] Define install-side expiry and timeout behavior:
-  - [ ] keep the install session valid through dependency provisioning, not only through artifact download (today the session TTL and presigned GET are both 10 minutes, sized for one small tarball);
-  - [ ] make a mid-install presigned-GET expiry produce an actionable error, and re-obtainable without restarting the whole install where practical;
-  - [ ] set deliberate connect and idle/progress timeouts on the download client, which currently uses `reqwest` defaults with no explicit timeout;
-  - [ ] record the chosen session and URL lifetimes in the spec rather than inheriting 10 minutes.
-- [ ] Keep extracted Tool directory version-terminal if no correctness issue requires a target segment; only one target payload is active per local install.
-- [ ] Store selected target/artifact digest/runtime-environment fingerprint in machine-local `.agentpm/` state if persistence is needed.
-- [ ] Harden archive extraction:
-  - [ ] reject unsupported symlink/hardlink entries explicitly instead of silently skipping them;
-  - [ ] retain traversal/absolute-path protection;
-  - [ ] enforce decompressed total-byte cap;
-  - [ ] enforce entry-count cap on extraction;
-  - [ ] ensure failed extraction cannot leave a seemingly complete install directory.
-- [ ] Provision dependencies after payload extraction:
-  - [ ] create/reuse Milestone-11C managed Python environment;
-  - [ ] replay the stored `PythonResolution` through AgentPM-managed `uv`, hash-verified against the recorded digests, without re-resolving;
-  - [ ] keep the wheel-only rule — no source builds — and surface the no-compatible-wheel error for the selected target;
-  - [ ] call the Milestone-11A resolver acquisition component; do not re-implement acquisition, PATH discovery, or verification here;
-  - [ ] verify environment fingerprint.
-- [ ] Only finalize the install session as successful after payload + dependency environment are ready.
-- [ ] Preserve legacy install/download/extract path for legacy releases.
-- [ ] Add actionable no-compatible-artifact error:
-  - [ ] requested target;
-  - [ ] available targets;
-  - [ ] selected Tool version.
-- [ ] Implement interactive recovery only for supported alternatives:
-  - [ ] a compatible newer version may be offered only for an unpinned/non-exact request;
-  - [ ] require explicit confirmation.
-- [ ] Do not silently install incompatible artifact.
-- [ ] Do not silently change a locked/exact version.
-- [ ] In headless mode, fail deterministically with structured error.
-- [ ] Do not add Rosetta/emulation handling in this milestone.
+- [x] Detect canonical current target using the Milestone 11A target identifier/detection mapping.
+- [x] Resolve the Tool's Python interpreter using existing family/minimum-version/`AGENTPM_PYTHON` rules before provisioning dependencies.
+- [x] Extend install-init request with target/runtime context needed for selection.
+- [x] Read/verify new release metadata:
+  - [x] logical release digest;
+  - [x] canonical artifact inventory;
+  - [x] Python resolution;
+  - [x] provenance material from Milestone 14C.
+- [x] Have install-init return/presign only the selected concrete artifact for the consumer while still exposing available target metadata for diagnostics.
+- [x] Select exact target first.
+- [x] Fall back to `any` only when a portable artifact is present.
+- [x] Verify release-level integrity before trusting artifact metadata.
+- [x] Verify selected artifact appears exactly in the verified release manifest.
+- [x] Stream-download selected artifact.
+- [x] Validate received size against expected artifact size where practical.
+- [x] Recompute selected artifact SHA-256 and compare to the verified release manifest.
+- [x] Redesign cache identity to prevent collisions across:
+  - [x] kind;
+  - [x] namespace/name;
+  - [x] version;
+  - [x] target;
+  - [x] artifact digest.
+- [x] Preserve cache re-verification before reuse.
+- [x] Define install-side expiry and timeout behavior:
+  - [x] keep the install session valid through dependency provisioning, not only through artifact download (today the session TTL and presigned GET are both 10 minutes, sized for one small tarball);
+  - [x] make a mid-install presigned-GET expiry produce an actionable error, and re-obtainable without restarting the whole install where practical;
+  - [x] set deliberate connect and idle/progress timeouts on the download client, which currently uses `reqwest` defaults with no explicit timeout;
+  - [x] record the chosen session and URL lifetimes in the spec rather than inheriting 10 minutes.
+- [x] Keep extracted Tool directory version-terminal if no correctness issue requires a target segment; only one target payload is active per local install.
+- [x] Store selected target/artifact digest/runtime-environment fingerprint in machine-local `.agentpm/` state if persistence is needed.
+- [x] Harden archive extraction:
+  - [x] reject unsupported symlink/hardlink entries explicitly instead of silently skipping them;
+  - [x] retain traversal/absolute-path protection;
+  - [x] enforce decompressed total-byte cap;
+  - [x] enforce entry-count cap on extraction;
+  - [x] ensure failed extraction cannot leave a seemingly complete install directory.
+- [x] Provision dependencies after payload extraction:
+  - [x] create/reuse Milestone-11C managed Python environment;
+  - [x] replay the stored `PythonResolution` through AgentPM-managed `uv`, hash-verified against the recorded digests, without re-resolving;
+  - [x] keep the wheel-only rule — no source builds — and surface the no-compatible-wheel error for the selected target;
+  - [x] call the Milestone-11A resolver acquisition component; do not re-implement acquisition, PATH discovery, or verification here;
+  - [x] verify environment fingerprint.
+- [x] Only finalize the install session as successful after payload + dependency environment are ready.
+- [x] Preserve legacy install/download/extract path for legacy releases.
+- [x] Add actionable no-compatible-artifact error:
+  - [x] requested target;
+  - [x] available targets;
+  - [x] selected Tool version.
+- [x] Implement interactive recovery only for supported alternatives:
+  - [x] a compatible newer version may be offered only for an unpinned/non-exact request;
+  - [x] require explicit confirmation.
+- [x] Do not silently install incompatible artifact.
+- [x] Do not silently change a locked/exact version.
+- [x] In headless mode, fail deterministically with structured error.
+- [x] Do not add Rosetta/emulation handling in this milestone.
+
+Implementation verification (2026-11-07): local Rust workspace and Registry
+suites pass, with focused final renewal/extraction checks and actual pinned-uv
+native-wheel tests. See the M15 evidence in `test-plan.md` for counts and limits.
+Implementation checkmarks do not claim the following acceptance steps:
+
+- [x] Independent review of Milestone 15 and resolution of any findings.
+      User confirmed review passed with no remaining findings. The signed-release
+      end-to-end acceptance gap is explicitly retained under Band 11 below.
+- [ ] Hosted CLI CI and all four native Resolver Contract runners pass for the
+      revision under review; Registry PostgreSQL job passes with target-install
+      coverage. Registry parity against authoritative CLI main remains the
+      separate Release Band 11 gate below.
+- [ ] Operator manual testing of a root-trusted, signed new-format release:
+      exact/any selection, install/run/Harness with actual dependencies, frozen
+      lock reuse, failure/repair and legacy regression checks. Use the existing
+      dev trust bootstrap; no production activation is claimed here.
 
 ## Release Band 11: Release Integrity and Verifiable Target-Aware Installs
 
@@ -2118,6 +2135,21 @@ This is the band where the new release format becomes real for users. It gives u
       This requirement is carried forward from the gated Band 9 rollout, not
       marked satisfied by its tiny storage probe. Record resource/concurrency
       assumptions and the relevant capacity evidence before activation.
+- [ ] Before declaring Band 11 accepted, exercise the shipped CLI against a
+      real signed new-format release through the deployed production trust
+      chain: pinned official root → root-signed served key set → Registry v3
+      attestation and author v2 signature → full release inventory → selected
+      artifact bytes → managed environment → successful Tool execution.
+      Verify exact-target precedence and portable `any` fallback using suitable
+      releases, only the selected payload is downloaded, and the portable lock
+      retains logical release integrity. Record CLI/Registry revisions, release
+      identities, host target, selected artifact digests and observed results.
+      Arrange any production smoke publication/activation only after the root,
+      parity and capacity prerequisites above; do not enable it as part of M15
+      implementation. Synthetic selection fixtures and separate verification
+      tests do not satisfy this end-to-end release gate. The existing dev root
+      can independently support M15's genuine local signed-release manual test;
+      production bootstrap is not a prerequisite for that local test.
 
 ## Milestone 16: Headless Signing and GitHub Actions Publishing
 > Scope note: make multi-target releases practical for maintainers by adding secure noninteractive signing plus a first official GitHub Actions workflow that packages target artifacts in parallel and performs one final atomic AgentPM publish. Follow existing AgentPM workflow conventions, but keep the package-build/publish protocol CI-provider-neutral. Stage 1 uses PAT auth for AgentPM registry CI; OIDC trusted publishing remains future work.

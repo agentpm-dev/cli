@@ -53,6 +53,7 @@ async fn counts_and_boolean_attestation_cannot_complete_an_explicitly_verified_i
             update_range: false,
             quiet: true,
             require_signature: !attestation,
+            machine: false,
             require_attestation: attestation,
             token: None,
         };

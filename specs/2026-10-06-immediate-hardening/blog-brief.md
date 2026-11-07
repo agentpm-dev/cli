@@ -143,3 +143,17 @@ storage interacts with database rollback, and why one clean target cannot stand
 in for the complete release. Keep any public walkthrough deferred until signing,
 verification and target-aware consumption are available; local fixtures and
 mocked storage do not establish production rollout or actual GuardDuty coverage.
+
+## Milestone 15 Evidence
+
+Potential engineering material: selecting one platform payload while verifying
+the entire signed release, keeping logical lock integrity separate from local
+artifact/cache identity, and treating download, extraction and dependency
+provisioning as distinct failure stages before install completion. Local tests
+exercise URL expiry/renewal, corrupted caches, malicious archives, machine-mode
+compatibility failures, real Registry rows and pinned-uv native-wheel execution.
+Hosted native CI and a complete operator install of a signed new-format release
+remain acceptance work; production trust bootstrap and activation remain release
+gates. Do not describe the local implementation as a production rollout or a
+completed cross-platform guarantee. This is evidence for later content planning,
+not an article draft.

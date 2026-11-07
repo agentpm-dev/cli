@@ -671,6 +671,7 @@ fn prepare_invocation(
     options: &RunOptions,
 ) -> Result<PreparedInvocation> {
     let entrypoint = &resolved.manifest.entrypoint;
+    crate::io::download::validate_local_selection(&resolved.tool_dir)?;
     let mut interpreter = resolve_interpreter_command(
         entrypoint.command.as_str(),
         resolved.manifest.runtime.as_ref(),

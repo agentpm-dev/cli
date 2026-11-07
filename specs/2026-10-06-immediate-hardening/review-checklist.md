@@ -398,6 +398,19 @@
 - Confirm a presigned GET expiring mid-install produces an actionable error.
 - Confirm the download client sets explicit connect and idle/progress timeouts instead of using `reqwest` defaults.
 - Confirm legacy install path remains intact.
+- Confirm capability negotiation does not let older clients treat a logical
+  release digest as a payload digest, and selected size/content type/descriptor
+  exactly match the verified full inventory before download.
+- Confirm URL renewal preserves the session ID/deadline, rejects duplicate or
+  changed package metadata, and rechecks current ownership/access without
+  re-resolving or silently changing a selected version.
+- Confirm the documented 120-minute session, 10-minute URL, 30-second connection
+  and idle timeouts, one renewal retry, 15,000-entry and 2-GiB extraction limits
+  match implementation and failure tests.
+- Confirm missing or inconsistent new-format local selection state fails at
+  execution, while legacy payloads without such state keep their prior behavior.
+- Confirm recovery candidates stay within the original request and cannot cause
+  exact/frozen/locked/machine/noninteractive installs to prompt or upgrade.
 
 ## Headless signing and CI
 

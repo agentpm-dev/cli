@@ -1493,6 +1493,7 @@ json.dump({"upper": payload.get("message", "").upper()}, sys.stdout)
                     signing: None,
                     verification: None,
                     runtime: None,
+                    selected_artifact: None,
                 }],
             }),
         )

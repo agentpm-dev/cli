@@ -3444,7 +3444,17 @@ mod tests {
                 "version":item["version"],
                 "integrity":integrity,
                 "presigned_url":url,
-                "size":12,
+                "size":match kind {
+                    "template" => state.template_tar.len(),
+                    "tool" => state.tool_tar.len(),
+                    "agent" => state.agent_tar.len(),
+                    "knowledge" => state.knowledge_tar.len(),
+                    "memory" => state.memory_tar.len(),
+                    "profile" => state.profile_tar.len(),
+                    "loop" if item["name"].as_str() == Some("@zack/reviewer-loop") => state.reviewer_loop_tar.len(),
+                    "loop" => state.loop_tar.len(),
+                    _ => unreachable!(),
+                },
                 "content_type":"application/gzip"
             }));
         }
