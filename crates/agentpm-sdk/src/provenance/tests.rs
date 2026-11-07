@@ -47,6 +47,70 @@ fn authenticated_provenance_verifies_new_and_existing_legacy_releases() {
 }
 
 #[test]
+fn original_v1_registry_types_verify_without_rewriting_signed_bytes() {
+    use ed25519_dalek::{Signer, SigningKey};
+    let (data, keys) = trusted();
+    let key = SigningKey::from_bytes(&std::array::from_fn(|i| i as u8));
+    let policy = VerificationPolicy {
+        require_signature: true,
+        require_attestation: true,
+    };
+    for statement_type in [
+        "agentpm.registry.attestation.v1",
+        "agentpm.package.attestation.v1",
+    ] {
+        let mut artifact: PackageArtifact =
+            serde_json::from_value(data["vectors"][2]["artifact"].clone()).unwrap();
+        let att = artifact
+            .verification
+            .as_mut()
+            .unwrap()
+            .registry_attestation
+            .as_mut()
+            .unwrap();
+        att.statement_json["type"] = json!(statement_type);
+        if statement_type == "agentpm.registry.attestation.v1" {
+            att.statement_json.as_object_mut().unwrap().remove("kind");
+        }
+        let bytes = legacy_statement_bytes(&att.statement_json).unwrap();
+        att.signature_b64 = B64.encode(key.sign(&bytes).to_bytes());
+        att.statement_bytes_b64 = Some(B64.encode(&bytes));
+        verify_artifact(&artifact, Some(&keys), policy).unwrap();
+
+        for field in ["type", "namespace", "kind", "artifactDigest"] {
+            let mut changed = artifact.clone();
+            let att = changed
+                .verification
+                .as_mut()
+                .unwrap()
+                .registry_attestation
+                .as_mut()
+                .unwrap();
+            att.statement_json[field] = json!("unsupported");
+            // Re-sign honestly: even a valid signature cannot bypass binding or
+            // turn an unrecognized future type into a supported legacy format.
+            let bytes = legacy_statement_bytes(&att.statement_json).unwrap();
+            att.signature_b64 = B64.encode(key.sign(&bytes).to_bytes());
+            att.statement_bytes_b64 = Some(B64.encode(bytes));
+            assert!(
+                verify_artifact(&changed, Some(&keys), policy).is_err(),
+                "{statement_type}: {field}"
+            );
+        }
+        let mut changed = artifact;
+        changed
+            .verification
+            .as_mut()
+            .unwrap()
+            .registry_attestation
+            .as_mut()
+            .unwrap()
+            .signature_b64 = B64.encode([0; 64]);
+        assert!(verify_artifact(&changed, Some(&keys), policy).is_err());
+    }
+}
+
+#[test]
 fn keyset_root_origin_signature_and_validity_are_required() {
     let data = fixture();
     let roots: Vec<TrustRoot> = serde_json::from_value(data["roots"].clone()).unwrap();

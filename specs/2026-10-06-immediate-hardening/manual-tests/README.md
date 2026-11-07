@@ -62,3 +62,9 @@ Generated workspaces/results are disposable; each guide states their location.
   dependency binding, legacy CLI compatibility and isolated PostgreSQL failure
   checks. Uses disposable dev signers; production activation and CLI-main
   contract parity remain Release Band 11 gates.
+- [Registry trust bootstrap and consumer verification (Milestone 14C)](SIGNING_M14C_MANUAL_TESTS.md):
+  real encrypted offline dev root and public pins, verified current-key backfill,
+  signed public-list delivery, old-catalogue CLI verification, new-format proof
+  and tamper checks, strict signed legacy install and Security UI inspection.
+  Persistent dev trust state survives cleanup; production bootstrap and CLI-main
+  parity remain Release Band 11 gates.

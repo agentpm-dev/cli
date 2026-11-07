@@ -3996,12 +3996,12 @@ Independent review passed with no findings, as confirmed by the operator.
 The operator approved the offline-root
 custody model: an encrypted root file stays with the operator, the Registry
 serves a pre-signed public key inventory, and no root secret enters Render/CI.
-The actual dev/production root generation, public-pin commit, configured-key
-backfill and signed-list installation have **not** occurred. Both checked-in
-trust-root manifests intentionally have empty `roots` arrays. The endpoint and
-client requirements fail closed until bootstrap, and the release-only bootstrap
-checker intentionally rejects shipping this unconfigured CLI. These are open
-operational acceptance criteria, not satisfied by fixture material.
+The operator has now confirmed all M14C manual tests passed, including real dev
+root generation/custody, public pins, existing-key backfill and signed public-list
+delivery. Both audited development manifests contain the real loopback dev pin.
+Production root/bootstrap remains open. Release checking intentionally rejects
+the dev pin; production-only audited pins and production delivery/verification
+are still required before shipping, and are not satisfied by fixture material.
 
 Implemented:
 
@@ -4059,7 +4059,7 @@ Historical consumer-path regression was also run explicitly:
    serializer, a Unicode publisher identity and a historical extension containing
    a float whose Python/Rust JSON spellings differ. Legacy proof carries the exact
    signed bytes; the client checks their parsed statement binding before crypto.
-2. `test_existing_v2_attestation_is_backfilled_and_exported_for_actual_client_verification`
+2. `test_existing_legacy_attestation_is_backfilled_and_exported_for_actual_client_verification`
    verifies and backfills its public key, produces a root-signed complete key set,
    and exports public install proof when `AGENTPM_M14C_PERSISTED_PROOF` is set.
 3. With the same public file, ran
@@ -4082,15 +4082,76 @@ finalize or lock creation. Shared-client HTTP tests reject plan substitution,
 missing packages and namespace-required-signature downgrade. Template mocks were
 corrected to emit the deduplicated graph the real resolver already returns.
 
-**Still open:** hosted/native CI and eventual CLI-main parity;
-deliberate operator root generation and safe custody/backup; committing real audited
-dev/production public pins; verified backfill of the real configured attestation key;
-signed public-list delivery/renewal and actual legacy-catalogue verification; and
-operator manual acceptance. See
+**Hosted CI:** the operator confirmed CLI CI, all four native Resolver Contract
+jobs, Registry Release uploads and migrations (PostgreSQL), and Web CI passed on
+the PR branches. Registry Release Contract Parity is the expected remaining
+failure because the matching authoritative CLI contracts are not on public CLI
+`main` yet. Rerun it for the Registry revision to be shipped after that merge;
+this report does not claim a main-ref parity pass or a deployment.
+
+**Still open for Band 11:** eventual CLI-main parity; production root generation
+and custody/backup; production public pins with dev entries removed from both
+release manifests; production-key backfill, signed public-list delivery and
+actual production legacy-catalogue verification. Final hosted CI must cover the
+revision shipped, including manual-test follow-up fixes. See
 `agentpm-api/app/tools/domain/tools/REGISTRY_TRUST.md` for the ordered bootstrap.
-Complete dev bootstrap during M14C manual acceptance before starting M15's real
-new-format end-to-end installation tests; production bootstrap is required before
-Release Band 11 ships the stricter verifier.
+Dev bootstrap/manual acceptance is complete and unblocks M15's real new-format
+end-to-end installation tests. Production bootstrap is required before Release
+Band 11 ships the stricter verifier.
+
+The [M14C operator runbook](manual-tests/SIGNING_M14C_MANUAL_TESTS.md) and its
+checked-in `fixtures/m14c` helpers are prepared. Seven helper checks passed,
+including actual V1.105-backed idempotent key seeding and historical proof export
+against disposable PostgreSQL; nonlocal DB refusal, read-only inspection,
+public-only pinning/conflict protection and isolated tamper copies are covered.
+The generated source passed `agentpm lint`, the standalone fixture consumer of
+the real Rust SDK compiled offline, and the runbook's zsh blocks passed syntax
+checking. No actual operator root, real dev DB backfill, served key list,
+production pin/configuration or live manual acceptance is claimed by preparation.
+
+During operator dev bootstrap, read-only catalogue inspection found 18 original
+`agentpm.registry.attestation.v1` rows and one
+`agentpm.package.attestation.v1` row alongside v2/v3. The initial backfill
+incorrectly rejected these historical names. Backfill and the Rust consumer now
+recognize the two explicit v1 forms while preserving original serialized bytes,
+missing-kind-as-Tool semantics, namespace/name/version/digest binding and full
+signature verification. Unknown types and invalid signatures still fail closed.
+No real stored row, existing root pin or private key was changed by this fix.
+Focused verification: **18 Registry trust/root tests passed** with disposable
+PostgreSQL; **5 Rust provenance tests passed, 1 handoff test ignored**; SDK Clippy
+passed. Required Registry hooks pass except the two unchanged search.py mypy
+errors; final formatting is checked. The operator subsequently confirmed the dev
+seed retry and the remaining manual tests passed.
+
+The bootstrap release gate was tightened after review: ordinary CI permits valid
+exact-origin dev pins, but release mode permits only the official production
+HTTPS origin. Tests include an official root plus HTTP dev, HTTPS loopback,
+IPv6 loopback and HTTPS staging roots; every combined release is rejected while
+development checks pass. Fixture public keys are forbidden for every origin.
+Malformed schemes, paths, credentials, queries/fragments and ports are rejected.
+The four checker tests pass, the actual current dev-pin manifest passes ordinary
+CI checking, and release checking fails as intended. The checker does not mutate
+the manifest or delete dev pins. Removing them from both audited copies is an
+explicit Band 11 source/release gate; the current local pin remains available for
+M14C/M15 manual verification.
+
+**Operator manual acceptance (2026-11-07): all tests passed.** This includes
+encrypted dev root generation/custody and matching audited public pins;
+backfill of the existing dev signing key without rewriting old v1/v2/v3
+attestations; a root-authenticated live key endpoint/cache; existing legacy v2
+proof and actual CLI install; and the signed four-artifact M14B release proof.
+The selected old package was
+`@zack/m14b-check-20261107012649-db6b4b0f-legacy@0.1.3`; the new-format matrix was
+`@zack/m14b-check-20261107012649-db6b4b0f@0.1.1`.
+All six modified copies were rejected and the untouched original still passed.
+The target mutation was rejected at duplicate-target inventory validation, before
+signature verification. Security UI/historical signer status, strict signed
+legacy publish/install/run and controlled cache/policy regressions also passed.
+Manual follow-ups added original v1 attestation compatibility, Security layout
+polish, shared breadcrumb truncation and the production-only release pin gate.
+Keep persistent dev trust files and renew the signed list before expiry. No
+production bootstrap, production activation or main-ref hosted parity pass is
+claimed by this development acceptance.
 No version bump, push, deployment, production mutation or release-gate activation
 is included. M15 target selection/download/provisioning and M16 publication stay
 out of scope; new-format installation remains gated.

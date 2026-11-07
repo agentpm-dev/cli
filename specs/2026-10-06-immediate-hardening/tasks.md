@@ -1915,13 +1915,16 @@ Band 11 gate, not an open M14B completion item.
   - [x] reject unknown key IDs and invalid/untrusted key-set signatures;
   - [x] keep retired signing keys available for historical verification;
   - [x] treat root-key rotation as a separate rare bootstrap/CLI-update concern; dynamic root rotation is out of Stage 1.
-- [ ] **Backfill the existing attestation signing key before enforcing verification.** Every already-published version has a `RegistryAttestation` recording the current `REGISTRY_KEY_ID` (default `apm-prod-1`); if that key ID is absent from the signed key set, `--require-attestation` regresses from passing to failing for the entire back catalogue:
-  - [ ] seed the public half of the currently configured attestation key into `registry_signing_keys` as an active key;
-  - [ ] include it in the first published key set and every later one;
+  - [x] permit exact-origin dev pins for development/manual testing, reject public
+    fixture roots for every origin, and enforce production-only audited root pins
+    in release CI even when the official root is present alongside a dev pin.
+- [ ] **Backfill the existing attestation signing key before enforcing verification** (dev complete; production remains a Band 11 gate). Every already-published version has a `RegistryAttestation` recording the current `REGISTRY_KEY_ID` (default `apm-prod-1`); if that key ID is absent from the signed key set, `--require-attestation` regresses from passing to failing for the entire back catalogue:
+  - [ ] seed the public half of the currently configured attestation key into `registry_signing_keys` as an active key (dev verified; production pending);
+  - [ ] include it in the first published key set and every later one (dev verified; production pending);
   - [x] confirm an **existing** `agentpm.registry.attestation.v2` row verifies end-to-end through the new client verification path, not merely that legacy server-side behavior is unchanged;
   - [x] state in docs/spec that `--require-attestation` covers legacy single-artifact releases as well as new-format releases.
-- [ ] **Establish the registry root key as an operational prerequisite, sequenced before enforcement:**
-  - [ ] generate the root Ed25519 keypair as a deliberate documented step before enabling the key-set endpoint;
+- [ ] **Establish the registry root key as an operational prerequisite, sequenced before enforcement** (dev complete; production remains a Band 11 gate):
+  - [ ] generate the root Ed25519 keypair as a deliberate documented step before enabling the key-set endpoint (dev complete; production pending);
   - [x] define and document root private-key custody and how key-set signing is performed; do not reuse the current pattern of a plain env-var read behind a log-and-continue failure path;
   - [ ] respect the bootstrap order — root keypair → seed existing attestation keys → root-signed key set → CLI shipped with pinned root public key → only then enforce `--require-attestation`;
   - [x] make `GET /v1/registry/signing-keys` **fail closed** when a valid root signature cannot be produced, rather than serving an unsigned or partial key set;
@@ -1957,22 +1960,41 @@ Band 11 gate, not an open M14B completion item.
   - [x] registry statement/signature;
   - [x] wrong/untrusted registry key.
 
-**Implementation status:** independent review passed with no findings, as
-confirmed by the operator. Operational root bootstrap and manual/hosted acceptance
-are still open. The operator approved
+- [x] Complete the real dev bootstrap and operator manual acceptance using
+  `manual-tests/SIGNING_M14C_MANUAL_TESTS.md`; operator confirmed all tests passed.
+  - [x] Generate the distinct encrypted dev root, follow custody/backup steps and
+    pin only its public key in both audited development manifests.
+  - [x] Verify/backfill the existing dev attestation key and serve the offline-root-
+    signed complete public inventory from the local Registry.
+  - [x] Verify an already-published legacy v2 package through the actual CLI,
+    including cryptographic attestation enforcement.
+  - [x] Verify the existing four-artifact release with the actual Rust consumer,
+    reject all six tampered copies and accept the unchanged original.
+  - [x] Verify historical signer status, new/legacy Security pages, signed legacy
+    publish/strict install/run, and controlled cache/policy regressions.
+
+**Implementation status:** development implementation, root bootstrap and manual
+acceptance are complete; M15 can proceed. Independent review passed with no findings, as
+confirmed by the operator. The operator also confirmed CLI CI, all four Resolver
+Contracts, Registry PostgreSQL uploads/migrations and Web CI passed on the PRs.
+Registry Release Contract Parity remains pending against public CLI `main`, as
+expected before the coordinated merge. Production root bootstrap and release
+acceptance remain Band 11 gates. The operator approved
 an **offline encrypted root** and a **pre-signed public key list**; the server
 never receives the root private key. V1.105 adds immutable public-key history
 without altering existing signing/version constraints. A verified, idempotent
 `flask --app run registry seed-current-key` command, public inventory export,
 offline root-generation/signing tool and retirement command are implemented.
-The unchecked bootstrap/pinning/backfill items above require actual operator
-execution in dev and production; fixture keys do not satisfy them.
+The unchecked official-root/bootstrap/backfill items above now apply to
+production; fixture keys and the completed dev setup do not satisfy them.
 
-The audited `registry-trust-roots-v1.json` copies intentionally contain no roots
-yet. The key endpoint fails closed and CLI release CI's
-`check_registry_bootstrap.py --release` intentionally fails until an actual
-official public pin is committed. Do not release this stricter verifier before
-backfill/key-list delivery is ready. The operator sequence and custody/renewal
+The audited `registry-trust-roots-v1.json` copies now contain the real loopback
+dev public pin for local testing. CLI release CI's
+`check_registry_bootstrap.py --release` intentionally rejects this development
+pin. Before release, complete production bootstrap and remove dev/non-production
+entries from both audited manifests, retaining the official production root/ring.
+Do not release the stricter verifier before production backfill/key-list delivery
+is ready. The operator sequence and custody/renewal
 policy are documented in `agentpm-api/app/tools/domain/tools/REGISTRY_TRUST.md`.
 
 Install/init adds complete verification material; shared Rust client consumption
@@ -1987,11 +2009,15 @@ No `agent.json`, portable lockfile, external Python/Node SDK, version bump,
 production deployment or feature-flag activation change is included.
 
 Local verification and outstanding acceptance are recorded in `test-plan.md`.
-Hosted/native jobs, operator root/bootstrap/manual checks and the coordinated
-CLI-main parity/release gates remain unclaimed. Complete dev root bootstrap during
-M14C manual testing before starting M15, so its new-format end-to-end install tests
-can use an actual authenticated key endpoint. Production bootstrap remains a
-Release Band 11 shipping prerequisite.
+Production root/bootstrap verification and the coordinated CLI-main parity/release
+gates remain open. The completed dev bootstrap provides the actual authenticated
+key endpoint needed for M15's new-format end-to-end install tests.
+
+The completed operator walkthrough is recorded in
+[`manual-tests/SIGNING_M14C_MANUAL_TESTS.md`](manual-tests/SIGNING_M14C_MANUAL_TESTS.md),
+with checked-in dev-only helpers and a consumer of the actual Rust verifier.
+Operator acceptance, rather than fixture preparation alone, closes dev bootstrap
+and manual testing. Production root/backfill/delivery remain unclaimed.
 
 ## Milestone 15: Target-Aware Installation and Runtime Provisioning
 > Scope note: consume the new release model safely on the client: choose one compatible target artifact, verify the release and payload, cache/extract it without collisions, provision the AgentPM-managed Python environment, and fail deterministically when compatibility or archive safety checks fail. Preserve the legacy install path and do not add Rosetta/emulation or silently change locked versions.
@@ -2073,6 +2099,10 @@ This is the band where the new release format becomes real for users. It gives u
       before shipping stricter client verification. Require
       `scripts/check_registry_bootstrap.py --release` to pass and verify an
       already-published legacy v2 attestation through the deployed trust chain.
+      Before tagging the CLI, remove development/non-production root entries from
+      both audited manifest copies; release mode accepts only the official
+      `https://api.agentpackagemanager.com` origin. Preserve dev root custody and
+      public files for local testing; do not silently filter pins at build time.
       Fixtures/empty pins do not satisfy this gate; keep production new-format
       publication disabled until the remaining Band 11 prerequisites pass.
 - [ ] After the authoritative CLI contract changes are merged to public CLI

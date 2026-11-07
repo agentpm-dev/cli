@@ -4,6 +4,7 @@ import argparse
 import base64
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 CONTRACTS = Path(__file__).resolve().parents[1] / "crates/agentpm-sdk/contracts"
 ORIGIN = "https://api.agentpackagemanager.com"
@@ -13,9 +14,35 @@ def check(roots, fixture, release=False):
     if roots.get("version") != 1 or set(roots) != {"version", "roots"}:
         raise ValueError("unsupported Registry root manifest")
     seen = set()
+    fixture_keys = {row["publicKeyB64"] for row in fixture["roots"]}
     for root in roots["roots"]:
         if set(root) != {"registry", "rootKeyId", "publicKeyB64"}:
             raise ValueError("invalid root pin fields")
+        origin = urlsplit(root["registry"])
+        if (
+            not origin.hostname
+            or origin.geturl() != root["registry"]
+            or origin.path
+            or origin.query
+            or origin.fragment
+            or origin.username is not None
+            or origin.password is not None
+            or origin.scheme not in ("https", "http")
+            or (
+                origin.scheme == "http"
+                and origin.hostname not in ("localhost", "127.0.0.1", "::1")
+            )
+        ):
+            raise ValueError(
+                "root registry must be an exact HTTPS origin or loopback HTTP development origin"
+            )
+        # Also reject malformed/non-numeric/out-of-range ports.
+        _ = origin.port
+        if release and root["registry"] != ORIGIN:
+            raise ValueError(
+                "release root pins must use only the official production HTTPS origin; "
+                "remove development/non-production pins from both audited manifests before release"
+            )
         raw = base64.b64decode(root["publicKeyB64"], validate=True)
         if len(raw) != 32 or base64.b64encode(raw).decode() != root["publicKeyB64"]:
             raise ValueError(
@@ -25,11 +52,9 @@ def check(roots, fixture, release=False):
         if not root["rootKeyId"] or identity in seen:
             raise ValueError("empty/duplicate Registry root ID")
         seen.add(identity)
-        if root["registry"] == ORIGIN and root["publicKeyB64"] in {
-            row["publicKeyB64"] for row in fixture["roots"]
-        }:
+        if root["publicKeyB64"] in fixture_keys:
             raise ValueError(
-                "public fixture root cannot be used for the official Registry"
+                "public fixture root cannot be pinned for any Registry origin"
             )
     if release and not any(root["registry"] == ORIGIN for root in roots["roots"]):
         raise ValueError(

@@ -276,8 +276,14 @@ fn legacy_binding(statement: &Value, artifact: &PackageArtifact, registry: bool)
     );
     if registry {
         ensure!(
-            statement["type"] == "agentpm.registry.attestation.v2"
-                && statement["namespace"] == namespace,
+            matches!(
+                statement["type"].as_str(),
+                Some(
+                    "agentpm.registry.attestation.v1"
+                        | "agentpm.package.attestation.v1"
+                        | "agentpm.registry.attestation.v2"
+                )
+            ) && statement["namespace"] == namespace,
             "legacy Registry statement type/namespace mismatch"
         );
     } else {

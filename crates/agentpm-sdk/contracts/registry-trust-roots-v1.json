@@ -1,4 +1,10 @@
 {
   "version": 1,
-  "roots": []
+  "roots": [
+    {
+      "registry": "http://127.0.0.1:5000",
+      "rootKeyId": "agentpm-dev-root-1",
+      "publicKeyB64": "msdt+jsZ1X3ATafxZc6HVzo3PH9x5H9cBC+iHJHsZG8="
+    }
+  ]
 }

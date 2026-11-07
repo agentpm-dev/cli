@@ -2094,6 +2094,16 @@ For the official AgentPM registry, Stage 1 uses a **root-signed registry key-set
 - the response is a versioned key-set document (type `agentpm.registry.keyset.v1`) containing active and historical attestation-verification keys needed for existing releases;
 - canonicalize the key-set payload with RFC 8785/JCS and sign it with a separate AgentPM registry **root** Ed25519 key;
 - ship/pin the official registry root public key (or small versioned root key ring) with the CLI as the bootstrap trust anchor;
+- non-production public roots may be pinned in development branches/local builds
+  for manual verification, scoped to their exact Registry origin. Ordinary CI
+  accepts exact HTTPS origins and loopback-only HTTP development origins; public
+  fixture keys are prohibited for every origin. Distributed Stage 1 CLI releases
+  must contain only pins for `https://api.agentpackagemanager.com`.
+  `check_registry_bootstrap.py --release` rejects any development/non-production
+  origin, including HTTPS loopback/staging origins, even when an official root
+  is also present. Before release, remove development entries from both audited
+  manifests in a reviewable source change and retain the official production
+  root/ring; the checker never silently filters or edits the shipped manifest;
 - the CLI verifies the root signature on the key set before trusting any attestation signing key from it;
 - cache a successfully verified key set locally with normal refresh/expiry behavior, but never use an unverified cached or network key set;
 - attestation `registryKeyId` selects a key from the verified key set;
