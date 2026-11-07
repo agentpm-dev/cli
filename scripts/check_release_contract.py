@@ -7,6 +7,7 @@ CONTRACT_FILES = (
     "package-release-v1.schema.json",
     "package-release-v1.fixtures.json",
     "signing-canonicalization-v1.fixtures.json",
+    "release-signing-v1.fixtures.json",
 )
 
 

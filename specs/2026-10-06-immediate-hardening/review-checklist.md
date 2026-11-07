@@ -287,6 +287,24 @@
 
 ## Integrity and signing
 
+- For 14B, inspect `release_signing.py`, both finalize paths, Rust `signing/release.rs`
+  and signed HTTP receipt handling. Check the exact v2/v3 fields, normalized
+  timestamps, full release binding and unchanged legacy statement bytes against
+  the shared `release-signing-v1.fixtures.json` snapshots.
+- Confirm explicit author submissions fail rather than being dropped in every
+  namespace mode; a signed client requires positive server acceptance. Check the
+  distinct algorithm/type, identity/digest, unregistered/inactive and bad-crypto
+  errors. Required still means one trusted signature, not the stored N-of-M value.
+- Confirm new finalize rechecks author authorization/policy and Registry signing
+  configuration after unlocked storage, using namespace → package → reservation
+  → signer lock order. Signing metadata, version/artifacts, scans and reservation
+  must commit atomically; configuration/insert failure leaves no published version.
+- Confirm exact completed retries use accepted historical signatures without
+  filtering by current activation, and cannot attach new signatures to an existing
+  unsigned release. Current `is_active`/`revoked_ts` remain separate metadata.
+- Confirm 14B preserves 13B's independently hashed stored bytes/size and checksum
+  confirmations, without trusting publisher metadata or adding another fresh-object
+  GET. No trust-anchor, consumer verification or new-format Security UI is claimed.
 - For 14A, inspect `canonical.rs`, `signing.rs`, server `canonical.py`/`legacy_signing.py` and the shared signing fixture. Verify the `serde_jcs` 0.1.0 → 0.2.0 update fixes escaped/non-BMP key ordering against the unchanged RFC expectations, with no legacy serializer migration.
 - Confirm the existing parity gate now requires the signing fixture as well as release fixtures, and its mutation test rejects changed/missing snapshots. Hosted CI and operator acceptance are separate from local fixture evidence.
 - Confirm legacy author signature v1 has a typed representation whose serialization is byte-identical to existing signatures.

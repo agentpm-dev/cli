@@ -1818,35 +1818,56 @@ enabling the new-format publish flow or implementing later milestones.
 > Scope note: introduce the new release-level statements built on the 14A foundation — `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` bound to the release digest — plus trustworthy stored-byte verification before finalize, fail-closed attestation, cross-language key-ID normalization, and explicit historical-signer semantics. Server-side only; client verification material is Milestone 14C.
 > Implementation notes:
 > - New-format signatures attach naturally to `PackageVersion` (the logical release), not to each target artifact.
-> - Current server finalize compares publisher-declared SHA against publisher-set S3 metadata, which is publisher-controlled. New release finalize needs a trustworthy stored-byte source.
+> - Legacy server finalize compares publisher-declared SHA against publisher-set S3 metadata, which is publisher-controlled. The gated new-release path already independently streams/hashes stored bytes in 13B; preserve that trusted source when adding signatures.
 > - Rust and Python display the same author key with different truncated key IDs (16 vs 12 chars). Match cryptographically by full public key and normalize display separately.
 > - A normal signer revocation after publication should not retroactively make a cryptographically valid historical release unsigned. Distinguish revocation from compromise.
 
-- [ ] Introduce new release-level author signature type, expected `agentpm.package.signature.v2`, binding release digest/identity.
-- [ ] Introduce new release-level registry attestation type, expected `agentpm.registry.attestation.v3`, binding release digest plus registry provenance facts.
-- [ ] Keep signatures/attestations attached to logical `PackageVersion`; do not create one author signature per target.
-- [ ] Improve publish signature diagnostics:
-  - [ ] distinguish unsupported algo/type;
-  - [ ] identity/digest mismatch;
-  - [ ] unregistered/inactive signer at publish;
-  - [ ] invalid Ed25519 signature;
-  - [ ] if user supplied `--sign`, rejection must fail publish rather than silently downgrade to unsigned.
-- [ ] Preserve namespace signing modes `off|optional|required`.
-- [ ] Preserve effective Stage 1 threshold: `required` means at least one valid trusted author signature.
-- [ ] Explicitly defer dynamic `min_author_signatures`/N-of-M enforcement.
-- [ ] Normalize key-ID display algorithm/length across Rust/Python.
-- [ ] Use full `public_key_b64` for signer matching/verification, not truncated key ID.
-- [ ] Define historical signer semantics:
-  - [ ] signature accepted while signer was authorized remains cryptographically/historically valid after normal revocation;
-  - [ ] expose current `is_active`/`revoked_ts` separately;
-  - [ ] do not invent retroactive compromise revocation in Stage 1.
-- [ ] Add trustworthy stored-byte verification before new release finalization:
-  - [ ] use S3/storage checksum if it provides trusted SHA-256 in the presigned flow; otherwise independently stream/hash the staged object;
-  - [ ] require declared digest == trusted stored digest == release-manifest digest reference;
-  - [ ] continue independently checking stored size.
-- [ ] Make new-format registry attestation fail closed:
-  - [ ] if registry signing key/config is unavailable or attestation persistence fails, leave release unpublished;
-  - [ ] legacy behavior may remain compatible for legacy releases.
+- [x] Introduce new release-level author signature type, expected `agentpm.package.signature.v2`, binding release digest/identity.
+- [x] Introduce new release-level registry attestation type, expected `agentpm.registry.attestation.v3`, binding release digest plus registry provenance facts.
+- [x] Keep signatures/attestations attached to logical `PackageVersion`; do not create one author signature per target.
+- [x] Improve publish signature diagnostics:
+  - [x] distinguish unsupported algo/type;
+  - [x] identity/digest mismatch;
+  - [x] unregistered/inactive signer at publish;
+  - [x] invalid Ed25519 signature;
+  - [x] if user supplied `--sign`, rejection must fail publish rather than silently downgrade to unsigned.
+- [x] Preserve namespace signing modes `off|optional|required`.
+- [x] Preserve effective Stage 1 threshold: `required` means at least one valid trusted author signature.
+- [x] Explicitly defer dynamic `min_author_signatures`/N-of-M enforcement.
+- [x] Normalize key-ID display algorithm/length across Rust/Python.
+- [x] Use full `public_key_b64` for signer matching/verification, not truncated key ID.
+- [x] Define historical signer semantics:
+  - [x] signature accepted while signer was authorized remains cryptographically/historically valid after normal revocation;
+  - [x] expose current `is_active`/`revoked_ts` separately;
+  - [x] do not invent retroactive compromise revocation in Stage 1.
+- [x] Add trustworthy stored-byte verification before new release finalization:
+  - [x] use S3/storage checksum if it provides trusted SHA-256 in the presigned flow; otherwise independently stream/hash the staged object;
+  - [x] require declared digest == trusted stored digest == release-manifest digest reference;
+  - [x] continue independently checking stored size.
+- [x] Make new-format registry attestation fail closed:
+  - [x] if registry signing key/config is unavailable or attestation persistence fails, leave release unpublished;
+  - [x] legacy behavior may remain compatible for legacy releases.
+
+**Implementation status (2026-11-06):** independent review passed, as confirmed
+by the operator after the replay-test follow-up. These
+checkboxes record implemented behavior and local tests, not operator acceptance.
+The gated finalize protocol saves author v2 and Registry v3 in the existing
+version-scoped tables in the same metadata transaction. Authorization/policy and
+signer/config changes during unlocked storage are rechecked before publication.
+Completed signed retries require the exact previously accepted envelope, including
+after normal revocation; a retry cannot attach a signature to an unsigned release.
+Legacy `--sign` retains v1 bytes but now requires explicit server acceptance.
+Shared Rust/Python fixtures and the existing contract-parity workflow include the
+new statement types and the 16-character author display fingerprint.
+
+Local verification: full Rust workspace **1,215 passed, 5 ignored**; full Registry
+suite against disposable PostgreSQL **690 passed, 7 skipped, 165 subtests passed**.
+Rust format/Clippy and local cross-repo contract parity pass. Applicable Registry
+hooks pass except two existing mypy errors in unchanged
+`app/tools/application/search.py:1486,1856`. See `test-plan.md` for evidence and
+scope limits. Hosted CI/native jobs, the coordinated CLI-main
+parity gate and operator manual acceptance remain unclaimed. No version bump,
+deployment or feature-flag activation is included; production remains gated.
 
 ## Milestone 14C: Registry Trust Anchor and Client Verification
 > Scope note: make releases independently verifiable by a consumer. Owns the persistent `registry_signing_keys` model, the root-signed registry key set (`agentpm.registry.keyset.v1` served from `GET /v1/registry/signing-keys`), the attestation-key backfill, the root-key operational prerequisite, the public Security/read DTO evolution, the install verification payload, and client-side verification of release digest, author signature, and registry attestation — including the stricter `--require-signature` / `--require-attestation` semantics and tamper tests.
@@ -1891,6 +1912,7 @@ enabling the new-format publish flow or implementing later milestones.
   - [ ] make `GET /v1/registry/signing-keys` **fail closed** when a valid root signature cannot be produced, rather than serving an unsigned or partial key set;
   - [ ] keep the pinned root public key auditable in the repository rather than injected at build time from an opaque source, and treat changing it as requiring a CLI release.
 - [ ] Evolve the public Security/read DTO for new-format versions so the web UI can inspect release-level integrity/provenance and target artifacts without using truncated digests as verification inputs; keep legacy responses compatible.
+  - [ ] Retain the Registry's optional/nullable `revoked_ts` in Web `src/types/tools.ts` (`AuthorSignature`) and the associated `authorSignatureSchema` parsers in `src/lib/get-*.ts`; currently those parsers strip the unlisted field. Test timestamp retention plus missing/null legacy values, and display current revocation separately from historical signature validity.
 - [ ] Update and verify the existing Tool Security/detail surface for new-format versions using the release/artifact data from Milestones 13A–13B and signing foundation/statements from Milestones 14A–14B, without Package Health scoring:
   - [ ] expose the release-level digest;
   - [ ] expose release-level author-signature/registry-attestation state;

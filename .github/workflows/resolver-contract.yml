@@ -26,6 +26,7 @@ on:
       - 'crates/agentpm-sdk/src/signing.rs'
       - 'crates/agentpm-sdk/src/signing/**'
       - 'crates/agentpm-sdk/contracts/signing-canonicalization-v1.fixtures.json'
+      - 'crates/agentpm-sdk/contracts/release-signing-v1.fixtures.json'
       - 'crates/agentpm-sdk/src/client.rs'
       - 'crates/agentpm-sdk/src/client/**'
       - 'crates/agentpm-sdk/tests/release_upload.rs'

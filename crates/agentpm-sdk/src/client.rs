@@ -153,6 +153,11 @@ impl AgentPmClient {
             }
         }
 
+        let require_signature = finalize_body["require_signature"].as_bool() == Some(true)
+            || finalize_body["author_signatures"]
+                .as_array()
+                .is_some_and(|s| !s.is_empty());
+
         let finalize_resp = self
             .auth(self.http.post(finalize_url))
             .json(&finalize_body)
@@ -165,6 +170,10 @@ impl AgentPmClient {
             .json::<PublishReceipt>()
             .await
             .map_err(SdkError::Http)?;
+
+        if require_signature && receipt.author_signatures_accepted.unwrap_or(0) == 0 {
+            return Err(SdkError::Other("Registry did not confirm an accepted author signature. Check the published version's signing state and Registry support before retrying with a new version.".into()));
+        }
 
         if init.resumed {
             receipt.message = format!("{} (resumed existing upload)", receipt.message);

@@ -429,18 +429,11 @@ impl PublishArgs {
                 format!("sha256:{sha256_hex}"),
                 chrono::Utc::now().to_rfc3339(),
             );
-            let statement_bytes = statement.legacy_bytes()?;
-            let sig = signing_key.sign(&statement_bytes);
-            let signature_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
-
-            Some(serde_json::json!({
-                "author_signatures": [{
-                    "algo": "ed25519",
-                    "public_key_b64": stored.public_key_b64,
-                    "signature_b64": signature_b64,
-                    "statement_json": statement
-                }]
-            }))
+            Some(signed_finalize_extra(
+                &statement,
+                &signing_key,
+                &stored.public_key_b64,
+            )?)
         } else {
             None
         };
@@ -473,6 +466,58 @@ impl PublishArgs {
 }
 
 // === Helpers ===
+
+fn signed_finalize_extra(
+    statement: &AuthorSignatureV1,
+    key: &SigningKey,
+    public: &str,
+) -> Result<JsonValue> {
+    let signature = key.sign(&statement.legacy_bytes()?);
+    Ok(
+        serde_json::json!({"require_signature":true,"author_signatures":[{
+            "algo":"ed25519", "public_key_b64":public,
+            "signature_b64":base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
+            "statement_json":statement
+        }]}),
+    )
+}
+
+#[cfg(test)]
+mod signature_tests {
+    use super::*;
+    use ed25519_dalek::{Signature, Verifier};
+
+    #[test]
+    fn explicit_signing_carries_required_intent_and_the_original_v1_bytes() {
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let public =
+            base64::engine::general_purpose::STANDARD.encode(key.verifying_key().to_bytes());
+        let statement = AuthorSignatureV1::new(
+            "tool".into(),
+            "example".into(),
+            "1.0.0".into(),
+            format!("sha256:{}", "a".repeat(64)),
+            "2026-11-06T13:00:00+00:00".into(),
+        );
+        let extra = signed_finalize_extra(&statement, &key, &public).unwrap();
+        assert_eq!(extra["require_signature"], true);
+        let item = &extra["author_signatures"][0];
+        assert_eq!(item["public_key_b64"], public);
+        assert_eq!(
+            item["statement_json"],
+            serde_json::to_value(&statement).unwrap()
+        );
+        let sig = base64::engine::general_purpose::STANDARD
+            .decode(item["signature_b64"].as_str().unwrap())
+            .unwrap();
+        key.verifying_key()
+            .verify(
+                &statement.legacy_bytes().unwrap(),
+                &Signature::from_slice(&sig).unwrap(),
+            )
+            .unwrap();
+    }
+}
 
 fn build_publish_metadata(
     manifest: JsonValue,

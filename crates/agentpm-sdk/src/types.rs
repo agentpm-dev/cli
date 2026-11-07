@@ -13,6 +13,8 @@ pub struct PublishReceipt {
     pub url: String,
     #[serde(default)]
     pub message: String,
+    #[serde(default)]
+    pub author_signatures_accepted: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]

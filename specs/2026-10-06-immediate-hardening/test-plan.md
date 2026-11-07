@@ -3840,6 +3840,85 @@ manual acceptance/review and the operator's production confirmation, Release
 Band 10 is complete. No new-format activation, new statement versions or later
 client verification is included; M14B is the next milestone.
 
+#### Milestone 14B implementation and local verification
+
+On 2026-11-06, implemented release-level author v2 and Registry v3 on the gated
+finalize protocol, preserving legacy author v1 / Registry v2 serialization.
+`release-signing-v1.fixtures.json` is a fixture-collection version, not another
+statement type. Identical snapshots in both repos contain portable/four-target
+bindings, canonical bytes, fixed Ed25519 signatures, Unicode provenance and the
+same 16-character author display fingerprint. The existing parity gate now
+requires this snapshot and runs the Python signing statement tests.
+
+Verified locally:
+
+- `cargo test --offline --locked --workspace --quiet`: **1,215 passed, 5 ignored**
+  across unit, integration and documentation test executables. Includes new
+  shared statement/crypto fixtures, original legacy `--sign` bytes/explicit intent
+  and signed HTTP transport tests rejecting omitted/zero server acceptance.
+- `cargo clippy --offline --locked --workspace --all-targets -- -D warnings` and
+  `cargo fmt --all --check`: passed.
+- Registry `.venv/bin/python -B -m pytest -q --tb=short -x`, with the dedicated
+  `AGENTPM_M13A_TEST_DATABASE_URL` pointing only at disposable PostgreSQL 16:
+  **690 passed, 7 skipped, 165 subtests passed**. A public deterministic fixture
+  signing key supplies the legacy test environment; no production key is used.
+  The release fixture applies the actual V1.52 signing DDL and release migrations,
+  with no ORM-generated schema or new production migration.
+- `scripts/check_release_contract.py --registry-root ../agentpm-api` and its
+  unittest mutation suite: passed; missing/changed signing snapshots fail parity.
+- Applicable Registry pre-commit hooks: Black, isort, Flake8, Pylint, Bandit,
+  pyupgrade and whitespace/conflict checks pass. Mypy still reports the two
+  existing assignment errors in unchanged `app/tools/application/search.py`
+  at lines 1486 and 1856. The full hook run is **not** claimed green.
+
+New PostgreSQL/HTTP cases in `test_release_signing.py` cover all namespace modes,
+one/four-target releases with Python dependencies, one trusted signature despite
+`min_author_signatures=3`, real author/Registry cryptography, unsupported
+algorithm/type, identity/digest mismatch, malformed/noncanonical statements,
+unregistered/inactive keys, bad signatures and duplicate envelopes. Legacy
+service rejection tests assert no final-object copy or version insert occurs.
+
+Follow-up replay regressions (2026-11-06): the two signing suites passed
+**55 tests** against disposable PostgreSQL after adding five cases. Authentic
+author-v2 and Registry-v3 statements/signatures verify for their original release
+but fail binding to the other portable/four-target release in either direction,
+even with identical kind/name/version and a shared artifact digest. Moving the
+original signature onto the other release's correctly bound statement also fails
+Ed25519 verification. An HTTP finalize test honestly signs a single-target release
+A, then submits that unchanged envelope against release B with an additional
+target. Their identity, manifest, Python resolution and first artifact are the
+same. B returns `422 / signature_identity_mismatch` before storage, leaves the
+reservation pending with no publication/signing rows, and accepts a correctly
+signed B retry. Registry replay coverage exercises statement binding/crypto only;
+consumer verification remains 14C. No production code changed for these tests.
+
+Missing/invalid Registry configuration fails before storage; signing-row
+persistence failure rolls back version/artifact/signature/attestation publication
+and allows retry of the same reservation. Changes to namespace policy, signer
+activation or Registry configuration during storage are rechecked after transfer.
+Stored-byte corruption cannot finalize; existing independently verified SHA-256,
+size and conditional-PUT behavior remains covered by the 13B tests. No trust is
+added in publisher metadata or ETags.
+
+One author signature is stored per logical release, not per artifact. Ordinary
+revocation preserves accepted historical signature bytes and permits an exact
+completed retry while rejecting a newly published signature from that key.
+Current activation/revocation metadata remains separate. Completed retries cannot
+attach new signatures retroactively, and an explicitly signed retry of an
+unsigned release fails. No compromise-invalidation policy is invented.
+
+**Independent review:** the operator confirmed M14B review fully passed on
+2026-11-06, including the cross-release replay regression follow-up. The Web
+`revoked_ts` retention reminder is explicitly tracked under M14C.
+
+**Still pending:** hosted Registry/CLI/native CI, coordinated
+parity against the eventual CLI `main` revision, and operator manual acceptance.
+No live AWS/production publication, feature activation, new Security/read surface,
+registry trust-anchor/key-history endpoint or consumer cryptographic verification
+is claimed. The latter verification cases below belong to 14C. Existing ordinary
+CLI publishing remains legacy; typed Rust transport is available for the gated
+signed protocol without introducing the later public release-building workflow.
+
 Stored-byte verification cases:
 
 - client-declared metadata hash that does not match stored bytes cannot finalize a new release;

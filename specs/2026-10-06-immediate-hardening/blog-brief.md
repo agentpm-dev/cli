@@ -1,5 +1,17 @@
 # Blog Brief
 
+## Milestone 14B Evidence
+
+Potential later engineering material: bind an author's signature to one logical
+release rather than each platform archive, and make explicit signing intent fail
+visibly instead of becoming an unsigned success. Local PostgreSQL and shared
+Rust/Python crypto fixtures cover atomic author/Registry provenance, authorization
+changes during unlocked storage and ordinary revocation without rewriting signed
+history. Reuse the independently verified stored-byte path; publisher metadata is
+not integrity evidence. This is server acceptance, not independent consumer trust:
+root-signed key history/client verification, operator acceptance and deployment
+remain separate. Evidence for later planning only, not an article or content plan.
+
 ## Milestone 14A Evidence
 
 Potential later engineering material: cryptographic compatibility depends on exact

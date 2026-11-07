@@ -1,5 +1,8 @@
-//! Historical author statement. Its serializer is intentionally NOT JCS.
+//! Author and Registry statements. Legacy author v1 is intentionally NOT JCS.
 use serde::{Deserialize, Serialize};
+
+mod release;
+pub use release::*;
 
 pub const AUTHOR_SIGNATURE_V1: &str = "agentpm.package.signature.v1";
 
