@@ -4570,14 +4570,15 @@ local/simulated Windows checks, not Windows PE/MSVC execution or hosted release
 acceptance; those gates below remain open. Public CI publishing docs, examples
 setup/native README and M16 spec/tasks/review checklist include the fourth target.
 
-Still open: independent review/manual acceptance, hosted CLI/platform jobs
-(including actual Windows permissions), a compatible released CLI and examples
+The operator confirmed independent review is complete.
+Still open: manual acceptance and hosted CLI/platform jobs
+(including main/tag platform jobs), a compatible released CLI and examples
 repository/environment/secret configuration, and real tagged publications plus
 strict clean-consumer verification of both maintained packages and the native
 four-target fixture. Keep their task boxes unchecked until run evidence and
 exact versions are recorded. A workflow file is not evidence of publication.
 
-For the outstanding permission-derived compatibility gate, record a separate
+For the permission-derived compatibility gate, record a separate
 pair of hosted results for
 `native_packaging_records_platform_permission_behavior_without_relabeling`
 in `crates/agentpm-cli/tests/ci_publishing.rs`. Inspect the explicit test output
@@ -4595,6 +4596,32 @@ Capture run/job links, the tested CLI commit, target IDs and the named test's
 passing output. Check those logs specifically rather than inferring coverage
 from a green matrix. The examples' real signed publications/clean-consumer
 acceptance remain separate; this CLI-platform check needs no production publish.
+
+Hosted PR evidence inspected after the operator reported passing checks:
+Resolver Contract run
+[42508120178](https://github.com/agentpm-dev/cli/actions/runs/42508120178)
+contains an explicit passing
+`native_packaging_records_platform_permission_behavior_without_relabeling`
+in both [Windows job 128815125044](https://github.com/agentpm-dev/cli/actions/runs/42508120178/job/128815125044)
+and [Linux job 128815125259](https://github.com/agentpm-dev/cli/actions/runs/42508120178/job/128815125259).
+The test lines are timestamped `2026-11-08T18:10:48.2276928Z` and
+`2026-11-08T18:08:00.0611249Z`, respectively; each `ci_publishing` suite reports
+6 passed, zero ignored and zero filtered. Checkout logs match CLI PR #117 merge
+`8c03545c63799e083ec367af47610343ec61d7d6`, head
+`b0ed688b295e8c8d399c236599ed7106574cd406`. This closes the distinct native
+Unix/Windows permission acceptance gate, without claiming examples publication
+or native C-helper compilation on Windows. Windows, Linux and Apple Silicon
+Resolver Contract jobs had completed successfully at inspection. The operator
+subsequently confirmed on 2026-11-08 that the final Intel Mac job passed too,
+completing all four targets for this PR revision.
+
+Ordinary CLI CI run `42508120182` passed, with its push-only `platform-targets`
+and dependent `Native runtime` jobs intentionally skipped on the PR event.
+Registry PR #128 run `42508120144` passed both jobs: parity checked Registry
+merge `03a70322c63dc3611af24687667000afb8461f02` against public CLI main
+`6370fa44eae1b9435c1f67855a9f946450000f22` (88 passed/16 skipped); the actual
+PostgreSQL job reports 315 passed and 8 subtests passed. Deployment and real
+example-tagged release acceptance remain open.
 
 ## Manual checks
 

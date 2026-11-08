@@ -2305,7 +2305,7 @@ This is the band where the new release format becomes real for users. It gives u
     where present; `any` can have none. Require author correction/reconciliation
     and rebuild; do not silently drop, select or relabel artifacts. Distinct
     concrete targets remain valid, and local single-artifact publish is unchanged.
-  - [ ] Test the permission-derived mixed-claim gate with identical recognized
+  - [x] Test the permission-derived mixed-claim gate with identical recognized
     text bytes under `0644`/`0755` archive modes, plus actual Unix/Windows
     packaging coverage. Assert no publication on mixed claims, actionable
     diagnostics, and acceptance of otherwise valid distinct concrete targets.
@@ -2320,6 +2320,16 @@ This is the band where the new release format becomes real for users. It gives u
     or Resolver Contract's `uv contract (<target>)` on applicable PR runs.
     Matrix configuration or an overall green summary alone does not close this
     box; inspect this test specifically and retain its Unix/Windows results.
+    Closed by inspected Resolver Contract run
+    [42508120178](https://github.com/agentpm-dev/cli/actions/runs/42508120178):
+    [Windows job 128815125044](https://github.com/agentpm-dev/cli/actions/runs/42508120178/job/128815125044)
+    and [Linux job 128815125259](https://github.com/agentpm-dev/cli/actions/runs/42508120178/job/128815125259)
+    both explicitly report this test `... ok`, with the full `ci_publishing`
+    suite passing 6 tests, zero ignored/filtered. Both checked out CLI PR #117
+    merge revision `8c03545c63799e083ec367af47610343ec61d7d6`, from head
+    `b0ed688b295e8c8d399c236599ed7106574cd406`. The named native platform
+    assertions establish the comparison; the examples' actual publications
+    remain separate acceptance items.
   - [x] when target validation fails, report affected build targets and their
     M12 diagnostic paths/reasons where present; do not scrape human stderr.
   - [x] authenticate with `AGENTPM_TOKEN`;
@@ -2373,15 +2383,42 @@ and do not close actual hosted Windows execution. Documentation includes the
 four-target example and Windows-specific setup.
 
 Hosted/manual acceptance remains open above: compatible CLI release and examples
-repository/environment/secrets setup, PR/merge platform jobs, actual Unix/Windows
-permission evidence and tag-driven signed publications with clean consumers for
+repository/environment/secrets setup, completion of hosted platform jobs and
+tag-driven signed publications with clean consumers for
 both maintained packages and all four native runners. Workflow definitions and
 local fixture success do not close these items. No pushes, tags, secret setup,
 production publication or paid model call were performed by this implementation.
 
+The operator confirmed independent review is complete. Remaining M16 work is
+hosted execution and real publication/consumer acceptance; the separate
+Unix/Windows permission comparison is now closed above. No further code finding
+is recorded.
+
+PR verification update: CLI PR #117's ordinary CI run
+[42508120182](https://github.com/agentpm-dev/cli/actions/runs/42508120182)
+passed; `platform-targets` and `Native runtime` were intentionally skipped on
+the PR event and will run on main/tag pushes. The Resolver Contract job logs
+close the separate Unix/Windows permission gate above. The operator subsequently
+confirmed on 2026-11-08 that the final Intel Mac job also passed, completing all
+four Resolver Contract targets for this PR revision.
+Registry PR #128 run
+[42508120144](https://github.com/agentpm-dev/registry/actions/runs/42508120144)
+passed parity and PostgreSQL jobs. The parity log records Registry PR merge
+`03a70322c63dc3611af24687667000afb8461f02` (head
+`f408f8910ec5ccbf6fb89116e7ee96c5d5a5bb20`) against public CLI main
+`6370fa44eae1b9435c1f67855a9f946450000f22`, with 88 passed/16 skipped;
+PostgreSQL reports 315 passed plus 8 subtests passed. These are PR/contract
+checks, not a deployed CLI release or examples publication.
+
 ## Release Band 12: Headless Signing and CI Publishing
 Covered milestones: 16.
 This gives us headless signing with encrypted AgentPM key material plus a noninteractive secret/passphrase source and reusable GitHub Actions patterns for building and publishing multi-target releases, including AgentPM's own cross-platform CI coverage. It follows Band 11 because there is no point automating the publication of signed multi-artifact releases until that format is consumer-installable and verifiable.
+
+Release preparation (2026-11-08): CLI manifest and Cargo lockfile now name
+`0.1.41`; the Web status page reflects that version with release date
+`2026-11-08`. These are local preparation changes, not a published release.
+The operator will push and deploy CLI → Registry → Web. The existing M16
+examples publication and clean-consumer acceptance items above remain open.
 
 ## Milestone 17: SDK Lockfile and Managed Python Tool Compatibility
 
