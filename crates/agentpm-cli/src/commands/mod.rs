@@ -10,6 +10,7 @@ pub mod login;
 pub mod memory;
 pub mod namespace;
 pub mod new;
+pub mod package;
 pub mod publish;
 pub mod run;
 pub mod serve;
@@ -37,6 +38,9 @@ pub enum Commands {
 
     /// Publish a package to the registry
     Publish(publish::PublishArgs),
+
+    /// Build a package archive and portable CI descriptor without publishing
+    Package(package::PackageArgs),
 
     /// Install package(s) from the registry
     Install(install::InstallArgs),

@@ -157,3 +157,15 @@ remain acceptance work; production trust bootstrap and activation remain release
 gates. Do not describe the local implementation as a production rollout or a
 completed cross-platform guarantee. This is evidence for later content planning,
 not an article draft.
+
+## Milestone 16 Evidence
+
+Potential engineering material: native runners produce relocatable archive/build
+bundles, then one provider-neutral CLI validates their identities and bytes before
+signing/publishing a complete release. Encrypted author keys can be supplied to
+an ephemeral runner with a separate passphrase; the Registry offline root stays
+out of CI. The maintained Python Tool and Agent examples show both release
+formats, with a separate compiled helper for all four shipped targets, including Windows x64. Local fixture and
+native-Mac evidence is not proof of hosted multi-platform publication. Keep
+workflow execution and real clean-consumer release acceptance explicit before
+making that claim. Engineering evidence only, not a new article/content plan.

@@ -414,6 +414,19 @@
 
 ## Headless signing and CI
 
+- Confirm new-format publication retains README/license fields using bounded
+  verified archive bytes, not unsigned publisher text. Keep one snapshot at a
+  time, no extra storage downloads, and no changes to legacy publication.
+- Confirm the examples repo contains independent summarize-text/Python and
+  devwork-copilot/Agent tag workflows, using their respective new/legacy formats;
+  Agent publication does not republish its Tools or depend on M17 SDK work.
+- Confirm summarize-text's native dependencies do not manufacture concrete
+  payload targets; the separate compiled helper proves the four-target runner matrix.
+- Confirm Windows is required in native builds, fan-in and post-publish verification;
+  ZIP checksums, native Windows paths, MSVC x64/static CRT and the shared `bin/`
+  manifest layout are covered. Linux arm64 stays out of scope.
+- Confirm clean-consumer strict installs and Tool/Agent checks are documented,
+  and hosted run/publication evidence stays pending until actually observed.
 - Confirm headless signing uses encrypted AgentPM key material rather than preferring raw private-key secrets.
 - Confirm key/passphrase can be supplied without TTY.
 - Confirm CI secrets/passphrases/decrypted keys are not printed.

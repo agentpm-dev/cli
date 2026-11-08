@@ -11,7 +11,7 @@ use agentpm_sdk::{
 use anyhow::{Context, Result};
 use std::{fs::File, io::Read, path::Path};
 
-pub(super) fn describe(path: &Path) -> Result<ToolPayloadDescriptor> {
+pub(in crate::commands) fn describe(path: &Path) -> Result<ToolPayloadDescriptor> {
     let policy = PayloadFormats::embedded()?;
     let header_bytes = policy
         .binary_formats

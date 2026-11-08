@@ -932,7 +932,7 @@ Use a canonical AgentPM target identifier that includes OS, CPU architecture, an
 - `x86_64-pc-windows-msvc`;
 - special value `any`.
 
-The initial official CI matrix does not need to cover every supported target, but the release schema must not hardcode only the initial three.
+The release schema must not hardcode the publishing example's target count; the initial example now covers all four supported CLI targets.
 
 Local packaging must classify conservatively.
 
@@ -1834,6 +1834,26 @@ The first official CI integration only needs to solve:
 
 The underlying CLI/protocol must remain CI-provider-neutral.
 
+The working examples live in `agentpm-examples`: independent package-specific
+tags select `summarize-text` (Python Tool/new release) or `devwork-copilot`
+(Agent/legacy publication), with the version component checked against only that
+package's manifest. A portable Python payload produces one `any` artifact even
+when its dependencies include native wheels. A separate native helper fixture
+proves the required four-target runner matrix, including Windows x64. Each example publishes once,
+then verifies the exact version in a clean consumer. Agent verification does
+not require SDK changes or a model-driven Agent run; SDK execution remains M17.
+Publication/model secrets and repository setup are documented in the examples
+and public CI publishing guide. Hosted run evidence is required separately
+from checking in workflow files.
+
+When moving normal Python publication onto this flow, retain existing package
+README/license presentation. Include discovered README and declared license text
+in the Python archive when they are valid bounded UTF-8, without editing the
+manifest. Registry finalization derives display text/hashes from the already
+verified snapshot of the first artifact in canonical target order, using existing
+legacy display limits and SPDX policy. It does not trust unsigned publisher text
+or require target-specific READMEs to agree; legacy publication is unchanged.
+
 Introduce or extract a reusable package-build CLI surface suitable for CI. An explicit `agentpm package` command is preferred if no existing command can provide a stable machine-readable artifact + descriptor output. `publish --dry-run` is not sufficient by itself because it skips signing/network stages and currently only prints a human artifact path.
 
 The build command should produce:
@@ -1878,9 +1898,18 @@ Initial required matrix:
 
 - `aarch64-apple-darwin`;
 - `x86_64-apple-darwin`;
-- `x86_64-unknown-linux-gnu`.
+- `x86_64-unknown-linux-gnu`;
+- `x86_64-pc-windows-msvc`.
 
-Linux arm64 and Windows may be added later or opportunistically, but must not block proving the model.
+Windows x64 is required for the example's build, atomic fan-in and clean-consumer
+verification. A missing/failed Windows job prevents publication. Linux arm64
+remains out of scope because AgentPM does not ship that CLI target. All runners
+use the same authored native-fixture manifest: `files` includes `bin/`, containing
+`native-helper` on Unix or `native-helper.exe` on Windows. Bootstrap native x64
+MSVC for the Windows helper and use the static C runtime; keep object files out
+of the payload. The pinned CLI installer verifies the published checksum before
+extracting the platform's `.tar.gz`/`.zip` executable and uses native filesystem
+paths for Windows PATH/consumer setup.
 
 CI v1 may authenticate to AgentPM with `AGENTPM_TOKEN`.
 
@@ -2481,7 +2510,7 @@ separate.
 - Official GitHub Actions workflow checks tag version against `agent.json.version`.
 - Matrix jobs build/package and upload CI artifacts only.
 - A final fan-in job downloads every target artifact and performs one atomic publish.
-- CI v1 supports required macOS arm64, macOS x86_64, and Linux x86_64 targets.
+- CI v1 supports required macOS arm64, macOS x86_64, Linux x86_64 and Windows x64 targets.
 - CI v1 can authenticate with `AGENTPM_TOKEN`.
 - OIDC/trusted AgentPM publishing is not required in Stage 1.
 

@@ -1,12 +1,10 @@
-//! New-format artifact preparation primitive. Legacy publish does not call this;
-//! M13B/M16 will connect the release transaction/build command separately.
+//! Embed the target/format descriptor in a new-format Python Tool archive.
 use super::{MAX_TAR_ENTRIES, ensure_safe_tar_name, write_artifact_atomically};
 use agentpm_sdk::release::{ARTIFACT_METADATA_FILE, ArtifactMetadata};
 use anyhow::{Result, ensure};
 use std::{collections::HashSet, fs::File, path::Path};
 
-#[allow(dead_code)] // Internal release-building primitive; no new publish workflow in M13A.
-pub(super) fn write_release_artifact(
+pub(in crate::commands) fn write_release_artifact(
     source: &Path,
     destination: &Path,
 ) -> Result<ArtifactMetadata> {

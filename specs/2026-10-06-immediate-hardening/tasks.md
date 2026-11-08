@@ -2241,82 +2241,184 @@ This is the band where the new release format becomes real for users. It gives u
 > - `publish --dry-run` is not a sufficient matrix build contract because it produces human output and skips signing/network behavior. Extract or add a provider-neutral package-build CLI surface.
 > - Initial registry authentication can use the existing `AGENTPM_TOKEN`/PAT mechanism.
 > - Matrix target vocabulary should match the canonical AgentPM targets from Milestone 11A.
+> - Host the working publication examples in `agentpm-examples`: `summarize-text` proves Python Tool publication, and `devwork-copilot` proves Agent publication through the existing legacy format. Publish each independently; SDK execution changes remain M17.
 
-- [ ] Add secure noninteractive key loading:
-  - [ ] preserve encrypted `StoredKeyV1`;
-  - [ ] support explicit encrypted key file/input suitable for ephemeral CI (`--key-file` or equivalent);
-  - [ ] support passphrase from `AGENTPM_KEY_PASSPHRASE` or equivalent secret source;
-  - [ ] preserve interactive prompt when no noninteractive secret is provided;
-  - [ ] never print passphrase/decrypted key.
-- [ ] Ensure headless publish can satisfy namespace `required` signing policy.
-- [ ] Keep `--key-id` behavior for local keystore users.
-- [ ] Normalize CI signing errors so missing key/passphrase/invalid decryption is actionable and non-secret.
-- [ ] Add/reuse a provider-neutral artifact-build command/path; prefer explicit `agentpm package` if no existing command can expose a stable machine-readable contract.
-- [ ] Package-build output must include:
-  - [ ] artifact path;
-  - [ ] canonical target;
-  - [ ] artifact SHA-256;
-  - [ ] artifact size;
-  - [ ] manifest digest;
-  - [ ] Python resolution digest;
-  - [ ] machine-readable descriptor for fan-in validation, preserving M12's typed
+- [x] Add secure noninteractive key loading:
+  - [x] preserve encrypted `StoredKeyV1`;
+  - [x] support explicit encrypted key file/input suitable for ephemeral CI (`--key-file` or equivalent);
+  - [x] support passphrase from `AGENTPM_KEY_PASSPHRASE` or equivalent secret source;
+  - [x] preserve interactive prompt when no noninteractive secret is provided;
+  - [x] never print passphrase/decrypted key.
+- [x] Ensure headless publish can satisfy namespace `required` signing policy.
+- [x] Keep `--key-id` behavior for local keystore users.
+- [x] Normalize CI signing errors so missing key/passphrase/invalid decryption is actionable and non-secret.
+- [x] Add/reuse a provider-neutral artifact-build command/path; prefer explicit `agentpm package` if no existing command can expose a stable machine-readable contract.
+- [x] Package-build output must include:
+  - [x] artifact path;
+  - [x] canonical target;
+  - [x] artifact SHA-256;
+  - [x] artifact size;
+  - [x] manifest digest;
+  - [x] Python resolution digest;
+  - [x] machine-readable descriptor for fan-in validation, preserving M12's typed
     payload diagnostics; expose structured build errors on failure and keep
     human progress out of machine stdout.
-- [ ] Keep local `agentpm publish` convenient by internally reusing the same package-build code for current-target/`any` publishing.
-- [ ] Build official GitHub Actions example/workflow for Python Tools.
-- [ ] Follow established AgentPM conventions:
-  - [ ] tag-triggered on `v*`;
-  - [ ] fail if tag version != `agent.json.version`;
-  - [ ] `actions/checkout@v4`;
-  - [ ] pinned toolchain/actions;
-  - [ ] minimal job permissions;
-  - [ ] `astral-sh/setup-uv@v6` where Python tooling is needed;
-  - [ ] `set -euo pipefail` for multiline bash.
-- [ ] Support initial required runner/target matrix:
-  - [ ] `aarch64-apple-darwin`;
-  - [ ] `x86_64-apple-darwin`;
-  - [ ] `x86_64-unknown-linux-gnu`.
-- [ ] Add Linux arm64 and/or Windows only if practical without blocking the initial proof.
-- [ ] Matrix jobs:
-  - [ ] checkout identical commit;
-  - [ ] run `agentpm package`/equivalent;
-  - [ ] upload artifact + descriptor with `actions/upload-artifact@v4`;
-  - [ ] do **not** independently publish to AgentPM.
-- [ ] Final fan-in job:
-  - [ ] `needs` all matrix build jobs;
-  - [ ] download all build outputs with `actions/download-artifact`;
-  - [ ] verify name/version/manifest digest/Python resolution digest match;
-  - [ ] reject duplicate targets;
-  - [ ] reject mixed `any` and concrete-target claims across matrix outputs
+- [x] Keep local `agentpm publish` convenient by internally reusing the same package-build code for current-target/`any` publishing.
+- [x] Preserve Python package-page README/license display when connecting the new release flow: ship discovered/declared bounded text with the archive, derive display fields from verified stored bytes, and retain legacy publication behavior. Cover persistence/idempotence in real PostgreSQL without a new migration.
+- [x] Build official GitHub Actions publishing examples in `agentpm-examples`:
+  - [x] Automate `summarize-text` packaging, headless author signing and publication through the new Python Tool release format, using its committed Python resolution. Native dependencies do not by themselves require concrete-target payloads; use a single `any` artifact when that is the classifier's result, without feeding duplicate `any` outputs to matrix fan-in.
+  - [x] Automate `devwork-copilot` packaging, headless author signing and publication through the existing Agent/legacy format with a single packaging job; retain author signature v1 and Registry attestation v2. Publishing the Agent must not republish its Tools or implicitly change their declared versions.
+  - [x] Use package-specific release tags (for example, `summarize-text/v<version>` and `devwork-copilot/v<version>`) so each tag selects only its intended package, and compare the version component with that package's `agent.json.version` before publishing.
+  - [x] Document package selection, committed inputs, compatible CLI version, Registry URL, `AGENTPM_TOKEN`, encrypted author key/passphrase secrets and release/verification commands in the examples repo and public publishing docs. Keep the initial examples limited to these two packages.
+  - [ ] Verify the published exact `summarize-text` version in a clean consumer: strict signature/attestation verification, managed Python dependency provisioning and a successful Tool call. Document any model credentials needed for the real call separately from Registry/signing secrets.
+  - [ ] Verify the published exact `devwork-copilot` version installs in a clean consumer with strict signature/attestation verification and the expected Agent manifest/dependency versions. This check must not depend on M17 SDK changes or require a model-driven Agent run.
+  - [ ] Prove the required distinct concrete-target matrix and atomic publication with a dedicated test package/fixture built on the corresponding runners; do not force or relabel `summarize-text` artifacts to manufacture target-specific claims.
+  - [ ] Record hosted workflow runs, published package versions and clean-consumer results for both real examples and the concrete-target proof; a workflow file or mocked test alone does not establish end-to-end acceptance.
+- [x] Follow established AgentPM conventions:
+  - [x] tag-triggered on `v*` for a single-package example, or the explicit package-specific tag patterns above for the examples monorepo;
+  - [x] fail if tag version != `agent.json.version`;
+  - [x] `actions/checkout@v4`;
+  - [x] pinned toolchain/actions;
+  - [x] minimal job permissions;
+  - [x] `astral-sh/setup-uv@v6` where Python tooling is needed;
+  - [x] `set -euo pipefail` for multiline bash.
+- [x] Support initial required runner/target matrix:
+  - [x] `aarch64-apple-darwin`;
+  - [x] `x86_64-apple-darwin`;
+  - [x] `x86_64-unknown-linux-gnu`;
+  - [x] `x86_64-pc-windows-msvc`.
+- [x] Include Windows x64 in the publishing example as explicitly requested: checksum-verified ZIP/`.exe` CLI installation, native x64 MSVC helper compilation with static CRT, a shared `bin/` manifest layout, required Windows fan-in input and clean-consumer verification. Linux arm64 remains excluded because AgentPM does not ship that target. Native hosted execution remains an acceptance gate.
+- [x] Matrix jobs:
+  - [x] checkout identical commit;
+  - [x] run `agentpm package`/equivalent;
+  - [x] upload artifact + descriptor with `actions/upload-artifact@v4`;
+  - [x] do **not** independently publish to AgentPM.
+- [x] Final fan-in job:
+  - [x] `needs` all matrix build jobs;
+  - [x] download all build outputs with `actions/download-artifact`;
+  - [x] verify name/version/manifest digest/Python resolution digest match;
+  - [x] reject duplicate targets;
+  - [x] reject mixed `any` and concrete-target claims across matrix outputs
     before automatic publication, including permission-derived differences with
     identical member contents and manifest/resolution digests. Identify every
     affected build/claimed target and contributing typed diagnostic paths/reasons
     where present; `any` can have none. Require author correction/reconciliation
     and rebuild; do not silently drop, select or relabel artifacts. Distinct
     concrete targets remain valid, and local single-artifact publish is unchanged.
-  - [ ] Test the permission-derived mixed-claim gate with identical recognized
+  - [x] Test the permission-derived mixed-claim gate with identical recognized
     text bytes under `0644`/`0755` archive modes, plus actual Unix/Windows
     packaging coverage. Assert no publication on mixed claims, actionable
     diagnostics, and acceptance of otherwise valid distinct concrete targets.
-  - [ ] when target validation fails, report affected build targets and their
+    Track this platform evidence independently of the examples' publication
+    runs. Inspect the named `ci_publishing` test
+    `native_packaging_records_platform_permission_behavior_without_relabeling`
+    on the same CLI revision in both a native Unix job and Windows x64. Require
+    an actual passing, non-skipped test result: Unix packages unchanged CSV bytes
+    as `any` under `0644`, then concrete under `0755`; Windows packages those
+    fixture bytes as `any`. Record workflow/job links, CLI commit and targets.
+    The relevant jobs are CI's `Native runtime (<target>)` on main/tag pushes,
+    or Resolver Contract's `uv contract (<target>)` on applicable PR runs.
+    Matrix configuration or an overall green summary alone does not close this
+    box; inspect this test specifically and retain its Unix/Windows results.
+    Closed by inspected Resolver Contract run
+    [42508120178](https://github.com/agentpm-dev/cli/actions/runs/42508120178):
+    [Windows job 128815125044](https://github.com/agentpm-dev/cli/actions/runs/42508120178/job/128815125044)
+    and [Linux job 128815125259](https://github.com/agentpm-dev/cli/actions/runs/42508120178/job/128815125259)
+    both explicitly report this test `... ok`, with the full `ci_publishing`
+    suite passing 6 tests, zero ignored/filtered. Both checked out CLI PR #117
+    merge revision `8c03545c63799e083ec367af47610343ec61d7d6`, from head
+    `b0ed688b295e8c8d399c236599ed7106574cd406`. The named native platform
+    assertions establish the comparison; the examples' actual publications
+    remain separate acceptance items.
+  - [x] when target validation fails, report affected build targets and their
     M12 diagnostic paths/reasons where present; do not scrape human stderr.
-  - [ ] authenticate with `AGENTPM_TOKEN`;
-  - [ ] load encrypted signing key/passphrase secrets if signing;
-  - [ ] perform one atomic release publish/finalize.
-- [ ] Ensure a failed/missing target build prevents final publish rather than creating a partial release.
-- [ ] Keep workflow/provider concepts out of core release schema; GitLab/other CI should be able to call the same CLI commands.
-- [ ] Verify local single-target publish remains supported.
-- [ ] Add end-to-end CI example package/run if feasible.
-- [ ] Extend **AgentPM's own** CI matrix beyond Linux, separately from the Tool-publishing workflow:
-  - [ ] `agentpm/.github/workflows/ci.yml` currently runs `ubuntu-latest` only while `release.yml` ships macOS and Windows, so platform breakage is first seen at tag time;
-  - [ ] add macOS and Windows jobs covering at least target detection, payload classification, archive extraction, and local runtime-environment provisioning;
-  - [ ] do not let `#[cfg(unix)]`-gated tests be the only coverage for behavior that also has a Windows path;
-  - [ ] if a full matrix per pull request is too slow, run it on merge to main and on release tags rather than omitting it.
-- [ ] Explicitly document AgentPM OIDC trusted publishing as future work, not Stage 1.
+  - [x] authenticate with `AGENTPM_TOKEN`;
+  - [x] load encrypted signing key/passphrase secrets if signing;
+  - [x] perform one atomic release publish/finalize.
+- [x] Ensure a failed/missing target build prevents final publish rather than creating a partial release.
+- [x] Keep workflow/provider concepts out of core release schema; GitLab/other CI should be able to call the same CLI commands.
+- [x] Verify local single-target publish remains supported.
+- [ ] Complete the end-to-end examples and concrete-target proof above, including failure checks that a tag/version mismatch or failed/missing required build prevents publication; exercise headless signing with both new and legacy release formats.
+- [x] Extend **AgentPM's own** CI matrix beyond Linux, separately from the Tool-publishing workflow:
+  - [x] `agentpm/.github/workflows/ci.yml` currently runs `ubuntu-latest` only while `release.yml` ships macOS and Windows, so platform breakage is first seen at tag time;
+  - [x] add macOS and Windows jobs covering at least target detection, payload classification, archive extraction, and local runtime-environment provisioning;
+  - [x] do not let `#[cfg(unix)]`-gated tests be the only coverage for behavior that also has a Windows path;
+  - [x] if a full matrix per pull request is too slow, run it on merge to main and on release tags rather than omitting it.
+- [x] Explicitly document AgentPM OIDC trusted publishing as future work, not Stage 1.
+
+Implementation evidence: `agentpm package --machine` writes relocatable
+`agentpm.package.build.v1` bundles; `publish --build` validates archive/embedded
+metadata and the required host set before any Registry mutation. Python local
+publish and saved builds use release author v2; legacy local/saved publication
+keeps author v1. Python release publication now requires explicit `--namespace`
+for the qualified signed identity. Public docs and example setup describe this.
+A narrow Registry finalization correction preserves README/license display
+fields from the first verified artifact in canonical target order; it does not
+trust unsigned publisher text. Python packaging includes discovered README and
+declared license text files so those fields remain bound to artifact bytes.
+No agent.json, lock, canonical release/signature schema, Python/Node SDK or
+database migration changes are included.
+
+Local verification: full Rust workspace **1,240 passed, 6 ignored**; the real
+pinned-uv/native-Mac environment suite **10 passed**, including its five normally
+ignored CLI/Harness/provisioning cases. Clippy with warnings denied and rustfmt
+pass. Six CLI integration tests cover moved bundles, tampered bytes, typed
+failure JSON, real permission-derived `any`/concrete rejection before network,
+noninteractive key errors and one signed four-artifact finalize plus a legacy
+signed Agent publish against local HTTP fixtures. Cross-target archive metadata
+in that transport test is synthetic; actual native compilation/execution was
+performed only on Apple Silicon locally. Example selector/Agent and CLI installer checks (6 tests)
+and summarize-text's offline tests (5 tests) pass. Registry release/display/signing/migration tests also pass (105 tests);
+required API hooks pass except two existing unrelated mypy assignment errors in
+`search.py:1486` and `:1856`. All three example manifests
+pass strict lint and package locally; summarize-text replays its existing 17-
+distribution lock and stays `any`. The compiled helper returns the expected result.
+
+Windows follow-up: the installer/native-layout regression suite now has **11
+passing examples tests**. The signed publication fixture includes all four
+supported targets; its 6 CLI integration and 2 fan-in unit tests pass, including
+missing-Windows rejection. Native fixture strict lint, packaging and execution
+pass locally on Apple Silicon; MSVC/Windows-format installer checks are simulated
+and do not close actual hosted Windows execution. Documentation includes the
+four-target example and Windows-specific setup.
+
+Hosted/manual acceptance remains open above: compatible CLI release and examples
+repository/environment/secrets setup, completion of hosted platform jobs and
+tag-driven signed publications with clean consumers for
+both maintained packages and all four native runners. Workflow definitions and
+local fixture success do not close these items. No pushes, tags, secret setup,
+production publication or paid model call were performed by this implementation.
+
+The operator confirmed independent review is complete. Remaining M16 work is
+hosted execution and real publication/consumer acceptance; the separate
+Unix/Windows permission comparison is now closed above. No further code finding
+is recorded.
+
+PR verification update: CLI PR #117's ordinary CI run
+[42508120182](https://github.com/agentpm-dev/cli/actions/runs/42508120182)
+passed; `platform-targets` and `Native runtime` were intentionally skipped on
+the PR event and will run on main/tag pushes. The Resolver Contract job logs
+close the separate Unix/Windows permission gate above. The operator subsequently
+confirmed on 2026-11-08 that the final Intel Mac job also passed, completing all
+four Resolver Contract targets for this PR revision.
+Registry PR #128 run
+[42508120144](https://github.com/agentpm-dev/registry/actions/runs/42508120144)
+passed parity and PostgreSQL jobs. The parity log records Registry PR merge
+`03a70322c63dc3611af24687667000afb8461f02` (head
+`f408f8910ec5ccbf6fb89116e7ee96c5d5a5bb20`) against public CLI main
+`6370fa44eae1b9435c1f67855a9f946450000f22`, with 88 passed/16 skipped;
+PostgreSQL reports 315 passed plus 8 subtests passed. These are PR/contract
+checks, not a deployed CLI release or examples publication.
 
 ## Release Band 12: Headless Signing and CI Publishing
 Covered milestones: 16.
 This gives us headless signing with encrypted AgentPM key material plus a noninteractive secret/passphrase source and reusable GitHub Actions patterns for building and publishing multi-target releases, including AgentPM's own cross-platform CI coverage. It follows Band 11 because there is no point automating the publication of signed multi-artifact releases until that format is consumer-installable and verifiable.
+
+Release preparation (2026-11-08): CLI manifest and Cargo lockfile now name
+`0.1.41`; the Web status page reflects that version with release date
+`2026-11-08`. These are local preparation changes, not a published release.
+The operator will push and deploy CLI → Registry → Web. The existing M16
+examples publication and clean-consumer acceptance items above remain open.
 
 ## Milestone 17: SDK Lockfile and Managed Python Tool Compatibility
 

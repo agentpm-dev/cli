@@ -1,5 +1,3 @@
-use crate::auth::read_key_file;
-use crate::commands::keys::key_id_from_pub_b64;
 use crate::commands::knowledge::{
     KnowledgeBuildMode, KnowledgeBuildSummary, execute_knowledge_build_with_manifest,
     parse_safe_relative_path, resolve_existing_file,
@@ -8,9 +6,7 @@ use crate::commands::memory::{
     ExecutedMemoryBuild, MemoryBuildMismatch, MemoryBuildMismatchKind, MemoryBuildMode,
     execute_memory_build_with_output,
 };
-use crate::keys::signing::{
-    StoredKeyV1, decrypt_private, keystore_dir, prompt_passphrase_with_fallback,
-};
+use crate::keys::signing::load_publish_key;
 use crate::manifest::{
     AgentManifest, Entrypoint, KnowledgeManifest, LoopManifest, MemoryManifest, ProfileManifest,
     PublishManifest, SkillManifest, TemplateManifest, ToolManifest, load_manifest_value,
@@ -40,10 +36,10 @@ use tracing::info;
 use walkdir::WalkDir;
 
 mod collection;
-mod payload;
-mod release_artifact;
+pub(super) mod payload;
+pub(super) mod release_artifact;
 
-const MAX_TAR_ENTRIES: usize = 15_000;
+pub(super) const MAX_TAR_ENTRIES: usize = 15_000;
 static BLOCKED_EMBEDDED_EXTS: &[&str] = &[".zip", ".whl", ".7z", ".rar", ".tar", ".tgz", ".tar.gz"];
 
 const MAX_README_BYTES: usize = 512 * 1024; // 512 KB
@@ -79,6 +75,23 @@ pub struct PublishArgs {
     #[arg(long, value_name = "KEY_ID")]
     pub key_id: Option<String>,
 
+    /// Encrypted StoredKeyV1 JSON file for signing on an ephemeral runner
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "sign",
+        conflicts_with = "key_id"
+    )]
+    pub key_file: Option<PathBuf>,
+
+    /// Publish saved package-build descriptors instead of rebuilding source
+    #[arg(long = "build", value_name = "DESCRIPTOR", conflicts_with_all = ["dry_run", "refresh_python"])]
+    pub builds: Vec<PathBuf>,
+
+    /// Require these matrix build hosts before publishing (repeat per host)
+    #[arg(long = "expect-build-target", requires = "builds")]
+    pub expected_build_targets: Vec<agentpm_sdk::target::Target>,
+
     /// Personal Access Token for headless auth (overrides env/file)
     #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
     pub token: Option<String>,
@@ -113,13 +126,88 @@ impl PublishArgs {
             ))?;
         s.ok(format!("using {}", mask_token(&token)));
 
+        if !self.builds.is_empty() {
+            return crate::commands::package::publish_builds(&self, &cfg, token).await;
+        }
+        let prepared = self.prepare(&cfg, quiet).await?;
+        let PreparedPackage {
+            mut tar_path,
+            publish_manifest,
+            mut meta,
+            filename,
+        } = prepared;
+        if self.dry_run {
+            println!("Dry-run: artifact created at {}", tar_path.display());
+            return Ok(());
+        }
+
+        // Python Tools use the release transaction; other kinds retain the
+        // existing single-artifact init/stream/finalize protocol.
+        let client = AgentPmClient::new(cfg.base_url.clone())?.with_token(token);
+
+        if meta["manifest"]["kind"] == "tool" && meta["manifest"]["runtime"]["type"] == "python" {
+            let build =
+                crate::commands::package::PackageBuild::from_prepared(&mut tar_path, &mut meta)?;
+            return crate::commands::package::publish_prepared(
+                &self,
+                &client,
+                vec![(build, tar_path)],
+            )
+            .await;
+        }
+        let mut s = Step::new("Uploading artifact", quiet);
+        // Build optional finalize_extra
+        let finalize_extra: Option<serde_json::Value> = if self.sign {
+            let (signing_key, public) =
+                load_publish_key(self.key_id.as_deref(), self.key_file.as_deref())?;
+
+            // Minimal statement (server checks name/version/digest)
+            let statement = AuthorSignatureV1::new(
+                manifest_kind(&publish_manifest).into(),
+                manifest_name(&publish_manifest).into(),
+                manifest_version(&publish_manifest).into(),
+                format!("sha256:{}", meta["sha256"].as_str().unwrap()),
+                chrono::Utc::now().to_rfc3339(),
+            );
+            Some(signed_finalize_extra(&statement, &signing_key, &public)?)
+        } else {
+            None
+        };
+
+        let res = client
+            .publish_package_from_path(&meta, &tar_path, &filename, finalize_extra)
+            .await;
+
+        let receipt = match res {
+            Ok(r) => {
+                s.ok("done");
+                r
+            }
+            Err(e) => {
+                s.err("upload failed");
+                return Err(e.into());
+            }
+        };
+
+        // Print receipt
+        println!("✓ Published {}@{}", receipt.name, receipt.version);
+        println!("  id:   {}", receipt.id);
+        println!("  url:  {}", receipt.url);
+        if !receipt.message.is_empty() {
+            println!("  note: {}", receipt.message);
+        }
+
+        Ok(())
+    }
+
+    pub(super) async fn prepare(&self, cfg: &Config, quiet: bool) -> Result<PreparedPackage> {
         // 2) Validate manifest using the same schema as `lint`
         let mut s = Step::new("Validating manifest", quiet);
         let manifest_path = PathBuf::from(&self.manifest);
         let (mut manifest_value, _raw) = load_manifest_value(&manifest_path)
             .with_context(|| format!("loading {}", manifest_path.display()))?;
 
-        let schema_source = resolve_schema_source(self.schema);
+        let schema_source = resolve_schema_source(self.schema.clone());
         let (schema_ok, issues) = validate_manifest_value(
             &schema_source,
             &manifest_path.to_string_lossy(),
@@ -341,12 +429,12 @@ impl PublishArgs {
         if let Some(r) = &readme_payload
             && let (Some(p), Some(sha)) = (r.get("path"), r.get("sha256"))
         {
-            println!("✓ README: {} (sha256 {})", p, sha.as_str().unwrap_or(""));
+            eprintln!("✓ README: {} (sha256 {})", p, sha.as_str().unwrap_or(""));
         }
         if let Some(m) = &skill_manual_payload
             && let (Some(p), Some(sha)) = (m.get("path"), m.get("sha256"))
         {
-            println!(
+            eprintln!(
                 "✓ Skill manual: {} (sha256 {})",
                 p,
                 sha.as_str().unwrap_or("")
@@ -355,30 +443,16 @@ impl PublishArgs {
         if let Some(l) = &license_payload {
             let spdx = l.get("spdx").and_then(|v| v.as_str()).unwrap_or("");
             if let Some(p) = l.get("path") {
-                println!(
+                eprintln!(
                     "✓ License: {} (from {}, sha256 {})",
                     spdx,
                     p.as_str().unwrap_or("LICENSE"),
                     l.get("sha256").and_then(|v| v.as_str()).unwrap_or("")
                 );
             } else if !spdx.is_empty() {
-                println!("✓ License: {}", spdx);
+                eprintln!("✓ License: {}", spdx);
             }
         }
-
-        if self.dry_run {
-            println!("Dry-run: artifact created at {}", tar_path.display());
-            return Ok(());
-        }
-
-        // 5) Upload to registry (MVP: single call, multipart form)
-        //    POST {base_url}/v1/tools/publish
-        //    Authorization: Bearer <PAT>
-        //    multipart fields:
-        //      - metadata: JSON (manifest + client info + sha256/size)
-        //      - artifact: file (application/gzip)
-        let mut s = Step::new("Uploading artifact", quiet);
-        let client = AgentPmClient::new(cfg.base_url.clone())?.with_token(token);
 
         let mut meta = build_publish_metadata(
             manifest_value,
@@ -409,65 +483,25 @@ impl PublishArgs {
             PublishManifest::Loop(mf) => artifact_filename(&mf.name, &mf.version, None),
         };
 
-        // Build optional finalize_extra
-        let finalize_extra: Option<serde_json::Value> = if self.sign {
-            // pick a local key (reuse helper from keys code)
-            let (_key_id, stored) = select_local_key(self.key_id.as_deref())?;
-            let pass = prompt_passphrase_with_fallback("Key passphrase: ")?;
-            let sk_bytes = decrypt_private(&stored, &pass)?;
-            let sk_arr: [u8; 32] = sk_bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| anyhow!("expected 32-byte ed25519 secret key"))?;
-            let signing_key = SigningKey::from_bytes(&sk_arr);
-
-            // Minimal statement (server checks name/version/digest)
-            let statement = AuthorSignatureV1::new(
-                manifest_kind(&publish_manifest).into(),
-                manifest_name(&publish_manifest).into(),
-                manifest_version(&publish_manifest).into(),
-                format!("sha256:{sha256_hex}"),
-                chrono::Utc::now().to_rfc3339(),
-            );
-            Some(signed_finalize_extra(
-                &statement,
-                &signing_key,
-                &stored.public_key_b64,
-            )?)
-        } else {
-            None
-        };
-
-        let res = client
-            .publish_package_from_path(&meta, &tar_path, &filename, finalize_extra)
-            .await;
-
-        let receipt = match res {
-            Ok(r) => {
-                s.ok("done");
-                r
-            }
-            Err(e) => {
-                s.err("upload failed");
-                return Err(e.into());
-            }
-        };
-
-        // Print receipt
-        println!("✓ Published {}@{}", receipt.name, receipt.version);
-        println!("  id:   {}", receipt.id);
-        println!("  url:  {}", receipt.url);
-        if !receipt.message.is_empty() {
-            println!("  note: {}", receipt.message);
-        }
-
-        Ok(())
+        Ok(PreparedPackage {
+            tar_path,
+            publish_manifest,
+            meta,
+            filename,
+        })
     }
+}
+
+pub(super) struct PreparedPackage {
+    pub tar_path: PathBuf,
+    pub publish_manifest: PublishManifest,
+    pub meta: JsonValue,
+    pub filename: String,
 }
 
 // === Helpers ===
 
-fn signed_finalize_extra(
+pub(super) fn signed_finalize_extra(
     statement: &AuthorSignatureV1,
     key: &SigningKey,
     public: &str,
@@ -591,12 +625,24 @@ fn package_tool_build(
         non_python_tar_name(Path::new(&ep_tar_name))
     };
     let (collected_files, collection_diagnostics) = if manifest.runtime["type"] == "python" {
-        let collected = collection::collect(
-            root,
-            &manifest.files,
-            &ep_tar_name,
-            python_metadata.is_some(),
-        )?;
+        // New-format display fields come from verified archive bytes. Preserve
+        // the existing README/license discovery behavior by shipping those
+        // bounded text files as well, even when files lists source only.
+        let authored: JsonValue = serde_json::from_slice(&fs::read(manifest_path)?)?;
+        let mut requested = manifest.files.clone();
+        if let Some((path, name)) = discover_readme(root, authored["readme"].as_str())
+            && read_utf8_with_cap(&path, MAX_README_BYTES).is_ok()
+        {
+            requested.push(name);
+        }
+        if let Some(path) = pick_license_paths(&authored).1
+            && let Ok((absolute, name)) = validate_declared_manifest_file_path(root, path)
+            && read_utf8_with_cap(&absolute, MAX_LICENSE_BYTES).is_ok()
+        {
+            requested.push(name);
+        }
+        let collected =
+            collection::collect(root, &requested, &ep_tar_name, python_metadata.is_some())?;
         (Some(collected.files), collected.diagnostics)
     } else {
         (None, Vec::new())
@@ -1934,7 +1980,7 @@ fn is_embedded_archive(name: &str) -> bool {
     BLOCKED_EMBEDDED_EXTS.iter().any(|ext| lower.ends_with(ext))
 }
 
-fn ensure_safe_tar_name(name: &str) -> Result<()> {
+pub(super) fn ensure_safe_tar_name(name: &str) -> Result<()> {
     // forbid absolute paths and parent traversal
     if name.starts_with('/') {
         bail!("unsafe absolute path in archive: {name}");
@@ -2159,7 +2205,7 @@ fn mode_from_meta_for_name(_meta: &Metadata, name_in_tar: &str) -> u32 {
     }
 }
 
-fn file_digest_and_len(path: &Path) -> Result<(String, u64)> {
+pub(super) fn file_digest_and_len(path: &Path) -> Result<(String, u64)> {
     let mut f = fs::File::open(path)?;
     let mut sha = Sha256::new();
     let mut len = 0_u64;
@@ -2235,59 +2281,6 @@ fn manifest_version(manifest: &PublishManifest) -> &str {
         PublishManifest::Memory(mf) => &mf.version,
         PublishManifest::Profile(mf) => &mf.version,
         PublishManifest::Loop(mf) => &mf.version,
-    }
-}
-
-fn select_local_key(key_id_flag: Option<&str>) -> Result<(String, StoredKeyV1)> {
-    let dir = keystore_dir()?;
-    let mut found: Vec<(String, StoredKeyV1)> = Vec::new();
-
-    if dir.exists() {
-        for ent in fs::read_dir(&dir)? {
-            let ent = ent?;
-            if !ent.file_type()?.is_file() {
-                continue;
-            }
-            if !ent.file_name().to_string_lossy().ends_with(".json") {
-                continue;
-            }
-
-            let path = ent.path();
-            match read_key_file(&path) {
-                Ok(k) => {
-                    let id = key_id_from_pub_b64(&k.public_key_b64)?;
-                    found.push((id, k));
-                }
-                Err(_) => {
-                    // Optionally log: eprintln!("Skipping unreadable key file: {}", path.display());
-                    continue;
-                }
-            }
-        }
-    }
-
-    if let Some(want) = key_id_flag {
-        found
-            .into_iter()
-            .find(|(id, _)| id == want)
-            .ok_or_else(|| anyhow!("No local key with id {}", want))
-    } else {
-        match found.len() {
-            0 => Err(anyhow!("No local keys. Run `agentpm keys generate`.")),
-            1 => Ok(found.into_iter().next().unwrap()),
-            _ => {
-                // Helpful hint if multiple
-                let ids = found
-                    .iter()
-                    .map(|(id, k)| format!("{id}\t{}", k.label))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                Err(anyhow!(
-                    "Multiple keys present; pass --key-id <id>. Available:\n{}",
-                    ids
-                ))
-            }
-        }
     }
 }
 
@@ -2394,6 +2387,9 @@ mod tests {
             token: Some("dummy-token".into()),
             namespace: None,
             refresh_python: false,
+            key_file: None,
+            builds: Vec::new(),
+            expected_build_targets: Vec::new(),
         }
     }
 
@@ -2701,6 +2697,9 @@ mod tests {
             token: Some("dummy-token".into()),
             namespace: None,
             refresh_python: false,
+            key_file: None,
+            builds: Vec::new(),
+            expected_build_targets: Vec::new(),
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -2755,6 +2754,9 @@ mod tests {
             token: Some("dummy-token".into()),
             namespace: None,
             refresh_python: false,
+            key_file: None,
+            builds: Vec::new(),
+            expected_build_targets: Vec::new(),
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -3207,6 +3209,9 @@ mod tests {
             token: Some("dummy-token".into()),
             namespace: None,
             refresh_python: false,
+            key_file: None,
+            builds: Vec::new(),
+            expected_build_targets: Vec::new(),
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -4040,6 +4045,9 @@ mod tests {
             token: Some("dummy-token".into()),
             namespace: None,
             refresh_python: false,
+            key_file: None,
+            builds: Vec::new(),
+            expected_build_targets: Vec::new(),
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -4106,6 +4114,9 @@ mod tests {
             token: Some("dummy-token".into()),
             namespace: None,
             refresh_python: false,
+            key_file: None,
+            builds: Vec::new(),
+            expected_build_targets: Vec::new(),
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -4169,6 +4180,9 @@ mod tests {
             token: Some("dummy-token".into()),
             namespace: None,
             refresh_python: false,
+            key_file: None,
+            builds: Vec::new(),
+            expected_build_targets: Vec::new(),
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -4229,6 +4243,9 @@ mod tests {
             token: Some("dummy-token".into()),
             namespace: None,
             refresh_python: false,
+            key_file: None,
+            builds: Vec::new(),
+            expected_build_targets: Vec::new(),
         };
 
         args.run("https://example.com".into()).await.unwrap();
@@ -4276,6 +4293,9 @@ mod tests {
             token: Some("dummy-token".into()),
             namespace: None,
             refresh_python: false,
+            key_file: None,
+            builds: Vec::new(),
+            expected_build_targets: Vec::new(),
         };
 
         let err = args.run("https://example.com".into()).await.unwrap_err();
@@ -4324,6 +4344,9 @@ mod tests {
             token: Some("dummy-token".into()),
             namespace: None,
             refresh_python: false,
+            key_file: None,
+            builds: Vec::new(),
+            expected_build_targets: Vec::new(),
         };
 
         let err = args.run("https://example.com".into()).await.unwrap_err();
