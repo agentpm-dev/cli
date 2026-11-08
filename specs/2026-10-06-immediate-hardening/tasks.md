@@ -2241,6 +2241,7 @@ This is the band where the new release format becomes real for users. It gives u
 > - `publish --dry-run` is not a sufficient matrix build contract because it produces human output and skips signing/network behavior. Extract or add a provider-neutral package-build CLI surface.
 > - Initial registry authentication can use the existing `AGENTPM_TOKEN`/PAT mechanism.
 > - Matrix target vocabulary should match the canonical AgentPM targets from Milestone 11A.
+> - Host the working publication examples in `agentpm-examples`: `summarize-text` proves Python Tool publication, and `devwork-copilot` proves Agent publication through the existing legacy format. Publish each independently; SDK execution changes remain M17.
 
 - [ ] Add secure noninteractive key loading:
   - [ ] preserve encrypted `StoredKeyV1`;
@@ -2263,9 +2264,17 @@ This is the band where the new release format becomes real for users. It gives u
     payload diagnostics; expose structured build errors on failure and keep
     human progress out of machine stdout.
 - [ ] Keep local `agentpm publish` convenient by internally reusing the same package-build code for current-target/`any` publishing.
-- [ ] Build official GitHub Actions example/workflow for Python Tools.
+- [ ] Build official GitHub Actions publishing examples in `agentpm-examples`:
+  - [ ] Automate `summarize-text` packaging, headless author signing and publication through the new Python Tool release format, using its committed Python resolution. Native dependencies do not by themselves require concrete-target payloads; use a single `any` artifact when that is the classifier's result, without feeding duplicate `any` outputs to matrix fan-in.
+  - [ ] Automate `devwork-copilot` packaging, headless author signing and publication through the existing Agent/legacy format with a single packaging job; retain author signature v1 and Registry attestation v2. Publishing the Agent must not republish its Tools or implicitly change their declared versions.
+  - [ ] Use package-specific release tags (for example, `summarize-text/v<version>` and `devwork-copilot/v<version>`) so each tag selects only its intended package, and compare the version component with that package's `agent.json.version` before publishing.
+  - [ ] Document package selection, committed inputs, compatible CLI version, Registry URL, `AGENTPM_TOKEN`, encrypted author key/passphrase secrets and release/verification commands in the examples repo and public publishing docs. Keep the initial examples limited to these two packages.
+  - [ ] Verify the published exact `summarize-text` version in a clean consumer: strict signature/attestation verification, managed Python dependency provisioning and a successful Tool call. Document any model credentials needed for the real call separately from Registry/signing secrets.
+  - [ ] Verify the published exact `devwork-copilot` version installs in a clean consumer with strict signature/attestation verification and the expected Agent manifest/dependency versions. This check must not depend on M17 SDK changes or require a model-driven Agent run.
+  - [ ] Prove the required distinct concrete-target matrix and atomic publication with a dedicated test package/fixture built on the corresponding runners; do not force or relabel `summarize-text` artifacts to manufacture target-specific claims.
+  - [ ] Record hosted workflow runs, published package versions and clean-consumer results for both real examples and the concrete-target proof; a workflow file or mocked test alone does not establish end-to-end acceptance.
 - [ ] Follow established AgentPM conventions:
-  - [ ] tag-triggered on `v*`;
+  - [ ] tag-triggered on `v*` for a single-package example, or the explicit package-specific tag patterns above for the examples monorepo;
   - [ ] fail if tag version != `agent.json.version`;
   - [ ] `actions/checkout@v4`;
   - [ ] pinned toolchain/actions;
@@ -2306,7 +2315,7 @@ This is the band where the new release format becomes real for users. It gives u
 - [ ] Ensure a failed/missing target build prevents final publish rather than creating a partial release.
 - [ ] Keep workflow/provider concepts out of core release schema; GitLab/other CI should be able to call the same CLI commands.
 - [ ] Verify local single-target publish remains supported.
-- [ ] Add end-to-end CI example package/run if feasible.
+- [ ] Complete the end-to-end examples and concrete-target proof above, including failure checks that a tag/version mismatch or failed/missing required build prevents publication; exercise headless signing with both new and legacy release formats.
 - [ ] Extend **AgentPM's own** CI matrix beyond Linux, separately from the Tool-publishing workflow:
   - [ ] `agentpm/.github/workflows/ci.yml` currently runs `ubuntu-latest` only while `release.yml` ships macOS and Windows, so platform breakage is first seen at tag time;
   - [ ] add macOS and Windows jobs covering at least target detection, payload classification, archive extraction, and local runtime-environment provisioning;
