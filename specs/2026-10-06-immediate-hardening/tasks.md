@@ -2271,9 +2271,9 @@ This is the band where the new release format becomes real for users. It gives u
   - [x] Use package-specific release tags (for example, `summarize-text/v<version>` and `devwork-copilot/v<version>`) so each tag selects only its intended package, and compare the version component with that package's `agent.json.version` before publishing.
   - [x] Document package selection, committed inputs, compatible CLI version, Registry URL, `AGENTPM_TOKEN`, encrypted author key/passphrase secrets and release/verification commands in the examples repo and public publishing docs. Keep the initial examples limited to these two packages.
   - [x] Verify the published exact `summarize-text` version in a clean consumer: strict signature/attestation verification, managed Python dependency provisioning and a successful Tool call. Document any model credentials needed for the real call separately from Registry/signing secrets. Operator confirmed all `select`/`build`/`publish`/`verify` jobs passed for production `@zack/summarize-text@0.1.10`; the Security tab shows the expected single `any` release artifact.
-  - [ ] Verify the published exact `devwork-copilot` version installs in a clean consumer with strict signature/attestation verification and the expected Agent manifest/dependency versions. This check must not depend on M17 SDK changes or require a model-driven Agent run.
-  - [ ] Prove the required distinct concrete-target matrix and atomic publication with a dedicated test package/fixture built on the corresponding runners; do not force or relabel `summarize-text` artifacts to manufacture target-specific claims.
-  - [ ] Record hosted workflow runs, published package versions and clean-consumer results for both real examples and the concrete-target proof; a workflow file or mocked test alone does not establish end-to-end acceptance.
+  - [x] Verify the published exact `devwork-copilot` version installs in a clean consumer with strict signature/attestation verification and the expected Agent manifest/dependency versions. This check must not depend on M17 SDK changes or require a model-driven Agent run. Operator confirmed the complete maintained-example workflow, including strict consumer verification, passes for production `@zack/devwork-copilot@0.1.8` after the historical Tool-signature compatibility update.
+  - [x] Prove the required distinct concrete-target matrix and atomic publication with a dedicated test package/fixture built on the corresponding runners; do not force or relabel `summarize-text` artifacts to manufacture target-specific claims. Operator confirmed production `@zack/native-release-check@0.1.0` published successfully on retry and all four strict clean-consumer verification jobs passed; its Web inventory lists the four concrete targets. Artifact sizes/digests are recorded in test-plan.md.
+  - [x] Record hosted workflow runs, published package versions and clean-consumer results for both real examples and the concrete-target proof; a workflow file or mocked test alone does not establish end-to-end acceptance. GitHub metadata/job logs and public Registry security responses were inspected directly; successful runs, expected failure runs, tested commit IDs and production digests are recorded under M16 final acceptance in test-plan.md.
 - [x] Follow established AgentPM conventions:
   - [x] tag-triggered on `v*` for a single-package example, or the explicit package-specific tag patterns above for the examples monorepo;
   - [x] fail if tag version != `agent.json.version`;
@@ -2338,7 +2338,7 @@ This is the band where the new release format becomes real for users. It gives u
 - [x] Ensure a failed/missing target build prevents final publish rather than creating a partial release.
 - [x] Keep workflow/provider concepts out of core release schema; GitLab/other CI should be able to call the same CLI commands.
 - [x] Verify local single-target publish remains supported.
-- [ ] Complete the end-to-end examples and concrete-target proof above, including failure checks that a tag/version mismatch or failed/missing required build prevents publication; exercise headless signing with both new and legacy release formats.
+- [x] Complete the end-to-end examples and concrete-target proof above, including failure checks that a tag/version mismatch or failed/missing required build prevents publication; exercise headless signing with both new and legacy release formats. Operator confirmed both controlled negative checks pass by producing the expected failed Actions runs: tag selection rejection and the deliberate Windows C1189 build error, with publication/verification skipped and no test release published.
 - [x] Extend **AgentPM's own** CI matrix beyond Linux, separately from the Tool-publishing workflow:
   - [x] `agentpm/.github/workflows/ci.yml` currently runs `ubuntu-latest` only while `release.yml` ships macOS and Windows, so platform breakage is first seen at tag time;
   - [x] add macOS and Windows jobs covering at least target detection, payload classification, archive extraction, and local runtime-environment provisioning;
@@ -2414,6 +2414,18 @@ checks, not a deployed CLI release or examples publication.
 Covered milestones: 16.
 This gives us headless signing with encrypted AgentPM key material plus a noninteractive secret/passphrase source and reusable GitHub Actions patterns for building and publishing multi-target releases, including AgentPM's own cross-platform CI coverage. It follows Band 11 because there is no point automating the publication of signed multi-artifact releases until that format is consumer-installable and verifiable.
 
+**Accepted 2026-11-08.** M16 implementation/review/CI, production deployments,
+the three signed examples publications and strict clean-consumer checks, all
+four native targets, and both controlled publication-failure checks are
+complete. Direct GitHub inspection confirms the three successful workflows
+and two expected failed workflows; their commits/logs and full production
+release/artifact digests are recorded in test-plan.md. Read-only Registry
+checks confirm both negative-test versions are absent and all native artifacts
+now have complete/clean GuardDuty results, matching the previously observed
+four digests. Database TLS/disconnect reliability remains a separate follow-up
+with no definitive root cause asserted. The notes below retain the rollout
+history; previously pending M16 acceptance items are superseded by this result.
+
 Release deployment (operator-confirmed 2026-11-08): CLI `0.1.41`, Registry and
 Web are deployed to production; the Web status page reflects that CLI version
 with release date `2026-11-08`. The operator also confirmed that the push-only
@@ -2460,6 +2472,24 @@ identity/digest/signature checks and rejection of unknown formats. CLI
 After release, update the GitHub repository variable `AGENTPM_CLI_VERSION`
 and rerun the existing failed verification job; do not republish or retag the
 already-published Agent. Agent acceptance remains open until that rerun passes.
+
+The operator subsequently confirmed all updates are applied and the complete
+`devwork-copilot@0.1.8` workflow, including `verify`, now passes. This closes
+the Agent's strict clean-consumer and exact dependency-version acceptance
+above, including its historical `github-issues@0.1.1` dependency. No SDK or
+model-driven Agent run is claimed. The four-target native publication,
+controlled failure checks and consolidated run-link/digest evidence remain
+open before declaring M16/Release Band 12 complete.
+
+The operator subsequently confirmed production
+`@zack/native-release-check@0.1.0` publication and all four verification jobs
+pass. The first publish attempt failed during PAT lookup with PostgreSQL
+`SSL SYSCALL error: EOF detected`, before release initialization; the same
+workflow succeeded on retry without a code, tag or version change. The Web
+inventory shows all four concrete artifacts and no `any`, as expected for
+the compiled native helper. Per-artifact scan status was queued when observed;
+clean scan completion is not claimed. Controlled failure checks and consolidated
+workflow-link/logical release-digest evidence remain open.
 
 ## Milestone 17: SDK Lockfile and Managed Python Tool Compatibility
 

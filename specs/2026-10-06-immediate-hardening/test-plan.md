@@ -4689,6 +4689,123 @@ typecheck pass. CLI `0.1.42` and the corresponding Web status/date are prepared;
 the examples README documents updating `AGENTPM_CLI_VERSION` after release and
 rerunning only failed jobs without retagging or republishing Agent 0.1.8.
 
+The operator subsequently confirmed that the release/settings updates are
+applied and the full maintained-example workflow for production
+`@zack/devwork-copilot@0.1.8` now passes, including `verify`. Its clean consumer
+installs with both strict provenance flags and confirms the exact Agent and
+declared Tool versions, including summarize-text 0.1.10; historical transitive
+Tool verification no longer blocks the run. This closes the Agent acceptance
+check without SDK execution or a model-driven Agent run. No additional workflow
+URL or release digest was supplied in this confirmation; consolidated evidence,
+the native four-runner publication and controlled failure checks remain open.
+
+Native publication acceptance (operator-confirmed):
+`@zack/native-release-check@0.1.0` published successfully and every native
+clean-consumer verification job passed. The initial attempt failed during
+PAT authentication before release initialization with a PostgreSQL SSL EOF;
+retrying succeeded without a code or tag change. The Web Security inventory
+shows these concrete artifacts (digests below are SHA-256 hex):
+
+| Target | Archive bytes | SHA-256 |
+| --- | ---: | --- |
+| `aarch64-apple-darwin` | 2,875 | `946f58d0de912187dba532f7cda2e9c2f9085e3774b989a77cb3b0b4b9c7f1d4` |
+| `x86_64-apple-darwin` | 2,501 | `456de3b2b275f7fcdd6bc0f247d5876f66831a4d65a085eb326ecc4f27cf99aa` |
+| `x86_64-pc-windows-msvc` | 76,885 | `513f39f2b37f8144fbc791bc301e8dc85f33aaadae2befa5fd3f423bb95d683d` |
+| `x86_64-unknown-linux-gnu` | 4,165 | `e58a226a1344f870b77e3067a93a135b5513db33d29995fb257566e146465037` |
+
+No `any` artifact is expected: each payload includes its platform's compiled
+C helper. The same logical version contains four distinct native artifacts.
+All scans were queued in the operator's observation; that is not clean-scan
+evidence. Workflow URLs, the logical release digest and controlled negative
+publication checks remain to be recorded before aggregate M16 acceptance.
+
+Controlled failure instructions are prepared in the examples repository's
+`publishing/FAILURE_CHECKS.md`, linked from its publishing README. A mismatched
+test tag must fail selection before builds; a separate worktree/test commit
+uses a matching prerelease version and Windows-only C `#error`, requiring
+three successful Unix builds, the deliberate Windows compiler failure and
+skipped publication/consumer jobs. The normal workflow, required matrix,
+main source and already-published tags are unchanged. Local validation checked
+all Bash blocks, executed the documented preparation in a temporary copy,
+verified tag rejection/matching selection and strict manifest lint, ran the
+Unix helper successfully and checked rejection with `_WIN32` defined. That
+last precheck is not native Windows evidence. No test branch/commit/tag was
+created or pushed by the implementation; the two hosted expected-failure
+runs and evidence remain open.
+
+The operator subsequently confirmed both controlled checks pass with the
+intended failed Actions conclusions. The Windows log shows x64 MSVC bootstrap
+succeeded, then C1189 at the injected `#error` with
+`Controlled publishing failure: required Windows build`; Python propagates
+the compiler's nonzero exit as expected. The operator confirmed the remaining
+checks as well: the three Unix builds passed, publication and verification
+were skipped, no test version was published, and the tag mismatch failed
+selection. This closes the controlled failure acceptance; recording the
+actual workflow links/commits remains a separate evidence item.
+
+Additional operator database logs show `SSL error: decryption failed or bad
+record mac` and `Connection reset by peer` on an application connection,
+alongside successful WAL archiving/checkpoints and subsequent connections.
+This corroborates a connection/TLS failure but does not establish its cause
+or an exact timestamp match for each un-timestamped log line. No database
+restart is shown in the supplied excerpt. Database connection reliability
+remains a separate follow-up; no pooling/runtime configuration change or
+definitive root-cause claim is made as part of this publishing acceptance.
+
+### M16 / Release Band 12 final acceptance (2026-11-08)
+
+All functional and hosted acceptance checks are complete. Direct public GitHub
+run metadata and connected GitHub job/log reads confirm the following results;
+these are additional to the operator confirmations above, not inferred from
+workflow configuration alone.
+
+| Case | Run | Examples commit | Result |
+| --- | --- | --- | --- |
+| `summarize-text/v0.1.10` | [42516878732](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42516878732) | `84ec9bf746831fee16e8c3fa07632d8a7b18653a` | Success, attempt 1; selection/build/publication and strict clean-consumer Tool execution pass. |
+| `devwork-copilot/v0.1.8` | [42517801787](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42517801787) | `e8aae37c738ca780e106fb29b4e9426239b9f725` | Success, final attempt 3; strict clean-consumer Agent and exact Tool dependencies verified without an SDK/model run. |
+| `native-release-check/v0.1.0` | [42522502168](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42522502168) | `14cac4130583689a16d77ced407c728a321b906f` | Success, attempt 2; four native builds, one publication, four strict consumers execute the helper. |
+| `native-release-check/v0.0.0-ci-mismatch.20261108211002-66836` | [42523849752](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42523849752) | `e8aae37c738ca780e106fb29b4e9426239b9f725` | Expected failure in selection; build, publication and verification skipped. |
+| `native-release-check/v0.0.0-ci-windows-failure.20261108211002-66836` | [42524078644](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42524078644) | `5d5d60523ceafc8a0fce8633b335012c64f5cd19` | Expected Windows C1189 error after successful x64 MSVC setup; three Unix builds pass; publication/verification skipped. |
+
+Inspected consumer logs explicitly include both provenance flags and success:
+summarizer [job 128841946210](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42516878732/job/128841946210),
+Agent [job 128858295721](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42517801787/job/128858295721),
+and native [Intel Mac 128859836003](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42522502168/job/128859836003),
+[Linux 128859836008](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42522502168/job/128859836008),
+[Windows 128859836051](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42522502168/job/128859836051),
+[Apple Silicon 128859836147](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42522502168/job/128859836147).
+The native logs show CLI 0.1.42. The negative selection
+[job 128862951419](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42523849752/job/128862951419)
+has the exact tag/version mismatch; the negative Windows
+[job 128863663573](https://github.com/agentpm-dev/agentpm-examples/actions/runs/42524078644/job/128863663573)
+has the deliberate compiler message. Job metadata confirms the expected skip
+conditions, including Windows bundle upload skipped on compiler failure.
+
+Read-only public production security responses confirm these full digests:
+
+| Package | Digest kind | SHA-256 hex |
+| --- | --- | --- |
+| `@zack/summarize-text@0.1.10` | Logical release | `d643446edb10f205b8be5a116885a8dd648b322b72d419c057126b1cc78f31bf` |
+| `@zack/summarize-text@0.1.10` | `any` artifact, 9,219 bytes | `cfa7a43ff3aeacf7e8bf012ee448e66d07ba556f232c4ccdffc7f5709d870722` |
+| `@zack/devwork-copilot@0.1.8` | Legacy artifact, from its full Registry attestation | `86c172e7ce98733af704bd269e12207d66111e6b639c1fae60ab6e0a589958c2` |
+| `@zack/native-release-check@0.1.0` | Logical release | `b1287236ec801362e47df42e32696731adc4f394d23fea15b788be91a4157b82` |
+
+The four native artifact digests/sizes match the inventory table above and all
+now report `scan_status=complete`, `scan_malware_status=clean`, with
+`GuardDutyMalwareScanStatus=NO_THREATS_FOUND`. Summarizer and Agent scans also
+report complete/clean. HTTP GET for both negative-test versions on the existing
+native package returns 404, independently confirming no test version was
+published. Public package IDs: summarize-text
+`b36a9384-ed1b-4379-80ce-736f520dcd5c`, Agent
+`3199cd1c-dfe1-4f08-92a9-fdebef838c86`, native fixture
+`eebce814-ac66-44c7-adc0-d1ab9d2b3e58`.
+
+No production mutation, package upload, workflow rerun, Git push or secret read
+was performed during this evidence collection. Earlier pending execution and
+evidence notes are superseded by these results. No required M16 acceptance
+criterion remains open; the recorded transient database connection issue stays
+an operational follow-up, and M17 SDK work has not started.
+
 ## Manual checks
 
 ### Registry
