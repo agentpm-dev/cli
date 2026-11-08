@@ -63,7 +63,7 @@ fn default_base_url() -> String {
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
         .with(EnvFilter::from_default_env())
-        .with(fmt::layer())
+        .with(fmt::layer().with_writer(std::io::stderr))
         .init();
 
     let cli = Cli::parse();
@@ -101,6 +101,7 @@ async fn main() -> Result<()> {
         commands::Commands::Knowledge(args) => args.run().await,
         commands::Commands::Memory(args) => args.run().await,
         commands::Commands::Publish(arg) => arg.run(cli.base_url.clone()).await,
+        commands::Commands::Package(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Install(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::New(arg) => arg.run(cli.base_url.clone()).await,
         commands::Commands::Run(arg) => arg.run(cli.base_url.clone()).await,

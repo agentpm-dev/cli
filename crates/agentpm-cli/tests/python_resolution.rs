@@ -105,7 +105,13 @@ fn cold_live_publish_rejects_dependencies_before_any_acquisition_or_preparation(
                 format!("http://{}", listener.local_addr().unwrap()),
             )
             .env_remove("AGENTPM_UV_PATH")
-            .args(["--token", "fixture-only", "--quiet"]);
+            .args([
+                "--token",
+                "fixture-only",
+                "--quiet",
+                "--namespace",
+                "fixture",
+            ]);
         if let Some(path) = override_path {
             command.env("AGENTPM_UV_PATH", path);
         }
@@ -328,7 +334,7 @@ fn publish_prepares_committed_resolution_and_reuses_it_with_a_cold_cache() {
             }
             let response = match index % 3 {
                 0 => {
-                    assert!(headers.starts_with("POST /v1/tools/publish/init "));
+                    assert!(headers.starts_with("POST /v1/tools/publish/releases/init "));
                     let metadata: Value = serde_json::from_slice(&bytes[header_end..]).unwrap();
                     assert_eq!(metadata["python_resolution_digest"], expected_digest);
                     assert_eq!(
@@ -339,7 +345,7 @@ fn publish_prepares_committed_resolution_and_reuses_it_with_a_cold_cache() {
                     assert_eq!(metadata["client"]["os"], std::env::consts::OS);
                     assert_eq!(metadata["client"]["arch"], std::env::consts::ARCH);
                     digests.push(metadata["python_resolution_digest"].clone());
-                    json!({"upload_id":"fixture-upload","put_url":format!("{endpoint}/object"),"headers":{},"final_key":"tool.tar.gz","expires_in":900}).to_string()
+                    json!({"release_id":"fixture-release","resumed":false,"expires_at":"tomorrow","max_bytes":1000000,"artifacts":[{"artifact_id":"fixture","target":"any","put_url":format!("{endpoint}/object"),"headers":{},"status":"pending","expires_at":"tomorrow","max_bytes":1000000}]}).to_string()
                 }
                 1 => {
                     assert!(headers.starts_with("PUT /object "));
@@ -362,7 +368,11 @@ fn publish_prepares_committed_resolution_and_reuses_it_with_a_cold_cache() {
                     String::new()
                 }
                 _ => {
-                    assert!(headers.starts_with("POST /v1/tools/publish/finalize "));
+                    assert!(
+                        headers.starts_with(
+                            "POST /v1/tools/publish/releases/fixture-release/finalize "
+                        )
+                    );
                     json!({"id":"fixture","name":"fixture","version":"0.1.0","url":"https://fixture.invalid"}).to_string()
                 }
             };
@@ -381,7 +391,13 @@ fn publish_prepares_committed_resolution_and_reuses_it_with_a_cold_cache() {
             .command("publish")
             .env("AGENTPM_BASE_URL", &base)
             .env("AGENTPM_UV_PATH", "/must-not-execute-with-committed-lock")
-            .args(["--token", "fixture-only", "--quiet"])
+            .args([
+                "--token",
+                "fixture-only",
+                "--quiet",
+                "--namespace",
+                "fixture",
+            ])
             .output()
             .unwrap();
         assert!(live.status.success(), "{}", text(&live));

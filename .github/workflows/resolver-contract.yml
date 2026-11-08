@@ -15,6 +15,10 @@ on:
       - 'crates/agentpm-cli/tests/target_install.rs'
       - 'crates/agentpm-cli/src/commands/publish.rs'
       - 'crates/agentpm-cli/src/commands/publish/**'
+      - 'crates/agentpm-cli/src/commands/package.rs'
+      - 'crates/agentpm-cli/src/commands/package/**'
+      - 'crates/agentpm-cli/src/keys/signing.rs'
+      - 'crates/agentpm-cli/tests/ci_publishing.rs'
       - 'crates/agentpm-cli/tests/python_resolution.rs'
       - 'crates/agentpm-cli/tests/payload_compatibility.rs'
       - 'crates/agentpm-cli/src/io/download.rs'
@@ -123,7 +127,8 @@ jobs:
           cargo test -p agentpm-cli --bin agentpm commands::publish::payload
           cargo test -p agentpm-cli --bin agentpm commands::publish::collection
           cargo test -p agentpm-cli --bin agentpm commands::publish::release_artifact
-          cargo test -p agentpm-cli --test payload_compatibility
+          cargo test -p agentpm-cli --test payload_compatibility --test ci_publishing
+          cargo test -p agentpm-cli --bin agentpm commands::package::tests
       - name: Verify native managed Python environments
         shell: bash
         env:

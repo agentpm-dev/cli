@@ -170,16 +170,17 @@ async fn live_publish_sends_descriptor_separately_from_publisher_telemetry() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let app = Router::new()
-        .route("/v1/tools/publish/init", post({
+        .route("/v1/tools/publish/releases/init", post({
             let received = Arc::clone(&received);
             let base = base.clone();
             move |Json(metadata): Json<Value>| {
                 let received = Arc::clone(&received);
                 let base = base.clone();
                 async move {
+                    let target = metadata["artifact"]["target"].clone();
+                    assert_eq!(metadata["release"]["artifacts"][0]["target"], target);
                     received.lock().unwrap().push(metadata);
-                    Json(json!({"upload_id":"fixture","put_url":format!("{base}/object"),
-                        "headers":{},"final_key":"tool.tar.gz","expires_in":900}))
+                    Json(json!({"release_id":"fixture","resumed":false,"expires_at":"tomorrow","max_bytes":1000000,"artifacts":[{"artifact_id":"fixture","target":target,"put_url":format!("{base}/object"),"headers":{},"status":"pending","expires_at":"tomorrow","max_bytes":1000000}]}))
                 }
             }
         }))
@@ -195,7 +196,7 @@ async fn live_publish_sends_descriptor_separately_from_publisher_telemetry() {
                 }
             }
         }))
-        .route("/v1/tools/publish/finalize", post(|| async {
+        .route("/v1/tools/publish/releases/fixture/finalize", post(|| async {
             Json(json!({"id":"fixture","name":"payload-fixture","version":"0.1.0","url":"https://fixture.invalid"}))
         }));
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -221,9 +222,12 @@ async fn live_publish_sends_descriptor_separately_from_publisher_telemetry() {
             fixture.add(name, b"{}\n");
         }
         let mut command = fixture.command();
-        command
-            .env("AGENTPM_BASE_URL", &base)
-            .args(["--quiet", "--strict"]);
+        command.env("AGENTPM_BASE_URL", &base).args([
+            "--quiet",
+            "--strict",
+            "--namespace",
+            "fixture",
+        ]);
         let output = tokio::task::spawn_blocking(move || command.output().unwrap())
             .await
             .unwrap();

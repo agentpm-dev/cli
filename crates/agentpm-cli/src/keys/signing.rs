@@ -1,3 +1,5 @@
+use crate::auth::read_key_file;
+use crate::commands::keys::key_id_from_pub_b64;
 use anyhow::{Context, anyhow};
 use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
@@ -11,7 +13,7 @@ use rand_core::{OsRng, RngCore};
 use rpassword::prompt_password;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 #[derive(Serialize, Deserialize)]
@@ -127,6 +129,114 @@ pub fn prompt_passphrase_with_fallback(prompt: &str) -> anyhow::Result<String> {
             Ok(s)
         }
     }
+}
+
+fn select_local_key(key_id_flag: Option<&str>) -> anyhow::Result<(String, StoredKeyV1)> {
+    let dir = keystore_dir()?;
+    let mut found: Vec<(String, StoredKeyV1)> = Vec::new();
+
+    if dir.exists() {
+        for ent in fs::read_dir(&dir)? {
+            let ent = ent?;
+            if !ent.file_type()?.is_file() {
+                continue;
+            }
+            if !ent.file_name().to_string_lossy().ends_with(".json") {
+                continue;
+            }
+
+            let path = ent.path();
+            match read_key_file(&path) {
+                Ok(k) => {
+                    let id = key_id_from_pub_b64(&k.public_key_b64)?;
+                    found.push((id, k));
+                }
+                Err(_) => {
+                    // Optionally log: eprintln!("Skipping unreadable key file: {}", path.display());
+                    continue;
+                }
+            }
+        }
+    }
+
+    if let Some(want) = key_id_flag {
+        found
+            .into_iter()
+            .find(|(id, _)| id == want)
+            .ok_or_else(|| anyhow!("No local key with id {}", want))
+    } else {
+        match found.len() {
+            0 => Err(anyhow!("No local keys. Run `agentpm keys generate`.")),
+            1 => Ok(found.into_iter().next().unwrap()),
+            _ => {
+                // Helpful hint if multiple
+                let ids = found
+                    .iter()
+                    .map(|(id, k)| format!("{id}\t{}", k.label))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Err(anyhow!(
+                    "Multiple keys present; pass --key-id <id>. Available:\n{}",
+                    ids
+                ))
+            }
+        }
+    }
+}
+
+/// Load only encrypted AgentPM envelopes; keep failures free of secret values/paths.
+pub fn load_publish_key(
+    key_id: Option<&str>,
+    key_file: Option<&Path>,
+) -> anyhow::Result<(ed25519_dalek::SigningKey, String)> {
+    use std::io::IsTerminal;
+    let stored = if let Some(path) = key_file {
+        let file = fs::File::open(path)
+            .map_err(|_| anyhow!("Cannot read encrypted signing key file; check --key-file"))?;
+        if file
+            .metadata()
+            .map_err(|_| anyhow!("Cannot inspect encrypted signing key file"))?
+            .len()
+            > 65536
+        {
+            return Err(anyhow!("Encrypted signing key file exceeds size limit"));
+        }
+        serde_json::from_reader::<_, StoredKeyV1>(std::io::Read::take(file, 65537))
+            .map_err(|_| anyhow!("Invalid encrypted signing key file; expected StoredKeyV1 JSON"))?
+    } else {
+        select_local_key(key_id)?.1
+    };
+    if stored.version != 1 || stored.kdf != "argon2id" {
+        return Err(anyhow!(
+            "Unsupported encrypted signing key envelope; expected StoredKeyV1/argon2id"
+        ));
+    }
+    let pass = match std::env::var("AGENTPM_KEY_PASSPHRASE") {
+        Ok(pass) if !pass.is_empty() => pass,
+        Ok(_) => return Err(anyhow!("AGENTPM_KEY_PASSPHRASE is empty")),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(anyhow!("AGENTPM_KEY_PASSPHRASE must be UTF-8"));
+        }
+        Err(_) if std::io::stdin().is_terminal() => {
+            prompt_passphrase_with_fallback("Key passphrase: ")?
+        }
+        Err(_) => {
+            return Err(anyhow!(
+                "No signing passphrase in noninteractive mode; set AGENTPM_KEY_PASSPHRASE"
+            ));
+        }
+    };
+    let secret = decrypt_private(&stored, &pass).map_err(|_| {
+        anyhow!("Cannot decrypt signing key; check the passphrase and encrypted key file")
+    })?;
+    let seed: [u8; 32] = secret
+        .try_into()
+        .map_err(|_| anyhow!("Invalid Ed25519 signing key length"))?;
+    let key = ed25519_dalek::SigningKey::from_bytes(&seed);
+    if B64.encode(key.verifying_key().to_bytes()) != stored.public_key_b64 {
+        return Err(anyhow!("Signing key public/private identity mismatch"));
+    }
+    Ok((key, stored.public_key_b64))
 }
 
 #[cfg(test)]

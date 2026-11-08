@@ -128,7 +128,10 @@ fn registry_command_routes_share_friendly_transport_errors_and_runtime_exit_one(
             "create a project",
         ),
         (&["whoami"], "check authentication"),
-        (&["publish", "--quiet"], "publish the package"),
+        (
+            &["publish", "--quiet", "--namespace", "example"],
+            "publish the package",
+        ),
         (&["login", "apm_fixture.secret", "--no-write"], "sign in"),
         (
             &[

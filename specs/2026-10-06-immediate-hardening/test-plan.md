@@ -4442,6 +4442,18 @@ known limitation until M17 is implemented and verified.
 
 ### CI / headless signing
 
+The working examples are in `agentpm-examples`. Verify package-specific tags
+select only `summarize-text` or `devwork-copilot`, and fail a mismatched version
+before publication. Verify both new release author v2 and legacy author v1
+signing through the noninteractive encrypted-key path. The portable summarizer
+uses one `any` artifact; the separate compiled native helper fixture exercises
+the four concrete runners, including Windows x64, and one atomic publication. After publishing, install
+the exact versions with strict author/Registry verification in clean consumers:
+run the summarizer with a separate model credential, check Agent dependency
+versions without SDK/model execution, and execute the native helper on each
+runner. Record hosted run URLs and exact package versions; local/mocked success
+must not close these hosted acceptance checks.
+
 Automated or integration cases:
 
 - encrypted AgentPM signing key works without TTY.
@@ -4478,6 +4490,111 @@ Automated or integration cases:
 - final atomic publish succeeds.
 - missing/failed matrix target prevents publish.
 - local single-target publish continues to work.
+- Windows joins build and post-publish verification; its missing/failed build
+  prevents publication. Exercise checksum-verified ZIP extraction and `.exe`
+  selection, uppercase/backslash Windows checksum records, native Windows PATH
+  handling, and x64 MSVC bootstrap/static runtime compilation. All four native
+  artifacts must retain one manifest digest despite different helper filenames
+  under `bin/`. Compiler objects must not enter that payload directory.
+
+### M16 implementation evidence (2026-11-08)
+
+- `cargo test --workspace --quiet`: **1,240 passed, 6 ignored**. Final focused
+  CLI cases additionally verify the signed four-artifact inventory and legacy
+  Agent publication, invalid/missing encrypted key envelopes and passphrases,
+  changed archive bytes, relocatable descriptors and typed failure JSON.
+- Real pinned `uv 0.13.5`, native Apple Silicon Python 3.13 and local HTTP fixtures:
+  **10 environment tests passed**, including all five normally ignored native
+  provisioning/CLI/Harness cases. No hosted cross-platform run is inferred.
+- `cargo fmt --all --check` and workspace/all-target Clippy with `-D warnings`
+  pass. Existing archive, authoring, messaging, Python resolution, target install,
+  signing/provenance and resolver tests pass through the workspace suite.
+- Native packaging test keeps recognized CSV bytes and manifest/resolution inputs
+  fixed while changing `0644` to `0755` on Unix. Its actual CLI fan-in fails on
+  the resulting `any`/concrete pair before reaching a closed Registry endpoint;
+  Windows exercises its actual mode-derived portable path and duplicate-target
+  rejection. The test is included in native platform jobs. Only the Unix side
+  has executed locally so far.
+- Local strict lint and machine packaging succeed for summarize-text,
+  devwork-copilot and native-release-check. The summarizer replays its existing
+  17-distribution author resolution and claims `any`. The native C helper was
+  compiled and invoked on this Mac and returned `{"value":4}` for input 3.
+  Its cross-target transport fixtures are synthetic, not cross-compilation proof.
+- Examples selector/Agent verification and installer tests: **6 passed**. The
+  actual composite setup script executes against local release assets, covering
+  dist-prefixed checksums, incorrect hashes/filenames and invalid CLI versions.
+  Existing summarizer
+  tests: **5 passed**, using mocked HTTP with real native dependencies and no
+  paid provider call. Black formats/checks the four new Python files.
+- Actionlint validates the changed CLI and new examples workflows. The local
+  actionlint 1.7.7 check ignores only its obsolete unknown-label warning for
+  `macos-15-intel`; the label is confirmed in
+  [GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+  YAML parsing and `bash -n` additionally cover the composite setup action and
+  workflow run blocks (6 YAML files, 26 Bash blocks), including the composite
+  setup action's heredoc and release checksum verification.
+- Public `package`, CI publishing and publish docs describe the concrete
+  provider-neutral bundle, encrypted-key setup and explicit `--namespace`
+  requirement for Python releases. Python builds include discovered README and
+  declared license text alongside source so the new release can retain existing
+  package-page display. Registry finalization reads bounded UTF-8 display text
+  from the already verified snapshot of the first canonical target and stores
+  its actual hashes; publisher-supplied display text is ignored. No extra S3
+  reads, snapshots held together, schema changes or transfer-time DB locks are
+  introduced. Real PostgreSQL persistence/idempotence plus UTF-8, size-limit,
+  ambiguous member and README-priority tests pass with the surrounding release,
+  signing, stats and migration suite: **105 passed**. Required API hooks pass
+  except the existing unrelated mypy assignments in `search.py:1486` and `:1856`.
+  Black/isort, Flake8, Pylint, Bandit and other hooks pass.
+- No canonical schema, database migration or SDK changes, pushes/tags, hosted
+  workflow executions, production writes or paid model calls are claimed.
+
+Windows publishing follow-up (2026-11-08): the operator requested Windows x64
+as a required fourth publishing/verification target; Linux arm64 stays excluded.
+The composite installer now uses native Python filesystem paths, checksum-verified
+Windows ZIP/`.exe` extraction and native PATH output. The fixture uses one
+manifest with `bin/`, compiling `native-helper.exe` through x64 MSVC/static CRT
+on Windows or `native-helper` through `cc` on Unix. Compiler intermediates live
+outside the payload. The fan-in command explicitly requires all four target
+builds, and post-publication strict installs/execution include Windows.
+
+Local follow-up verification: **11 examples tests passed**, including the actual
+installer's Windows-format ZIP, uppercase/backslash checksum and corrupt-checksum
+cases; native helper compilation/execution on this Mac; simulated MSVC bootstrap
+and Windows entrypoint selection. **6 CLI publication integration tests and 2
+fan-in unit tests passed**, now covering a signed four-artifact inventory and
+rejection of an inventory missing Windows. Rustfmt and Clippy `-D warnings`,
+Black, Actionlint and YAML/Bash syntax checks pass. Native fixture strict lint,
+packaging and local execution succeed with the shared `bin/` layout. These are
+local/simulated Windows checks, not Windows PE/MSVC execution or hosted release
+acceptance; those gates below remain open. Public CI publishing docs, examples
+setup/native README and M16 spec/tasks/review checklist include the fourth target.
+
+Still open: independent review/manual acceptance, hosted CLI/platform jobs
+(including actual Windows permissions), a compatible released CLI and examples
+repository/environment/secret configuration, and real tagged publications plus
+strict clean-consumer verification of both maintained packages and the native
+four-target fixture. Keep their task boxes unchecked until run evidence and
+exact versions are recorded. A workflow file is not evidence of publication.
+
+For the outstanding permission-derived compatibility gate, record a separate
+pair of hosted results for
+`native_packaging_records_platform_permission_behavior_without_relabeling`
+in `crates/agentpm-cli/tests/ci_publishing.rs`. Inspect the explicit test output
+on a native Unix runner and `x86_64-pc-windows-msvc` at the same CLI commit. It
+must pass without being skipped/filtered out. On Unix its real packaging calls
+classify unchanged CSV bytes as `any` under `0644`, then concrete under `0755`,
+and reject the mixed pair before publication. The Windows branch packages the
+same fixture bytes as `any` and rejects duplicate portable outputs. Synthetic
+archive-mode unit tests cover the gate logic separately and do not establish
+this platform behavior.
+
+CI's `Native runtime (<target>)` jobs (main/tag push) and Resolver Contract's
+`uv contract (<target>)` jobs (applicable PR runs) both invoke `ci_publishing`.
+Capture run/job links, the tested CLI commit, target IDs and the named test's
+passing output. Check those logs specifically rather than inferring coverage
+from a green matrix. The examples' real signed publications/clean-consumer
+acceptance remain separate; this CLI-platform check needs no production publish.
 
 ## Manual checks
 
