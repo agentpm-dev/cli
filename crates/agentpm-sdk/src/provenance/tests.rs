@@ -111,6 +111,90 @@ fn original_v1_registry_types_verify_without_rewriting_signed_bytes() {
 }
 
 #[test]
+fn original_tool_v1_authors_verify_without_weakening_identity_or_format_checks() {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn sign(author: &mut AuthorProof, key: &SigningKey) {
+        let bytes = legacy_statement_bytes(&author.statement_json).unwrap();
+        author.signature_b64 = B64.encode(key.sign(&bytes).to_bytes());
+        author.statement_bytes_b64 = Some(B64.encode(bytes));
+    }
+
+    let (data, keys) = trusted();
+    let key = SigningKey::from_bytes(&std::array::from_fn(|i| i as u8));
+    let policy = VerificationPolicy {
+        require_signature: true,
+        require_attestation: true,
+    };
+    for include_kind in [false, true] {
+        let mut artifact: PackageArtifact =
+            serde_json::from_value(data["vectors"][2]["artifact"].clone()).unwrap();
+        let author = &mut artifact.verification.as_mut().unwrap().authors[0];
+        assert_eq!(
+            author.public_key_b64,
+            B64.encode(key.verifying_key().as_bytes())
+        );
+        author.statement_json["type"] = json!("agentpm.tool.signature.v1");
+        if !include_kind {
+            author
+                .statement_json
+                .as_object_mut()
+                .unwrap()
+                .remove("kind");
+        }
+        // Keep original timestamp spelling and every extension field signed.
+        author.statement_json["historicalExtension"] = json!("é😀");
+        sign(author, &key);
+        verify_artifact(&artifact, Some(&keys), policy).unwrap();
+
+        for field in ["name", "version", "kind", "artifactDigest", "type"] {
+            let mut changed = artifact.clone();
+            let author = &mut changed.verification.as_mut().unwrap().authors[0];
+            author.statement_json[field] = json!("unsupported");
+            // A genuinely signed but wrongly bound or unknown statement fails.
+            sign(author, &key);
+            assert!(
+                verify_artifact(&changed, Some(&keys), policy).is_err(),
+                "{field}"
+            );
+        }
+        for field in ["createdAt", "historicalExtension"] {
+            let mut changed = artifact.clone();
+            let author = &mut changed.verification.as_mut().unwrap().authors[0];
+            author.statement_json[field] = json!("changed after signing");
+            author.statement_bytes_b64 =
+                Some(B64.encode(legacy_statement_bytes(&author.statement_json).unwrap()));
+            assert!(
+                verify_artifact(&changed, Some(&keys), policy).is_err(),
+                "{field}"
+            );
+        }
+        let mut changed = artifact.clone();
+        changed.verification.as_mut().unwrap().authors[0].signature_b64 = B64.encode([0; 64]);
+        assert!(verify_artifact(&changed, Some(&keys), policy).is_err());
+
+        // The historical Tool label must not become a signature type for Agents.
+        let mut changed = artifact;
+        changed.kind = crate::models::install::PackageKind::Agent;
+        let proof = changed.verification.as_mut().unwrap();
+        proof.manifest["kind"] = json!("agent");
+        proof.authors[0].statement_json["kind"] = json!("agent");
+        sign(&mut proof.authors[0], &key);
+        assert!(
+            verify_artifact(
+                &changed,
+                None,
+                VerificationPolicy {
+                    require_signature: true,
+                    require_attestation: false
+                },
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn keyset_root_origin_signature_and_validity_are_required() {
     let data = fixture();
     let roots: Vec<TrustRoot> = serde_json::from_value(data["roots"].clone()).unwrap();

@@ -2270,7 +2270,7 @@ This is the band where the new release format becomes real for users. It gives u
   - [x] Automate `devwork-copilot` packaging, headless author signing and publication through the existing Agent/legacy format with a single packaging job; retain author signature v1 and Registry attestation v2. Publishing the Agent must not republish its Tools or implicitly change their declared versions.
   - [x] Use package-specific release tags (for example, `summarize-text/v<version>` and `devwork-copilot/v<version>`) so each tag selects only its intended package, and compare the version component with that package's `agent.json.version` before publishing.
   - [x] Document package selection, committed inputs, compatible CLI version, Registry URL, `AGENTPM_TOKEN`, encrypted author key/passphrase secrets and release/verification commands in the examples repo and public publishing docs. Keep the initial examples limited to these two packages.
-  - [ ] Verify the published exact `summarize-text` version in a clean consumer: strict signature/attestation verification, managed Python dependency provisioning and a successful Tool call. Document any model credentials needed for the real call separately from Registry/signing secrets.
+  - [x] Verify the published exact `summarize-text` version in a clean consumer: strict signature/attestation verification, managed Python dependency provisioning and a successful Tool call. Document any model credentials needed for the real call separately from Registry/signing secrets. Operator confirmed all `select`/`build`/`publish`/`verify` jobs passed for production `@zack/summarize-text@0.1.10`; the Security tab shows the expected single `any` release artifact.
   - [ ] Verify the published exact `devwork-copilot` version installs in a clean consumer with strict signature/attestation verification and the expected Agent manifest/dependency versions. This check must not depend on M17 SDK changes or require a model-driven Agent run.
   - [ ] Prove the required distinct concrete-target matrix and atomic publication with a dedicated test package/fixture built on the corresponding runners; do not force or relabel `summarize-text` artifacts to manufacture target-specific claims.
   - [ ] Record hosted workflow runs, published package versions and clean-consumer results for both real examples and the concrete-target proof; a workflow file or mocked test alone does not establish end-to-end acceptance.
@@ -2414,11 +2414,52 @@ checks, not a deployed CLI release or examples publication.
 Covered milestones: 16.
 This gives us headless signing with encrypted AgentPM key material plus a noninteractive secret/passphrase source and reusable GitHub Actions patterns for building and publishing multi-target releases, including AgentPM's own cross-platform CI coverage. It follows Band 11 because there is no point automating the publication of signed multi-artifact releases until that format is consumer-installable and verifiable.
 
-Release preparation (2026-11-08): CLI manifest and Cargo lockfile now name
-`0.1.41`; the Web status page reflects that version with release date
-`2026-11-08`. These are local preparation changes, not a published release.
-The operator will push and deploy CLI → Registry → Web. The existing M16
-examples publication and clean-consumer acceptance items above remain open.
+Release deployment (operator-confirmed 2026-11-08): CLI `0.1.41`, Registry and
+Web are deployed to production; the Web status page reflects that CLI version
+with release date `2026-11-08`. The operator also confirmed that the push-only
+`platform-targets` job and all four `Native runtime` jobs ran and passed.
+This closes the pending main/tag native-platform execution check above.
+The existing M16 examples publication and clean-consumer acceptance items remain
+open; production deployment does not substitute for those workflow runs.
+
+Examples preparation (2026-11-08): the operator confirmed GitHub repository
+variables, publishing environment and secrets are configured. Local release
+sources now prepare `summarize-text@0.1.10` and
+`devwork-copilot@0.1.8`, with the Agent pinned to that Tool version.
+The Tool's reviewed 17-distribution resolution and input fingerprint are
+unchanged; only its local author-root version advances. Strict manifest lint,
+local packaging, all 11 publishing fixture tests and 5 offline summarizer tests
+pass. Updated READMEs document configuration and tag order. No examples tag,
+hosted publication or paid model call is claimed; those acceptance items remain
+open pending the actual workflow runs.
+
+Examples acceptance update (operator-confirmed): production
+`@zack/summarize-text@0.1.10` is published and all maintained-example workflow
+jobs from `select` through `verify` passed, closing that Tool's strict clean
+consumer and real execution check above. Its Web Security tab shows the
+expected new-format release integrity with one `any` artifact. The workflow
+run URL and published release digest have not yet been recorded. Agent,
+four-target native example and controlled failure acceptance remain open.
+
+The Agent attempt remains unaccepted: after fixing the examples uv-cache
+cleanup, production finalize exposed an internal Registry dependency-validation
+bug that rejected supported new-format Tools as if requested by a legacy
+install client. A narrow Registry correction and regression coverage are
+prepared; deploy that fix and rerun the existing failed Agent job. No new CLI
+release, schema migration or examples retag is required for this correction.
+
+The operator subsequently confirmed the Registry correction is deployed and
+`@zack/devwork-copilot@0.1.8` published successfully. Its clean-consumer job
+then rejected the historical `@zack/github-issues@0.1.1` author statement type
+`agentpm.tool.signature.v1`. Public production metadata confirms that exact
+type with omitted `kind`; its original Ed25519 signature is valid.
+The CLI now accepts that historical label only for Tool artifacts, retaining
+identity/digest/signature checks and rejection of unknown formats. CLI
+`0.1.42`, its Cargo lock entry and the matching Web status entry dated
+`2026-11-08` are prepared locally. The examples setup guide now pins 0.1.42.
+After release, update the GitHub repository variable `AGENTPM_CLI_VERSION`
+and rerun the existing failed verification job; do not republish or retag the
+already-published Agent. Agent acceptance remains open until that rerun passes.
 
 ## Milestone 17: SDK Lockfile and Managed Python Tool Compatibility
 

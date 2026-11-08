@@ -4620,8 +4620,74 @@ and dependent `Native runtime` jobs intentionally skipped on the PR event.
 Registry PR #128 run `42508120144` passed both jobs: parity checked Registry
 merge `03a70322c63dc3611af24687667000afb8461f02` against public CLI main
 `6370fa44eae1b9435c1f67855a9f946450000f22` (88 passed/16 skipped); the actual
-PostgreSQL job reports 315 passed and 8 subtests passed. Deployment and real
-example-tagged release acceptance remain open.
+PostgreSQL job reports 315 passed and 8 subtests passed.
+
+Release Band 12 update (operator-confirmed 2026-11-08): CLI `0.1.41`, Registry
+and Web are deployed to production. The push-only `platform-targets` job and
+all four `Native runtime` jobs ran and passed. These results are operator
+reports; no additional run links or commit IDs were supplied for this update.
+Real examples workflow publications, their strict clean-consumer checks and
+the controlled publication-failure cases remain open M16 acceptance items.
+
+Subsequent operator acceptance: all `select`, `build`, `publish` and `verify`
+jobs passed for production `@zack/summarize-text@0.1.10`. The hosted `verify`
+job installs the exact version in a clean consumer with
+`--require-signature --require-attestation`, provisions its managed Python
+dependencies and executes a real successful summarizer call. The operator
+also observed release integrity and one `any` artifact on its Web Security
+tab, as expected for the new Python release format. No run URL or published
+release digest was supplied; those evidence fields remain open along with
+Agent/native example publication and controlled failure checks.
+
+The first `devwork-copilot/v0.1.8` attempt failed during build post-job cleanup:
+`setup-uv` tried to save a nonexistent cache because Agent packaging never ran
+uv. Its dependent publish/verify jobs therefore do not close Agent acceptance.
+The examples workflow now sets up developer uv only for the summarizer build.
+Both maintained and native consumer verification jobs use Python 3.11 already
+provided by `setup-agentpm` and AgentPM's managed resolver, removing the unused
+developer uv/cache action. Workflow lint and the 11 existing publishing tests
+pass locally; the corrected Agent and native hosted runs remain required.
+The examples publishing README documents this distinction and the need to
+retry from a corrected tagged commit rather than rerun the old workflow.
+
+The corrected Agent workflow then reached Registry finalize but received
+`422 invalid_dependency_access`. The shared graph validator defaulted to
+legacy-client release support during internal publication validation, rejecting
+the new-format summarizer before publication. Regression subtests reproduced
+the failure for Agent, Skill, Template and Agent→Skill→Tool dependencies before
+the fix. Internal publish validation now explicitly accepts the supported
+release format; access denial, kind mismatch, unknown future formats and
+old-client install rejection remain covered. Publish/install checks pass:
+149 tests, 44 subtests, 1 opt-in database test skipped. Required API hooks were
+run; the existing unrelated mypy errors at `search.py:1486` and `:1856` remain.
+Registry deployment and a successful rerun of the existing Agent publish job
+are still required; no CLI release, migration or new examples tag is needed
+for this Registry-only correction. Public CI publishing docs and the examples
+README describe the mixed-format composition and retry behavior.
+
+Subsequent operator report: the Registry fix is deployed and the Agent's
+publication succeeded; strict verification then failed on the transitive
+`@zack/github-issues@0.1.1` dependency with `unsupported legacy author statement`.
+Read-only public metadata inspection confirmed an authentic original
+`agentpm.tool.signature.v1` author statement without `kind`, plus a Registry
+v1 attestation. The old client-side check reproduced rejection before the fix.
+The Rust consumer now permits the original author label only for legacy Tool
+artifacts. Regression tests cover omitted/present Tool kind, genuinely signed
+identity/digest/type mutations, unsigned timestamp/extension changes, invalid
+signatures and rejection of that Tool-only label on Agents. Unknown types stay
+unsupported; new publication/signature formats and contracts are unchanged.
+
+The actual published public author signature, Registry v1 attestation, manifest
+and root-signed production key set were saved under
+`/private/tmp/agentpm-band12-legacy-proof/`. A standalone caller of the fixed
+Rust consumer verified both signatures using the pinned official root and
+`require_signature=true`, `require_attestation=true`. This checks genuine
+production signed metadata without starting an install session or changing
+published rows; it does not replace the pending hosted Agent consumer run.
+Full Rust workspace tests pass: **1,241 passed, 6 ignored**. Web status lint and
+typecheck pass. CLI `0.1.42` and the corresponding Web status/date are prepared;
+the examples README documents updating `AGENTPM_CLI_VERSION` after release and
+rerunning only failed jobs without retagging or republishing Agent 0.1.8.
 
 ## Manual checks
 

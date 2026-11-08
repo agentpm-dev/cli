@@ -288,7 +288,12 @@ fn legacy_binding(statement: &Value, artifact: &PackageArtifact, registry: bool)
         );
     } else {
         ensure!(
-            statement["type"] == "agentpm.package.signature.v1",
+            statement["type"] == "agentpm.package.signature.v1"
+                // Original Tool publications predate the package-wide label
+                // and may omit kind. Preserve their signed bytes and binding;
+                // this historical label is valid only for Tool artifacts.
+                || (artifact.kind.as_str() == "tool"
+                    && statement["type"] == "agentpm.tool.signature.v1"),
             "unsupported legacy author statement"
         );
     }
