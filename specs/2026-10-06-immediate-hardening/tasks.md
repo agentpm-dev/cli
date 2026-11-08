@@ -2115,14 +2115,22 @@ Implementation checkmarks do not claim the following acceptance steps:
 ## Release Band 11: Release Integrity and Verifiable Target-Aware Installs
 
 Covered milestones: 14B–14C, 15.
-Release preparation: CLI `0.1.40` and the Web status entry dated `2026-11-07`
-are prepared locally. This does not record a tag, publication, deployment or
-production activation. Merge CLI contracts to `main` for Registry parity first;
-release the CLI only after production trust delivery is verified.
+Operator confirmed CLI `0.1.40` is released and installed, its version is
+verified, and Web with the status entry dated `2026-11-07` is deployed.
+Operator confirmed the Registry is redeployed with
+`RELEASE_PUBLISH_ENABLED=true` under the capacity exception below.
+Operator confirmed final CI, including Registry contract parity, passed, and
+production root custody/backup is secured with its passphrase stored separately.
+Production trust delivery and the prepared CLI's legacy verification pass.
+Full finalize capacity remains deferred under the operator exception below.
+Operator confirmed all signed new-format production smoke tests pass. After
+passing hosted CI and deploying Registry V1.106, the landing-page package total
+increased from 50 to 51, closing the counter follow-up. Band 11 rollout is
+accepted under the recorded capacity exception.
 
 This is the band where the new release format becomes real for users. It gives us release-level `agentpm.package.signature.v2` and `agentpm.registry.attestation.v3` statements, trustworthy stored-byte verification before finalize, fail-closed attestation, the root-signed registry key set with its backfill and root-key prerequisite, client-side verification of release digest, author signature, and registry attestation, stricter `--require-signature`/`--require-attestation` semantics, and target-aware installation with runtime provisioning for the selected artifact. The gate from Band 9 lifts here and not before: publishers publish multi-artifact signed releases, and consumers select their target, verify the release cryptographically, and provision the right environment. This is the largest band in the stage and the one that cannot be subdivided — a cut that shipped target selection without verification would mean knowingly installing unverified releases, and a cut that shipped verification without target selection would mean a verifier with nothing installable to verify.
 
-- [ ] Complete M14C's operator root generation/custody, audited public pin,
+- [x] Complete M14C's operator root generation/custody, audited public pin,
       existing attestation-key backfill and signed public key-list delivery
       before shipping stricter client verification. Require
       `scripts/check_registry_bootstrap.py --release` to pass and verify an
@@ -2139,10 +2147,21 @@ This is the band where the new release format becomes real for users. It gives u
       from these release manifests while external dev files were left intact.
       Release-mode bootstrap validation, all four bootstrap-checker tests and
       local cross-repo contract parity pass for these public pins.
-      Root custody/offline backup confirmation, production attestation-key
-      backfill, signed key-list delivery and deployed-chain verification remain
-      open. Public pin validation alone does not complete this bootstrap gate.
-- [ ] After the authoritative CLI contract changes are merged to public CLI
+      Operator output confirms production migrations through V1.105 validated,
+      `seed-current-key` registered `apm-prod-1`, and complete public inventory
+      export succeeded. The operator's production key-endpoint response contains
+      the root-signed list issued `2026-11-07T22:31:48Z`, expiring
+      `2026-12-07T22:31:48Z`. Its signature, exact production origin and validity
+      were verified locally against the pinned `agentpm-root-1`; it contains
+      `apm-prod-1` matching the exported public inventory. Operator confirmed
+      the prepared CLI successfully installed existing production legacy Tool
+      `@zack/summarize-text@0.1.9` with `--require-attestation`, including managed
+      Python provisioning before finalize, in disposable consumer
+      `agentpm-band11-legacy.0Kpa1h`. Operator confirmed encrypted root custody,
+      separate offline backup and separately stored passphrase. Production
+      bootstrap/legacy-chain verification passes; new-format production
+      acceptance remains open below.
+- [x] After the authoritative CLI contract changes are merged to public CLI
       `main`, rerun the Registry's `Release Contract Parity` job for the Registry
       revision to be shipped. Require passing schema/signing/shared-vector
       comparisons and Python contract tests before Registry deployment; record
@@ -2150,12 +2169,34 @@ This is the band where the new release format becomes real for users. It gives u
       prerequisite for M14B manual testing. A manual dispatch against a proposed
       CLI ref does not replace this `main`-ref release gate. Keep the production
       release flow gated until all Band 11 activation prerequisites are met.
+      Operator confirmed all final CI jobs green. Hosted
+      [Release Contract Parity run 42420238617](https://github.com/agentpm-dev/registry/actions/runs/42420238617)
+      passed both parity and PostgreSQL jobs. Its revision log records Registry
+      `b421ad58d53594fae227cb632a9e7afa781db33b` (PR merge revision) and CLI
+      `d10f674b2ed59dc87baeaa3053305d0b010dc642` checked from explicit `main`;
+      parity tests report 88 passed, 16 skipped.
 - [ ] Before enabling `RELEASE_PUBLISH_ENABLED` in production, confirm hosted
       finalize disk/request/concurrency capacity for the configured size limits.
       This requirement is carried forward from the gated Band 9 rollout, not
       marked satisfied by its tiny storage probe. Record resource/concurrency
       assumptions and the relevant capacity evidence before activation.
-- [ ] Before declaring Band 11 accepted, exercise the shipped CLI against a
+      Operator exception for the initial rollout: the production Registry is on
+      0.5 CPU / 512 MB RAM, and the operator explicitly authorizes enabling the
+      new-format flow for small production smoke publishes without proving the
+      largest configured upload/concurrency case. No instance upgrade or upload
+      limit change is requested. Full-capacity verification remains unchecked;
+      this is an accepted operational risk, not a passed capacity test or proof
+      that the current host fails. Operator inspection reports `/tmp` with
+      58.12 GiB free and both upload budgets at 1,000,000,000 bytes. This is a
+      point-in-time disk observation, not a concurrent load test. The reported
+      start command is `gunicorn run:app`; checked-in `gunicorn.conf.py` sets only
+      logging. Without environment overrides, Gunicorn uses sync workers, a
+      30-second worker timeout and `WEB_CONCURRENCY` workers (one if unset).
+      Runtime environment overrides have not been inspected; a long synchronous
+      finalize can occupy a worker and hit that timeout. This exception permits
+      the controlled smoke below while maximum-size capacity remains deferred.
+      Operator subsequently confirmed production flag activation and redeploy.
+- [x] Before declaring Band 11 accepted, exercise the shipped CLI against a
       real signed new-format release through the deployed production trust
       chain: pinned official root → root-signed served key set → Registry v3
       attestation and author v2 signature → full release inventory → selected
@@ -2165,11 +2206,31 @@ This is the band where the new release format becomes real for users. It gives u
       retains logical release integrity. Record CLI/Registry revisions, release
       identities, host target, selected artifact digests and observed results.
       Arrange any production smoke publication/activation only after the root,
-      parity and capacity prerequisites above; do not enable it as part of M15
-      implementation. Synthetic selection fixtures and separate verification
+      parity and capacity prerequisites above, with the operator's explicit
+      initial-rollout capacity exception recorded there; do not enable it as
+      part of M15 implementation. Synthetic selection fixtures and separate verification
       tests do not satisfy this end-to-end release gate. The existing dev root
       can independently support M15's genuine local signed-release manual test;
       production bootstrap is not a prerequisite for that local test.
+      Production walkthrough is prepared in
+      [`manual-tests/RELEASE_BAND11_SMOKE.md`](manual-tests/RELEASE_BAND11_SMOKE.md),
+      with a separate production-scoped helper; development guards remain
+      unchanged. Operator subsequently confirmed all production walkthrough
+      tests pass, including signed publication, exact-target/`any` selection,
+      strict trust-chain verification, managed execution and frozen lock checks.
+      Release identities and selected digests are retained by the walkthrough's
+      local evidence files; they are not transcribed here.
+- [x] Deploy Registry V1.106 and verify the landing-page package count catches up
+      after statistics caches expire. The production smoke exposed an INSERT-only
+      publication trigger: new-format versions transition from pending to
+      published by UPDATE, so their first package publication was never counted.
+      V1.106 adds the UPDATE trigger and repairs missing new-format first-publication
+      counters, including namespace/weekly statistics, without recounting legacy
+      history or additional versions/artifacts. Local PostgreSQL regression and
+      related publication/migration/statistics tests pass (73 tests). Operator
+      confirmed hosted CI passed, Registry was deployed to production, the hero
+      package total is now 51 and the remaining smoke tests still pass. No CLI
+      or Web release was required for this correction.
 
 ## Milestone 16: Headless Signing and GitHub Actions Publishing
 > Scope note: make multi-target releases practical for maintainers by adding secure noninteractive signing plus a first official GitHub Actions workflow that packages target artifacts in parallel and performs one final atomic AgentPM publish. Follow existing AgentPM workflow conventions, but keep the package-build/publish protocol CI-provider-neutral. Stage 1 uses PAT auth for AgentPM registry CI; OIDC trusted publishing remains future work.

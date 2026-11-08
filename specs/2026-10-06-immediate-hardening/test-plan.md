@@ -4309,6 +4309,88 @@ install can already use the existing dev root and served dev key set; that
 manual acceptance does not prove the deployed production chain. Removing the
 dev pin is a CLI release requirement, not a local-testing prerequisite.
 
+Band 11 production bootstrap evidence: the operator's served public key set
+issued `2026-11-07T22:31:48Z`, expiring `2026-12-07T22:31:48Z`, verifies against
+the pinned production root `agentpm-root-1` and contains the exported
+`apm-prod-1` public key. Operator output confirms the prepared CLI installed
+existing legacy `@zack/summarize-text@0.1.9` from the production API using
+`--require-attestation`, completed managed Python provisioning and finalized
+successfully in `agentpm-band11-legacy.0Kpa1h`. This establishes the production
+legacy trust-chain prerequisite. Operator subsequently confirmed encrypted root
+custody, a separate offline backup, separately stored passphrase and all final
+CI jobs passing. Hosted Registry run `42420238617` independently reports success
+for parity and PostgreSQL; its parity log records Registry PR merge revision
+`b421ad58d53594fae227cb632a9e7afa781db33b` and public CLI `main` revision
+`d10f674b2ed59dc87baeaa3053305d0b010dc642`, with 88 tests passed and 16 skipped.
+This closes bootstrap and main-ref parity prerequisites. Operator subsequently
+confirmed CLI `0.1.40` released/installed with version verified and Web deployed.
+Finalize capacity and new-format end-to-end acceptance remain separately
+tracked. The operator subsequently enabled the production release flag and
+redeployed under the explicit capacity exception below.
+
+Operator capacity exception: the current production host is 0.5 CPU / 512 MB RAM.
+The operator explicitly accepts proceeding with small new-format production
+smoke publishes and enabling the flow without proving maximum-size/concurrent
+publish capacity, and does not request an upgrade or lower upload limits.
+Do not count this acceptance as a passing capacity/load test. Operator inspection
+reports `/tmp` with 58.12 GiB free, and per-artifact/per-release limits both at
+1,000,000,000 bytes. This observed free space is sufficient for one maximum-size
+snapshot but is not reserved disk or concurrent-load evidence. Effective
+worker overrides remain unverified. Reported start command `gunicorn run:app`
+and the logging-only checked-in config imply the default sync worker and
+30-second worker timeout unless overridden; worker count can come from
+`WEB_CONCURRENCY`, otherwise one. This is configuration inspection, not a
+measured long-request/concurrency test. The code streams artifact
+verification in 1-MiB chunks and snapshots one artifact at a time to temporary
+disk, so the RAM figure alone neither proves nor disproves support for the
+configured 1-GB budgets. Operator confirmed `RELEASE_PUBLISH_ENABLED=true` and
+production redeployment. Actual signed-new-format publication/install/run
+evidence is still outstanding; the prepared operator walkthrough is
+[`RELEASE_BAND11_SMOKE.md`](manual-tests/RELEASE_BAND11_SMOKE.md).
+
+Production smoke scaffolding verification: **14 offline tests passed**, including
+real archive preparation with the installed release CLI, saved author binding,
+unique package/target scope, changed-file rejection before network access,
+production Registry path and S3 bucket/object restrictions, upload header
+separation, URL renewal without PUT, and saved Security signature/inventory/scan
+checks. Both production Tool manifests and the consumer pass installed CLI
+strict lint; all 10 runbook shell blocks parse as zsh and both Python files are
+Black-clean. Test HTTP calls are mocked and locked dependency hashes are
+synthetic for archive-only tests. These results are preparation evidence, not
+actual production publication/native execution or a capacity load test.
+
+Band 11 production smoke outcome: the operator subsequently confirmed every
+walkthrough test passed using released CLI `0.1.40` against production. This
+closes the production signed-release selection/verification/install/run gate;
+the maximum-size/concurrency exception above remains in effect. Detailed release
+identities, target/digest selections and Security evidence remain in the local
+walkthrough evidence directory rather than being invented or transcribed here.
+
+The smoke exposed a separate statistics regression: installs increased, but
+the hero package total remained 50 after the first new package identity was
+published. The historical publication trigger runs only on INSERT, whereas
+new-format finalize inserts a pending version and updates it to published.
+Registry migration V1.106 invokes the existing first-publication function on
+publication updates, initializes historical legacy markers without recounting
+them, and repairs missed new-format package/namespace/weekly counters. Existing
+publication timestamps, signed release metadata and artifact bytes are unchanged.
+
+Local disposable PostgreSQL tests reproduce 50 before the migration and 51
+afterward despite multiple versions/artifacts; verify repeated migration,
+publication retries and no-op updates do not double-count; verify transaction
+rollback, legacy publication, yanked history and committed pending versions.
+Together with related release publication, migration/order and statistics helper
+tests, **73 passed**. Required hooks pass except the existing unrelated mypy
+errors in `app/tools/application/search.py:1486` and `:1856`; Black/isort,
+Flake8, Pylint, Bandit and the remaining hooks pass. The PostgreSQL hosted job
+now includes the new regression suite. The operator subsequently confirmed
+hosted CI passed, Registry V1.106 was deployed to production and the landing-page
+package total increased from 50 to 51. The remaining production smoke tests
+also pass, closing this follow-up and accepting Band 11 under the recorded
+capacity exception. API and Web statistics caches can delay the visible result
+for several minutes. No production mutation was performed by the local
+regression tests.
+
 ### SDK lockfile and managed Python Tool compatibility (M17)
 
 Implement these cases in both `agentpm-sdk-python` and `agentpm-sdk-node`.

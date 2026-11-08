@@ -75,3 +75,10 @@ Generated workspaces/results are disposable; each guide states their location.
   failure-before-finalize checks. Includes a local scripted Harness model,
   legacy vendoring and bounded download/extraction tests. Production bootstrap,
   CLI-main parity and production-chain acceptance remain Band 11 gates.
+- [Release Band 11 production signed-release smoke](RELEASE_BAND11_SMOKE.md):
+  use released CLI 0.1.40 and the established production root/key set to publish
+  two small signed verification versions, verify complete signature/scan
+  evidence, install portable and exact-target payloads, execute native Python
+  dependencies and preserve a frozen portable lock. Uses a separate helper
+  restricted to its unique smoke package, production API/bucket and sub-1-MiB
+  archives. Maximum-size/concurrent capacity remains deferred by the operator.
