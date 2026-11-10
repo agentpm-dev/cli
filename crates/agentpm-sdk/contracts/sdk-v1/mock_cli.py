@@ -9,7 +9,8 @@ from pathlib import Path
 if sys.argv[1:] == ["--version"]:
     print(os.environ.get("MOCK_CLI_VERSION", "agentpm 0.1.43"))
     sys.exit(0)
-request = json.load(sys.stdin)
+# Match the Rust CLI: JSON transport is UTF-8, independent of Python's text locale.
+request = json.load(sys.stdin.buffer)
 if path := os.environ.get("MOCK_CLI_CAPTURE"):
     Path(path).write_text(
         json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "request": request})
