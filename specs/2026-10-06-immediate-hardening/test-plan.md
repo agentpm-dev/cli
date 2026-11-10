@@ -4520,9 +4520,28 @@ now compare exact platform-native `Path` values. All 15 Agent/Skill loader tests
 Black/Ruff and whitespace checks pass locally. Hosted Windows reruns remain
 required; these fixes do not alter SDK runtime behavior or fixture contents.
 
-Operator reports all other CI jobs passed. The reported Node Windows formatting
-and Python Windows loader-assertion jobs still require successful reruns with
-the fixes above; the complete hosted SDK matrix gate remains open until then.
+Operator subsequently confirmed the Python SDK hosted matrix is fully green.
+Node's remaining Windows test run exposed eight failures: slash-based loader
+path assertions, the short/long Windows temp-path alias in the real native test,
+and a Unicode roundtrip through the shared Python mock CLI. Loader assertions
+now compare exact platform-native paths; the native test resolves path aliases
+and checks actual containment within the managed runtime, preserving Unix venv
+executable symlinks. The mock reads JSON from stdin bytes rather than Python's
+locale-dependent text wrapper. Both SDK bridge tests retain their emoji
+roundtrip and explicitly set `PYTHONIOENCODING=cp1252`; this reproduced the exact
+reported mojibake before the fix. The canonical mock and both SDK snapshots
+remain byte-identical. Push the CLI fixture change before the SDK snapshots so
+the cross-repository parity checks use the matching contract revision.
+
+Local verification of this correction: Node suite **106 passed, 2 skipped**
+(native integration requires its explicit test environment; the other skip is
+an existing Harness case), and the real CLI/native-dependency integration
+separately passes with selected Python 3.11 on macOS arm64. Python bridge tests
+**23 passed**, including the forced-code-page roundtrip. The actual Rust CLI's
+SDK-request UTF-8 roundtrip also passed under cp1252 with a disposable byte-reading
+Python echo Tool. Node formatter/lint/typecheck, Python Black/Ruff, shared fixture
+parity and whitespace checks pass. SDK/CLI runtime code is unchanged. A successful
+hosted Node Windows rerun remains required; local checks do not close that gate.
 
 Remaining acceptance: operator-confirmed hosted SDK matrices (Linux x64, both
 macOS architectures, Windows x64), CLI prerequisite release, both SDK
