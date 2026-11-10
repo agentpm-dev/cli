@@ -2277,9 +2277,9 @@ older versions are present alongside them. Local author roots are not installed
 releases. Existing additive v4 compatibility applies, but an unsupported future
 lock version must fail explicitly rather than being downgraded or guessed.
 
-Dependency-bearing Python Tools invoked through either SDK must use the
-compatible installed CLI's authoritative managed execution path and its machine
-result contract. Reuse finalized target/integrity checks and environment
+All Tools invoked through either SDK, including legacy Python and Node, must use
+the compatible installed CLI's authoritative runner and machine result contract.
+Dependency-bearing Python uses its verified managed environment. Reuse finalized target/integrity checks and environment
 validation; do not implement another resolver, wheel installer, environment
 selector or provenance verifier in an SDK. Missing/old CLI, missing/stale
 environment, tampered metadata or unsupported target/interpreter must fail
@@ -2293,9 +2293,21 @@ checks, documented env layering, timeout/cancellation and stderr behavior.
 Managed execution retains isolation from ambient `PYTHONPATH`/`PYTHONHOME`;
 secrets and full credential-bearing commands must not appear in errors/logs.
 Machine runner failures must remain distinct from a Tool's own returned error
-data. Existing no-dependency/legacy vendored Python and Node Tools retain their
-supported invocation paths without gaining an unnecessary CLI requirement.
+data. A compatible installed CLI is required for every Tool call; there is no
+SDK-owned subprocess fallback. Existing discovery and callable APIs remain.
 Python typing/optional adapters and Node ESM/CJS/types remain supported.
+
+The prepared compatibility floor is SDK 0.1.17 with CLI 0.1.43. The CLI's
+SDK bridge is `run --machine --sdk-request`: stdin contains schema version 1,
+`input`, an `environment` string map and an absolute `tool_directory`. The run
+reference must be exact; the CLI validates the installed manifest identity and
+uses its normal target/runtime/schema/environment checks. This preserves custom
+SDK installed-directory selection and caller-over-manifest env without putting
+secrets in argv or introducing another Registry/install protocol. Ordinary
+`run` input/output behavior is unchanged. The SDK bridge preserves historical
+JSON-after-logs compatibility and the 10 MB SDK Tool-output budget in the CLI,
+and SDKs unwrap only a complete machine result after CLI completion. Old SDK
+interpreter flags/resource limits are not a second runtime policy.
 
 M17 acceptance requires both SDKs' native suites and cross-platform integration
 evidence, including a real native-dependency Tool called through an SDK wrapper,
@@ -2495,10 +2507,11 @@ separate.
 
 - Python and Node SDKs load supported v2/v3/v4 locks and installed compositions
   read-only, reject unsupported future locks and preserve exact installed versions.
-- Both SDKs invoke dependency-bearing Python Tools through the verified managed
-  CLI runtime, with unchanged public result shapes and actionable failures.
+- Both SDKs invoke every Tool through the compatible CLI; dependency-bearing
+  Python uses its verified managed runtime, with unchanged public result shapes
+  and actionable failures.
 - No ambient-Python fallback, silent provisioning, re-resolution or lock rewrite
-  occurs during SDK load/call; legacy standalone paths remain supported.
+  occurs during SDK load/call; legacy Tools remain supported through the CLI.
 - Real Python and Node consumer tests exercise native Python dependencies on
   supported Linux/macOS/Windows runners and preserve optional adapter/package exports.
 - Supported SDK/CLI version floors, package smoke checks and example-app

@@ -161,6 +161,8 @@ pub struct ToolSpec {
 pub struct RunOptions {
     pub timeout_ms: Option<u64>,
     pub env_overrides: HashMap<String, String>,
+    pub installed_tool_dir: Option<PathBuf>,
+    pub sdk_compatibility: bool,
     pub output_limit_bytes: usize,
     pub cancellation_requested: Option<Arc<AtomicBool>>,
     #[cfg(unix)]
@@ -172,6 +174,8 @@ impl Default for RunOptions {
         Self {
             timeout_ms: None,
             env_overrides: HashMap::new(),
+            installed_tool_dir: None,
+            sdk_compatibility: false,
             output_limit_bytes: DEFAULT_OUTPUT_LIMIT_BYTES,
             cancellation_requested: None,
             #[cfg(unix)]
@@ -340,6 +344,14 @@ pub fn resolve_installed_tool(project_dir: &Path, spec: &ToolSpec) -> Result<Res
         );
     }
 
+    read_installed_tool(spec, version, tool_dir)
+}
+
+fn read_installed_tool(
+    spec: &ToolSpec,
+    version: Version,
+    tool_dir: PathBuf,
+) -> Result<ResolvedTool> {
     let manifest_path = tool_dir.join("agent.json");
     let manifest_text = fs::read_to_string(&manifest_path)
         .with_context(|| format!("reading {}", manifest_path.display()))?;
@@ -403,7 +415,22 @@ pub fn run_installed_tool(
     // This runner is intentionally synchronous in Milestone 1.
     // When async CLI commands wire into it (for example `agentpm run` in Milestone 2),
     // call it through `tokio::task::spawn_blocking` rather than on the async executor.
-    let resolved = resolve_installed_tool(project_dir, spec)?;
+    let resolved = if let Some(directory) = &options.installed_tool_dir {
+        let ToolSelector::Exact(version) = &spec.selector else {
+            bail!("SDK invocation requires an exact installed Tool version");
+        };
+        let resolved = read_installed_tool(spec, version.clone(), directory.clone())?;
+        let name = resolved.manifest.name.trim_start_matches('@');
+        let expected = spec.package.trim_start_matches('@');
+        if resolved.manifest.version != version.to_string()
+            || (name != expected && Some(name) != expected.split('/').next_back())
+        {
+            bail!("installed Tool identity mismatch; run agentpm install again on this machine");
+        }
+        resolved
+    } else {
+        resolve_installed_tool(project_dir, spec)?
+    };
     validate_json_schema(
         &resolved.manifest.inputs,
         input,
@@ -438,6 +465,11 @@ pub fn run_installed_tool(
     )?;
 
     let combined_size = output.stdout.len() + output.stderr.len();
+    if options.sdk_compatibility {
+        use std::io::Write;
+        // SDKs redact credential values before forwarding these diagnostics.
+        std::io::stderr().write_all(&output.stderr)?;
+    }
     if combined_size > options.output_limit_bytes {
         preserve_failure_artifacts(
             &run_dir,
@@ -484,7 +516,7 @@ pub fn run_installed_tool(
     }
 
     let child_stderr = output.stderr.clone();
-    let parsed = serde_json::from_slice(&output.stdout)
+    let parsed = parse_tool_output(&output.stdout, options.sdk_compatibility)
         .with_context(|| format!("{} (logs: {})", ERR_TOOL_OUTPUT_NOT_JSON, run_dir.display()));
     let output = match parsed {
         Ok(v) => v,
@@ -522,6 +554,54 @@ pub fn run_installed_tool(
     let _ = fs::remove_dir_all(&run_dir);
 
     Ok(RunResult { resolved, output })
+}
+
+fn parse_tool_output(bytes: &[u8], sdk_compatibility: bool) -> serde_json::Result<Value> {
+    let strict = serde_json::from_slice(bytes);
+    if strict.is_ok() || !sdk_compatibility {
+        return strict;
+    }
+    // Historical SDKs accept a JSON object after stdout log lines. Keep that
+    // compatibility in the authoritative runner, not in two SDK parsers.
+    let mut depth = 0;
+    let mut start = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if depth == 0 {
+            if byte == b'{' {
+                start = index;
+                depth = 1;
+                quoted = false;
+                escaped = false;
+            }
+            continue;
+        }
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                quoted = false;
+            }
+        } else {
+            match byte {
+                b'"' => quoted = true,
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0
+                        && let Ok(value) = serde_json::from_slice(&bytes[start..=index])
+                    {
+                        return Ok(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    strict
 }
 
 #[allow(dead_code)]
@@ -1252,6 +1332,23 @@ mod tests {
 
         let range = parse_tool_spec("@zack/echo-json@^0.1").unwrap();
         assert!(matches!(range.selector, ToolSelector::Range(_)));
+    }
+
+    #[test]
+    fn sdk_stdout_parser_preserves_quoted_braces_and_normal_run_strictness() {
+        let bytes = br#"log line
+{"message":"quoted } and \" {", "nested":{"ok":true}}
+"#;
+        assert!(parse_tool_output(bytes, false).is_err());
+        assert_eq!(
+            parse_tool_output(bytes, true).unwrap()["nested"]["ok"],
+            true
+        );
+        assert!(parse_tool_output(b"log {invalid} no JSON", true).is_err());
+        assert_eq!(
+            parse_tool_output(b"[1,2]", true).unwrap(),
+            serde_json::json!([1, 2])
+        );
     }
 
     #[test]

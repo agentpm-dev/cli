@@ -457,7 +457,7 @@
 - Confirm exact installed versions, all supported composition kinds and local
   author roots are handled deliberately; no dependency or integrity value is
   invented and no ambient installed version supersedes the requested one.
-- Confirm dependency-bearing Python Tools from both SDKs use the compatible
+- Confirm all Tools from both SDKs use the compatible
   CLI's authoritative managed runner and finalized target/integrity checks.
   Reject duplicate SDK resolution/provisioning/environment-selection logic.
 - Confirm missing/stale environment or missing/old CLI fails with repair
@@ -467,13 +467,16 @@
 - Confirm env isolation, required-env layering, stdin/stdout/stderr,
   timeout/cancellation and secret handling retain the intended contracts.
 - Confirm no-dependency/legacy vendored Python and Node Tool behavior remains
-  supported without an unnecessary new CLI prerequisite.
+  supported through the CLI prerequisite, without an SDK-owned runner fallback.
 - Confirm shared compatibility fixtures and actual native-dependency execution
   through both SDK wrappers, with Linux/macOS/Windows runner evidence rather
   than only direct CLI tests or mocked target labels.
 - Confirm typing, Python optional adapters and Node ESM/CJS/type exports pass
   repo-native verification; supported SDK/CLI floors and distribution smoke
   evidence are recorded separately from local source/build checks.
+- Confirm neither SDK 0.1.17 is published until CLI 0.1.43 is published and
+  Homebrew/Scoop install or upgrade checks report a compatible version. A main
+  merge or GitHub release asset alone must not satisfy this release gate.
 - Confirm SDK implementation was deferred from Band 8 to M17 and final
   documentation/migration remains M18. Do not treat the known SDK app failure
   as a passing runtime check or pull Stage 2 category work into this milestone.

@@ -3,6 +3,7 @@ use crate::runner::{
     RunOptions, RunnerErrorKind, classify_runner_error, parse_tool_spec, run_installed_tool,
 };
 use anyhow::{Context, anyhow, bail};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
@@ -29,6 +30,19 @@ pub struct RunArgs {
     /// Emit a stable machine-readable JSON result envelope on stdout
     #[arg(long)]
     pub machine: bool,
+
+    /// Read SDK invocation context and input together from stdin
+    #[arg(long, hide = true, requires = "machine", conflicts_with_all = ["input", "input_file"])]
+    pub sdk_request: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkRequest {
+    schema_version: u32,
+    input: Value,
+    environment: HashMap<String, String>,
+    tool_directory: PathBuf,
 }
 
 impl RunArgs {
@@ -53,7 +67,7 @@ impl RunArgs {
         } else {
             let input = self.parse_input_value(&stdin_bytes, stdin_is_terminal)?;
             let spec = parse_tool_spec(&self.spec)?;
-            let options = self.build_run_options();
+            let options = self.request_run_options(&stdin_bytes)?;
             let project_dir_cl = project_dir.clone();
             let stdout = tokio::task::spawn_blocking(move || {
                 let result = run_installed_tool(&project_dir_cl, &spec, &input, &options)?;
@@ -80,7 +94,10 @@ impl RunArgs {
             Ok(spec) => spec,
             Err(err) => return self.write_machine_error(err),
         };
-        let options = self.build_run_options();
+        let options = match self.request_run_options(stdin_bytes) {
+            Ok(options) => options,
+            Err(err) => return self.write_machine_error(err),
+        };
         let result = tokio::task::spawn_blocking(move || {
             run_installed_tool(&project_dir, &spec, &input, &options)
         })
@@ -128,6 +145,9 @@ impl RunArgs {
     }
 
     fn parse_input_value(&self, stdin_bytes: &[u8], stdin_is_terminal: bool) -> Result<Value> {
+        if self.sdk_request {
+            return Ok(Self::sdk_request(stdin_bytes)?.input);
+        }
         match (&self.input, &self.input_file) {
             (Some(input), None) => {
                 serde_json::from_str::<Value>(input).context("invalid JSON provided via --input")
@@ -152,6 +172,29 @@ impl RunArgs {
             }
             _ => unreachable!("clap conflicts prevent --input and --input-file together"),
         }
+    }
+
+    fn sdk_request(bytes: &[u8]) -> Result<SdkRequest> {
+        let request: SdkRequest =
+            serde_json::from_slice(bytes).context("invalid SDK run request")?;
+        if request.schema_version != 1 || !request.tool_directory.is_absolute() {
+            bail!(
+                "unsupported SDK request version or non-absolute Tool directory; update the AgentPM SDK and CLI"
+            );
+        }
+        Ok(request)
+    }
+
+    fn request_run_options(&self, bytes: &[u8]) -> Result<RunOptions> {
+        let mut options = self.build_run_options();
+        if self.sdk_request {
+            let request = Self::sdk_request(bytes)?;
+            options.installed_tool_dir = Some(request.tool_directory);
+            options.env_overrides = request.environment;
+            options.sdk_compatibility = true;
+            options.output_limit_bytes = 10 * 1024 * 1024;
+        }
+        Ok(options)
     }
 
     fn build_run_options(&self) -> RunOptions {
@@ -190,6 +233,25 @@ mod tests {
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+    #[test]
+    fn sdk_output_compatibility_stays_scoped_to_bridge() {
+        let args = RunArgs {
+            spec: "@fixture/tool@1.0.0".into(),
+            input: None,
+            input_file: None,
+            timeout_ms: None,
+            machine: true,
+            sdk_request: true,
+        };
+        let bytes = serde_json::to_vec(&json!({"schema_version":1,"input":{},
+            "environment":{"OVERRIDE":"caller"},"tool_directory":std::env::temp_dir()}))
+        .unwrap();
+        let options = args.request_run_options(&bytes).unwrap();
+        assert!(options.sdk_compatibility);
+        assert_eq!(options.output_limit_bytes, 10 * 1024 * 1024);
+        assert_eq!(options.env_overrides["OVERRIDE"], "caller");
+    }
+
     #[cfg(unix)]
     #[test]
     fn run_surface_opts_into_scoped_signal_cleanup() {
@@ -201,6 +263,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         assert!(
@@ -226,6 +289,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let stdout = run_with(
@@ -249,6 +313,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let err = args.parse_input_value(&[], false).unwrap_err();
@@ -275,6 +340,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let stdout = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap();
@@ -302,6 +368,7 @@ mod tests {
             input_file: Some(payload),
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let stdout = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap();
@@ -318,6 +385,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let err = args.parse_input_value(&[], true).unwrap_err();
@@ -339,6 +407,7 @@ mod tests {
             input_file: Some(payload.clone()),
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let err = args.parse_input_value(&[], true).unwrap_err();
@@ -366,6 +435,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let stdout = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap();
@@ -395,6 +465,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let stdout = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap();
@@ -411,6 +482,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let err = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap_err();
@@ -437,6 +509,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let err = run_with(&args, root.path(), &[], true, run_installed_tool).unwrap_err();
@@ -464,6 +537,7 @@ mod tests {
             input_file: None,
             timeout_ms: Some(100),
             machine: false,
+            sdk_request: false,
         };
 
         let err = run_with(
@@ -511,6 +585,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
         let latest = run_with(&latest, root.path(), &[], true, run_installed_tool).unwrap();
         let latest_json: Value = serde_json::from_str(latest.trim()).unwrap();
@@ -522,6 +597,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
         let range = run_with(&range, root.path(), &[], true, run_installed_tool).unwrap();
         let range_json: Value = serde_json::from_str(range.trim()).unwrap();
@@ -546,6 +622,7 @@ mod tests {
             input_file: None,
             timeout_ms: None,
             machine: false,
+            sdk_request: false,
         };
 
         let stdout = run_with(

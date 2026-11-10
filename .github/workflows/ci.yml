@@ -41,6 +41,7 @@ jobs:
       - name: Release and signing contract parity checker tests
         run: |
           python3 -m unittest discover -s scripts -p test_release_contract.py -v
+          python3 -m unittest discover -s scripts -p test_sdk_contract.py -v
           python3 scripts/check_registry_bootstrap.py
           python3 -m unittest discover -s scripts -p test_registry_bootstrap.py -v
 

@@ -4394,8 +4394,8 @@ regression tests.
 ### SDK lockfile and managed Python Tool compatibility (M17)
 
 Implement these cases in both `agentpm-sdk-python` and `agentpm-sdk-node`.
-This section plans future work; the current SDK app startup failure remains a
-known limitation until M17 is implemented and verified.
+M17 is implemented and locally verified as recorded below. Hosted matrices and
+actual distribution publication/consumer smokes remain separate acceptance gates.
 
 - Shared representative fixtures cover supported lockfile v2/v3/v4, installed
   Agents and Skill-transitive Tools, local author roots, additive v4 fields,
@@ -4426,8 +4426,8 @@ known limitation until M17 is implemented and verified.
   documented behavior. Ambient `PYTHONPATH` shadow and `PYTHONHOME` do not
   override managed execution. No key/token/passphrase leaks in captured output.
 - Legacy/no-dependency Python Tools, vendored native content and Node Tools
-  retain their previous runner behavior, including standalone use without a
-  CLI where previously supported. Optional adapters remain optional.
+  execute through the same CLI bridge, with no standalone subprocess fallback.
+  Optional adapters remain optional.
 - Run Python pytest/format/lint/mypy/package checks and Node test/lint/build/
   declaration/ESM/CJS checks using their repo-native commands. Execute real
   integration cases on supported Linux, macOS and Windows runners; fake target
@@ -4439,6 +4439,70 @@ known limitation until M17 is implemented and verified.
 - Check documented minimum SDK/CLI versions and install SDK distributions into
   clean consumer environments for operator-confirmed release smoke checks.
   Local builds or source overrides alone are not publication evidence.
+
+### M17 implementation and local evidence — 2026-11-09
+
+- Python SDK 0.1.17 / Node SDK 0.1.17 read v2/v3/v4 locks without rewriting
+  them, reject malformed/future locks and bind exact installed references. Both
+  delegate every Tool to CLI 0.1.43; metadata loaders and public callable/result
+  shapes remain. The pre-implementation [audit](m17-audit.md) records the floor
+  and narrow CLI stdin bridge.
+- Shared `crates/agentpm-sdk/contracts/sdk-v1` vectors and mock/native fixtures
+  are copied byte-for-byte into SDK suites. SDK CI checks against the selected
+  public CLI ref. The CLI parity-checker mutation test rejects altered and
+  missing copies and runs in CLI CI.
+- Local Apple Silicon Python suite: **108 passed, 1 skipped**. Node suite:
+  **107 passed, 1 skipped**. Both include a real local-HTTP Registry install,
+  pinned uv 0.13.5 and pydantic 2.11.7/pydantic-core 2.33.2 native execution
+  through SDK callables. The existing optional real Harness/provider fixture is
+  the local skip; it is not an unexecuted M17 Tool test.
+- Real SDK tests verify native import paths under the managed runtime, exact
+  versions, read-only lock/ready state, blocked ambient Python shadowing,
+  timeout, changed local target marker, changed interpreter, malformed installed
+  resolution metadata and missing ready marker. Failed calls neither repair
+  state nor use app/global Python. Setup shuts down its Registry before calls;
+  calls use a nonexistent resolver override, so another resolve/provision path
+  cannot make these checks pass silently.
+- Offline transport tests cover exact argv/project/directory, stdin JSON,
+  credentials absent from argv, `ok:false` returned as Tool data, runner errors,
+  truncated/malformed/incompatible/wrong-Tool machine envelopes, unsuccessful
+  exits, transport overflow, missing/old CLI and redacted stderr/errors. Python
+  interruption terminates/reaps its CLI child. Legacy vendored Python and Node
+  Tool invocation use the real CLI. Two historical Unix-shebang-only Harness
+  test doubles are explicitly skipped on Windows; Tool/native tests are enabled
+  there. No Harness production protocol was changed.
+- CLI `cargo test --workspace`, clippy with warnings denied and Rust formatting
+  pass. Python Black/Ruff/mypy, wheel/sdist build and Twine checks pass. Node
+  test/lint/format/full TypeScript check, ESM/CJS/declaration build and npm pack
+  pass. Three existing Node test-fixture type errors were corrected to enable
+  full typechecking without weakening exported types. Python build metadata is
+  pinned to 2.4 so the locked upload validator accepts the new artifacts.
+- Clean temporary local wheel/tarball consumers verify Python `py.typed`, import
+  without LangChain and Node ESM/CJS exports. These are local artifact checks,
+  **not published distribution evidence**. Final clean wheel/tarball consumers
+  also execute the example no-model smoke against the installed Agent/Tool;
+  the Python wheel's packaged source bytes match the current SDK source.
+- Updated Python devwork app and Node research example both load the existing
+  real `@zack/devwork-copilot@0.1.8` v4 consumer lock and invoke installed
+  `@zack/summarize-text@0.1.10` through the SDK. An explicitly empty model key
+  produces the expected Tool `INPUT_MISSING_API_KEY` data after dependency
+  import, with no model request. No installed lock version or integrity was
+  hand-edited. Python example tests pass (5). The no-model fixture separately
+  exercises successful native package behavior and returns the calculated total.
+- Web status formatting/typecheck/lint pass (six existing unrelated lint
+  warnings). Public SDK MDX and the updated version/repair guidance are checked
+  with the site's MDX compiler. No Registry application/schema changes occur.
+
+Remaining acceptance: operator-confirmed hosted SDK matrices (Linux x64, both
+macOS architectures, Windows x64), CLI prerequisite release, both SDK
+publications and clean consumers using the actual published versions. Before
+either SDK 0.1.17 publication, verify CLI 0.1.43 is published and installable/
+upgradable through Homebrew on macOS and Scoop on Windows; record the resulting
+`agentpm --version` from each package-manager flow. A CLI main merge, source
+binary or GitHub release asset does not satisfy this distribution gate. Workflow
+configuration/source overrides/local archives do not close these gates. Public
+docs/status deployment remains operator-owned. No push, tag, deployment,
+publication, root-key operation or model-funded call was performed.
 
 ### CI / headless signing
 

@@ -2504,32 +2504,63 @@ workflow-link/logical release-digest evidence remain open.
 > - This decision supersedes the earlier standalone/no-CLI legacy-execution requirement in the companion planning files; align those requirements before M17 implementation.
 > - Do not fix compatibility by lowering a lockfile version, copying dependencies into the app/global Python, setting an ambient interpreter override or silently falling back to the legacy runner.
 
-- [ ] Audit Python and Node SDK installed-package loaders, Agent/Skill composition, exported types, optional adapters and invocation paths against the finalized CLI contracts; record the supported SDK/CLI version matrix and any narrow CLI machine-output adjustment needed for delegation before implementation.
-- [ ] Add read-only lockfile v4 support in both SDKs, retaining existing v2/v3 behavior:
-  - [ ] validate the lock version before interpreting the payload; reject malformed and unsupported future versions;
-  - [ ] resolve exact installed Agent/Skill/Tool references from the lock rather than selecting another installed version;
-  - [ ] consume the portable Python resolution and relevant additive installed-package metadata without changing the fixed contract or moving local environment state into the lock;
-  - [ ] tolerate supported additive fields without rewriting/dropping them; do not accept arbitrary future lock versions;
-  - [ ] handle local author roots and all supported composition kinds without inventing dependency entries or requiring an app-level `agent.json` for an installed Agent.
-- [ ] Replace both SDKs' direct Tool execution logic with delegation to a compatible installed AgentPM CLI via `agentpm run --machine` for Python and Node Tools:
-  - [ ] preserve project/lock discovery, exact version, selected installed payload, input JSON and existing output/callable shapes;
-  - [ ] use the existing CLI machine interface and unwrap its result deliberately; preserve Tool-returned `ok`/`error` data separately from runner failures;
-  - [ ] use the verified managed environment and finalized target/integrity checks; never re-resolve, auto-install, rewrite the lock or rebuild a missing environment during an SDK call;
-  - [ ] report missing/old CLI, missing/stale environment, tampered metadata and incompatible target/interpreter with actionable errors; never fall back to an ambient Python;
-  - [ ] preserve documented caller/entrypoint environment layering, required variables, timeout/cancellation, stderr logging and secret redaction while retaining managed-runtime `PYTHONPATH`/`PYTHONHOME` isolation;
-  - [ ] verify no-dependency, legacy vendored and Node Tools through the same CLI path; document the new CLI prerequisite and actionable missing/outdated-CLI errors rather than retaining a second direct-execution fallback.
-- [ ] Preserve Python typing/`py.typed`, Node ESM/CJS/declarations and optional framework adapters; do not introduce a breaking import or result-shape change to obtain runtime compatibility.
-- [ ] Add shared representative fixtures for lock v2/v3/v4, future-version rejection and Python Tool resolution; consume the same fixtures from both SDK suites rather than independent divergent literals.
+- [x] Audit Python and Node SDK installed-package loaders, Agent/Skill composition, exported types, optional adapters and invocation paths against the finalized CLI contracts; record the supported SDK/CLI version matrix and any narrow CLI machine-output adjustment needed for delegation before implementation.
+- [x] Add read-only lockfile v4 support in both SDKs, retaining existing v2/v3 behavior:
+  - [x] validate the lock version before interpreting the payload; reject malformed and unsupported future versions;
+  - [x] resolve exact installed Agent/Skill/Tool references from the lock rather than selecting another installed version;
+  - [x] consume the portable Python resolution and relevant additive installed-package metadata without changing the fixed contract or moving local environment state into the lock;
+  - [x] tolerate supported additive fields without rewriting/dropping them; do not accept arbitrary future lock versions;
+  - [x] handle local author roots and all supported composition kinds without inventing dependency entries or requiring an app-level `agent.json` for an installed Agent.
+- [x] Replace both SDKs' direct Tool execution logic with delegation to a compatible installed AgentPM CLI via `agentpm run --machine` for Python and Node Tools:
+  - [x] preserve project/lock discovery, exact version, selected installed payload, input JSON and existing output/callable shapes;
+  - [x] use the existing CLI machine interface and unwrap its result deliberately; preserve Tool-returned `ok`/`error` data separately from runner failures;
+  - [x] use the verified managed environment and finalized target/integrity checks; never re-resolve, auto-install, rewrite the lock or rebuild a missing environment during an SDK call;
+  - [x] report missing/old CLI, missing/stale environment, tampered metadata and incompatible target/interpreter with actionable errors; never fall back to an ambient Python;
+  - [x] preserve documented caller/entrypoint environment layering, required variables, timeout/cancellation, stderr logging and secret redaction while retaining managed-runtime `PYTHONPATH`/`PYTHONHOME` isolation;
+  - [x] verify no-dependency, legacy vendored and Node Tools through the same CLI path; document the new CLI prerequisite and actionable missing/outdated-CLI errors rather than retaining a second direct-execution fallback.
+- [x] Preserve Python typing/`py.typed`, Node ESM/CJS/declarations and optional framework adapters; do not introduce a breaking import or result-shape change to obtain runtime compatibility.
+- [x] Add shared representative fixtures for lock v2/v3/v4, future-version rejection and Python Tool resolution; consume the same fixtures from both SDK suites rather than independent divergent literals.
 - [ ] Implement and run the SDK-specific cases in `test-plan.md`, including real CLI/managed-native-dependency execution from both Python and Node consumers, hosted Linux/macOS/Windows coverage, legacy regressions and no-model-cost fixtures. Run each repo's native tests, formatter, lint/typecheck/build checks.
-- [ ] Update the Python devwork app and a representative Node SDK consumer to exercise published Agent/Tool composition with a real consumer lock; verify actual invocation through the SDK wrapper, not only `agentpm run` separately. Preserve reviewed author state and existing immutable releases.
-- [ ] Update SDK READMEs and `agentpm-api/docs` with supported lock/CLI versions, managed-runtime prerequisites, installation/repair steps and verified examples. Record that old SDKs are not compatible merely because the CLI install succeeded.
-- [ ] Prepare tested SDK package versions, example dependency floors and matching website SDK status markers. Keep publication/deployment operator-owned; record release/install verification separately from local package/build checks.
-- [ ] After required checks pass, operator publishes the updated SDK packages and deploys matching documentation/status markers; verify clean consumers install the published SDK versions and invoke a dependency-bearing Python Tool. Record actual distribution versions and the Python/Node smoke results before closing the release band.
+  - [x] Local Python/Node suites, real CLI/native dependency and failure-path tests, format/lint/typecheck/build/package checks, shared fixture parity and no-model example SDK calls pass on Apple Silicon.
+  - [ ] Record hosted Linux x64, Apple Silicon macOS, Intel macOS and Windows x64 SDK workflow passes against the compatible CLI revision; configured jobs alone are not execution evidence.
+- [x] Update the Python devwork app and a representative Node SDK consumer to exercise published Agent/Tool composition with a real consumer lock; verify actual invocation through the SDK wrapper, not only `agentpm run` separately. Preserve reviewed author state and existing immutable releases.
+- [x] Update SDK READMEs and `agentpm-api/docs` with supported lock/CLI versions, managed-runtime prerequisites, installation/repair steps and verified examples. Record that old SDKs are not compatible merely because the CLI install succeeded.
+- [x] Prepare tested SDK package versions, example dependency floors and matching website SDK status markers. Keep publication/deployment operator-owned; record release/install verification separately from local package/build checks.
+- [ ] After required checks pass, operator publishes CLI 0.1.43 and confirms it is installable/upgradable through Homebrew and Scoop before publishing either SDK 0.1.17. Then publish both SDKs and deploy matching documentation/status markers; verify clean consumers install the published SDK versions and invoke a dependency-bearing Python Tool. Record actual distribution versions and the Python/Node smoke results before closing the release band.
+
+M17 implementation evidence (2026-11-09): see [SDK audit](m17-audit.md) and
+the M17 evidence in `test-plan.md`. Prepared Python and Node SDK 0.1.17 plus CLI
+0.1.43 and matching status dates. No SDK/CLI publication, push, deployment or
+hosted run is claimed. User-requested `.agentpm/` ignores are present in both SDK
+repos. Public manifests/schema and Registry protocols remain unchanged.
 
 ## Release Band 13: SDK Lockfile and Managed Python Tool Compatibility
 
 Covered milestones: 17.
 Python and Node consumers can load current installed Agent compositions and call dependency-bearing Python Tools through the same managed runtime used by the CLI. This closes the SDK app gap recorded during Band 8 without delaying the already verified CLI/Registry rollout. Acceptance requires both SDKs, native dependency execution, legacy compatibility, documented version floors and separately confirmed SDK distribution smoke checks.
+
+Band 13 operator gates:
+
+**Cross-repository release gate: publish CLI 0.1.43 → confirm Homebrew/Scoop
+installation → publish Python and Node SDK 0.1.17.** Neither SDK may be published
+until the CLI distribution checks below pass. Every SDK Tool call requires the
+compatible CLI, including legacy Python and Node Tools; reversing this sequence
+breaks those calls for freshly installed SDK consumers. A CLI merge, source build
+or GitHub release asset alone does not establish package-manager availability.
+
+- [ ] Merge and publish the compatible CLI 0.1.43 prerequisite.
+- [ ] Confirm Homebrew and Scoop distribution updates are live. On macOS and
+      Windows respectively, install/upgrade through the documented package-manager
+      flow and record `agentpm --version` reporting 0.1.43 or a newer compatible
+      release. Keep both SDK publications blocked until both checks pass.
+- [ ] Record both SDKs' hosted platform matrices, including shared-contract parity
+      against CLI main. Before main is updated, a proposed CLI ref may be used for
+      pre-merge SDK CI via `cli_ref`/`AGENTPM_CLI_REF`; publication uses main.
+- [ ] Only after the CLI distribution gate passes, publish Python `agentpm` 0.1.17
+      and Node `@agentpm/sdk` 0.1.17, then run clean
+      consumers against the actual distributions and a dependency-bearing Tool.
+- [ ] Deploy the matching public docs and website status markers after the
+      versions they advertise are available.
 
 ## Milestone 18: Documentation and Migration Hardening
 > Scope note: finish Stage 1 by documenting the hardened discovery/CLI/analytics surfaces and the new Python Tool dependency, runtime-environment, portability, release, integrity, and CI models so authors can use the system without founder guidance. This milestone updates Stage 1-facing docs/examples only; it does not perform the Stage 2 category-language/IA rewrite or expand the feature set beyond earlier milestones.

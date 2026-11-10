@@ -1,5 +1,16 @@
 # Blog Brief
 
+## Milestone 17 Evidence
+
+Potential later engineering material: a thin SDK can keep familiar callables
+while delegating exact Tool execution to one CLI-owned runtime. The regression
+case now loads the real v4 Agent composition and imports the installed native
+Python dependencies through both language wrappers without a model request.
+Local tests also prove damaged runtime state fails with explicit repair guidance
+instead of silently switching Python. Shared fixtures and host CI guard the
+contract. Hosted results and published SDK consumer smokes remain operator gates;
+do not describe the new SDK versions as shipped yet. Engineering evidence only.
+
 ## Milestone 14C Evidence
 
 Potential later engineering material: a signing badge becomes meaningful to a
