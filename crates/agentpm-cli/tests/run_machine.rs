@@ -548,3 +548,76 @@ fn wait_for_pid_file(path: &Path) -> i32 {
     }
     panic!("timed out waiting for {}", path.display());
 }
+
+#[test]
+fn sdk_request_executes_exact_override_with_caller_env_and_legacy_stdout() {
+    let python = available_command(&["python3", "python"]).expect("python required");
+    let root = TestProject::new();
+    root.write_lock(lock_for("@zack/machine-echo", "0.1.0"));
+    let lock_before = fs::read(root.path().join("agent.lock")).unwrap();
+    let mut manifest: Value = serde_json::from_str(&schema_tool_manifest("python3")).unwrap();
+    manifest["entrypoint"]["env"] = serde_json::json!({"LAYER":"manifest"});
+    root.write_tool("@zack/machine-echo", "0.1.0", serde_json::to_string(&manifest).unwrap(),
+        "import os,json,sys\njson.load(sys.stdin)\nprint('historical stdout logging')\nprint('diagnostic',file=sys.stderr)\nprint(json.dumps({'message':os.environ['LAYER']}))\n");
+    let selected = root.path().join("custom selected directory");
+    fs::rename(
+        root.path().join(".agentpm/tools/zack/machine-echo/0.1.0"),
+        &selected,
+    )
+    .unwrap();
+    let request = serde_json::json!({"schema_version":1,"input":{"message":"hi"},"environment":{"LAYER":"caller"},"tool_directory":selected});
+    let output = sdk_run(&root, &python, "@zack/machine-echo@0.1.0", &request);
+    assert!(output.status.success(), "{}", stderr_text(&output));
+    let value = single_stdout_envelope(&output);
+    assert_eq!(value["output"]["message"], "caller");
+    assert!(stderr_text(&output).contains("diagnostic"));
+    assert_eq!(
+        fs::read(root.path().join("agent.lock")).unwrap(),
+        lock_before
+    );
+    assert!(!selected.join("run").exists());
+
+    for reference in [
+        "@zack/machine-echo@latest",
+        "@zack/machine-echo@0.2.0",
+        "@zack/other@0.1.0",
+    ] {
+        let failed = sdk_run(&root, &python, reference, &request);
+        assert!(!failed.status.success());
+        assert_eq!(single_stdout_envelope(&failed)["status"], "error");
+    }
+    for invalid in [
+        serde_json::json!({"schema_version":2,"input":{},"environment":{},"tool_directory":selected}),
+        serde_json::json!({"schema_version":1,"input":{},"environment":{},"tool_directory":"relative"}),
+    ] {
+        let failed = sdk_run(&root, &python, "@zack/machine-echo@0.1.0", &invalid);
+        assert!(!failed.status.success());
+        assert_eq!(single_stdout_envelope(&failed)["status"], "error");
+    }
+}
+
+fn sdk_run(
+    root: &TestProject,
+    python: &str,
+    reference: &str,
+    request: &Value,
+) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_agentpm"))
+        .current_dir(root.path())
+        .env("AGENTPM_TELEMETRY", "0")
+        .env("AGENTPM_PYTHON", python)
+        .env("LAYER", "ambient")
+        .args(["run", reference, "--machine", "--sdk-request"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(request).unwrap())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
