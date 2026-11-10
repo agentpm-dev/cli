@@ -36,18 +36,18 @@ use compatibility::compatibility_recovery;
 
 #[derive(clap::Parser, Debug, Clone)]
 pub struct InstallArgs {
-    // Path to the manifest (agent.json)
+    /// Path to the consumer manifest (agent.json)
     #[arg(long, default_value = "agent.json")]
     pub manifest: String,
 
     /// Optional spec like @owner/name@^1.2
     pub spec: Option<String>,
 
-    /// Fail if lockfile would change (no re-resolution)
+    /// Replay the portable lock without changing it; never substitute a locked version
     #[clap(long)]
     pub frozen: bool,
 
-    /// Re-resolve and re-download even if the lock looks satisfied
+    /// Refresh AgentPM packages and repair local runtimes; Python dependencies replay the recorded resolution
     #[clap(long)]
     pub refresh: bool,
 

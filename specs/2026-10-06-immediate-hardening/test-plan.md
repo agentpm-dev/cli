@@ -4966,6 +4966,91 @@ evidence notes are superseded by these results. No required M16 acceptance
 criterion remains open; the recorded transient database connection issue stays
 an operational follow-up, and M17 SDK work has not started.
 
+### Documentation and migration acceptance (M18)
+
+- Audit `agentpm-api/docs` alongside public CLI, Python SDK, Node SDK and
+  maintained-example READMEs/user guides. Compare version floors, prerequisites,
+  commands and migration instructions across surfaces; updating only the hosted
+  docs or only a repo README does not satisfy acceptance.
+- Scan user-facing prose, example instructions and CLI help for internal stage,
+  milestone and release-band labels, including abbreviated labels such as
+  `M17`. Review the matches and express prerequisites/availability using public
+  feature names, supported versions and actual commands. Published guidance
+  must not rely on internal planning vocabulary. Keep this check scoped to
+  user guidance rather than internal specs, historical review records or test
+  evidence.
+- Run documentation builds/link checks and verify the updated README commands
+  against the released CLI/SDK contracts. Inspect rendered docs and CLI help to
+  ensure the same public wording reaches users.
+
+### M18 implementation evidence (2026-11-10)
+
+- Public docs audit covers Registry MDX, CLI/schema READMEs, both SDK READMEs
+  and maintained example guides together. CLI 0.1.43 / SDK 0.1.17 are the
+  documented compatibility floors. Added release-level integrity guidance and
+  retained all existing routes. Pager checks found and corrected a link to
+  `publish-a-tool/publish`; the actual `publish-a-tool/pubilsh` route is retained.
+- `cargo test -p agentpm-cli --test authoring --test messaging` and
+  `cargo test -p agentpm-cli --test ci_publishing --test python_resolution`:
+  **28 passed**. `cargo fmt --all --check` and
+  `cargo clippy --workspace --all-targets -- -D warnings` pass. Rust edits are
+  CLI argument documentation only. Actual package/publish/install help was
+  inspected for prepared locks, namespace/signing and frozen/refresh semantics.
+- Registry: `REGISTRY_PRIVATE_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  .venv/bin/python -m pytest tests/test_docs_content.py
+  tests/test_release_contract.py tests/test_signing_canonicalization.py
+  tests/test_signing_statements.py -q`: **91 passed, 150 subtests passed**.
+  The new five-test docs suite checks frontmatter/pager targets, local links,
+  real release/resolution contract examples and public planning-label removal.
+  It is wired into the existing Release Contract Parity workflow.
+- From the CLI repo, run
+  `node specs/2026-10-06-immediate-hardening/manual-tests/fixtures/m18/render-docs.mjs
+  ../agentpm-api ../agentpm-web` with the Web dependencies installed:
+  **51 MDX pages compile and render** using the website's MDX/React/GFM/directive,
+  heading and code-highlighting toolchain. No website implementation changes.
+- A fresh released-CLI `init` → strict `lint` → strict machine `package` recipe
+  passes and produces `target: any` plus the real native build host in its bundle.
+  All six changed example packages pass `agentpm lint` and `publish --dry-run`
+  using CLI 0.1.43 and the unchanged schema. Knowledge/Memory build commands and
+  Slack bundle build pass; ten affected example tests pass (three order, three
+  Slack, two per Harness SDK host scaffold), without live model/service calls.
+  Operator clarified that only `slack-post-message` and the two Harness SDK host
+  Templates are existing production packages requiring republication. The other
+  three are source examples, not production publication acceptance gates.
+- Public Markdown/MDX/YAML/JS and source manifests pass formatting; generated
+  locks and Memory contract bytes retain the CLI's own formatting. SDK runtime
+  code, SDK version floors and all consumer-app installed state are unchanged.
+- Registry native hooks pass except **two existing mypy errors** imported from
+  `app/tools/application/search.py:1486` and `:1856`. Running the same mypy hook
+  against unchanged `tests/test_release_contract.py` reproduces both. No M18
+  Python file errors remain; unrelated search implementation is outside scope.
+- Container checks use fresh contexts under
+  `/private/tmp/agentpm-m18-containers-jykyx8wv`, public SDK 0.1.17 and the
+  checksum-verified Linux CLI 0.1.43. The binary references glibc 2.39; both SDK
+  scaffolds now use matching Trixie bases, explicit Linux amd64 and context
+  exclusions for host runtime state. CLI startup succeeds in those images.
+  Full container Registry install/SDK invocation remains pending: Python urllib
+  reaches production `/health` (HTTP 200), but the released Linux CLI reports a
+  connection failure from the same image under Linux amd64 emulation on this
+  Apple Silicon Mac. This CLI-specific transport failure
+  is unresolved, not proof of a Registry outage or a successful container run. CLI 0.1.43 also cannot replay
+  a direct non-Tool package reference with `--frozen`; the docs distinguish exact
+  Agent install from the manifest-driven frozen Tool workflow. No runtime fix is
+  included in this documentation milestone.
+
+No publication, Git push, production deployment or paid model call is claimed.
+Operator confirmed M18 reviews are complete with no findings. Hosted checks,
+container completion and deployment/publication remain tracked under Release
+Band 14 in `tasks.md`.
+
+Release preparation (2026-11-10): bumped CLI to 0.1.44 in its Cargo manifest
+and generated lockfile; only the CLI package version changed, with no dependency
+updates. The website CLI status card now displays v0.1.44 and the 2026-11-10
+release date. SDK cards retain 0.1.17 and their existing release dates. An offline
+CLI build reports `agentpm 0.1.44`; Rust formatting, website typecheck, targeted
+status-page ESLint/Prettier and whitespace checks pass. Hosted checks, actual
+release publication and deployment remain operator-owned and pending.
+
 ## Manual checks
 
 ### Registry

@@ -30,10 +30,13 @@ mod tests;
 
 #[derive(Args, Debug)]
 pub struct PackageArgs {
+    /// Manifest to package; Python dependencies require a prepared agent.lock
     #[arg(long, default_value = "agent.json")]
     pub manifest: String,
+    /// Override the bundled schema with a URL or file
     #[arg(long)]
     pub schema: Option<String>,
+    /// Treat manifest-lint warnings as errors
     #[arg(long)]
     pub strict: bool,
     /// Bundle directory containing package-build.json and its archive
