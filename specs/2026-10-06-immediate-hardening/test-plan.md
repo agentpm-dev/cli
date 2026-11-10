@@ -4540,19 +4540,65 @@ separately passes with selected Python 3.11 on macOS arm64. Python bridge tests
 **23 passed**, including the forced-code-page roundtrip. The actual Rust CLI's
 SDK-request UTF-8 roundtrip also passed under cp1252 with a disposable byte-reading
 Python echo Tool. Node formatter/lint/typecheck, Python Black/Ruff, shared fixture
-parity and whitespace checks pass. SDK/CLI runtime code is unchanged. A successful
-hosted Node Windows rerun remains required; local checks do not close that gate.
+parity and whitespace checks pass. SDK/CLI runtime code is unchanged. Operator
+subsequently confirmed all CI passes, closing the hosted SDK platform-matrix
+gate, including the Node Windows rerun, and confirmed CLI 0.1.43 is released.
 
-Remaining acceptance: operator-confirmed hosted SDK matrices (Linux x64, both
-macOS architectures, Windows x64), CLI prerequisite release, both SDK
-publications and clean consumers using the actual published versions. Before
-either SDK 0.1.17 publication, verify CLI 0.1.43 is published and installable/
-upgradable through Homebrew on macOS and Scoop on Windows; record the resulting
-`agentpm --version` from each package-manager flow. A CLI main merge, source
-binary or GitHub release asset does not satisfy this distribution gate. Workflow
-configuration/source overrides/local archives do not close these gates. Public
-docs/status deployment remains operator-owned. No push, tag, deployment,
-publication, root-key operation or model-funded call was performed.
+Operator also confirmed both CLI 0.1.43 Homebrew/Scoop installation/upgrade
+checks pass and both SDKs pass shared-contract parity with their CLI refs reset
+to main. This closes the CLI distribution and main-ref parity prerequisites
+for SDK publication.
+
+Operator confirmed both SDK 0.1.17 publications succeeded and PyPI shows that
+version. Direct `npm view @agentpm/sdk@0.1.17 version` and
+`npm view @agentpm/sdk dist-tags --json` queries against registry.npmjs.org return
+0.1.17 and `latest: 0.1.17`, respectively. The older npm website display does not
+reflect the current registry metadata.
+
+Published-consumer acceptance now passes on macOS arm64 with the installed
+Homebrew CLI **0.1.43**, Python **3.13.15** and Node **20.20.2**. Fresh tracked-file
+copies of Python devwork and Node research excluded existing installs, lockfiles,
+env files and language environments. Temporary dependency declarations pinned
+SDK **0.1.17** exactly, installed from public PyPI/npm. Python package metadata
+confirms a non-editable index distribution in the temporary venv; Node resolution
+confirms its SDK resides in the temporary `node_modules`. No sibling SDK source
+override was used. Each separate clean consumer used the released CLI against
+production with `--require-signature --require-attestation` to install
+`@zack/devwork-copilot@0.1.8` and its eight-package v4 lock. Both existing example
+smoke entrypoints resolved the Skill-transitive `@zack/summarize-text@0.1.10` and
+invoked it through their SDK callable. The expected `INPUT_MISSING_API_KEY` Tool
+data confirms dependency import and invocation with an explicitly empty model
+key; no model-generated summary is claimed. Lock bytes and runtime-ready marker
+bytes/mtimes stayed unchanged. Evidence is retained locally at
+`/private/tmp/agentpm-m17-published-96zud2wm/evidence/published-smokes.json`.
+
+The follow-up examples audit updated 17 additional SDK dependency declarations
+across consumer apps, template payloads and private reference providers, plus
+SDK/CLI prerequisite and published-provider setup documentation. Six publishable
+templates have patch version bumps recorded in `tasks.md`; only their version
+field changes semantically in AgentPM manifests. Existing consumer manifests,
+AgentPM locks and install state were not edited. Language dependencies are
+refreshed through uv/pnpm; changes to AgentPM-managed dependencies must use the
+CLI. Thirteen affected scaffold/Node-provider test suites pass. Python provider
+tests pass in fresh copies with published SDK 0.1.17 and the required test/
+pgvector extras: **13 Knowledge + 5 Memory**. An initial unrelated test environment
+lacked psycopg; installing the declared extra resolves that setup failure, and
+the Knowledge README test command now includes it. Both published SDKs expose
+their Knowledge/Memory process helpers. All six changed template manifests pass
+released-CLI `agentpm lint` and `publish --dry-run`; inspection of each archive
+confirms its new template version and SDK 0.1.17 dependency declaration.
+JSON/Markdown formatting, TOML parsing and whitespace checks pass.
+Database-backed provider sessions and paid app/model workflows were
+not run by these checks.
+
+Operator subsequently confirmed publication of all six prepared template versions
+under namespace `zack`, closing the template publication gate.
+
+Operator confirmed the final changes are pushed and Registry/Web are deployed,
+closing the public docs/status deployment gate. M17 and Release Band 13 have no
+remaining acceptance items. Publication and deployment were operator-performed;
+no push, tag, deployment, publication, root-key operation or model-funded call
+was performed by the agent.
 
 ### CI / headless signing
 
