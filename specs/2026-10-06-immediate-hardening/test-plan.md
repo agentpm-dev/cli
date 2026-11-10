@@ -4493,6 +4493,37 @@ actual distribution publication/consumer smokes remain separate acceptance gates
   warnings). Public SDK MDX and the updated version/repair guidance are checked
   with the site's MDX compiler. No Registry application/schema changes occur.
 
+M17 hosted-CI interpreter selection correction: the initial Ubuntu SDK jobs
+exported the runner's bare `python` (`/usr/bin/python`, Python 3.14) as
+`AGENTPM_TEST_PYTHON`/`AGENTPM_PYTHON`, despite the Python SDK tests running under
+their requested 3.11/3.12 environments. The locked pydantic-core 2.33.2 fixture
+correctly failed wheel-only install on 3.14. Both SDK workflow setup steps now
+run through `uv run --no-project --python "$SDK_TEST_PYTHON_VERSION"`, verify the
+requested major/minor version and the resolved child executable, then export
+that absolute executable. The resolution and runtime policy are unchanged.
+Locally executed both exact workflow setup scripts with ambient Python 3.13:
+Node selected 3.11, Python selected 3.11/3.12, and deliberate wrong-version
+execution stopped before environment export. The real native fixture passed
+for Node with selected 3.11 and Python with selected 3.11/3.12 on macOS arm64.
+Workflow YAML/format checks pass; hosted Ubuntu reruns remain required.
+
+M17 Windows checkout/test corrections: Node's Windows formatter reported nearly
+every text file because Git checked out CRLF while Prettier/EditorConfig expect
+LF. Both SDKs now declare `* text=auto eol=lf`; the CLI also pins its shared
+`sdk-v1` contract directory to LF, preserving byte-identical snapshots across
+all three repositories. Disposable local checkouts with `core.autocrlf=true`
+reproduced the formatter failure, then passed the full Node formatter and both
+SDK parity checks after checking out with the proposed attributes. Push the CLI
+attributes update before SDK updates so Windows parity uses the same policy.
+Two pre-existing Python loader assertions assumed slash-separated paths; they
+now compare exact platform-native `Path` values. All 15 Agent/Skill loader tests,
+Black/Ruff and whitespace checks pass locally. Hosted Windows reruns remain
+required; these fixes do not alter SDK runtime behavior or fixture contents.
+
+Operator reports all other CI jobs passed. The reported Node Windows formatting
+and Python Windows loader-assertion jobs still require successful reruns with
+the fixes above; the complete hosted SDK matrix gate remains open until then.
+
 Remaining acceptance: operator-confirmed hosted SDK matrices (Linux x64, both
 macOS architectures, Windows x64), CLI prerequisite release, both SDK
 publications and clean consumers using the actual published versions. Before
