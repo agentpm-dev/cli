@@ -134,7 +134,9 @@ agentpm init --kind template --name research-assistant-python --description "Pyt
 > ```
 > https://raw.githubusercontent.com/agentpm-dev/cli/v0.1.0/schemas/agentpm.manifest.schema.json
 > ```
+>
 > or
+>
 > ```
 > https://raw.githubusercontent.com/agentpm-dev/cli/<COMMIT_SHA>/schemas/agentpm.manifest.schema.json
 > ```
@@ -144,12 +146,14 @@ agentpm init --kind template --name research-assistant-python --description "Pyt
 ## Validate locally
 
 Use the built-in linter:
+
 ```bash
 # In the directory containing agent.json
 agentpm lint
 ```
 
 Or specify a path:
+
 ```bash
 agentpm lint path/to/agent.json
 ```
@@ -211,29 +215,29 @@ Harness runtime state belongs under `.agentpm-state/` by default. `.agentpm/` re
 
 ## Field reference (overview)
 
-| Field         | Type     | Required | Allowed on | Notes                                                                               |
-|---------------|----------|----------|-----------|-------------------------------------------------------------------------------------|
-| `$schema`     | string   | no       | all       | URI to this schema (optional but recommended)                                       |
-| `kind`        | enum     | **yes**  | all       | `"tool"`, `"skill"`, `"agent"`, `"template"`, `"knowledge"`, `"memory"`, `"profile"`, or `"loop"` |
-| `name`        | string   | **yes**  | all       | `^[a-z][a-z0-9-]{0,63}$`                                                            |
-| `version`     | semver   | **yes**  | all       | SemVer string (supports pre/metadata)                                               |
-| `description` | string   | **yes**  | all       | Free text                                                                           |
-| `tools`       | array    | **yes**¹ | **agent**, **skill** | Array of tool refs: string or `{name, version}`                           |
-| `skills`      | array    | no       | **agent** | Array of skill refs: string or `{name, version}`                                    |
-| `knowledge`   | array    | no       | **agent** | Knowledge dependencies resolved into installed Knowledge packages.                   |
-| `memory`      | array    | no       | **agent** | Memory Blueprint dependencies resolved into installed Memory packages.               |
-| `profiles`    | array    | no       | **agent** | Instruction Profile dependencies resolved into installed Profile packages.           |
-| `examples`    | array    | no       | **agent** | Inline prompt examples `{ title, prompt }`.                                         |
-| `skill`       | object   | **yes**⁴ | **skill** | Skill metadata including `entrypoint`, optional references, scripts, and compatibility |
-| `template`    | object   | **yes**³ | **template** | Template metadata including files root, dependencies, variables, and entrypoints |
-| `entrypoint`  | string   | **yes**² | **tool**  | Execution ref `{command, args, cwd, timeout_ms, env}`                               |
-| `inputs`      | object   | **yes**² | **tool**  | JSON Schema (or shape) for inputs                                                   |
-| `outputs`     | object   | **yes**² | **tool**  | JSON Schema (or shape) for outputs                                                  |
-| `files`       | string[] | **yes**² | **tool**  | Non-empty list of paths/globs to package                                            |
-| `runtime`     | object   | no       | **tool**  | `{ type: "python or node", version: "MAJOR[.MINOR[.PATCH]]" }`                      | 
-| `environment` | object   | no       | all       | Dictionary of required or optional env variables `{required, description, default}` | 
-| `readme`      | string   | no       | all       | Path to README file. Will automatically look for README.md if not specified.         | 
-| `license`     | object   | no       | all       | `{ spdx: "license spdx", file: "Path to LICENSE file" }`                            | 
+| Field         | Type     | Required | Allowed on           | Notes                                                                                             |
+| ------------- | -------- | -------- | -------------------- | ------------------------------------------------------------------------------------------------- |
+| `$schema`     | string   | no       | all                  | URI to this schema (optional but recommended)                                                     |
+| `kind`        | enum     | **yes**  | all                  | `"tool"`, `"skill"`, `"agent"`, `"template"`, `"knowledge"`, `"memory"`, `"profile"`, or `"loop"` |
+| `name`        | string   | **yes**  | all                  | `^[a-z][a-z0-9-]{0,63}$`                                                                          |
+| `version`     | semver   | **yes**  | all                  | SemVer string (supports pre/metadata)                                                             |
+| `description` | string   | **yes**  | all                  | Free text                                                                                         |
+| `tools`       | array    | **yes**¹ | **agent**, **skill** | Array of tool refs: string or `{name, version}`                                                   |
+| `skills`      | array    | no       | **agent**            | Array of skill refs: string or `{name, version}`                                                  |
+| `knowledge`   | array    | no       | **agent**            | Knowledge dependencies resolved into installed Knowledge packages.                                |
+| `memory`      | array    | no       | **agent**            | Memory Blueprint dependencies resolved into installed Memory packages.                            |
+| `profiles`    | array    | no       | **agent**            | Instruction Profile dependencies resolved into installed Profile packages.                        |
+| `examples`    | array    | no       | **agent**            | Inline prompt examples `{ title, prompt }`.                                                       |
+| `skill`       | object   | **yes**⁴ | **skill**            | Skill metadata including `entrypoint`, optional references, scripts, and compatibility            |
+| `template`    | object   | **yes**³ | **template**         | Template metadata including files root, dependencies, variables, and entrypoints                  |
+| `entrypoint`  | object   | **yes**² | **tool**             | Execution ref `{command, args, cwd, timeout_ms, env}`                                             |
+| `inputs`      | object   | **yes**² | **tool**             | JSON Schema (or shape) for inputs                                                                 |
+| `outputs`     | object   | **yes**² | **tool**             | JSON Schema (or shape) for outputs                                                                |
+| `files`       | string[] | **yes**² | **tool**             | Non-empty list of literal file/directory paths to package                                         |
+| `runtime`     | object   | no       | **tool**             | `{ type: "python or node", version: "MAJOR[.MINOR[.PATCH]]" }`                                    |
+| `environment` | object   | no       | all                  | Dictionary of required or optional env variables `{required, description, default}`               |
+| `readme`      | string   | no       | all                  | Path to README file. Will automatically look for README.md if not specified.                      |
+| `license`     | object   | no       | all                  | `{ spdx: "license spdx", file: "Path to LICENSE file" }`                                          |
 
 ¹ required only when `kind = "agent"` or `kind = "skill"`  
 ² required only when `kind = "tool"`
@@ -241,6 +245,7 @@ Harness runtime state belongs under `.agentpm-state/` by default. `.agentpm/` re
 ⁴ required only when `kind = "skill"`
 
 **Kind-specific rules** are enforced via schema constraints:
+
 - `entrypoint`, `inputs`, `outputs`, `files`, `runtime` ⇒ **only valid on tools**
 - `tools` ⇒ **valid on agents and skills**
 - `skill` ⇒ **only valid on skills**
@@ -404,7 +409,7 @@ Both `inputs` and `outputs` are **JSON Schema (Draft 2020-12)** objects that des
 
 ```json
  "entrypoint": {
-    "command": "node", // Bare interpreter (node|nodejs|python|python3) name or absolute path to it 
+    "command": "node", // Bare interpreter (node|nodejs|python|python3) name or absolute path to it
     "args": ["dist/summarize.js"], // Path to runnable entry
     "cwd": ".", // optional
     "timeout_ms": 60000, // optional
@@ -446,14 +451,31 @@ If a tool is used without passing a required env variable to the load function, 
 
 - **Strict by default:** `additionalProperties: false` rejects unknown fields.
 - **SemVer check:** `version` uses a SemVer-compatible regex.
-- **Paths:** `files` entries are strings; treat them as repo-relative paths or globs. Future work may add `exclude`.
+- **Paths:** `files` entries are literal repo-relative file or directory paths. Missing declared paths fail packaging; glob patterns are not expanded.
 
 ---
 
 ## Contributing
 
 PRs welcome! If you add fields:
+
 1. Update the schema with constraints.
 2. Add examples under `schemas/examples/`.
 3. Note whether they’re `agent`-only or `tool`-only.
 4. Update this README and the main CLI README as needed.
+
+## Python dependency and release contracts
+
+For a Python Tool, `runtime.dependencies` declares index requirements and
+`runtime.version` is the minimum interpreter version. Node Tools cannot declare
+Python dependencies. AgentPM prepares an exact portable `PythonResolution` in
+`agent.lock`, installs hash-verified compatible wheels into a managed environment,
+and keeps local target/interpreter selection under `.agentpm/`.
+
+New Python publications use `agentpm.package.release.v1`, binding the complete
+immutable target inventory; source-only payloads may use `any`. These release
+and Python-resolution contracts are generated state, not additional authored
+`agent.json` fields. Tool `files` remains literal file/directory paths.
+
+See [Python authoring and migration](https://www.agentpackagemanager.com/docs/v0.1/advanced/python-dependencies)
+and [release integrity](https://www.agentpackagemanager.com/docs/v0.1/advanced/release-integrity).

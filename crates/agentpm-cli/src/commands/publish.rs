@@ -55,11 +55,11 @@ pub struct PublishArgs {
     #[arg(long, value_name = "URL|PATH")]
     pub schema: Option<String>,
 
-    /// Treat warnings as errors (same semantics as lint)
+    /// Treat manifest-lint warnings as errors; payload narrowing warnings remain diagnostic
     #[arg(long)]
     pub strict: bool,
 
-    /// Dry-run: validate and package but do not upload
+    /// Validate/package without upload; prepare missing or stale Python resolution in agent.lock
     #[arg(long)]
     pub dry_run: bool,
 
@@ -67,7 +67,7 @@ pub struct PublishArgs {
     #[arg(long)]
     pub quiet: bool,
 
-    /// Sign this publish using a local key
+    /// Sign with an encrypted author key; unlock with AGENTPM_KEY_PASSPHRASE or a prompt
     #[arg(long)]
     pub sign: bool,
 
@@ -96,7 +96,7 @@ pub struct PublishArgs {
     #[arg(long, value_name = "PAT", env = "AGENTPM_TOKEN")]
     pub token: Option<String>,
 
-    /// Namespace handle to publish into
+    /// Namespace to publish into (required for Python releases)
     #[arg(long, value_name = "HANDLE")]
     pub namespace: Option<String>,
 

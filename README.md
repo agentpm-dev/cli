@@ -27,7 +27,6 @@ Agent packages are not runnable app bundles. They install as portable compositio
 [![Homebrew tap](https://img.shields.io/badge/homebrew-agentpm--dev%2Ftap-blue)](https://github.com/agentpm-dev/homebrew-tap)
 [![Scoop bucket](https://img.shields.io/badge/scoop-agentpm--dev%2Fscoop--bucket-blue)](https://github.com/agentpm-dev/scoop-bucket)
 
-
 ## Installation
 
 ### Option A — Package Managers
@@ -35,22 +34,26 @@ Agent packages are not runnable app bundles. They install as portable compositio
 #### Homebrew (macOS & Linux)
 
 Install via our tap:
+
 ```bash
 brew tap agentpm-dev/tap
 brew install agentpm
 ```
 
 Upgrade:
+
 ```bash
 brew update && brew upgrade agentpm
 ```
 
 Uninstall:
+
 ```bash
 brew uninstall agentpm
 ```
 
 Verify:
+
 ```bash
 which agentpm
 agentpm --version
@@ -60,23 +63,27 @@ brew info agentpm
 #### Scoop (Windows)
 
 Install via our Scoop bucket:
+
 ```powershell
 scoop bucket add agentpm https://github.com/agentpm-dev/scoop-bucket
 scoop install agentpm
 ```
 
 Upgrade:
+
 ```powershell
 scoop update
 scoop update agentpm
 ```
 
 Uninstall:
+
 ```bash
 scoop uninstall agentpm
 ```
 
 Verify:
+
 ```bash
 where agentpm
 agentpm --version
@@ -88,18 +95,22 @@ scoop info agentpm
 Requires the Rust toolchain.
 
 From the repo root:
+
 ```bash
 
 cargo install --path crates/agentpm-cli --locked
 ```
+
 binaries go to: ~/.cargo/bin (ensure it's on your PATH)
 
 Update later:
+
 ```bash
 cargo install --path crates/agentpm-cli --locked
 ```
 
 Uninstall:
+
 ```bash
 cargo uninstall agentpm-cli
 ```
@@ -109,17 +120,20 @@ cargo uninstall agentpm-cli
 #### macOS (Intel/Apple Silicon) and Linux x86_64.
 
 One-liner (installs to ~/.local/bin by default)
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh | bash
 ```
 
 Review first, then run:
+
 ```bash
 curl -fsSL -o install.sh https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh
 bash install.sh
 ```
 
 Custom install location:
+
 ```bash
 PREFIX=/usr/local sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh)"
 ```
@@ -131,6 +145,7 @@ The installer downloads the latest GitHub Release asset for your OS/arch and pla
 The installer defaults to `~/.local/bin`, which isn’t on `PATH` by default on macOS.
 
 **Option A — add it to PATH (recommended for user-local installs):**
+
 ```bash
 # zsh (macOS default): add to both login and interactive shells
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
@@ -143,9 +158,11 @@ which agentpm && agentpm --version
 ```
 
 **Option B — install system-wide (no PATH changes needed on most Macs):**
+
 ```bash
 PREFIX=/usr/local sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentpm-dev/cli/main/scripts/install-latest.sh)"
 ```
+
 Tip: different terminals (Terminal.app, iTerm, VS Code) may read different startup files. Adding to both ~/.zprofile and ~/.zshrc covers most setups.
 
 ## Quick start
@@ -301,21 +318,21 @@ agentpm harness @zack/support-agent --config agentpm.harness.json --state-dir .a
 
 The command requires `agent.lock`, defaults to the interactive TUI surface, selects the only runnable Agent automatically, and asks for an explicit Agent selector when multiple runnable Agents are present. Use `--json` without `--headless`/`--machine` when you only need the preflight readiness report.
 
-Harness runtime records are written under `.agentpm-state/` by default, while `.agentpm/` remains installed dependency state. Full Harness CLI, config, protocol, provider, and SDK documentation lives in the versioned docs under `../agentpm-api/docs/v0.1/cli/harness.mdx`.
+Harness runtime records are written under `.agentpm-state/` by default, while `.agentpm/` remains installed dependency state. See the public [Harness guide](https://www.agentpackagemanager.com/docs/v0.1/cli/harness) for CLI, configuration, protocol, provider and SDK usage.
 
 ### Publishing
 
 Use:
 
 ```bash
-agentpm publish
+agentpm publish --namespace your-namespace
 ```
 
 The preferred publish scope is:
 
 - `packages:publish`
 
-That scope can publish tools, skills, agents, and templates.
+That scope can publish all supported package kinds.
 
 ### Manifest schema
 
@@ -342,6 +359,71 @@ Keep two READMEs:
 
 - root `README.md` for the template package shown in the registry
 - `template/README.md` for the generated project shown to scaffold consumers
+
+## Python Tools and portable releases
+
+Use CLI **0.1.43+** for the complete release and SDK workflow. Python and Node
+SDK consumers require SDK **0.1.17+** plus the installed CLI for every Tool call.
+
+A Python Tool declares distribution requirements in `runtime.dependencies` in
+`agent.json`. AgentPM owns its pinned `uv` dependency engine; your project does
+not need uv, a uv project or a uv lockfile. Prepare the portable resolution:
+
+```bash
+agentpm lint --strict
+agentpm publish --dry-run --refresh-python
+git diff -- agent.lock
+# Review and commit the manifest, source and lock before publication.
+agentpm publish --namespace your-namespace --sign --key-id YOUR_KEY_ID
+```
+
+`--refresh-python` requires `--dry-run`; live publication reuses a fresh committed
+resolution instead of resolving again. Tool `files` entries are literal files
+or directories, not globs, and every declared path must exist. Python directory
+collection omits incidental environment/cache/Git/dotenv state, with explicit
+inclusion overrides. See the [authoring and migration guide](https://www.agentpackagemanager.com/docs/v0.1/advanced/python-dependencies).
+
+New Python publications use `agentpm.package.release.v1`, even without declared
+dependencies. One immutable version contains one `any` payload or a complete
+native-target inventory. Declared dependencies are separate from payload
+classification: a source Tool can use `any` while its dependency wheels contain
+native code. Node Tools and other kinds retain legacy single-archive publication.
+Existing vendored Python versions remain valid; migration creates a new version.
+
+```bash
+agentpm install @your-namespace/your-tool@1.0.0 --require-signature --require-attestation
+agentpm run @your-namespace/your-tool@1.0.0 --input '{}'
+```
+
+Install selects an exact target before `any`, verifies release/provenance and
+archive digests, then installs hash-verified locked wheels into a per-Tool
+managed Python environment. It does not build dependencies from source or
+modify global Python. `runtime.version` is a minimum; set `AGENTPM_PYTHON` to a
+compatible interpreter consistently at install and run. A missing/stale runtime
+fails with reinstall guidance; use `agentpm install --refresh` for damaged files.
+
+`agent.json` is author intent; `agent.lock` is portable resolved state. The lock
+stores logical release integrity and Python resolution; selected artifacts and
+interpreter fingerprints stay under `.agentpm/`. Keep that directory out of Git.
+Supported v2/v3 locks remain readable; v4 carries newer capabilities and future
+unsupported versions fail rather than being rewritten.
+
+Supported native CLI targets are Apple Silicon/Intel macOS, Linux x86-64 glibc
+and Windows x64. The released Linux CLI 0.1.43 needs glibc 2.39+; Linux arm64
+and musl are unsupported. First-use Python engine
+acquisition needs access to the Registry's presigned storage; dependency installs
+also need index/distribution access. See the guide for exact-version
+`AGENTPM_UV_PATH`, shared cache paths and proxy/airgapped preparation.
+
+For CI, `agentpm package --machine` creates an archive and `package-build.json`.
+Transfer native bundles and publish once using repeated `--build` and
+`--expect-build-target` options. Use an encrypted author key file with
+`AGENTPM_KEY_PASSPHRASE` supplied separately; AgentPM OIDC publishing is not
+currently available. See [CI publishing](https://www.agentpackagemanager.com/docs/v0.1/advanced/ci-publishing)
+and [release digests, signatures and trust](https://www.agentpackagemanager.com/docs/v0.1/advanced/release-integrity).
+
+Product feedback is available from the website footer. Reproducible CLI bugs
+can be reported through [GitHub Issues](https://github.com/agentpm-dev/cli/issues).
 
 ## Contributing
 

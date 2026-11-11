@@ -2601,85 +2601,143 @@ or GitHub release asset alone does not establish package-manager availability.
 > - Document cryptographic meaning precisely: artifact digest, release digest, author signature, registry attestation, and what install actually verifies.
 > - Keep Stage 2 taxonomy/copy rewrite out of this milestone.
 
-- [ ] Update Python Tool authoring docs:
-  - [ ] declare dependencies in `agent.json`;
-  - [ ] `agent.json` = author intent;
-  - [ ] `agent.lock` = AgentPM-resolved portable state;
-  - [ ] AgentPM-managed uv/resolution;
-  - [ ] users do not need a uv project;
-  - [ ] what the stored resolution guarantees: **reproducible, digest-verified dependency resolution across supported targets** — not byte-for-byte identical environments on every platform, since the consumer still selects a target-appropriate distribution from the verified set. Do not describe the `uv` pin as the source of reproducibility;
-  - [ ] install is wheel-only and never compiles from source, and what the no-compatible-wheel error means;
-  - [ ] AgentPM-managed per-Tool Python environment;
-  - [ ] `AGENTPM_PYTHON` interpreter behavior/minimum runtime version;
-  - [ ] portable source payload versus native target-specific payload;
-  - [ ] local publish;
-  - [ ] CI multi-target publish.
-- [ ] Add migration section for existing Python Tool authors:
-  - [ ] existing `_vendor` Tools remain valid;
-  - [ ] no forced republish;
-  - [ ] historical compatibility remains unknown/legacy;
-  - [ ] how to migrate a new version to declared dependencies.
-- [ ] Mark `_vendor` as legacy/manual for dependency management and explain architecture pitfalls.
-- [ ] Document the managed resolver for operators and CI, not just Tool authors:
-  - [ ] AgentPM acquires its own pinned `uv` on first use and does not use a PATH-installed one;
-  - [ ] the cache location, and that it is shared across projects;
-  - [ ] the first-use network requirement, and that the download honors standard proxy environment variables;
-  - [ ] `AGENTPM_UV_PATH` for airgapped/preprovisioned environments, including that it must report AgentPM's exact pinned version;
-  - [ ] which hosts need allowlisting for a Python-dependency install to work;
-  - [ ] the supported resolver targets, and that ARM Linux/musl are unsupported because AgentPM's CLI does not ship them.
-- [ ] Correct current docs/comments that imply Tool `files` entries are globs if the implementation remains literal file/directory paths.
-- [ ] Document missing declared `files` path as a publish error.
-- [ ] Document lockfile evolution:
-  - [ ] existing v2/v3 locks remain supported;
-  - [ ] v4 capability state;
-  - [ ] future unsupported lock versions fail rather than being rewritten lossily;
-  - [ ] no target-qualified package keys;
-  - [ ] local selected artifact is not stored in the portable lock.
-- [ ] Document the canonical `PythonResolution` v1 shape and explain that it locks exact distributions/markers but not publisher-selected wheels or local target state.
-- [ ] Document release/artifact model:
-  - [ ] canonical release type `agentpm.package.release.v1`;
-  - [ ] logical Tool version/release;
-  - [ ] target artifact inventory;
-  - [ ] canonical target identifiers + `any`;
-  - [ ] immutable release inventory;
-  - [ ] legacy scalar artifact fields remain legacy-only while new-format versions use per-target artifact records.
-- [ ] Document S3/release concepts only to the degree useful for advanced publishers; avoid forcing internal storage details into basic author docs.
-- [ ] Document install behavior:
-  - [ ] exact target then `any`;
-  - [ ] managed dependency environment creation;
-  - [ ] local environment refresh behavior;
-  - [ ] no-compatible-target error;
-  - [ ] no silent locked-version substitution.
-- [ ] Document integrity/provenance:
-  - [ ] RFC 8785/JCS as the new canonicalization contract;
-  - [ ] root-signed official-registry key-set trust model and historical signing-key rotation;
-  - [ ] release digest;
-  - [ ] artifact digest;
-  - [ ] author signature;
-  - [ ] registry attestation;
-  - [ ] actual client-side verification;
-  - [ ] `--require-signature`;
-  - [ ] cryptographic `--require-attestation`;
-  - [ ] normal historical signer revocation semantics.
-- [ ] Document headless signing:
-  - [ ] encrypted key file/material;
-  - [ ] `AGENTPM_KEY_PASSPHRASE` or final chosen secret source;
-  - [ ] do not recommend raw private-key secrets.
-- [ ] Document official GitHub Actions workflow:
-  - [ ] tag ↔ `agent.json.version` guard;
-  - [ ] target matrix;
-  - [ ] `actions/upload-artifact` / `actions/download-artifact` fan-in;
-  - [ ] one atomic publish;
-  - [ ] `AGENTPM_TOKEN`;
-  - [ ] provider-neutral CLI equivalent.
-- [ ] Document OIDC/trusted AgentPM publishing as a future direction rather than a Stage 1 feature.
-- [ ] Document telemetry/privacy contract and opt-out.
-- [ ] Update CLI help text for new package/signing/install options.
-- [ ] Update registry/docs examples to use `agentpm-harness` Template execution surface where relevant.
-- [ ] Update feedback/help docs for product feedback versus reproducible GitHub bugs.
-- [ ] Carry forward Milestone 17's verified Python/Node SDK compatibility matrix and managed Tool examples; do not claim older SDKs support v4 or managed execution.
-- [ ] Ensure Stage 2 terminology work remains separate.
+- [x] Audit and update both documentation surfaces together: `agentpm-api/docs`
+      and public repository READMEs/user guides, including CLI, Python SDK, Node
+      SDK and maintained examples. Keep supported versions, prerequisites,
+      commands, migration steps and behavior consistent across them.
+- [x] Remove internal planning language from user-facing documentation, examples
+      and CLI help. Describe public features and workflows directly; do not use
+      labels such as "Milestone 17", "M18", "Stage 1" or "Release Band 13" to
+      explain prerequisites, availability or behavior. Internal specs and review
+      records remain planning artifacts, separate from published user guidance.
+- [x] Update Python Tool authoring docs:
+  - [x] declare dependencies in `agent.json`;
+  - [x] `agent.json` = author intent;
+  - [x] `agent.lock` = AgentPM-resolved portable state;
+  - [x] AgentPM-managed uv/resolution;
+  - [x] users do not need a uv project;
+  - [x] what the stored resolution guarantees: **reproducible, digest-verified dependency resolution across supported targets** — not byte-for-byte identical environments on every platform, since the consumer still selects a target-appropriate distribution from the verified set. Do not describe the `uv` pin as the source of reproducibility;
+  - [x] install is wheel-only and never compiles from source, and what the no-compatible-wheel error means;
+  - [x] AgentPM-managed per-Tool Python environment;
+  - [x] `AGENTPM_PYTHON` interpreter behavior/minimum runtime version;
+  - [x] portable source payload versus native target-specific payload;
+  - [x] local publish;
+  - [x] CI multi-target publish.
+- [x] Add migration section for existing Python Tool authors:
+  - [x] existing `_vendor` Tools remain valid;
+  - [x] no forced republish;
+  - [x] historical compatibility remains unknown/legacy;
+  - [x] how to migrate a new version to declared dependencies.
+- [x] Mark `_vendor` as legacy/manual for dependency management and explain architecture pitfalls.
+- [x] Document the managed resolver for operators and CI, not just Tool authors:
+  - [x] AgentPM acquires its own pinned `uv` on first use and does not use a PATH-installed one;
+  - [x] the cache location, and that it is shared across projects;
+  - [x] the first-use network requirement, and that the download honors standard proxy environment variables;
+  - [x] `AGENTPM_UV_PATH` for airgapped/preprovisioned environments, including that it must report AgentPM's exact pinned version;
+  - [x] which hosts need allowlisting for a Python-dependency install to work;
+  - [x] the supported resolver targets, and that ARM Linux/musl are unsupported because AgentPM's CLI does not ship them.
+- [x] Correct current docs/comments that imply Tool `files` entries are globs if the implementation remains literal file/directory paths.
+- [x] Document missing declared `files` path as a publish error.
+- [x] Document lockfile evolution:
+  - [x] existing v2/v3 locks remain supported;
+  - [x] v4 capability state;
+  - [x] future unsupported lock versions fail rather than being rewritten lossily;
+  - [x] no target-qualified package keys;
+  - [x] local selected artifact is not stored in the portable lock.
+- [x] Document the canonical `PythonResolution` v1 shape and explain that it locks exact distributions/markers but not publisher-selected wheels or local target state.
+- [x] Document release/artifact model:
+  - [x] canonical release type `agentpm.package.release.v1`;
+  - [x] logical Tool version/release;
+  - [x] target artifact inventory;
+  - [x] canonical target identifiers + `any`;
+  - [x] immutable release inventory;
+  - [x] legacy scalar artifact fields remain legacy-only while new-format versions use per-target artifact records.
+- [x] Document S3/release concepts only to the degree useful for advanced publishers; avoid forcing internal storage details into basic author docs.
+- [x] Document install behavior:
+  - [x] exact target then `any`;
+  - [x] managed dependency environment creation;
+  - [x] local environment refresh behavior;
+  - [x] no-compatible-target error;
+  - [x] no silent locked-version substitution.
+- [x] Document integrity/provenance:
+  - [x] RFC 8785/JCS as the new canonicalization contract;
+  - [x] root-signed official-registry key-set trust model and historical signing-key rotation;
+  - [x] release digest;
+  - [x] artifact digest;
+  - [x] author signature;
+  - [x] registry attestation;
+  - [x] actual client-side verification;
+  - [x] `--require-signature`;
+  - [x] cryptographic `--require-attestation`;
+  - [x] normal historical signer revocation semantics.
+- [x] Document headless signing:
+  - [x] encrypted key file/material;
+  - [x] `AGENTPM_KEY_PASSPHRASE` or final chosen secret source;
+  - [x] do not recommend raw private-key secrets.
+- [x] Document official GitHub Actions workflow:
+  - [x] tag ↔ `agent.json.version` guard;
+  - [x] target matrix;
+  - [x] `actions/upload-artifact` / `actions/download-artifact` fan-in;
+  - [x] one atomic publish;
+  - [x] `AGENTPM_TOKEN`;
+  - [x] provider-neutral CLI equivalent.
+- [x] Document OIDC/trusted AgentPM publishing as a future direction rather than a Stage 1 feature.
+- [x] Document telemetry/privacy contract and opt-out.
+- [x] Update CLI help text for new package/signing/install options.
+- [x] Update registry/docs examples to use `agentpm-harness` Template execution surface where relevant.
+- [x] Update feedback/help docs for product feedback versus reproducible GitHub bugs.
+- [x] Carry forward Milestone 17's verified Python/Node SDK compatibility matrix and managed Tool examples; do not claim older SDKs support v4 or managed execution.
+- [x] Ensure Stage 2 terminology work remains separate.
+
+M18 implementation evidence (2026-11-10): public CLI/SDK/example READMEs,
+Registry docs and CLI package/publish/install help now describe the delivered
+contracts with CLI 0.1.43 / SDK 0.1.17 floors. Added the release/integrity guide,
+portable resolution example, migration/repair, networking/container prerequisites,
+headless/atomic CI publication and accurate malware/provenance boundaries. Existing
+docs routes are retained, including the historical `pubilsh` filename. User-facing
+planning labels were removed without renaming stable example package identities.
+No manifest-schema or SDK/runtime behavior changed.
+
+Verification: 28 CLI integration tests, 91 Registry tests plus 150 subtests,
+51 compiled/rendered docs pages and all six changed-package lint/dry-run checks
+pass. See the M18 evidence in `test-plan.md` for commands, example tests and
+verification limits. Full Registry pre-commit still reports the same two existing
+imported-module mypy errors in `app/tools/application/search.py` (1486, 1856);
+the unchanged contract test reproduces them. All other applicable hooks pass.
+
+Operator confirmed reviews are complete with no findings. This closes review
+acceptance; hosted checks and the remaining release/verification gates below
+are still pending.
 
 ## Release Band 14: Documentation and Migration Hardening
 Covered milestones: 18.
 This gives us Stage 1-facing documentation for the new dependency, release, signing, telemetry, and install surfaces, the migration guidance for authors and consumers moving from single-artifact to multi-artifact releases, updated CLI help text, and refreshed registry/docs examples. It is last because documentation written against surfaces that are still moving has to be rewritten; Stage 2 terminology work stays out of scope.
+
+
+Band 14 operator gates:
+
+- [x] Review the documentation/help changes. Operator confirmed reviews are
+      complete with no findings.
+- [ ] Record hosted checks, including
+      the Registry documentation tests now included in Release Contract Parity.
+- [ ] Finish clean Docker SDK invocation checks for the updated scaffolds.
+      Released Linux CLI 0.1.43 executes in the Trixie images; end-to-end Registry
+      install/SDK invocation is not yet established. Do not copy a workstation's
+      `.agentpm/` into the image or change host networking/policies to claim a pass.
+- [x] Prepare CLI 0.1.44 and the website CLI status marker dated 2026-11-10
+      after review. SDK versions remain 0.1.17 with their existing release dates.
+- [ ] After hosted checks pass, operator publishes the CLI help update and
+      deploys matching Registry docs and Web status in CLI → Registry → Web
+      order. Version preparation does not publish, push, tag or deploy anything.
+- [ ] Operator republishes only the three existing production packages under
+      namespace `zack` after reviewing the packaging dry runs:
+      `slack-post-message` 0.1.2, `harness-sdk-host-node` 0.1.2 and
+      `harness-sdk-host-python` 0.1.2. Operator confirmed that `validate-order`,
+      `m13-reference-corpus` and `m16-reference-memory` are not production
+      packages; their source updates require no production publication.
+      Existing releases remain unchanged. Consumer app refs/locks/install state
+      were not edited; later upgrades must use AgentPM commands. Memory/Knowledge
+      generated outputs and the Python author lock were refreshed through the CLI.
+- [ ] Verify deployed docs navigation/rendering and the published example
+      versions. SDK runtime/package versions remain 0.1.17; README/scaffold
+      updates do not claim a new SDK distribution.

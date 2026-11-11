@@ -180,3 +180,19 @@ formats, with a separate compiled helper for all four shipped targets, including
 native-Mac evidence is not proof of hosted multi-platform publication. Keep
 workflow execution and real clean-consumer release acceptance explicit before
 making that claim. Engineering evidence only, not a new article/content plan.
+
+
+## Milestone 18 Evidence
+
+Potential later content: an author declares dependencies once, reviews a portable
+resolution, publishes one immutable release and lets each consumer verify/select
+its artifact and provision compatible wheels. Public docs now connect authoring,
+legacy migration, key trust, atomic CI fan-in and CLI-backed SDK execution without
+using internal planning labels. Tested examples distinguish portable lock state
+from local runtimes and payload portability from dependency-wheel availability.
+Container guidance also records real binary ABI/interpreter prerequisites.
+
+Evidence is documentation/contract tests, rendered pages, local package dry runs
+and existing released SDK/CLI contracts. Hosted checks, container invocation and
+publication/deployment acceptance remain separate; do not turn those pending
+checks into public claims. This is engineering handoff material, not a blog draft.
