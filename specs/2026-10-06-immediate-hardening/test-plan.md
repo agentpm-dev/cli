@@ -5029,7 +5029,7 @@ an operational follow-up, and M17 SDK work has not started.
   checksum-verified Linux CLI 0.1.43. The binary references glibc 2.39; both SDK
   scaffolds now use matching Trixie bases, explicit Linux amd64 and context
   exclusions for host runtime state. CLI startup succeeds in those images.
-  Full container Registry install/SDK invocation remains pending: Python urllib
+  Initial emulated container install attempts were blocked: Python urllib
   reaches production `/health` (HTTP 200), but the released Linux CLI reports a
   connection failure from the same image under Linux amd64 emulation on this
   Apple Silicon Mac. This CLI-specific transport failure
@@ -5038,18 +5038,52 @@ an operational follow-up, and M17 SDK work has not started.
   Agent install from the manifest-driven frozen Tool workflow. No runtime fix is
   included in this documentation milestone.
 
-No publication, Git push, production deployment or paid model call is claimed.
-Operator confirmed M18 reviews are complete with no findings. Hosted checks,
-container completion and deployment/publication remain tracked under Release
-Band 14 in `tasks.md`.
+Container diagnostic follow-up: disabling Rosetta gets past the TLS failure,
+but QEMU then crashes the managed uv binary at `--version` with signal 11.
+The downloaded binary matches the authoritative uv 0.13.5 Linux SHA-256
+`8a70db72685b7138121bfcda71fa1a00cb709ed9f1fdc4ecf1dd871e8e167e52`.
+Direct execution and shell execution both reproduce the crash, as do the
+`max`, `qemu64` and `Nehalem` emulated CPU settings. The CLI's version-mismatch
+message also covers unsuccessful resolver execution, so it does not establish
+that the binary has a different version. This matches the reported
+[QEMU uv execution failure](https://github.com/docker/desktop-feedback/issues/382).
+Prepared a portable fixture
+archive at `/private/tmp/agentpm-native-container-checks.tar.gz` containing both
+adapted SDK scaffold contexts, the released CLI 0.1.43, published SDK 0.1.17
+smokes, file checksums and `run-native.sh`. Archive contents/checksums and shell
+syntax are verified locally. The script builds and runs both containers with
+runtime networking disabled and retains build/run logs.
+
+Native container acceptance: operator ran `run-native.sh` in a GitHub Codespace
+and supplied both `PASS python SDK container` and `PASS node SDK container`.
+Both images used released CLI 0.1.43 and published SDK 0.1.17, installed
+`@zack/devwork-copilot@0.1.8` with required signatures and attestations, and
+provisioned managed Python dependencies inside the image. Each SDK then invoked
+`@zack/summarize-text@0.1.10` with runtime networking disabled and returned the
+expected `INPUT_MISSING_API_KEY` Tool result. Both smoke programs completed
+successfully. This closes container acceptance and supersedes the earlier
+pending native-execution notes. Mac emulation failures remain recorded separately.
+
+Operator confirmed M18 reviews are complete with no findings and both container
+checks pass. Operator subsequently confirmed the CLI 0.1.44, Registry and Web
+production rollout and that all remaining publication/version and deployed smoke
+checks look good. The three production example refreshes are
+`@zack/slack-post-message@0.1.2`, `@zack/harness-sdk-host-node@0.1.2` and
+`@zack/harness-sdk-host-python@0.1.2`. Deployed docs navigation/rendering,
+website status and released CLI version/help verification are complete.
+M18 and Release Band 14 have no remaining acceptance items. Publication,
+deployment and final smoke results are operator-reported evidence.
 
 Release preparation (2026-11-10): bumped CLI to 0.1.44 in its Cargo manifest
 and generated lockfile; only the CLI package version changed, with no dependency
 updates. The website CLI status card now displays v0.1.44 and the 2026-11-10
 release date. SDK cards retain 0.1.17 and their existing release dates. An offline
 CLI build reports `agentpm 0.1.44`; Rust formatting, website typecheck, targeted
-status-page ESLint/Prettier and whitespace checks pass. Hosted checks, actual
-release publication and deployment remain operator-owned and pending.
+status-page ESLint/Prettier and whitespace checks pass.
+
+Hosted CI: operator confirmed all changes were pushed, PRs opened, and all
+hosted CI jobs passed, including the Registry documentation checks in Release
+Contract Parity. Operator confirmed the CLI, Registry and Web rollout is complete.
 
 ## Manual checks
 
