@@ -2705,9 +2705,8 @@ verification limits. Full Registry pre-commit still reports the same two existin
 imported-module mypy errors in `app/tools/application/search.py` (1486, 1856);
 the unchanged contract test reproduces them. All other applicable hooks pass.
 
-Operator confirmed reviews are complete with no findings. This closes review
-acceptance; hosted checks and the remaining release/verification gates below
-are still pending.
+Operator confirmed reviews are complete with no findings and all hosted PR
+checks passed.
 
 ## Release Band 14: Documentation and Migration Hardening
 Covered milestones: 18.
@@ -2718,26 +2717,37 @@ Band 14 operator gates:
 
 - [x] Review the documentation/help changes. Operator confirmed reviews are
       complete with no findings.
-- [ ] Record hosted checks, including
-      the Registry documentation tests now included in Release Contract Parity.
-- [ ] Finish clean Docker SDK invocation checks for the updated scaffolds.
-      Released Linux CLI 0.1.43 executes in the Trixie images; end-to-end Registry
-      install/SDK invocation is not yet established. Do not copy a workstation's
-      `.agentpm/` into the image or change host networking/policies to claim a pass.
+- [x] Record hosted checks. Operator confirmed all changes were pushed, PRs
+      opened, and all hosted CI jobs passed, including Release Contract Parity
+      with the Registry documentation tests.
+- [x] Finish clean Docker SDK invocation checks for the updated scaffolds.
+      Operator confirmed both native Linux x86-64 Codespace checks passed with
+      CLI 0.1.43 and SDK 0.1.17. Fresh images strictly installed the published
+      Agent and dependencies. Both SDKs invoked `summarize-text@0.1.10` and
+      returned the expected `INPUT_MISSING_API_KEY` result with runtime networking
+      disabled. Earlier Rosetta TLS and QEMU resolver crashes remain recorded
+      as Apple Silicon emulation limitations.
 - [x] Prepare CLI 0.1.44 and the website CLI status marker dated 2026-11-10
       after review. SDK versions remain 0.1.17 with their existing release dates.
-- [ ] After hosted checks pass, operator publishes the CLI help update and
+- [x] After hosted checks pass, operator publishes the CLI help update and
       deploys matching Registry docs and Web status in CLI → Registry → Web
-      order. Version preparation does not publish, push, tag or deploy anything.
-- [ ] Operator republishes only the three existing production packages under
+      order. Operator confirmed CLI 0.1.44, Registry and Web are rolled out.
+- [x] Operator republishes only the three existing production packages under
       namespace `zack` after reviewing the packaging dry runs:
       `slack-post-message` 0.1.2, `harness-sdk-host-node` 0.1.2 and
-      `harness-sdk-host-python` 0.1.2. Operator confirmed that `validate-order`,
+      `harness-sdk-host-python` 0.1.2. Operator confirmed the remaining package
+      publication/version checks are complete. Operator confirmed that `validate-order`,
       `m13-reference-corpus` and `m16-reference-memory` are not production
       packages; their source updates require no production publication.
       Existing releases remain unchanged. Consumer app refs/locks/install state
       were not edited; later upgrades must use AgentPM commands. Memory/Knowledge
       generated outputs and the Python author lock were refreshed through the CLI.
-- [ ] Verify deployed docs navigation/rendering and the published example
+- [x] Verify deployed docs navigation/rendering and the published example
       versions. SDK runtime/package versions remain 0.1.17; README/scaffold
-      updates do not claim a new SDK distribution.
+      updates do not claim a new SDK distribution. Operator confirmed all final
+      checks look good, including the CLI version/help and website status.
+
+M18 and Release Band 14 are complete. Operator confirmation closes the remaining
+publication and deployed smoke checks after review, hosted CI, native container
+verification and the CLI/Registry/Web rollout. Apple Silicon container emulation
+limitations remain documented; native Linux container acceptance passed.
