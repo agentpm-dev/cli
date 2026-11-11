@@ -1,5 +1,22 @@
 # Test Plan
 
+## Final Stage 1 acceptance
+
+Stage 1 is complete following operator confirmation of all final checks.
+M18 and Release Band 14 close the planned work after the CLI 0.1.44, Registry
+and Web rollout, the three production example refreshes, passing review/hosted
+CI and both native Linux SDK container smokes. The operator also confirmed the
+older M8 CLI scaffolding/lint manual walkthrough passed during final closeout.
+M14C production-bootstrap acceptance is established by the detailed Band 11
+record, including the pinned root, existing signing-key backfill, served signed
+key set and strict legacy/new-format verification.
+
+Full-size/concurrent finalize capacity remains deferred under the operator's
+recorded rollout exception. Mac container emulation failures remain documented.
+These limitations are retained alongside stage acceptance. Earlier chronological
+notes describing later-completed work as pending are superseded by the completion
+evidence and the reconciled checklist in `tasks.md`.
+
 ## Required verification
 
 The stage is not complete until the major user flows pass end-to-end and legacy compatibility is preserved.

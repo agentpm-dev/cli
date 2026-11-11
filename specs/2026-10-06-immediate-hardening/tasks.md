@@ -1,5 +1,22 @@
 # Tasks
 
+## Completion status
+
+Stage 1 is complete. All planned milestones and Release Bands 1–14 are accepted.
+The operator confirmed the final CLI 0.1.44 / Registry / Web rollout, the three
+production example refreshes and deployed smoke checks. Reviews, hosted CI,
+manual verification and both native Linux SDK container checks passed.
+
+Closeout reconciles the M14C production-bootstrap boxes against the completed
+Band 11 evidence, records the operator's M8 walkthrough confirmation and identifies
+M5's unselected implementation alternatives without treating them as open tasks.
+
+Full-size/concurrent Registry finalize capacity remains an explicitly deferred
+operational follow-up under the accepted rollout exception recorded in Band 11.
+Apple Silicon container emulation limitations remain documented. Neither the
+capacity exception nor the native Linux container passes establish maximum-load
+capacity or successful Mac emulation.
+
 ## Milestone 1: Registry Discovery Correctness
 > Scope note: establish a correct, predictable Explore/search navigation baseline before adding new discovery capabilities. This milestone fixes page-size/cursor/history/state defects, visibility inconsistencies, and basic loading/empty/error behavior. It does not add new filters, expand indexed search fields, change ranking semantics, add stars/trending logic, redesign namespace discovery, or perform Stage 2 category/terminology work.
 > Implementation notes:
@@ -342,10 +359,10 @@ This gives us a reusable server-side faceted-search foundation, the first object
 - [x] Limit pins to namespace-owned visible artifacts.
 - [x] Enforce pin maximum (default target: 6 unless changed).
 - [x] Add explicit pin ordering:
-  - [ ] drag/drop if it fits current UI patterns cleanly; or
+  - Alternative considered: drag/drop; deterministic controls selected below.
   - [x] deterministic move-up/down/order controls.
 - [x] Ensure deleting/unpublishing/yanking an artifact does not leave a broken visible pin:
-  - [ ] either remove invalid pins automatically; or
+  - Alternative considered: automatic removal; suppression/owner cleanup selected below.
   - [x] suppress them and expose cleanup to Owner/Admin.
 - [x] Hide empty pin section from normal visitors.
 - [x] Show empty-state management prompt to Owner/Admin.
@@ -538,7 +555,7 @@ This gives us a hardened shared package-detail shell across kinds plus the regis
 - [x] Add ordering tests ensuring actionable semantic messages appear before generic schema fallback.
 - [x] Confirm the diagnostic shape produced here can carry an external rule identifier alongside the path, so Stage 2's APDS rule IDs attach without re-cutting the renderer. Do not implement APDS rules in this milestone — only avoid foreclosing them.
 - [x] Add a reproducible operator runbook and disposable fixtures: `specs/2026-10-06-immediate-hardening/manual-tests/CLI_M8_MANUAL_TESTS.md` and `scripts/cli_m8_manual.py`.
-- [ ] Complete the operator walkthrough and record readability/unexpected-output notes in the runbook. Builder smoke checks do not replace this manual acceptance.
+- [x] Complete the operator walkthrough and record readability/unexpected-output notes in the runbook. Operator confirmed during final Stage 1 closeout that the walkthrough passed and all is good. Builder smoke checks do not replace this manual acceptance.
 
 Implementation and verification completed 2026-10-15; see `specs/2026-10-06-immediate-hardening/test-plan.md`, "Milestone 8 evidence". The schema tolerance ships in **0.1.36**, published/installed by operator confirmation on **2026-10-22**, superseding the original **0.1.35** preparation target. Production first-use capture confirms the installed binary reports **0.1.36**; this is operator release evidence, not an independent GitHub/Homebrew publication audit.
 
@@ -1902,13 +1919,13 @@ Band 11 gate, not an open M14B completion item.
   - [x] activation/creation metadata;
   - [x] retirement metadata/status;
   - [x] historical keys retained for old attestations.
-- [ ] Implement the fixed official-registry trust-anchor design: **root-signed registry key set**.
+- [x] Implement the fixed official-registry trust-anchor design: **root-signed registry key set**.
   - [x] expose `GET /v1/registry/signing-keys`;
   - [x] return a versioned key-set payload with type `agentpm.registry.keyset.v1`;
   - [x] include active and retired/historical attestation signing keys required for old release verification;
   - [x] canonicalize the key-set payload with RFC 8785/JCS;
   - [x] sign the key set with a separate registry root Ed25519 key;
-  - [ ] ship/pin the official registry root public key (or small versioned root key ring) in the CLI as the bootstrap trust anchor;
+  - [x] ship/pin the official registry root public key (or small versioned root key ring) in the CLI as the bootstrap trust anchor;
   - [x] verify the root signature before accepting any key from the endpoint;
   - [x] allow local caching only after successful root verification;
   - [x] select attestation keys by `registryKeyId` from the verified key set;
@@ -1918,17 +1935,17 @@ Band 11 gate, not an open M14B completion item.
   - [x] permit exact-origin dev pins for development/manual testing, reject public
     fixture roots for every origin, and enforce production-only audited root pins
     in release CI even when the official root is present alongside a dev pin.
-- [ ] **Backfill the existing attestation signing key before enforcing verification** (dev complete; production remains a Band 11 gate). Every already-published version has a `RegistryAttestation` recording the current `REGISTRY_KEY_ID` (default `apm-prod-1`); if that key ID is absent from the signed key set, `--require-attestation` regresses from passing to failing for the entire back catalogue:
-  - [ ] seed the public half of the currently configured attestation key into `registry_signing_keys` as an active key (dev verified; production pending);
-  - [ ] include it in the first published key set and every later one (dev verified; production pending);
+- [x] **Backfill the existing attestation signing key before enforcing verification** (dev and production complete; see the Band 11 bootstrap evidence). Every already-published version has a `RegistryAttestation` recording the current `REGISTRY_KEY_ID` (default `apm-prod-1`); if that key ID is absent from the signed key set, `--require-attestation` regresses from passing to failing for the entire back catalogue:
+  - [x] seed the public half of the currently configured attestation key into `registry_signing_keys` as an active key (dev and production verified; see Band 11);
+  - [x] include it in the first published key set and every later one (dev and production verified; see Band 11);
   - [x] confirm an **existing** `agentpm.registry.attestation.v2` row verifies end-to-end through the new client verification path, not merely that legacy server-side behavior is unchanged;
   - [x] state in docs/spec that `--require-attestation` covers legacy single-artifact releases as well as new-format releases.
-- [ ] **Establish the registry root key as an operational prerequisite, sequenced before enforcement** (dev complete; production remains a Band 11 gate):
-  - [ ] generate the root Ed25519 keypair as a deliberate documented step before enabling the key-set endpoint (dev complete; production pending);
+- [x] **Establish the registry root key as an operational prerequisite, sequenced before enforcement** (dev and production complete; see the Band 11 bootstrap evidence):
+  - [x] generate the root Ed25519 keypair as a deliberate documented step before enabling the key-set endpoint (dev and production complete; see Band 11);
   - [x] define and document root private-key custody and how key-set signing is performed; do not reuse the current pattern of a plain env-var read behind a log-and-continue failure path;
-  - [ ] respect the bootstrap order — root keypair → seed existing attestation keys → root-signed key set → CLI shipped with pinned root public key → only then enforce `--require-attestation`;
+  - [x] respect the bootstrap order — root keypair → seed existing attestation keys → root-signed key set → CLI shipped with pinned root public key → only then enforce `--require-attestation`;
   - [x] make `GET /v1/registry/signing-keys` **fail closed** when a valid root signature cannot be produced, rather than serving an unsigned or partial key set;
-  - [ ] keep the pinned root public key auditable in the repository rather than injected at build time from an opaque source, and treat changing it as requiring a CLI release.
+  - [x] keep the pinned root public key auditable in the repository rather than injected at build time from an opaque source, and treat changing it as requiring a CLI release.
 - [x] Evolve the public Security/read DTO for new-format versions so the web UI can inspect release-level integrity/provenance and target artifacts without using truncated digests as verification inputs; keep legacy responses compatible.
   - [x] Retain the Registry's optional/nullable `revoked_ts` in Web `src/types/tools.ts` (`AuthorSignature`) and the associated `authorSignatureSchema` parsers in `src/lib/get-*.ts`; currently those parsers strip the unlisted field. Test timestamp retention plus missing/null legacy values, and display current revocation separately from historical signature validity.
 - [x] Update and verify the existing Tool Security/detail surface for new-format versions using the release/artifact data from Milestones 13A–13B and signing foundation/statements from Milestones 14A–14B, without Package Health scoring:
@@ -2175,8 +2192,8 @@ This is the band where the new release format becomes real for users. It gives u
       `b421ad58d53594fae227cb632a9e7afa781db33b` (PR merge revision) and CLI
       `d10f674b2ed59dc87baeaa3053305d0b010dc642` checked from explicit `main`;
       parity tests report 88 passed, 16 skipped.
-- [ ] Before enabling `RELEASE_PUBLISH_ENABLED` in production, confirm hosted
-      finalize disk/request/concurrency capacity for the configured size limits.
+- **Deferred operational follow-up:** confirm hosted finalize
+      disk/request/concurrency capacity for the configured size limits.
       This requirement is carried forward from the gated Band 9 rollout, not
       marked satisfied by its tiny storage probe. Record resource/concurrency
       assumptions and the relevant capacity evidence before activation.
@@ -2184,7 +2201,7 @@ This is the band where the new release format becomes real for users. It gives u
       0.5 CPU / 512 MB RAM, and the operator explicitly authorizes enabling the
       new-format flow for small production smoke publishes without proving the
       largest configured upload/concurrency case. No instance upgrade or upload
-      limit change is requested. Full-capacity verification remains unchecked;
+      limit change is requested. Full-capacity verification remains deferred;
       this is an accepted operational risk, not a passed capacity test or proof
       that the current host fails. Operator inspection reports `/tmp` with
       58.12 GiB free and both upload budgets at 1,000,000,000 bytes. This is a

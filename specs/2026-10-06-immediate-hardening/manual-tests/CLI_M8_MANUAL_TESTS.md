@@ -263,14 +263,15 @@ before using `setup --reset` if you need to retain it.
 
 ### Operator Record
 
-- Tested date:
-- CLI path and SHA-256 (`fixture.json`):
-- Sections inspected:
-- Readability or unexpected-output notes:
-- Remaining issues:
+- Acceptance confirmation: operator confirmed the walkthrough passed during final Stage 1 closeout.
+- Historical test date, CLI path and SHA-256: not transcribed into this record.
+- Sections inspected: operator confirmed the walkthrough is complete.
+- Readability or unexpected-output notes: operator reported all is good.
+- Remaining issues: none reported for this walkthrough.
 
-Recording the actual **released** CLI version carrying `standard` tolerance is
-still a release-time task. A successful local walkthrough does not complete it.
+Release evidence for `standard` tolerance is recorded in `tasks.md`: CLI
+**0.1.36**, confirmed published/installed on **2026-10-22**. This is separate
+from the operator walkthrough confirmation above.
 
 ## Optional: Blog Sitemap Follow-Up
 
