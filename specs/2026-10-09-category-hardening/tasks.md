@@ -59,18 +59,20 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 
 **Implementation checklist**
 
-- [ ] Inventory top-level schema: `$schema`, `$id`, `kind`, local `name`, version, description, and conditional kind requirements.
-- [ ] Record the eight kinds and separate Agent Package (`agent`) from six Components and `template`.
-- [ ] Map each kind to its actual manifest metadata fields and related CLI commands.
-- [ ] Record how dependency declarations are represented (strings versus object selectors) and how Registry `@namespace/name` differs from local manifest `name`.
-- [ ] Trace global and phase Agent bindings through actual phase lookup and effective capabilities.
-- [ ] Trace Skill Tool inheritance through declared dependencies, bindings and Runner exposure.
-- [ ] Trace Memory spaces and operation triggers including `capacity`, `record_count`, `interval`, and `external`.
-- [ ] Trace Loop terminal outcomes, default omitted outcomes, and phase restrictions.
-- [ ] Classify observed behavior as structural contract, candidate portable semantics, or AgentPM-specific implementation policy; record the evidence and unresolved interpretation instead of treating current code as automatically normative.
-- [ ] List published legacy manifests and known common authored examples that will be used for regression.
-- [ ] Make an explicit cross-repo contract table and attach file paths/line references to the PR.
-- [ ] Have Claude independently review whether the inventory omits a meaningful authoring or execution behavior.
+- [x] Inventory top-level schema: `$schema`, `$id`, `kind`, local `name`, version, description, and conditional kind requirements.
+- [x] Record the eight kinds and separate Agent Package (`agent`) from six Components and `template`.
+- [x] Map each kind to its actual manifest metadata fields and related CLI commands.
+- [x] Record how dependency declarations are represented (strings versus object selectors) and how Registry `@namespace/name` differs from local manifest `name`.
+- [x] Trace global and phase Agent bindings through actual phase lookup and effective capabilities.
+- [x] Trace Skill Tool inheritance through declared dependencies, bindings and Runner exposure.
+- [x] Trace Memory spaces and operation triggers including `capacity`, `record_count`, `interval`, and `external`.
+- [x] Trace Loop terminal outcomes, default omitted outcomes, and phase restrictions.
+- [x] Classify observed behavior as structural contract, candidate portable semantics, or AgentPM-specific implementation policy; record the evidence and unresolved interpretation instead of treating current code as automatically normative.
+- [x] List published legacy manifests and known common authored examples that will be used for regression.
+- [x] Make an explicit cross-repo contract table and attach file paths/line references to the PR.
+- [x] Have Claude independently review whether the inventory omits a meaningful authoring or execution behavior. User confirmed Claude review passed on **2026-11-13**, after the environment-precedence and Tool-invocation additions.
+
+**Builder evidence — 2026-11-13:** [Contract inventory](m1a-contract-inventory.md) includes the cross-repo table/source line references for the review handoff, baseline revisions, regression catalog, S/P/I classification, reconciliation register and D01/D02/D19 decisions. The [schema index](m1a-schema-index.md) covers all 78 manifest and 36 Harness configuration definitions. [Verification](m1a-verification.md) records 421 unique CLI tests (including the review additions for Tool environment precedence and process invocation), 213 Registry tests plus 91 subtests, 137 SDK tests passed with two optional SDK tests skipped, and 38 focused schema/CLI/source-manifest probes. No product/schema/migration/shared Stage 1 contract changed. S2-AC-01/S2-AC-03 contributions and later unmet portions are explicit; Claude review passed, as confirmed by the user on **2026-11-13**, with no remaining findings. **M1A is complete.** No other milestone's checklist is completed by this audit.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 

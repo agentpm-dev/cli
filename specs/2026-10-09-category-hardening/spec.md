@@ -6,6 +6,8 @@ independently reviews.
 **Date:** 2026-10-09  
 **Companions:** [`tasks.md`](tasks.md), [`test-plan.md`](test-plan.md), [`review-checklist.md`](review-checklist.md).
 
+**M1A implementation evidence (2026-11-13):** [Existing contract inventory](m1a-contract-inventory.md), [schema source index](m1a-schema-index.md), and [local verification](m1a-verification.md). This baseline records current behavior and reconciliation items; it does not freeze APDS or supersede the requirements below.
+
 > **North star:** Someone who encounters AgentPM without its creator present understands what an **Agent
   Package** is, why it exists, what AgentPM manages, how the portable contract works, and how to try or
   create one.

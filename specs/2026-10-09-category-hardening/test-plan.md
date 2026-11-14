@@ -21,6 +21,8 @@
 
 ### Verification crosswalk — numbered release bands and A/B/C milestones
 
+**M1A local evidence (2026-11-13):** See the [contract inventory](m1a-contract-inventory.md), [complete schema index](m1a-schema-index.md), and [executed commands/edge probes](m1a-verification.md). The audit exercises the current contract, including local versus scoped names, all eight kinds, dependency/binding forms and Phase 6/7 interpretations. It introduces no normative APDS fixture expectations. The user confirmed independent Claude review passed on **2026-11-13**, after both execution-semantics additions; **M1A is complete**.
+
 The table below lets Codex and Claude find the relevant **named tests** without guessing which broad area a milestone represents. The test IDs are requirements for coverage, not assertions that corresponding test files already exist. Implementers add exact test paths/commands to the evidence record as the code lands.
 
 | Milestone | Main test evidence required | Critical negative/edge condition |
