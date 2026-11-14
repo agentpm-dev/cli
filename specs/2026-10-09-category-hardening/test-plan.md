@@ -13,7 +13,8 @@
 - Each milestone must cite changed files/PRs, AC and D identifiers, test commands with exit status, screenshots where appropriate, and blocked/skipped verification with a reason and follow-up. Claude should be able to reproduce the evidence.
 - **Functional differences matter:** verify schema structure *and* semantics, version provenance, publishing enforcement, exact locked graph, Runner compatibility/readiness, Health evidence truthfulness, and nonquery Registry curation.
 - Use hermetic/local unit fixtures for most tests. Use a staging Registry with throwaway namespaces/packages for publish/install and explicit provider config or test model for Harness. Do not mutate production, sign with live private keys unnecessarily, or rely on real accounts in unit tests.
-- For schema changes, independently validate both Rust and Python using **identical version-pinned fixtures**. Test against older published versions and old clients; don't only test new scaffolds.
+- For schema changes, independently validate both Rust and Python using **identical version-pinned validator fixtures**. Map cases A–P to the correct validation level or separate Runner test; neither validator must execute Loops or Memory operations. Test against older published versions and old clients; don't only test new scaffolds.
+- **Human-first APDS gate:** Independently review the versioned `README.md` and `semantics.md` for clear, concise, navigable explanations and short normative rules. Confirm newcomers can locate guarantees and implementation freedoms without AgentPM source code or an AI explanation; technical completeness alone is insufficient.
 - For UI, compare current live design tokens and behavior, not AI-generated mockup palette/copy/metrics. Use semantic/accessibility checks, responsive screenshots and actual API fixtures.
 - Every status/badge must have a test that proves where its data came from (or verifies unknown/legacy fallback). No “all checks passing” or “works with any runner” default assumptions.
 - Run a **full regression pass at the release band boundary** and again after M17C. If Stage 1 code changes during the window, re-run affected integration suites.
@@ -26,9 +27,9 @@ The table below lets Codex and Claude find the relevant **named tests** without 
 |---|---|---|
 | M1A — contract inventory | Schema/Phase 6–7 cross-repo contract audit | Incorrect assumptions about local `name` versus scoped reference |
 | M1A.1 — tolerance release | T-APDS-20 | Old CLI accepts `standard`; misspelled key still rejected; no field loss on rewrite |
-| M1B — immutable schema | T-APDS-01–05, 16–18; schema/hash drift checks | Agent w/o Tools valid; mutable `$id` rejected as normative identity; freeze gate observed |
-| M1C — semantics | T-APDS-06–14; rule-to-fixture index | Skill inheritance, Loop denial, Memory operation targets |
-| M2A — fixtures | T-APDS-03–14 + positive/negative rule coverage | Incomplete graph is not automatically nonconformant |
+| M1B — immutable schema | T-APDS-01–05, 16–18,21; schema/hash drift + README readability | Agent w/o Tools valid; mutable `$id` rejected as normative identity; freeze gate observed |
+| M1C — semantics | T-APDS-06–14,21; A–P rule-to-fixture/Runner map | Skill inheritance, Loop denial, Memory targets; portable meaning without Harness-only rules or dense prose |
+| M2A — fixtures | T-APDS-03–14 + A–P level/role mapping | Incomplete graph is not automatically nonconformant; no runtime execution demanded of validators |
 | M2B — Rust validator | T-APDS-01–16, 18–19 in Rust CI | Unknown standard does not fall back; deterministic paths/IDs; schema-source override cannot forge conformance |
 | M2C — Python validator | T-APDS-01–16 in Python CI, parity report | Independent validation, not client trust or CLI shellout |
 | M3A — init | T-CLI-01–03,06 | Default Agent but explicit Tool works; valid escaped JSON |
@@ -38,7 +39,7 @@ The table below lets Codex and Claude find the relevant **named tests** without 
 | M5A — lock/APDS | T-LOCK-01,05,07–08 | Standard origin survives ordinary regeneration; forward guard |
 | M5B — frozen/empty | T-LOCK-02–06 | Direct Skill/Agent closure, semver, tamper, empty dependencies |
 | M6A — Harness capability | T-RUN-01–04,07 | Valid no-Loop not APDS-invalid; missing model noninteractive |
-| M6B — exact versions/SDK | T-RUN-01,05–08 | Multi-Agent same-named different versions; prompt A/B decision |
+| M6B — exact versions/SDK | T-RUN-01,05–09 | Multi-version bindings; direct/inherited/Memory/Profile/Loop semantics; prompt A/B decision |
 | M7A — universal Health | T-HEALTH-01,03 | Missing signature/scan does not become verified |
 | M7B — kind-specific Health | T-HEALTH-02–05 | N/A per kind; private graph data hidden |
 | M8A — APDS web reference | T-DETAIL-04,06 | Source and standard separate; no remote arbitrary fetch |
@@ -62,7 +63,7 @@ The table below lets Codex and Claude find the relevant **named tests** without 
 | M16A — journeys | T-ONB-02–04,06 | Try/Build/Template actionable, no nonexistent Developer link |
 | M16B — comprehension/handoff | T-ONB-07–08 | User-owned idea, optional publishing, observed confusion logged |
 | M17A — docs gate | T-DOCS-01 | Entire Stage 1 complete before comprehensive rewrite |
-| M17B — docs rewrite | T-DOCS-02–03 | Canonical standard linked, no authored README rewrite |
+| M17B — docs rewrite | T-DOCS-02–03 + T-APDS-21 | Canonical readable standard linked, no authored README rewrite |
 | M17C — final verification | T-DOCS-01–04 + all T suites | All D01–D21 and S2-AC-01–22 evidence reviewed |
 
 ### Suggested commands grounded in current repository structure
@@ -113,24 +114,25 @@ The `agentpm init` invocation and `agentpm lint` without flags are based on exis
 | **T-APDS-04** | Valid scaffold/fixtures for all eight kinds using actual current schema field shapes | Pass; local manifest `name` distinct from namespaced dependency reference |
 | **T-APDS-19** | Kind-specific APDS violation on each of the eight kinds (missing kind-required field, invalid kind-specific shape) | Diagnostic names the offending field and JSON path plus the stable rule ID; **never** a bare `/oneOf` verdict with the manifest echoed; built on Stage 1 M8's renderer, not a Stage 2 fork |
 | **T-APDS-05** | Missing/blank/whitespace-only description, wrong selector id/version, invalid kind, unknown top-level key, malformed refs | Correct stable rule/structural diagnostic and nonzero lint status. Whitespace-only `description` is an **error**, not a warning, is enforced by the pinned schema in both Rust and Python with identical trimming, and is **not** additionally reported by the legacy CLI-side warning |
-| **T-APDS-06** | Valid resolved Agent with global + phase Tool/Skill/Profile/Knowledge/Memory bindings | Availability additive, no overwrite of globals |
-| **T-APDS-07** | Bound global Skill → declared Tool, bound phase Skill → declared Tool, without direct Tool binding | Tool inherits exact Skill scope, limited by Loop access |
-| **T-APDS-08** | Loop `tools:false`/`knowledge:false`/`memory.read:false`/`memory.write:false` despite globally/phase-bound capabilities | Binding does not bypass Loop prohibition |
-| **T-APDS-09** | Unknown binding phase, invalid Loop entry/transition/outcome, duplicated phase identifiers, implicit `complete` outcome | Correct success/failure at appropriate validation level |
-| **T-APDS-10** | Profile capability hints/boundaries requiring unavailable Tool but Loop forbids it | Hints/boundaries do not grant access; warnings vs errors reflect declared rule |
-| **T-APDS-11** | Memory Blueprint operations: global/phase bound; targets space not directly bound; external/interval/count/capacity triggers; governance/retention declarations | Valid authored relationships; trigger/participation semantics preserved; no automatic persistence/execution implied |
-| **T-APDS-12** | Knowledge context vs vector, Profile required identity/objectives/communication, Template variables/entrypoints/execution surfaces, Tool runtime shape | Kind-specific schema and semantic rule coverage |
-| **T-APDS-13** | Standalone Agent lacks resolved deps; resolved graph provided in separate run | Standalone non-failure but **incomplete** for unresolved checks; resolved run decisive |
-| **T-APDS-14** | New manifest unsupported standard; old published manifest with inferred interpretation | `unsupported` vs `legacy_inferred` clearly distinguished; no fake verification |
-| **T-APDS-15** | Run entire fixture corpus through Rust validator and Python validator independently | Expected statuses, rule IDs, paths and severities consistent (allow documented equivalent human text) |
+| **T-APDS-06** | Valid resolved Agent with global + phase Tool/Skill/Profile/Knowledge/Memory bindings (cases A, K, L) | Validate scope references and additive authored applicability; actual exposure tested in T-RUN |
+| **T-APDS-07** | Bound global Skill → declared Tool, phase Skill → Tool, and direct + inherited same resolved Tool (cases B, C, J) | Valid resolved identities/scopes; no required duplicate binding or extra permission; Runner exposure tested separately |
+| **T-APDS-08** | Authored Loop `tools:false`/`knowledge:false`/`memory.read:false`/`memory.write:false` with valid global/phase bindings | Loop restrictions have clear declarative meaning; blocked exposure verified in T-RUN, not by executing a validator fixture |
+| **T-APDS-09** | Unknown binding phase, invalid Loop entry/transition/outcome, duplicate phase IDs, omitted outcomes with `on: "complete"` (cases D, O); supported checkpoint/limit/error-policy declarations | Validity and default outcome ID `complete` checked at applicable level; prompt/outcome generation and recovery remain Runner decisions |
+| **T-APDS-10** | Profile `compatibility.requires.tool_use`/`recommends`, `required`/`preferred` behavioral constraints, and global/phase Profile bindings (cases E, K) | Structurally valid authored expectations and additive scope; hints/constraints never grant Tools; no prompt-order requirement or invented runtime-support violation |
+| **T-APDS-11** | Memory `document`/`collection`/`sequence`, record schemas, retrieval/retention/capacity/governance, lifecycle operations, unbound-but-declared targets, `external`/`interval`/`record_count`/`capacity` (cases F, G, L, M) | Valid/invalid references and authored scope/trigger contracts; executing eligible operations or persisting records is a separate Runner test |
+| **T-APDS-12** | Knowledge `context`/`vector` files, embedding/index identity, provenance and retrieval defaults; Template `files_root`/variables/dependencies/entrypoints/execution surfaces; Profile and Tool shapes | Schema, relationships and available packaged-file checks; no specific retrieval provider, `agentpm new` requirement or automatic entrypoint execution |
+| **T-APDS-13** | Standalone Agent lacks referenced dependencies; Knowledge or Memory declaration examined without and then with required packaged files (case N) | Report completed scope truthfully; unavailable graph/content is unevaluated, while an actually supplied complete invalid package is a definite violation |
+| **T-APDS-14** | New manifest unsupported standard and AgentPM historical missing-standard adapter, tested as separate suites | Unsupported does not fall back to a different APDS version; `legacy_inferred` is AgentPM compatibility state, never normative proof or retrospective declaration |
+| **T-APDS-15** | Run the validator-applicable portion of the shared A–P fixture corpus through Rust and Python independently | Same expected semantic outcomes, levels and rule IDs where supported (human messages may differ); Runner-only cases are not validator parity failures |
 | **T-APDS-16** | Mutate original unversioned schema or fixture file after bundling; verify CI synchronization/immutable contract guard | Divergence detected, immutable published contract not silently altered |
 | **T-APDS-20** | **Tolerance release (M1A.1):** on the tolerance build, lint a manifest carrying `standard` for all eight kinds; lint a manifest with a misspelled top-level key (`standrad`, `tool`); run `agentpm install <pkg>` and `knowledge build --write` against a manifest holding `standard` plus one extra unknown key; run `agentpm new` from a Template whose scaffolded files carry `standard`; confirm `publish` preflight, `export`, `memory build` accept it | `standard` accepted everywhere and never lost on rewrite (key reordering from the deliberate no-`preserve_order` build is expected); misspelled keys still rejected, proving the root was not opened; `agentpm new` clears `validate_generated_manifests_blocking`; no command emits `standard` yet |
 | **T-APDS-18** | Place a permissive `schemas/agentpm.manifest.schema.json` in the working directory, and separately pass `--schema` (file and `http(s)` forms) to `lint` and `publish`; attempt to validate a manifest the pinned contract rejects | Override cannot yield `conformant`; result labeled non-authoritative; `publish` preflight cannot imply conformance from an overridden schema; no network fetch during routine validation |
 | **T-APDS-17** | **Freeze-gate evidence:** confirm Stage 1 M2/M11A schema additions were merged before v1.0.0 froze, then validate a Template declaring `agentpm-harness` and a Tool declaring `runtime.dependencies` against the frozen contract | Both are **conformant** under v1.0.0; no need for a v1.0.1/v1.1.0 to accept legitimate Stage 1 manifests |
+| **T-APDS-21** | **Human-first editorial review (M1B/M1C):** have Codex shorten and organize the APDS `README.md` and eleven-chapter `semantics.md`, then have Claude follow the documents as an unfamiliar technical implementer | Clear entry point, scannable rule IDs, understandable guarantees and freedoms, useful examples and fixture links; no unnecessary schema repetition, boilerplate or AgentPM-only engineering narrative. Record exact passages improved and remaining ambiguities; do not impose a word limit or omit real rules |
 
-**Fixture inventory required:** include positive and negative fixtures for each *normative semantic rule*, not just the examples above; map stable rule IDs to fixture cases in the conformance index. Generated/no-dependency Agent, multi-version dependency graph and early MMP legacy artifacts are essential fixtures.
+**Fixture inventory required:** map all sixteen cases A–P to standalone, resolved-composition, packaged-content validation and/or Runner interpretation. Include positive/negative fixtures for each **validator-testable normative rule**; do not manufacture invalid manifests for advisory or execution-only semantics. Keep the AgentPM legacy adapter fixtures separate from the normative APDS corpus. Generated/no-dependency Agent and multi-version graphs remain essential.
 
-**Design/contract review check:** Claude compares `semantics.md` and fixture outcomes against existing Phase 6/7 behavior: additive scope, Skill inheritance, Memory operation participation vs directly bound spaces, Loop priority, Profiles advisory. A JSON Schema pass alone is insufficient.
+**Design/contract review check:** Claude compares `semantics.md` and fixtures against Phase 6/7 authored intent: additive scopes, Skill Tool inheritance, Memory operation versus direct access, Loop `complete`/policy, Profile behavioral constraints versus advisory capability hints. Current Harness behavior is evidence, **not automatic normative authority**. A JSON Schema pass or a technically exhaustive but unreadable document is insufficient.
 
 ### B. CLI authoring/init/lint (M3A–M3B; S2-AC-02,03,18)
 
@@ -174,6 +176,7 @@ The `agentpm init` invocation and `agentpm lint` without flags are based on exis
 - **T-RUN-06:** Phase access rejects bound Tool/Knowledge/Memory where Loop forbids it; approval gating remains enforced; Profile hints never create capabilities.
 - **T-RUN-07:** Historical valid Runner outcomes, `$end`/`$abort`/`$handoff`, implicit completion, checkpoint, retry, memory operations, TUI/headless trace/events remain intact.
 - **T-RUN-08:** D13 top-level Agent description prompt A/B: capture deterministic/runnable comparison cases with/without description, model/token/cost/quality notes, selected recommendation and regression for retained behavior. **Evidence and decision**, not necessarily code change.
+- **T-RUN-09:** Run the execution/capability-observable subset of APDS cases A–P with a supported Harness configuration: inherited/global/phase Tools and Loop denial, repeated Tool paths, additive Profile applicability without a mandated prompt order, direct Memory access versus operation-mediated unbound targets, phase-limited operation eligibility, uninvoked `external` trigger, and implicit Loop outcome `complete`. Check only features the Runner claims to support; unsupported capability is a compatibility result, **not** proof that the artifact is invalid.
 
 ### F. Health model and detail pages (M7A–M10B; S2-AC-10,11,12)
 
@@ -217,7 +220,7 @@ The `agentpm init` invocation and `agentpm lint` without flags are based on exis
 - **T-ONB-09:** Example/Template republication: for every Template whose `files_root` ships manifests, `agentpm new` from a clean directory produces a workspace that passes strict `agentpm lint`, resolves and installs with exact pinned Component versions, and gives an honest not-runnable explanation when the scaffolded Agent has no Loop. Every prior published version of every touched package is byte-identical (digest recorded before and after) and still installable, with no retroactive APDS-verified marking. Republished versions pass independent Registry validation, not just local lint. An older CLI still scaffolds/lints an older Template version. The deliberately **not** republished set is recorded with rationale.
 - **T-DOCS-01:** **Before M17A:** all Stage 1 milestones confirmed complete; otherwise broad docs/README rewrite is blocked. Stage 1 functional docs and early APDS normative files unaffected.
 - **T-DOCS-02:** Introduction/Quickstart and CLI/Registry/SDK/Harness/Component/Template/Health documents agree on terminology and working paths; generic Tool-first Quickstart replaced with genuine Agent Package-first guide.
-- **T-DOCS-03:** AgentPM-owned README, docs code fences, homepage code boxes, versioned normative APDS links and starter example match actual commands/versions; no author-controlled published README modifications.
+- **T-DOCS-03:** AgentPM-owned README, docs code fences, homepage code boxes, versioned normative APDS links and starter example match actual commands/versions; no author-controlled published README modifications. Confirm explanatory docs link to the concise canonical APDS contract rather than duplicating or subtly rewriting its rules.
 - **T-DOCS-04:** Docs/README links, SEO, navigation, screenshots, generated code examples and SDK snippets pass smoke test; no stale pre-Stage 1 lock/publish/provenance guidance.
 
 ---
@@ -250,7 +253,7 @@ The `agentpm init` invocation and `agentpm lint` without flags are based on exis
 
 | Band | Manual scenario | Evidence to collect |
 |---|---|---|
-| **1: APDS + publish** | Install the tolerance release and confirm an old-style workspace plus a `standard`-bearing manifest both work; create one new artifact of each kind; lint; inspect versioned normative schema/rules; publish representative new release; try forged publish; inspect unchanged legacy release | CLI transcripts (redacted), schema fixture result report, staging API status, version diff, rollout/rollback notes |
+| **1: APDS + publish** | Install the tolerance release and confirm an old-style workspace plus a `standard`-bearing manifest both work; create one new artifact of each kind; lint; read the APDS README/semantics as a newcomer; inspect versioned schema/rules and A–P fixture map; publish a new release; try forged publish; inspect unchanged legacy release | CLI transcripts (redacted), schema fixture and Runner-test mapping, readability findings/revisions, staging API status, version diff, rollout/rollback notes |
 | **2: install + Harness** | Fresh install existing Agent with Skill-inherited Tool, Memory operations and Loop; inspect lock; frozen reinstall in empty dir; TUI run then headless/SDK preflight; try no Loop and missing model | Lock snapshots with safe metadata, run traces/exit statuses, machine capability payload and result, no secrets |
 | **3: Health + detail** | View Agent Overview composition, Loop phases, standard/raw `agent.json`, Health; select old/legacy version; inspect Tool, Knowledge, Memory, Profile, Loop, Skill and Template pages | Desktop/mobile screenshots, API evidence source map, negative-state screenshots |
 | **4: category UI** | Walk every route and confirm one consistent shell (header/search/canvas/section cards/kind tokens/footer); anonymous home → featured Agent → Explore search and no-query discovery → namespace pinned items → standard/category/pricing; change featured configuration and repeat | Before/after screenshots, URL/canonical captures, role/visibility matrix, featured config change evidence |
@@ -294,7 +297,7 @@ Claude review: approved / changes requested / blocked:
 
 ### Artifact requirements
 
-- **APDS:** fixed-version contract bundle and checksum; `semantics.md` stable rule index; schema field diff; fixture manifest/result report for **both independent implementations**; statement of structural/resolved/Runner boundaries.
+- **APDS:** fixed-version contract bundle and checksum; `README.md`/`semantics.md` newcomer readability review and revisions; concise stable-rule index; schema diff; A–P fixture-role/level map; validator-applicable fixture results for **both independent implementations**; separate Runner-observation evidence; explicit standalone/resolved/packaged-content versus Runner boundaries.
 - **Publishing:** old client/new client matrix; malicious/custom client negative tests; server cutoff/pending-session and rollback evidence; legacy immutable release digest sample; registry audit/error classifications.
 - **Install/Harness:** lock v4 roundtrip and frozen graph sample; exact version resolution proof; machine capabilities payload; TUI/headless/SDK parity; non-TTY no-model and no-Loop results; description-context experiment.
 - **Health:** field-to-source map, per-kind applicability matrix and status screenshots including unknown/legacy/failed and advisory conditions; no universal score.
@@ -304,7 +307,7 @@ Claude review: approved / changes requested / blocked:
 
 ### Reviewer sign-off criteria
 
-Claude Code should **request changes** if any of the following holds: APDS semantics contradict the currently implemented contract without product approval; Rust/Python tests only pass by sharing the same unverified client conclusion; Registry accepts an invalid new release via raw API; frozen lock replay/empty deps fails; APDS-valid no-Loop Agent is labeled nonconformant; Health inflates trust; a featured private package leaks; main page changes the brand unilaterally; a milestone lacks decision evidence; final docs began before Stage 1 finished.
+Claude Code should **request changes** if any of the following holds: the APDS documents are too dense for a technically capable newcomer to find applicable guarantees, despite technically correct content; portable semantics are confused with Harness/AgentPM implementation details; validator fixtures are made to execute Runner behavior; APDS semantics contradict agreed authored intent without product approval; Rust/Python tests only pass by sharing the same unverified client conclusion; Registry accepts an invalid new release via raw API; frozen lock replay/empty deps fails; APDS-valid no-Loop Agent is labeled nonconformant; Health inflates trust; a featured private package leaks; main page changes the brand unilaterally; a milestone lacks decision evidence; final docs began before Stage 1 finished.
 
 ---
 

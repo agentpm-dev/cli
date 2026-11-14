@@ -407,6 +407,38 @@ bespoke executable semantics language or rewrite the entire Harness implementati
 difficult to maintain, Codex may split chapters into included normative files, with one canonical index and
 fixed-version references. No ambiguous duplicated sources of truth.
 
+**REQUIRED — human-first APDS documentation.** `README.md` and `semantics.md` are written for developers
+who need to understand what to implement and which guarantees they can rely on, including readers who
+have never used AgentPM. **Clarity and concision are acceptance requirements, not optional polish.** A
+technically correct standard that developers cannot reasonably read or navigate is not finished.
+
+- **`README.md` is the entry point:** Explain APDS, the artifact kinds, conformance roles, core guarantees,
+  scope/limitations, and where to find the normative rules. Use a short, navigable overview; link to detail
+  rather than reproducing the entire specification.
+- **`semantics.md` is the precise, readable contract:** Introduce concepts in plain language, then state
+  short, unambiguous rules. Prefer active voice, familiar terms, compact examples and skimmable headings.
+  For example, prefer "Global bindings apply in every phase. Phase bindings add capabilities to that phase;
+  they do not replace global bindings. Loop restrictions still apply" over an abstract paragraph that
+  communicates the same guarantee.
+- **One source of each fact:** Do not restate schema field definitions, repeat a rule across several
+  chapters, or narrate every imaginable implementation strategy. Refer to the versioned schema, a rule ID,
+  or the conformance fixture instead. Keep AgentPM implementation history outside normative APDS content.
+- **Rigorous without boilerplate:** Stable rule IDs, conformance subjects/levels, expected results and
+  fixture mappings remain required, but they need not be expanded into a separate long template for every
+  rule. Store detailed validation metadata in a concise rule index/fixture record where it is more useful;
+  give rationale or examples in the prose when they clarify a non-obvious point.
+- **Explain freedoms clearly:** A reader should know both what the contract guarantees and what a
+  compatible implementation may do differently, without repeated lists of forbidden internal algorithms.
+  Tables, diagrams or short examples are welcome when easier to understand than dense paragraphs.
+- **Review for humans:** Codex must do a dedicated editorial pass and Claude must independently read both
+  files as a technically capable newcomer. Remove needless jargon, duplicated qualifications, long
+  sentences and mechanically formal prose without deleting genuine interoperability guarantees.
+
+There is **no arbitrary page or word limit**: Memory and Loop semantics may need more detail than simple
+identity rules. The standard should nonetheless be the **shortest clear document that fully specifies APDS
+v1.0.0**. These guidelines are instructions for authoring the standard, not additional normative rules
+that implementations must satisfy.
+
 **Recommended chapter structure:**
 
 1. **Scope, roles, and terminology:** Agent Package vs Component vs Template; manifest identity; dependency
@@ -498,7 +530,8 @@ fixed-version references. No ambiguous duplicated sources of truth.
 **These IDs/text are RECOMMENDED examples, not preapproved normative definitions.** Codex verifies every
 rule against the current schema, Phase 6/7 implementation, and real conformance examples. If a material
 mismatch exists, pause/review rather than codifying accidental implementation behavior as an APDS promise.
-Rules need applicability, rationale, validation level, severity, path(s), and fixture mappings.
+Rule applicability, validation level, expected failures/paths, rationale where useful, and fixture
+mappings must remain traceable; they need not appear as a lengthy repeated template in the prose.
 Human-friendly CLI/Registry messages may show rule IDs unobtrusively; conformance engines must preserve
 them programmatically.
 
@@ -646,12 +679,18 @@ that a phase name matches a dependency Loop or that a transitive Tool is legally
 9. Version immutability policy and links to canonical schema, semantics and fixtures.
 10. How to report a semantic ambiguity without silently changing frozen fixtures.
 
+**Writing guidance:** Keep this README a short, navigable introduction, not a second copy of
+`semantics.md` or the JSON Schema. A reader should quickly understand what APDS promises, which role they
+are implementing and where to find the precise requirements.
+
 #### Normative semantics chapter blueprint — more detailed than a table of contents
 
-Codex should use the following as an **implementation guide for the actual content of `semantics.md`**, not
-replace each bullet with a single sentence. Each rule should have a stable ID, normative statement,
-applicability, validation level, failure mode, rationale, illustrative example and a conformance fixture
-reference. Where the existing source does not support a proposed interpretation, **surface a reconciliation
+Codex should use the following as an **implementation guide for the actual content of `semantics.md`**,
+not as a requirement to turn every bullet into a long paragraph. Give each normative rule a stable ID,
+clear requirement and scope; keep validation levels, failure expectations and fixture references traceable
+through concise annotations or the rule/fixture index. Add rationale and examples when they genuinely
+clarify meaning, not as repetitive boilerplate. Prioritize the human-first documentation requirements
+above. Where existing source does not support a proposed interpretation, **surface a reconciliation
 issue** before freezing v1.0.0.
 
 **Chapter 1 — Status, scope, conformance, and normative language**
@@ -2271,6 +2310,9 @@ IDs are stable requirement references for `tasks.md`, `test-plan.md`, and review
   fixtures, version policy and canonical docs/source paths. Existing generic schema path cannot drift from
   it, and no runtime schema-source override can silently replace it. The freeze occurred **after** Stage 1's
   manifest-schema additions (M2, M11A) merged, and those fields are conformant under v1.0.0.
+  Its `README.md` and `semantics.md` also pass a dedicated human-readability review: a technically capable
+  newcomer can quickly find what APDS defines, the rules applicable to their role, and the guarantees they
+  can expect without needing AgentPM source code or an AI-generated explanation.
 - **S2-AC-02** — All eight new kind scaffolds emit `standard: {id:"agentpm",version:"1.0.0"}`; plain
   `agentpm init` defaults to an APDS-valid minimal Agent Package, and `--kind tool` plus every explicit
   other kind remains valid. Names/descriptions serialize safely. `agentpm export`'s generated Skill
@@ -2420,7 +2462,7 @@ altering an AGREED requirement. The complete list is retained so none are silent
 
 | ID | Design decision | Preferred direction (opinion) | Allowable Codex/Claude discretion and required decision evidence |
 |---|---|---|---|
-| **D01** | APDS rule organization | **One `semantics.md`** organized by semantic domain with normative rule IDs, exceptions, examples and fixture links; no bespoke DSL. | Split if maintainability clearly benefits; document canonical normative index, non-duplication and fixture consistency. |
+| **D01** | APDS rule organization | **One concise, human-readable `semantics.md`** organized by semantic domain with short normative rules, stable IDs and linked fixtures; no bespoke DSL. `README.md` is the approachable entry point. | Split if maintainability clearly benefits; document canonical normative index, non-duplication and fixture consistency. Preserve complete guarantees without bloated rule templates or duplicated schema prose; require independent editorial review. |
 | **D02** | APDS contract directory and schema migration | **`cli/standards/agentpm/1.0.0/`** authoritative, versioned copy of existing schema, old schema path compatibility alias/generated output. | Choose repo/build mechanism after examining CLI bundling and Registry vendoring; prove no drift or live-fetch dependency. |
 | **D03** | Conformance fixtures and outputs | **Valid/invalid/resolved fixture directories** + expected rule/status/JSON-path results; standalone/resolved distinction. | JSONL/index alternative permitted if ergonomic; verify Rust/Python independent parity and CI integration. |
 | **D04** | Legacy authored manifests / lint | Strict by default for newly authored; optional explicit upgrade/legacy compatibility mode if useful. | Decide UX and error messages without opening a default bypass; document old local authoring handling. |

@@ -4,7 +4,7 @@
 **Audience:** Claude Code as independent implementation reviewer, with Codex as implementer.  
 **Primary contract:** [`spec.md`](spec.md); **implementation order:** [`tasks.md`](tasks.md); **required tests/evidence:** [`test-plan.md`](test-plan.md).
 
-> **Reviewer charter:** Do not just ask whether the feature works on a demo package. Challenge whether the work **faithfully preserves the agreed category/portable APDS contracts**, integrates with Stage 1, is genuinely reproducible and verifiable, and does not silently broaden the project. The spec's REQUIRED constraints are binding. Its PREFERRED implementations are **strong opinions, not architectural orders**; assess Codex's alternatives on evidence. Never accept fabricated mockup metadata as production fact.
+> **Reviewer charter:** Do not just ask whether the feature works on a demo package. Challenge whether the work **faithfully preserves the agreed category/portable APDS contracts**, integrates with Stage 1, is genuinely reproducible and verifiable, and does not silently broaden the project. The spec's REQUIRED constraints are binding. Its PREFERRED implementations are **strong opinions, not architectural orders**; assess Codex's alternatives on evidence. Never accept fabricated mockup metadata as production fact. **Treat human readability as an APDS release requirement:** developers should understand the contract and their guarantees without AgentPM source code or an AI explanation.
 
 ## Review protocol and output
 
@@ -58,19 +58,21 @@ The implementation is split into **M1A–M17C**, including **M1A.1**, **M8B.1** 
 - [ ] Manifest filename `agent.json` still common to all kinds; only `kind:agent` means Agent Package. Local `name` is unscoped as in the actual schema; namespaced package identities are references/Registry identifiers. Mockup pseudo-JSON (`"apds"` or `"type"`) hasn't leaked into actual code.
 - [ ] Blank/whitespace-only `description` is a **hard conformance error** enforced by the pinned schema in both implementations with identical trimming, and the pre-existing CLI-side `description should not be empty` **warning** was removed or promoted so the defect is reported once at one severity.
 - [ ] New Agent with **no Tools**, **no Loop**, **no Profiles** is intrinsically valid, with meaningful non-whitespace description; Tool/Knowledge/Memory/Profile/Loop/Skill/Template shapes remain valid. No unjustified breaking change to established manifests.
-- [ ] Normative APDS `README.md` states scope, release immutability, version policy, implementation roles, glossary, Registry independence and bounded portability.
+- [ ] The APDS `README.md` is a short, navigable entry point covering scope, artifact kinds, conformance roles, guarantees, version policy, Registry independence and links to the schema, semantics and fixtures. It does not repeat the schema or attempt to serve as a second full specification.
 - [ ] Rule-ID diagnostics are attached to **Stage 1 M8's** restructured diagnostic shape, not a parallel Stage 2 renderer, and a kind-specific APDS violation reports a real field/path rather than a bare `/oneOf` verdict.
-- [ ] `semantics.md` is actually **normative**: consistent MUST/SHOULD/MAY language, stable semantic rule IDs, applicability, examples, rationale, check level, failure or advisory level and fixture mapping. Not a marketing document or code mirror without normative meaning.
+- [ ] `semantics.md` is a **precise, readable normative contract**: short MUST/SHOULD/MAY rules, stable IDs, applicable conformance roles, and accessible validation levels/fixture mappings. Rationale and examples clarify non-obvious behavior without an eight-field prose template for every rule. It is not a marketing document, an expanded schema dictionary or a mirror of Harness internals.
+- [ ] **Human-first editorial gate (M1B/M1C):** Claude reads both APDS documents as a technically capable newcomer. The purpose, applicable rules, guarantees and implementation freedoms are easy to find. Remove dense abstract prose, redundant definitions/disclaimers and unnecessarily long sentences **without cutting normative guarantees**. Record concrete unclear passages and their revisions; no arbitrary word/page limit.
+- [ ] **Normative inclusion test:** each requirement is needed for artifact validity, preservation of authored meaning, or intended interoperability. Prompt assembly, Profile text ordering/de-duplication, internal scheduling, storage and AgentPM legacy adapters are not made normative merely because Harness/CLI implements them.
 - [ ] Semantic chapter/rules cover **all** agreed domains:
   - [ ] identity/reference/version semantics; direct/transitive dependency graph and kind correctness;
   - [ ] additive Agent global + phase bindings, versionless bindings resolved to pinned package versions, phase names checked against resolved Loop;
-  - [ ] Skill-declared Tools inherit Skill scope, globally and per-phase, without duplicate Tool bindings;
-  - [ ] Loop tool/knowledge/memory read/write policy constrains bindings, plus outcomes, implicit completion, transitions, terminal targets, limits and error-policy declaration;
-  - [ ] Profiles identity/behavior composition/hints are advisory; they cannot grant capabilities;
-  - [ ] Knowledge context/vector data/retrieval contracts independent of backend;
-  - [ ] Memory scopes, record types, document/collection/sequence spaces, operations and interval/record-count/capacity/external triggers; globally bound operations participate run-wide subject to triggers, phase operations only in phase, operations may target not-directly-bound spaces, declarative Blueprint doesn't execute/persist itself;
-  - [ ] Templates scaffold via `new` rather than constitute Runner-executable Agent Packages, including actual execution-surface vocabulary;
-  - [ ] standalone vs resolved validation vs Runner interpretation and supported/unsupported/incomplete/conformant/nonconformant distinctions.
+  - [ ] Skill-declared Tools inherit Skill scope, globally and per-phase, without duplicate Tool bindings or automatic script execution; repeated paths do not grant extra permissions;
+  - [ ] Loop Tool/Knowledge/Memory access constrains bindings; omitted phase outcomes mean exactly `complete`, with valid transitions/terminals, limits, checkpoints and explicit error policies. Do not standardize incidental prompt/retry/recovery defaults;
+  - [ ] Profiles apply additively across global/phase scope. `required` versus `preferred` behavioral constraints retain their declared strength; `compatibility.requires`/`recommends` are capability expectations, **not access grants**. Neither prompt order nor natural-language conflict precedence is normative;
+  - [ ] Knowledge `context`/`vector` contracts include paths, embedding/index identities and retrieval defaults; declared provenance is not independently verified trust. Packaged-data validity and Runner retrieval support are distinct;
+  - [ ] Memory scopes, versioned record schemas, `document`/`collection`/`sequence`, retrieval, capacity/retention/governance, `consolidate`/`transform`/`delete` and source-handling/provenance semantics. Global/phase operation participation differs from trigger eligibility (`external`, `interval`, `record_count`, `capacity`) and execution; operations may target declared spaces not directly bound, **without bypassing applicable policy**;
+  - [ ] Templates are project/workspace scaffolds with generation-time variables, files/dependencies, optional execution surfaces and non-autoexecuting entrypoints. `agentpm new` is one implementation, **not a required APDS command**;
+  - [ ] standalone, resolved-composition and packaged-content validation are scoped; Runner interpretation, local readiness and legacy-inferred compatibility are separate. `conformant`/`nonconformant`/`incomplete`/`unsupported` have distinct meanings without requiring an AgentPM-specific response format.
 - [ ] Authoritative semantics and expected conformance fixture outcomes are immutable for the released version; no semantic drift under same version. Version rule IDs are stable and not reused after changing meaning.
 - [ ] No accidental normative requirement for specific provider/model/prompt template/Harness TUI/MCP host/approvals UI/private Registry subscription/full orchestration language.
 - [ ] Claude explicitly cross-checks APDS rules with existing Phase 6/7 semantics rather than assuming the current implementation or planning prose is automatically accurate. Flag genuine disagreements before v1.0.0 freeze.
@@ -78,7 +80,7 @@ The implementation is split into **M1A–M17C**, including **M1A.1**, **M8B.1** 
 ### 3. Validators and Registry independent enforcement (M2A–M4B)
 
 - [ ] Rust CLI and Python Registry validate **independently** against same pinned contract and shared fixture suite; one doesn't call or blindly trust the other for conformance. CI parity failures actionable.
-- [ ] Fixtures cover all kinds and actual semantic edge cases, both positive and negative, with stable expected rule/status/path outcomes; incomplete unresolved context distinct from false passing and false failures.
+- [ ] **Cases A–P from `spec.md` are mapped to the correct verification surfaces**: standalone, resolved-composition or packaged-content validator fixtures, and separate Runner interpretation tests where execution/capability exposure matters. Create positive/negative counterparts for validator-testable rules, not artificial invalid manifests for advisory guidance or execution-only behavior. Incomplete context must not become false passing or false failure.
 - [ ] Strict new authoring missing/unknown standard fails clearly. If legacy authored compatibility mode exists, it is explicit and cannot bypass new publishing enforcement. The pre-existing CWD-relative schema and `--schema` overrides are also accounted for — they were the real bypass and are not a substitute for the pinned contract.
 - [ ] CLI `init` defaults to Agent Package with truthful default name, generated APDS declaration, safe JSON serialization, valid optional empty dependency structure; all explicit kinds continue to lint, especially Stage 1 Tool scaffold.
 - [ ] Registry independently inspects **staged embedded manifest bytes** and matches init/finalize metadata including kind/name/version/standard before making release visible. A raw/custom API client cannot bypass validation.
@@ -94,7 +96,7 @@ The implementation is split into **M1A–M17C**, including **M1A.1**, **M8B.1** 
 - [ ] Empty dependency Agent install/resolution **succeeds** and doesn't send a failing empty list to Registry. Test normal and frozen.
 - [ ] Harness declares actual supported APDS IDs/versions, validates selected graph, and exposes capabilities across CLI, TUI, headless machine/preflight and Node/Python SDK surfaces using existing protocols where possible.
 - [ ] APDS-conformant Agent without Loop is recognized as valid **but not Harness-runnable**; unknown standard distinct; missing model/provider in non-TTY is not optimistic Ready.
-- [ ] Multiple locked versions of same Component in workspace cannot be selected by ambiguous name-only lookup. Binding to Skill inheritance and Memory operations honors the correct exact Component version and Loop constraints.
+- [ ] Multiple locked versions of the same Component cannot be selected by ambiguous name-only lookup. Skill Tool inheritance, duplicate binding paths, additive Profiles, Loop `complete` transitions, and direct versus operation-mediated Memory access preserve their authored meaning; eligibility does not imply execution.
 - [ ] Harness inner loop, phase results/terminal handoff, approvals, tracing, hooks, MCP and provider services not accidentally redesigned.
 - [ ] Top-level Agent description prompt A/B **conducted and documented**, even if no prompt change adopted; this is not an APDS requirement.
 
@@ -201,7 +203,7 @@ The implementation is split into **M1A–M17C**, including **M1A.1**, **M8B.1** 
 ### 13. Evidence is sufficient, not just present
 
 - [ ] `test-plan.md` required automated and manual checks were mapped to actual test names and commands; any deviation explained. No “verified” checkbox only based on mockup render or code review.
-- [ ] Rust CLI and Python Registry run full same APDS conformance fixture corpus, both expected pass/fail/status/rule ID outcomes, and suite is CI-enforced.
+- [ ] Rust CLI and Python Registry run the same **validator-applicable** APDS fixture corpus, with expected level/status/rule ID outcomes and CI parity. They are not required to run Loops, Memory operations or model prompts; those semantic guarantees receive separate compatible-Runner tests.
 - [ ] Registry release security and migration tests include malicious/custom client, mismatched staged manifest, queued session cutover, new version of legacy package, multi-target Tool and immutable historic artifacts.
 - [ ] Frozen lock tests replay direct Agent/Skill roots, full transitive graph/semver/integrity and zero-dependency Agents from **clean** workspaces.
 - [ ] Harness tests check no-Loop, unsupported APDS, missing provider in noninteractive headless, multiple locked versions, restricted phase and Machine/SDK parity.
@@ -215,7 +217,7 @@ The implementation is split into **M1A–M17C**, including **M1A.1**, **M8B.1** 
 | Requirement | Expected reviewer evidence |
 |---|---|
 | **S2-AC-02** | Tolerance-release version and ship date vs first `standard` emission; round-trip preservation test; one-field-only relaxation proof; `export` scaffold emission |
-| **S2-AC-01–04** | APDS bundle/version/schema diff/semantics, shared fixture matrix, Rust+Python conformance results, all-kind init/lint, freeze-gate commit evidence |
+| **S2-AC-01–04** | APDS bundle/version/schema diff/semantics, A–P fixture-to-role map, Rust+Python validator parity, all-kind init/lint, freeze-gate evidence, **README/semantics newcomer readability review** |
 | **S2-AC-05** | Registry independent staged-bytes verification, rollout/backward-compat, negative raw-client test |
 | **S2-AC-06–07** | APDS lock v4 and provenance, frozen transitive replay, empty deps, digest/semver guard |
 | **S2-AC-08–09** | Harness capability/readiness/SDK parity, no Loop+non-TTY model negative test, description experiment report |
@@ -250,7 +252,7 @@ Claude should explicitly mark each decision as *documented / evidence adequate /
 
 | ID | Preferred starting point | Claude should specifically challenge |
 |---|---|---|
-| **D01** | One normative `semantics.md` with stable rule IDs and examples | Is the meaning testable, not duplicative, and accurate for Skill/Memory/Loop semantics? |
+| **D01** | One concise, human-readable `semantics.md` with short normative rules and linked examples; approachable `README.md` | Can a newcomer find guarantees and implementation freedoms quickly? Are rules precise without boilerplate, schema duplication or AgentPM implementation details? |
 | **D02** | `cli/standards/agentpm/1.0.0` authoritative existing-schema version; old schema path compatibility | Can old and new diverge; moving schema ID; packaging/no-network path; is the CWD-relative/`--schema` runtime override closed for APDS verdicts? |
 | **D03** | Fixture dirs valid/invalid/resolved + machine expected outcomes | Do Rust/Python validate independently and cover incomplete/unsupported? |
 | **D04** | Strict new-authoring standard selection, optional explicit legacy migration; tolerance release before emission | Is there a hidden permissive lint/publish bypass or hostile old-local workflow? Did the root relax by one field only, and is the minimum CLI version concrete? |
@@ -275,7 +277,7 @@ Claude should explicitly mark each decision as *documented / evidence adequate /
 ### 17. Additional reviewer questions
 
 1. **APDS as a standard:** Can a third party inspect authored manifests, validate them against the documented contract and know precisely which semantics they must honor *without reading AgentPM source or using its hosted Registry*? Conversely, can a third-party Runner decline support without making a valid package “invalid”?
-1a. **Backward and forward compatibility:** Could a user on an already-released CLI hit a hard failure because of a change made here — not only when publishing, but when linting, scaffolding or building a package someone else published? Was the tolerance step shipped before the emitting step?
+   1a. **Backward and forward compatibility:** Could a user on an already-released CLI hit a hard failure because of a change made here — not only when publishing, but when linting, scaffolding or building a package someone else published? Was the tolerance step shipped before the emitting step?
 2. **Correctness in absence of context:** If only `agent.json` is available, can the evaluator honestly say what it verified and what remains unresolved? Does the Registry overclaim graph conformance based on incomplete dependency access?
 3. **Source of truth:** If schema, semantics, registry representation and Harness behavior disagree, is there a clear version-pinned specification and defect process rather than silent app-specific reinterpretation?
 4. **Release validity:** Can a hand-crafted tar/finalize request publish a malformed APDS artifact? Can a race, second artifact target or old pending session bypass the standard gate?
@@ -297,13 +299,15 @@ Do **not** escalate ordinary choices like exact standard directory, internal dat
 - [ ] Does the v1.0.0 schema **evolve** the existing `cli/schemas/agentpm.manifest.schema.json` instead of inventing a second independently maintained definition?
 - [ ] Did Codex preserve local authored `name` versus `@namespace/name` references and machine `kind` instead of copying mistaken mockup `type`/`apds` fields?
 - [ ] Is the versioned `$id` stable and unrelated to the arbitrary user-supplied `$schema` editor value, and do **scaffolds now emit the pinned versioned `$schema`** rather than the moving `main` branch URL they emit today?
-- [ ] Does `semantics.md` include **actual normative rules** for every supported kind, with IDs, level, source path and expected fixtures—not generic marketing explanations?
+- [ ] Does `semantics.md` include **short, precise normative rules** for every supported kind, with IDs, applicable subjects/levels and fixture references—not vague marketing prose or repeated schema definitions? Can a newcomer find and understand the relevant guarantees?
+- [ ] Does `README.md` give a newcomer a clear entry point and links to the schema, semantics and fixtures, without duplicating them? Did Codex and Claude complete the separate human-readability pass?
+- [ ] Are AgentPM-specific implementation history, CLI/Harness choices, diagnostic wire formats and legacy inference kept outside the normative contract?
 - [ ] Are the important binding semantics demonstrated with valid **positive and negative** examples, including Skill-inherited Tools and Loop-denied phases?
 - [ ] Are Memory operation targets allowed beyond directly bound spaces, with global/phase participation and `external`, `interval`, `record_count`, `capacity` triggers interpreted correctly?
-- [ ] Are Loop terminal targets, implicit completion, branches, cycles, error policies and phase limits described as actual current contracts?
-- [ ] Does Profile composition/hints remain advisory, not a capability/safety enforcement grant?
+- [ ] Are Loop terminal targets, implicit outcome **`complete`**, branches, cycles, checkpoints, explicit error policies and phase limits described without making incidental Runner defaults universal?
+- [ ] Are global/phase Profile bindings additive with no required prompt ordering/de-duplication; are `required`/`preferred` constraints distinguished from advisory `compatibility.requires`/`recommends` and from capability permissions?
 - [ ] Is a dependency-free, no-Loop, no-Profile Agent valid yet acknowledged as potentially Harness-incompatible?
-- [ ] Does a standalone manifest validation result avoid claiming full graph conformance when relevant dependency context is absent?
+- [ ] Does a standalone or packaged-content validation result avoid claiming full resolved-graph conformance when dependency context is absent? Are unexamined files and unsupported runtime features distinguished from definite artifact violations?
 - [ ] Can Rust CLI and Python Registry test the same pinned fixture corpus **offline** without one shelling to/trusting the other?
 - [ ] Is normative v1.0.0 immutable once released, with schema and semantics and website reference pointing to identical versioned source?
 - [ ] Does an old missing-standard release retain its bytes and installation ability without APDS verification being invented?
@@ -358,5 +362,5 @@ Approve | Approve with follow-ups | Changes required | Blocked
 - Remaining risks / owner:
 ```
 
-**Final stage sign-off:** Claim “Stage 2 done” only if `S2-AC-01` through `S2-AC-22` are evidenced, `D01`–`D20` have reviewed decisions, every release band's critical path is verified, and the final documentation milestone occurred after Stage 1 completed. Passing unit tests but shipping misleading category/Health claims is **not** successful Stage 2 completion.
+**Final stage sign-off:** Claim “Stage 2 done” only if `S2-AC-01` through `S2-AC-22` are evidenced (including the APDS human-readability gate), `D01`–`D21` have reviewed decisions, every release band's critical path is verified, and the final documentation milestone occurred after Stage 1 completed. Passing unit tests but shipping unreadable normative documentation or misleading category/Health claims is **not** successful Stage 2 completion.
 
