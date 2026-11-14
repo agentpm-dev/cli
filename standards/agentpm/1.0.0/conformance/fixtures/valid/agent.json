@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "kind": "agent",
+  "name": "example",
+  "version": "0.1.0",
+  "description": "Starter AgentPM project",
+  "tools": [],
+  "skills": [],
+  "knowledge": [],
+  "memory": [],
+  "profiles": [],
+  "examples": [
+    {
+      "title": "Example prompt",
+      "prompt": "Describe the user request this agent should handle."
+    }
+  ],
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  }
+}

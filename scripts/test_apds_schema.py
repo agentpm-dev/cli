@@ -84,6 +84,9 @@ class ApdsSchemaTests(unittest.TestCase):
                 COMPATIBILITY,
                 SCHEMA,
                 BUNDLE / "conformance/fixtures/valid/minimal-agent.json",
+                BUNDLE / "semantics.md",
+                BUNDLE / "conformance/rule-index.md",
+                BUNDLE / "conformance/semantic-cases.md",
             ]:
                 path = root / relative
                 original = path.read_bytes()

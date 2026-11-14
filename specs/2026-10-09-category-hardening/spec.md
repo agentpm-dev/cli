@@ -235,6 +235,8 @@ advertisement for no product benefit.
 
 **M1B implementation evidence (2026-11-14):** [Canonical structural candidate](../../standards/agentpm/1.0.0/README.md), [before/after schema diff](m1b-structural-diff.json), and [verification/decision record](m1b-verification.md). Semantic rules and the complete conformance corpus remain with M1C/M2A; this is not a publication claim.
 
+**M1C implementation evidence (2026-11-14):** [Semantic reference](../../standards/agentpm/1.0.0/semantics.md), [rule index](../../standards/agentpm/1.0.0/conformance/rule-index.md), [A–T case map](../../standards/agentpm/1.0.0/conformance/semantic-cases.md), [chapter verification](m1c-verification.md) and [reconciliation decisions](m1c-reconciliation.md). User confirmed independent contract/readability review passed with no remaining findings on 2026-11-14; M1C is complete. Initial M2A fixture review remains required before freeze/publication.
+
 **REQUIRED:** Publish a discoverable, versioned immutable **AgentPM APDS v1.0.0** specification containing
 the same JSON structural contract as the current schema **plus** normative semantic rules and executable
 cross-implementation conformance expectations.
@@ -1015,7 +1017,7 @@ A Runner may allow an authorized Tool, such as a shell-execution Tool, to invoke
     - `record_count` declares eligibility when the referenced Memory space reaches the specified record-count `threshold`.
     - `capacity` declares eligibility when the referenced Memory space reaches its declared capacity.
     - Trigger references must identify valid spaces where applicable. A capacity trigger must refer to a space with a meaningful declared capacity.
-    - Define trigger eligibility independently from the internal mechanism used to detect the condition or schedule execution.
+    - Define trigger eligibility independently from the internal mechanism used to detect the condition or schedule execution. Preserve Phase 7B’s observable edge/rearm semantics for record-count/capacity and state-dependent baseline/completion-based reset for intervals; polling, yield points, storage and failure cooldowns remain implementation choices.
     - Do not prescribe polling frequencies, timer implementations, background worker architectures, or trigger-dispatch algorithms.
     - Clarify that trigger eligibility does not necessarily imply immediate execution, successful completion, or availability of the required backend.
     - Preserve the distinction between a Blueprint's trigger definition, an Agent's operation binding scope, and a Runner's ability to invoke or schedule the operation.
@@ -1054,6 +1056,8 @@ A Runner may allow an authorized Tool, such as a shell-execution Tool, to invoke
 - Reconcile the exact Memory fields, optionality, operation variants, record-schema requirements, and cross-reference rules against the existing manifest schema and Phase 6C/7A decisions before finalizing APDS v1.0.0.
 - Treat the established distinction between **direct space bindings and operation bindings** as a fixed semantic requirement. This includes the ability of an eligible operation to target valid spaces that are not directly bound in the active phase. Do not inadvertently weaken or reverse this behavior while formalizing the standard.
 - Reconcile the exact interaction between Loop Memory read/write policy and Blueprint lifecycle operations. Do not assume that a Loop's direct-space restrictions automatically invalidate an otherwise valid operation target, and do not invent an unrestricted operation execution bypass.
+
+  **M1C review correction, 2026-11-14:** user reversed the earlier proposed tightening after review identified Phase 7B’s explicit direct-access-only rule. Loop Memory read/write flags constrain direct Agent access, not the internal reads/writes of separately bound lifecycle operations. Operations remain governed by their binding scope, triggers, Blueprint policies, runtime authorization and backend support; their targets need no direct binding and gain no direct Agent exposure. Preserve and verify this existing authority boundary in M6B; no prohibition-enforcement runtime change is requested.
 - Distinguish trigger eligibility, operation participation, invocation, and execution. In particular, preserve externally triggered operations as explicitly invoked capabilities rather than treating their declaration as permission for autonomous background execution.
 - Reconcile omitted policy values, transform output modes, source handling, provenance, and derived-record deletion behavior against the current contract. Do not automatically elevate Harness-specific scheduling, retry, or cleanup defaults into normative APDS requirements.
 - Review the currently supported governance annotations, including their `x-agentpm-*` names, and distinguish which have defined portable meanings from those that are descriptive or dependent on implementation capabilities. Do not claim universal privacy or security guarantees without an explicit contract.
@@ -1205,6 +1209,8 @@ Not every case requires all three forms of verification. Conformance fixtures sh
 | **N — Incomplete composition context** | An Agent declares references to external Components. | The validator receives the Agent manifest but not the referenced Component definitions. | Standalone validation may succeed, while dependent resolved-composition checks remain unevaluated. Missing context alone must not be reported as confirmed nonconformance. |
 | **O — Implicit Loop outcome** | Phase `research` omits explicit `outcomes`. A transition declares `from: "research"`, `on: "complete"`, and a valid destination. | The Loop otherwise satisfies its structural and semantic requirements. | The phase has the APDS-defined implicit outcome `complete`. The transition refers to that outcome validly. A Runner may choose how phase completion is determined but must preserve the declared outcome and transition meaning. |
 | **P — Conformance versus runtime support** | An Agent Package has a valid Knowledge, Memory, or other Component dependency. | The selected Runner cannot provide a required runtime capability or backend. | Artifact conformance and Runner compatibility/readiness remain separate determinations. A missing runtime capability does not retroactively invalidate an otherwise conformant authored artifact. |
+
+**M1C review coverage addition:** the published [semantic-case map](../../standards/agentpm/1.0.0/conformance/semantic-cases.md) supplements A–P with Q–T for MEM-008 initial armed eligibility, unchanged-count no-refire, rearming below the boundary and interval dormancy/baseline/reset. These are Runner observations; no validator is required to execute them.
 
 **Required fixture coverage and interpretation rules**
 

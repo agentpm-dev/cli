@@ -20,6 +20,8 @@ A structural pass alone does not establish full conformance to APDS 1.0.0. The s
 | ---------------------------------------------------------------------- | --------------------------------------------------------------- |
 | [manifest.schema.json](manifest.schema.json)                           | Defines valid manifest structure                                |
 | [semantics.md](semantics.md)                                           | Defines what declarations mean and how they must be interpreted |
+| [conformance/rule-index.md](conformance/rule-index.md)                 | Locates semantic rules by subject and evaluation scope          |
+| [conformance/semantic-cases.md](conformance/semantic-cases.md)         | Illustrates composition and Runner interpretation expectations  |
 | [conformance/README.md](conformance/README.md)                         | Explains validation and conformance tests                       |
 | [conformance/fixtures/valid/](conformance/fixtures/valid/)             | Expected structurally valid manifests for all eight kinds       |
 | [conformance/structural-cases.json](conformance/structural-cases.json) | Expected acceptance and rejection of description edge cases     |

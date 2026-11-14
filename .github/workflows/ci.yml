@@ -38,11 +38,11 @@ jobs:
           python3 scripts/check_payload_formats.py --check
           python3 -m unittest discover -s scripts -p test_payload_formats.py -v
 
-      - name: APDS schema, bundle drift and independent Python structure checks
+      - name: APDS schema, semantic reference and bundle drift checks
         run: |
           python3 -m pip install 'jsonschema==4.23.0'
           python3 scripts/check_apds_schema.py
-          python3 -m unittest discover -s scripts -p test_apds_schema.py -v
+          python3 -m unittest discover -s scripts -p 'test_apds_*.py' -v
 
       - name: Release and signing contract parity checker tests
         run: |

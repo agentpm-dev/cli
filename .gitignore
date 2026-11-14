@@ -6,6 +6,7 @@ __pycache__/
 .idea/
 .vscode/
 agent.json
+!/standards/agentpm/*/conformance/fixtures/**/agent.json
 agent.lock
 .agentpm
 pub.txt

@@ -4,6 +4,8 @@ The structural checks in this directory evaluate manifest shape. They do not exe
 
 Normative fixture expectations must agree with the schema and semantic rules. Resolve conflicts before publication; fixtures cannot override either document.
 
+Use the [semantic rule index](rule-index.md) to find a requirement's subject and evaluation scope. The [semantic cases](semantic-cases.md) map the core composition cases and four stateful trigger cases to the relevant rules and distinguish declaration checks from Runner observations. They describe expected interpretation rather than an executable validator or a universal runtime protocol.
+
 The nine [valid manifests](fixtures/valid/) cover all eight kinds and an Agent with no dependency fields. The Tool includes Python distribution requirements; the Template includes `agentpm-harness`. Referenced content is not supplied by this structural corpus, so file existence, generated build freshness and dependency resolution are not evaluated here.
 
 [structural-cases.json](structural-cases.json) supplies identical description cases to independent Rust and Python JSON Schema tests. A description must contain at least one character outside the Unicode `White_Space` set: U+0009–000D, U+0020, U+0085, U+00A0, U+1680, U+2000–200A, U+2028–2029, U+202F, U+205F and U+3000. The explicit class in the schema avoids differences between language-specific `trim`, `strip` and regular-expression shorthand. U+200B and U+001C are not members of that set; the tests make this boundary explicit. Leading/trailing whitespace around meaningful text is allowed; validators do not rewrite descriptions.
