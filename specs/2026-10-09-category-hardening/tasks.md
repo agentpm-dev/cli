@@ -10,7 +10,7 @@
 
 ## How to use this implementation plan
 
-- **Read `spec.md` first.** It is fully self-contained; do not assume access to its planning chat. Especially read the detailed APDS examples and semantic cases before changing schema or validation.
+- **Read `spec.md` first.** It is fully self-contained; do not assume access to its planning chat. Especially read the detailed APDS chapter blueprint and cases A–P before changing schema or validation. The blueprint guides the *authoring* of `semantics.md`; AgentPM implementation notes in that blueprint must not be copied into the normative standard.
 - `REQUIRED / AGREED` is not optional. `PREFERRED` is our strong suggested approach but Codex may improve it with evidence. `INVESTIGATE / EXPERIMENT` requires a documented outcome even when the feature itself is deferred. Claude reviews all normal D01–D21 decisions; escalate only product-semantic or high-impact compatibility conflicts.
 - Each `Milestone X[A/B/C]` should normally fit a focused PR or review unit. Split again if necessary rather than merging unrelated backend/UI migrations into a giant change. A **Release Band** is a coherent integration/deployment boundary; parallel development within a band is fine with explicit dependencies.
 - **Stage 1 owns** search correctness/facets/ranking/stars/trending, namespace pins/scoped search, shared detail shell, technical SEO, CLI scaffold/lint/output hardening, analytics, Python portability, lockfile v4, multi-artifact publishing, digest/signature/attestation and CI. Review actual landed/in-flight Stage 1 work before any overlapping change; do not implement a competing version.
@@ -66,6 +66,7 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 - [ ] Trace Skill Tool inheritance through declared dependencies, bindings and Runner exposure.
 - [ ] Trace Memory spaces and operation triggers including `capacity`, `record_count`, `interval`, and `external`.
 - [ ] Trace Loop terminal outcomes, default omitted outcomes, and phase restrictions.
+- [ ] Classify observed behavior as structural contract, candidate portable semantics, or AgentPM-specific implementation policy; record the evidence and unresolved interpretation instead of treating current code as automatically normative.
 - [ ] List published legacy manifests and known common authored examples that will be used for regression.
 - [ ] Make an explicit cross-repo contract table and attach file paths/line references to the PR.
 - [ ] Have Claude independently review whether the inventory omits a meaningful authoring or execution behavior.
@@ -164,47 +165,55 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 ## Milestone 1C: Write and Review Normative APDS Semantics
 > **Scope note:** Specify the meaning of the already implemented artifact/composition system in `semantics.md`, with stable normative rules and examples. Outside this milestone: Do not create an executable semantics DSL or silently standardize a runtime defect.
 > **Implementation notes:**
-> - This is the most important APDS editorial milestone. Follow the detailed chapter blueprint and behavioral cases in `spec.md`. Every normative assertion is checked against actual sources and mapped to a fixture.
+> - This is the most important APDS editorial milestone. Follow the detailed chapter blueprint and behavioral cases in `spec.md`. Every normative assertion must have a portable justification and traceable evidence; map testable claims to fixtures without manufacturing invalid cases for purely explanatory guidance.
+> - **Normative boundary:** APDS defines artifact validity and authored portable meaning, not incidental AgentPM CLI/Registry/SDK/Harness implementation choices. Apply the three-part inclusion test (validity, meaning, intended interoperability) to each proposed rule. Put AgentPM-specific instructions in the Stage 2 spec or implementation documentation, not the published `semantics.md`.
 > - **Dependencies:** M1A/M1B; freeze with initial conformance fixture review from M2A. **Inherits M1B's hard gate:** normative semantics cannot be frozen before Stage 1 M2/M11A schema additions are merged, because their fields carry semantics this document must state.
 > - **Decisions:** D01, D19. **Acceptance:** S2-AC-01, S2-AC-03.
 
 **Implementation checklist**
 
-- [ ] Define normative terminology, conformance subjects, validation levels and uncertainty states.
-- [ ] Write identity/reference/version/composition rules and their applicability.
-- [ ] Write Agent global/phase additive binding semantics using representative valid examples.
-- [ ] Write Skill Tool inheritance for global and phase bindings; avoid mandatory duplicate direct Tool binding.
-- [ ] Write Loop access policy as a constraint on bound/inherited capabilities.
-- [ ] Write exact Loop entry/phase/outcome/transition/terminal/limit/checkpoint/error-policy semantics.
-- [ ] Specify Profile composition order and advisory hints; no Profile granting forbidden tools.
-- [ ] Write Knowledge context/vector and artifact reference semantics without requiring a storage backend.
-- [ ] Write Memory spaces, direct surfaces, operation targets, triggers and global/phase participation; no automatically executed external trigger.
-- [ ] Write Template scaffolding and `agentpm-harness` surface interpretation, distinct from runnable Agent.
-- [ ] Specify how validators distinguish nonconformant versus incomplete resolved checks and unsupported standards.
-- [ ] Separate authored semantics from Runner model/approval/hook/prompt implementation.
-- [ ] Give each rule the full attribute set the binding requirement below specifies (stable ID, MUST/SHOULD/MAY statement, applicability, rationale, validation level, diagnostic target, representative example, fixture reference).
+- [ ] Define normative terminology and role-specific conformance subjects (author, validator, Registry, Manager, Runner); a role is not obliged to implement unrelated roles.
+- [ ] Distinguish standalone, resolved-composition and packaged-content validation, unevaluated requirements and unsupported standards; distinguish artifact conformance from the extent of verification.
+- [ ] Apply the normative inclusion test to each candidate rule: necessary for artifact validity, authored meaning or an intended interoperability guarantee. Label implementation-specific explanations as non-normative; do not codify current Harness behavior by default.
+- [ ] Write artifact identity, standard and artifact versions, namespaces, reference kinds, direct/transitive composition and resolved-version meaning without specifying a particular Registry, resolver or lockfile format.
+- [ ] Distinguish dependency declarations from Agent bindings; write global/phase additive binding semantics, Loop restrictions and capability eligibility separately from actual runtime availability/invocation.
+- [ ] Write Skill Tool inheritance for global and phase bindings, logical identity across multiple direct/inherited paths and the absence of automatic Skill-script execution; do not prescribe de-duplication algorithms or a shell-executor Tool.
+- [ ] Write Loop entry/phase/outcome/transition/terminal/limit/access/checkpoint/error-policy semantics; make omitted-outcome `complete` a portable identifier, not a prompt-generation mechanism.
+- [ ] Reconcile transition determinism/completeness, step counting, explicit approval/checkpoint behavior and explicit failure policy without elevating omitted-policy Harness defaults into normative rules.
+- [ ] Write additive global/phase Instruction Profile applicability, authored constraints and advisory compatibility (`compatibility.requires`/`recommends`); do not impose Profile prompt order, de-duplication or universal natural-language conflict precedence.
+- [ ] Write Knowledge `context`/`vector`, paths, corpus/embedding/index identities, retrieval defaults, provenance and compatibility; distinguish manifest and packaged-content checks from Runtime retrieval implementation.
+- [ ] Write Memory scopes, record type schemas/versions, the three space models, retrieval modes, capacity/retention/constraints and governance annotations without specifying a storage backend.
+- [ ] Write Memory direct-space versus lifecycle-operation access, global/phase participation, triggers (`external`, `interval`, `record_count`, `capacity`), trigger eligibility versus invocation, and operation inputs/targets/source-handling/provenance/cascade behavior.
+- [ ] Preserve operation access to valid declared input/output/target spaces not directly bound in the current phase; reconcile applicable Loop policy without granting operations a blanket access bypass.
+- [ ] Write Template files, variable interpolation, dependency and entrypoint declarations, and supported execution-surface meaning; do not make `agentpm new`, Harness installation or automatic command execution normative.
+- [ ] Define accurate conformance claims and portable logical outcomes without requiring every independent implementation to use AgentPM diagnostic formatting, API enums or user interfaces.
+- [ ] Keep AgentPM legacy-inferred handling outside normative APDS; the standard requires explicit identification for v1.0.0 authoring but does not mandate retroactive migration of historical releases.
+- [ ] Explicitly exclude Runner model selection, prompt ordering, approvals UI, hook architecture, storage/retrieval algorithms, scheduling, retry engines and traces unless a specific authored behavior requires an observable guarantee.
+- [ ] Give each normative rule a stable ID, requirement level, conformance subject, applicability, validation level, rationale, illustrative example and fixture reference where testable; keep diagnostic presentation rules for AgentPM validators separate from APDS semantics.
 - [ ] Create a concise rule index so future validation errors and Registry reference pages can deep link correctly.
-- [ ] Verify every semantic example uses schema-accurate fields; do not copy mockup-generated `type` or `apds` fields.
-- [ ] Produce a semantic mismatch log; escalate only contradictions that change agreed product behavior.
-- [ ] Require focused Claude rule-by-rule signoff before calling APDS v1.0.0 frozen.
+- [ ] Verify every semantic example uses schema-accurate fields; do not copy mockup-generated `type` or `apds` fields or describe internal product behavior as universal.
+- [ ] Produce a semantic reconciliation log identifying ambiguous intended behavior, implementation-only defaults and any schema/runtime contradictions; escalate actual product-semantic decisions before freezing.
+- [ ] Require focused Claude rule-by-rule signoff for all eleven chapters, including an explicit audit for AgentPM implementation details mistakenly made normative.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
-- Write *detailed normative* `semantics.md` aligned to the APDS design and semantic chapter blueprint in `spec.md`. At minimum cover:
-  - conformance levels and certainty (`conformant`/`nonconformant`/`incomplete`/`unsupported`) and independent validator vs Runner vs Registry roles;
-  - identity, scoped/unscoped names, versions, dependency refs, kind constraints, graph resolution and transitivity;
-  - **global + phase bindings additive**, phase-named access, versionless binding resolution to exact locked dependencies, binding availability vs Loop prohibition;
-  - Skill-inherited Tool bindings in **global and phase** scope, with no redundant direct Tool binding;
-  - Loop phase/entry/outcome/transition/terminal/limit/access/checkpoint semantics, including omitted-outcome `complete` behavior;
-  - Profiles global-to-phase composition, identity/objective/communication/boundaries/compatibility hints, and advisory hints never granting capabilities;
-  - Knowledge context/vector authoring and retrieval-interface meaning without mandating runtime storage/index;
-  - Memory spaces, record types, operation triggers (`external`, `interval`, `record_count`, `capacity` where actual schema supports), global vs phase participation, operation targets beyond directly bound spaces, non-autonomous declarative behavior;
-  - Template scaffold semantics versus Agent Package runtime and `agentpm-harness` execution surface when Stage 1 has landed;
-  - explicit Legacy inference semantics, conformance vs security and compatibility vs environment-ready distinctions;
-  - Runner boundaries: provider, approvals, hooks, prompt assembly, I/O, traces, runtime implementation are not APDS normative requirements.
-- Give each **normative** rule a stable ID, MUST/SHOULD/MAY statement, applicability, rationale, diagnostic level/target, representative example and fixture reference. Treat sample IDs `APDS-ID-001`, `APDS-AGENT-001`, `APDS-BIND-001/002`, `APDS-SKILL-001`, `APDS-LOOP-001/002`, `APDS-PROFILE-001`, `APDS-MEM-001/002`, `APDS-TEMPLATE-001` in spec as suggested, not finished rules; reconcile with actual implementation. Do not simply paraphrase entire current docs into ambiguous prose.
-- Audit all Phase 6/7 semantics against current authored manifests and Harness behavior; if contradiction is material, record it and request product decision **before** publishing normative v1.0.0. Do not standardize accidental bugs.
-- Record **D01**, **D02**, **D19** decisions and evidence; include canonical schema synchronization check strategy and candidate semantic rule table. Request focused Claude APDS contract review before committing the version as immutable.
+- Write *detailed normative* `semantics.md` aligned to the revised eleven-chapter blueprint and cases A–P in `spec.md`. At minimum cover:
+  - role-specific conformance subjects; standalone, resolved-composition and packaged-content evaluation; partial/unsupported verification states and the distinction between conformance and verification;
+  - portable artifact identity, declared standard, namespaced references, artifact versions, kind constraints, direct/transitive graph composition and exact selected-version meaning **without requiring `agent.lock`**;
+  - **global + phase bindings additive**, scope validity, authored eligibility versus Runner support and Loop access restrictions; MCP bindings and consumer context without prescribing protocol internals or prompt injection;
+  - Skill-inherited Tool capability scope and identity for **global and phase** bindings, duplicate paths without extra permissions, no required internal de-duplication algorithm, and no Skill script auto-execution;
+  - Loop graph/phase/entry/outcome/transition/terminal/limit/access/checkpoint and explicit error-policy semantics, including the fixed omitted-outcome identifier `complete`; keep omitted-policy recovery/prompt strategies implementation-defined;
+  - Profiles' additive global/phase applicability, behavioral `required` versus `preferred` constraints and actual `compatibility.requires`/`recommends` hints; **no normative prompt concatenation order, guidance de-duplication algorithm or automatic conflict precedence**;
+  - Knowledge `context`/`vector` structure, packaged content paths, embedding/index identity and compatibility, retrieval defaults and provenance versus verified trust, without mandating a provider or retrieval engine;
+  - Memory scopes, record contracts and schema versions, `document`/`collection`/`sequence` models, retrieval modes, capacity/retention/append-only, operation kinds and source-handling/provenance/cascade/governance declarations;
+  - Memory direct-space binding versus separately bound operation participation; global/phase scopes, eligibility for `external`/`interval`/`record_count`/`capacity`, and valid operation targets **without direct space bindings**, subject to applicable policy, with no prescribed scheduler/backend;
+  - Template file/variable substitution/dependency/entrypoint/declared execution surface semantics, including the `agentpm-harness` identifier, **without requiring `agentpm new`, automatic entrypoint execution or any particular Runner**;
+  - conformance distinctions from trust/scanning, Runner compatibility and local readiness; legacy missing-standard inference is **AgentPM compatibility policy, not a normative alternate APDS authoring format**;
+  - implementation boundaries: provider, prompts, Profile ordering/de-duplication, approvals UI, hooks, runtime scheduling, storage, retry, I/O and tracing mechanisms must not become normative absent a deliberate observable contract.
+- For every candidate rule, first apply the **normative inclusion test**: is it necessary for artifact validity, portable authored meaning, or intended interoperability? Distinguish normatively required behavior from explanatory examples and AgentPM-specific implementation guidance; put the latter **outside** the published normative `semantics.md`.
+- Give each **normative** rule a stable ID, MUST/SHOULD/MAY statement, conformance subject, applicability, validation level, rationale, representative example and fixture reference where testable. AgentPM validators should attach useful rule IDs/paths/levels, but **independent APDS implementations need not emit AgentPM's exact diagnostic schema, enum or UI**. Treat sample IDs `APDS-ID-001`, `APDS-AGENT-001`, `APDS-BIND-001/002`, `APDS-SKILL-001`, `APDS-LOOP-001/002`, `APDS-PROFILE-001`, `APDS-MEM-001/002`, `APDS-TEMPLATE-001` in spec as suggested, not finished rules.
+- Audit Phase 6/7 authored semantics against current manifests and Harness as **evidence**, not automatic authority. Record contradictions, undocumented defaults and ambiguous policy interactions; request product decisions before publishing normative v1.0.0, rather than standardizing accidental implementation behavior.
+- Record **D01**, **D02**, **D19** decisions and evidence; include canonical schema synchronization check strategy and a candidate-rule classification table (normative / non-normative implementation guidance / AgentPM compatibility). Require focused Claude APDS contract review before freezing the version.
 
 **Verification:** the standard four evidence requirements apply — see [Per-milestone evidence requirements](#per-milestone-evidence-requirements). Map the AC and decision IDs listed in this milestone's header.
 
@@ -213,35 +222,39 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 ## Milestone 2A: Create a Shared, Executable APDS Conformance Fixture Corpus
 > **Scope note:** Convert APDS structure and semantics into deterministic positive, negative, and unresolved-graph test cases. Outside this milestone: assumption that a standalone manifest can validate its entire graph; no fake retrospective verification.
 > **Implementation notes:**
-> - Both language implementations will read exactly the same fixture content and expected status/rule IDs. Each major semantic rule needs a proving positive and a rejecting negative case.
+> - Both language implementations will read the same normative validation fixtures and expected outcomes/rule IDs. Supply positive/negative counterparts where a rule is validator-testable; **do not** invent an invalid manifest solely to test advisory guidance or require a validator to execute a Runner-only behavior.
+> - Cases A–P in `spec.md` cover both authored conformance and Runner interpretation. Tag each case by evaluation role/level; the Rust/Python parity suite covers normative validation results, while execution/capability behavior tests belong to M6A/M6B.
 > - **Dependencies:** M1B/M1C normative draft.
 > - **Decisions:** D03, D19. **Acceptance:** S2-AC-01, S2-AC-03, S2-AC-04.
 
 **Implementation checklist**
 
-- [ ] Define fixture index format with case ID, root manifest, optional resolved graph, validation level and expected results.
+- [ ] Define fixture index format with case ID, root manifest, optional resolved graph/packaged files, conformance subject, validation level and expected results; distinguish validator outcomes from Runner-observation expectations.
 - [ ] Add one valid authored manifest for each of the eight kinds.
 - [ ] Add the dependency-free valid Agent case with no `tools`, `loop` or Profiles.
 - [ ] Add a multi-component valid Agent case with real schema-shaped references.
-- [ ] Add paired global Skill inherited Tool and phase Skill inherited Tool cases.
+- [ ] Add paired global Skill inherited Tool and phase Skill inherited Tool cases, plus repeated direct/inherited paths to the same resolved Tool without additional permissions (cases A–C and J).
 - [ ] Add additive global+phase bindings with Loop allowing and denying tools in different phases.
 - [ ] Add wrong phase and wrong-kind reference failures with stable rule IDs.
-- [ ] Add Loop missing entry, unknown transition, invalid target and omitted-outcome valid cases.
-- [ ] Add Profile hint versus Loop prohibition case.
-- [ ] Add Memory operation target-not-directly-bound success plus trigger eligibility cases.
-- [ ] Add Knowledge context/vector and Template scaffold positives/negatives.
+- [ ] Add Loop missing entry, unknown transition/outcome, invalid target and omitted-outcome `complete` valid cases; include defined checkpoint/limit/error-policy semantics without assuming Harness-only prompt or recovery defaults (case O).
+- [ ] Add Profile `compatibility.requires.tool_use` versus Loop prohibition plus additive global/phase Profile applicability; do not assert prompt ordering or text de-duplication (cases E and K).
+- [ ] Add Memory direct space versus operation-mediated access, phase-scoped operation participation versus trigger eligibility, unbound-but-declared operation targets, external trigger without invocation, and valid/invalid operation references (cases F, G, L and M).
+- [ ] Cover all three Memory space models; record-type/schema references; retrieval modes; `external`, `interval`, `record_count`, `capacity` triggers; retention/source-handling/output/provenance/cascade and supported governance annotation shapes where applicable.
+- [ ] Add Knowledge `context`/`vector` and Template scaffold positives/negatives, including packaged-file/embedding/index relationships, non-secret variables, declared execution surfaces and entrypoints that are not executed by declaration.
 - [ ] Add selector missing, unsupported, malformed and whitespace description failures. The whitespace-description case must assert **error** severity, not a warning, and must come from the pinned schema rather than CLI-only logic.
-- [ ] Add incomplete resolved-graph cases and clearly mark what could not be evaluated.
-- [ ] Add legacy inferred declaration fixtures without upgrading historical bytes to explicit APDS.
-- [ ] Pin fixture bytes/version for v1.0.0 and document controlled fixture updates.
+- [ ] Add incomplete resolved-graph and unavailable packaged-content cases; distinguish standalone conformance from unverified graph/content and from unsupported Runtime capabilities (cases H, N and P).
+- [ ] Add separate AgentPM legacy-inference compatibility fixtures without claiming historical undeclared artifacts are explicitly APDS-conformant; keep these outside the normative APDS authoring-validity corpus.
+- [ ] Map each of the sixteen semantic cases A–P to standalone/resolved/packaged-content validator fixtures, Runner interpretation tests, or both; cover multi-version graph selection and exact capability identity (case I) without mandating an AgentPM lockfile.
+- [ ] Pin normative fixture bytes/version for v1.0.0 and document controlled fixture updates.
 - [ ] Review examples against actual parser before declaring case validity.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
-- Design conformance harness/fixture manifest, **prefer** `conformance/fixtures/{valid,invalid,resolved}` plus expected-results index. Each test declares validation level, status and stable rule IDs (plus JSON paths and severity where meaningful). Retain exact bytes/checksums once APDS v1.0.0 freezes.
-- Build positive fixtures for every kind plus minimal Agent, empty arrays/omitted dependencies, legitimate complex composition, Skill Tool-inheritance global/phase, additive scopes restricted by Loop, Loop implicit outcome, Knowledge modes, Profile hints, Memory Blueprint operation scopes/trigger semantics, Template scaffold, and a resolved graph with multiple exact dependency versions.
-- Build negative fixtures for missing/unsupported standard, whitespace description, malformed field/name/reference, wrong-kind dependency, unknown bound Loop phase, invalid transitions/outcomes, invalid Memory spaces/operations, invalid Profile/Template/Tool structures, and direct/transitive integrity/identity mismatch where validation level permits.
-- Include explicit **incomplete/not fully evaluated** fixtures when a valid standalone manifest lacks needed external dependency context; separate unsupported-standard from invalid structure. Include legacy inferred behavior fixtures but do not pretend those old bytes are explicitly conformant.
+- Design conformance harness/fixture manifest, **prefer** `conformance/fixtures/{valid,invalid,resolved}` plus expected-results index and optional packaged-content cases. Label subject/level, expected logical status and stable rule IDs (plus JSON paths/severity where meaningful). No universal APDS diagnostic serialization is required. Retain exact bytes/checksums once APDS v1.0.0 freezes.
+- Map **all spec cases A–P** to the right verification surface: standalone and resolved-composition validator assertions, packaged-content validation, and/or compatible Runner capability/behavior tests. The Rust/Python parity gate tests only what independent validators can evaluate; it must not require a Registry to execute Loops, Skills or Memory operations.
+- Build positive fixtures for every kind, minimal Agent, global/phase and inherited Tool bindings (including duplicate-path logical identity), additive Profiles, Loop `complete`, Knowledge modes and payload references, Memory direct and operation-mediated access/triggers/policies, Template instantiation declarations, and a resolved graph with multiple exact dependency versions.
+- Build negative fixtures for missing/unsupported standard, whitespace description, malformed identity/reference, wrong-kind dependency, unknown bound Loop phase, invalid transitions/outcomes, invalid Memory space/operation/schema reference, invalid kind-specific structures and artifact-content mismatches where observable at the declared validation level.
+- Include explicit **incomplete/not fully evaluated** fixtures when a valid standalone manifest lacks external graph or packaged content; separate unsupported-standard/Runner capability from authored invalidity. Test AgentPM legacy inference as a compatibility adapter without pretending historical undeclared artifacts are explicitly APDS-conformant.
 
 **Verification:** the standard four evidence requirements apply — see [Per-milestone evidence requirements](#per-milestone-evidence-requirements). Map the AC and decision IDs listed in this milestone's header.
 
@@ -262,19 +275,20 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 - [ ] Implement intrinsic checks and rule-ID diagnostics with affected JSON paths. Attach rule IDs to the diagnostic shape Stage 1 M8 produced; do **not** re-cut the lint renderer or re-solve root kind dispatch here.
 - [ ] Verify a kind-specific APDS violation reports the offending field/path plus rule ID rather than a bare `/oneOf` verdict. If Stage 1 M8 has not landed, record this as a blocked prerequisite instead of working around it.
 - [ ] Implement resolved-graph checks when dependency definitions are available.
-- [ ] Return incomplete/not evaluated rather than false failure when graph context is absent.
+- [ ] Implement applicable packaged-content checks when referenced artifact files are available; missing files/context must be reported according to whether the validator was actually supplied a complete package.
+- [ ] Return incomplete/not evaluated rather than false failure when graph or packaged-content context is absent.
 - [ ] Return unsupported when declaration is unknown rather than silently using v1.
 - [ ] Preserve human-readable CLI lint formatting and compatible structured output behavior.
 - [ ] Run entire fixture corpus against Rust expected results, not selective handpicked cases.
 - [ ] Test invocation in a disconnected local environment.
 - [ ] Test deterministic diagnostic ordering and duplicate-rule behavior.
-- [ ] Record scope of evaluation in output used by downstream CLI publish/inspect code.
+- [ ] Record supported conformance role/level, evaluated rules and unevaluated checks in AgentPM CLI output used by downstream publish/inspect code; do not claim full-graph verification from standalone success.
 - [ ] Document any parser behavior that must be fixed to preserve APDS optional dependencies.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
 - Update Rust CLI validation engine to select bundled supported version, run schema and semantic checks with stable diagnostics, distinguish standalone and resolved validation, reject unknown selector rather than silently falling back.
-- Create a simple contract capability matrix: which checks can run intrinsically, which require the resolved graph, which depend on runtime compatibility; report certainty and unresolved checks to callers without false success.
+- Create a simple contract capability matrix: which checks can run intrinsically, which require the resolved graph or packaged files, and which are **Runner interpretation/compatibility checks outside validator conformance**; report certainty and unresolved checks without false success. Use AgentPM-specific actionable diagnostics without claiming their exact shape is normative APDS.
 
 **Verification:** the standard four evidence requirements apply — see [Per-milestone evidence requirements](#per-milestone-evidence-requirements). Map the AC and decision IDs listed in this milestone's header.
 
@@ -292,9 +306,9 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 - [ ] Choose existing Registry Python test/runtime conventions and pin the v1.0.0 schema bundle.
 - [ ] Implement standard ID/version lookup with explicit unsupported result.
 - [ ] Implement schema checks using compatible JSON Schema draft semantics.
-- [ ] Implement semantic rules independently in Python, respecting intrinsic/resolved distinction.
+- [ ] Implement semantic rules independently in Python, respecting standalone/resolved-composition/packaged-content levels and excluding Runner-only execution behavior from Registry validation.
 - [ ] Produce stable rule IDs, paths and validation-level/result states.
-- [ ] Run same fixture corpus against Python validator and compare case-by-case to Rust outcomes.
+- [ ] Run the same **validator-applicable** fixture corpus against Python and compare case-by-case to Rust outcomes; keep Runner interpretation cases in Harness tests, not as Registry execution requirements.
 - [ ] Test regex, optional arrays and malformed/unknown property handling for parity.
 - [ ] Add CI parity/checksum job or equivalent cross-repo fixture synchronization gate.
 - [ ] Test scanner/signing/ACL failures remain separate from APDS results.
@@ -577,7 +591,9 @@ This gives AgentPM one pinned APDS v1.0.0 definition derived from its current sc
 - [ ] Use selected Agent's resolved graph/lock to determine exact Component version and kind.
 - [ ] Test workspace with two Agents binding the same named Tool at different versions.
 - [ ] Verify Skill-inherited Tools are exposed only in valid global/phase scope and Loop policy.
-- [ ] Verify Memory operation target semantics remain as in Phase 7A.
+- [ ] Verify Memory operation target semantics remain as in Phase 7A, including operation access to declared spaces not directly phase-bound and scope/trigger eligibility remaining distinct from actual invocation.
+- [ ] Test supported Runner interpretation separately from schema validation: global/phase additive Profiles without prescribed prompt ordering; no automatic Skill script execution; Loop implicit `complete` transition and authored access/checkpoint/error-policy meaning, within features Harness actually supports.
+- [ ] Confirm Knowledge backend compatibility and local readiness failures are not reported as APDS invalidity.
 - [ ] Expose standard support list through Node SDK bridge/host APIs.
 - [ ] Expose equivalent support list through Python SDK bridge/host APIs.
 - [ ] Confirm TUI, headless and machine preflight outputs agree semantically.
@@ -1456,7 +1472,7 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 - [ ] Provide manual Build path with `agentpm init` new Agent default and optional Loop.
 - [ ] Provide Template starter with `agentpm new` semantics, not Agent install conflation.
 - [ ] Update Component guides for Tool, Skill, Knowledge, Memory, Profile, Loop roles.
-- [ ] Update APDS authoring/schema/semantics links and version support info.
+- [ ] Update APDS authoring/schema/semantics links and version support info; distinguish published normative semantics from AgentPM-specific CLI/Registry/Harness implementation guidance.
 - [ ] Update publish, install/lock, legacy migration, frozen and release provenance guidance.
 - [ ] Update Harness Runner and Node/Python SDK integration help with realistic prerequisites.
 - [ ] Update CLI, Registry, SDK, examples and website owned README positioning.

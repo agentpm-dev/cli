@@ -654,183 +654,532 @@ applicability, validation level, failure mode, rationale, illustrative example a
 reference. Where the existing source does not support a proposed interpretation, **surface a reconciliation
 issue** before freezing v1.0.0.
 
-**Chapter 1 — Status, scope, and normative language**
+**Chapter 1 — Status, scope, conformance, and normative language**
 
-- Define `MUST`, `MUST NOT`, `SHOULD`, `SHOULD NOT`, `MAY` and conformance subjects: artifact author,
-  validator, registry, and compatible Runner.
-- Specify difference between a standalone manifest being structurally conformant and a complete resolved
-  graph being semantically conformant.
-- Explain that the standard may prescribe meaning or restrictions without mandating how runtime services
-  are implemented.
-- Specify diagnostics with rule ID, manifest path, declared standard and validation level; avoid conflating
-  invalid with missing dependency context.
-- Distinguish the immutable normative document from explanatory website/blog/docs copy that can evolve.
+- Define `MUST`, `MUST NOT`, `SHOULD`, `SHOULD NOT`, and `MAY` as normative requirement terms. Define conformance subjects such as artifact authors, validators, registries, Managers, and compatible Runners. Requirements apply only to the conformance subjects and capabilities explicitly identified by each rule; implementations are not required to fulfill unrelated roles.
+- Establish the scope of APDS as a standard for the **structure and portable semantics of Agent Packages and their Components**. Structural requirements define valid artifact representations. Semantic requirements define the meaning of authored declarations, their relationships, and the guarantees necessary for compatible interpretation. APDS does not prescribe internal implementation architecture unless specific observable behavior is necessary to preserve those semantics.
+- Distinguish **standalone artifact conformance** from **resolved-composition conformance**. Standalone validation evaluates requirements that can be determined from an artifact independently. Resolved-composition validation evaluates relationships requiring referenced artifacts. Passing standalone validation does not establish full graph conformance, and unavailable dependency context does not itself establish nonconformance.
+- Define how implementations declare and report their supported conformance roles and validation levels. Validators must not claim verification of requirements they have not evaluated. Runners must preserve the applicable semantics of the constructs they claim to support, without being required to support every optional capability or use a particular execution architecture.
+- Distinguish APDS conformance from distribution trust, Runner compatibility, and environment-specific execution readiness. These are separate properties; none should be inferred solely from another.
+- Establish stable identifiers for normative rules and define how those rules relate to conformance tests. Require that validation outcomes distinguish established violations from requirements that could not be evaluated. Leave implementation-specific diagnostic presentation and serialization unspecified unless explicitly standardized.
+- Distinguish normative requirements from non-normative explanations, examples, and implementation guidance. Explanatory material may illustrate a requirement but must not introduce additional requirements implicitly.
+- Establish version immutability: a published APDS version defines a stable structural and semantic contract. Changes affecting normative requirements or conformance outcomes require appropriate standard versioning. Non-normative documentation may evolve independently without redefining the published contract.
 
-**Chapter 2 — Identity, version, namespace, and references**
+**Implementation guidance for Codex and Claude Code — not normative APDS content**
 
-- Describe common manifest `kind`, local `name`, artifact `version`, purpose `description`, declared
-  `standard`, and optional editor `$schema` precisely.
-- Distinguish package identity (`@namespace/name`), dependency version selectors (range/exact where
-  supported), locked versions, and APDS standard version.
-- Artifacts of different kinds can have similar names; identity must include kind where necessary to avoid
-  ambiguous resolution.
-- The Registry namespace and permissions are distribution semantics; APDS must not require one hosted Registry.
-- Describe unknown-property behavior and how a future extension may be introduced without permissive v1.0.0
-  rewriting.
-- A legacy missing declaration is **not** an alternative normative v1.0.0 authoring format; legacy
-  inference is a compatibility adapter outside the new-release contract.
+When authoring this chapter and the remainder of `semantics.md`, use the following inclusion test:
+
+1. Is the proposed rule necessary to determine whether an artifact is valid?
+2. Is it necessary to preserve the intended meaning of an authored declaration?
+3. Is it necessary to guarantee an explicitly intended aspect of interoperability?
+
+If none applies, the behavior should generally remain implementation-defined rather than becoming normative.
+
+Existing AgentPM CLI, Registry, SDK, and Harness behavior should inform the identification of intended semantics, but implementation choices must not automatically become standard requirements. In particular, internal algorithms, prompt construction, de-duplication strategies, caching, scheduling, recovery mechanisms, and presentation details should remain outside the normative contract unless their observable behavior is deliberately standardized.
+
+Keep this guidance in the Stage 2 implementation specification. Do not reproduce AgentPM-specific development instructions or historical implementation explanations in the published normative `semantics.md`. Where the existing implementation and the proposed portable semantics disagree, document the discrepancy for reconciliation before finalizing APDS v1.0.0.
+
+**Chapter 2 — Artifact identity, versions, namespaces, and references**
+
+- Define the common manifest fields `kind`, local `name`, artifact `version`, purpose `description`, declared `standard`, and optional editor `$schema` according to the versioned schema. Clarify that `standard` identifies the normative definition contract, while `$schema` is an optional tooling reference and does not override the declared standard.
+- Distinguish artifact identity, namespaced references (`@namespace/name`), artifact versions, dependency version selectors (ranges or exact versions where supported), and APDS standard versions. Define their respective meanings without conflating an artifact's version with the version of the standard used to define it.
+- Define how artifact kinds participate in identity and reference interpretation. Artifacts of different kinds may have similar names; references must resolve unambiguously to the intended artifact kind and identity. Do not assume that a matching name alone establishes the correct dependency.
+- Define the portable meaning and structure of namespaced references without requiring a particular hosted Registry. Namespace ownership, authentication, authorization, publication permissions, and Registry-specific identity management are distribution concerns rather than universal APDS requirements.
+- Define the semantics of version references and resolved dependency identity. A version selector expresses an authored dependency constraint; a resolved dependency identifies a specific artifact version. APDS may define the requirements necessary for unambiguous composition, but does not mandate a particular dependency-resolution algorithm, lockfile format, local installation layout, or package-management implementation.
+- Define unknown-property behavior according to the declared versioned schema. Unsupported properties must not be silently reinterpreted as valid APDS v1.0.0 extensions. Future extensions or changes to the manifest contract must follow the standard's versioning rules rather than implicitly expanding the meaning of an immutable standard version.
+- Require explicit supported standard identification for artifacts authored under APDS v1.0.0. Artifacts lacking a standard declaration are not an alternative conformant v1.0.0 authoring format. Implementations may provide backward-compatibility mechanisms for historical artifacts, but such mechanisms must not be represented as normative APDS declarations or proof of conformance.
 
 **Chapter 3 — Dependencies and composition**
 
-- Define direct references in `tools`, `skills`, `knowledge`, `memory`, `profile`/`profiles`, `loop` and
-  other actual fields according to existing schemas.
-- Distinguish a declared direct dependency from dependencies of that dependency; transitive paths remain
-  traceable for inspection.
-- State that resolving a versionless binding does **not** authorize taking any installed version matching
-  the name; it must resolve through the Agent's declared dependency graph/lock.
-- Invalid cross-kind references should fail when enough context exists, e.g. declaring a Skill identity in
-  a Tool-only binding.
-- No implicit requirement that every Agent have a Tool, Profile, Loop, Memory or Knowledge package; missing
-  categories are legitimate.
-- Reproducibility is expressed through exact resolved versions/digests, but exact `agent.lock`
-  serialization is an AgentPM Manager concern and belongs outside the normative manifest schema.
+- Define how artifacts declare direct Component dependencies using the existing manifest fields, including `tools`, `skills`, `knowledge`, `memory`, `profile`/`profiles`, `loop`, and other applicable fields according to each artifact kind's schema. Preserve the supported dependency relationships and kind restrictions of APDS v1.0.0 rather than introducing new composition capabilities.
+- Distinguish **dependency declarations**, **dependency references**, and **bindings**:
+    - A dependency declaration identifies a Component required by an artifact's authored composition.
+    - A dependency reference identifies an artifact using the supported identity and version-constraint forms.
+    - An Agent binding identifies how an already declared Component or capability participates in the Agent's execution context. A binding does not implicitly create an undeclared dependency.
+    - The validity and meaning of binding scopes and effective capabilities are defined in subsequent chapters.
+- Define **direct and transitive dependencies**. Direct dependencies are declared by an artifact; transitive dependencies are reached through the dependency declarations of referenced artifacts. A resolved composition must preserve the identity, kind, and dependency relationships needed to interpret that composition unambiguously. APDS does not prescribe how a Manager stores, visualizes, or presents the resulting dependency graph.
+- Define the interpretation of version-constrained references within a resolved composition. When a binding or another reference identifies a dependency without repeating its version, the reference must resolve to the appropriate artifact in the containing composition's resolved dependency context. It must not arbitrarily select an unrelated installed artifact merely because its name matches. The standard should establish unambiguous reference semantics without requiring a particular dependency-resolution algorithm or lockfile implementation.
+- Define cross-kind dependency and reference validity according to the supported APDS artifact relationships. A reference requiring a Tool must not resolve to a Skill or another incompatible kind. Violations requiring referenced artifact information are established during resolved-composition validation; unavailable dependency context must not automatically be treated as a confirmed violation.
+- Preserve the optional nature of Agent Package composition. An Agent Package may validly omit Tools, Skills, Knowledge, Memory Blueprints, Instruction Profiles, or a Loop. APDS conformance does not require an Agent Package to contain every Component family, or to be immediately executable by a particular Runner.
+- Define the distinction between an authored dependency constraint and an exact resolved dependency. Reproducible composition requires unambiguous identification of the selected artifact versions, while integrity verification may rely on additional artifact metadata supplied by a distribution or package-management system. APDS does not mandate the `agent.lock` format, a particular digest algorithm, dependency storage layout, or installation mechanism.
 
 **Chapter 4 — Agent bindings and effective capabilities**
 
-- Document global bindings, phase bindings, the six Component families, Memory spaces/operations, MCP
-  bindings, and consumer context only to the extent supported by the current format.
-- Global and phase bindings are **additive**. A phase's effective candidate capabilities include globally
-  bound capabilities and bindings specifically declared for that phase.
-- Phase-specific bindings only apply in their named phase. A declared phase key must identify an actual
-  phase in the Agent's resolved Loop to pass resolved-composition validation.
-- Direct Tool bindings and Tool capabilities inherited through bound Skills are distinct paths; inheritance
-  is not a reason to duplicate a direct binding.
-- **Loop phase access rules constrain** effective Tool/Knowledge/Memory exposure even if a capability is
-  bound globally or inherited by a Skill.
-- Differentiate authored availability, runtime service availability, and actual tool invocation: a binding
-  does not authorize bypassing approvals or grant an unsupported Runner capability.
-- MCP bound surfaces may add capabilities only as permitted by the authored binding and Loop policy; avoid
-  inventing precedence rules not yet specified in source.
+- Define the meaning of Agent bindings according to the existing manifest schema, including global bindings, phase-specific bindings, direct Component bindings, Memory spaces and operations, MCP imports, and consumer context where supported. Distinguish the declaration of a dependency from a binding that makes the dependency or its capabilities available within a particular execution scope. Do not introduce new binding types or capabilities beyond those defined by APDS v1.0.0.
+- Define **global and phase-specific binding scopes**:
+    - Globally bound Components and capabilities are applicable throughout an Agent run, subject to applicable access restrictions.
+    - Phase-bound Components and capabilities are applicable within their declared phase.
+    - Global and phase bindings are **additive**. The effective candidate bindings in a phase include the applicable global bindings and the bindings declared specifically for that phase.
+    - A phase binding does not implicitly override, replace, or remove a global binding.
+    - Binding scope determines where a declaration applies; it does not, by itself, guarantee that the capability can execute.
+- Define **phase reference validity**. Phase-specific bindings must identify phases declared by the Agent's resolved Loop. References to nonexistent phases are invalid when the required composition context is available. An Agent without a Loop may still declare valid global bindings, but phase-specific bindings cannot reference nonexistent execution phases. These relationships belong to resolved-composition validation rather than requiring a particular Runner to detect them during execution.
+- Define **direct and inherited capability availability**. An Agent may bind a Tool directly or gain access to Tool capabilities through a bound Skill's declared Tool dependencies. These are distinct composition relationships with potentially different binding scopes. A Tool inherited through a Skill does not require a duplicate direct Tool binding. The detailed inheritance semantics are specified in Chapter 5.
+- Define the relationship between **bindings and Loop access policy**:
+    - Bindings establish which Components and capabilities are applicable within an Agent's global or phase-specific scope.
+    - Loop access declarations constrain which applicable capabilities may be exposed or exercised within a phase.
+    - A globally bound or inherited capability does not bypass a restriction declared by the active Loop phase.
+    - Restrictions on Tools, Knowledge, and Memory must be interpreted according to their respective access-policy definitions in the current APDS contract.
+    - Memory's distinction between direct space access and Blueprint-governed operations must be preserved. An operation is not automatically prohibited from accessing a declared target merely because that target space is not directly bound in the current phase; Chapter 9 defines the applicable operation semantics.
+    - The effective capability set is determined by applicable bindings, inherited capabilities, and authored access restrictions—not by any one of those declarations in isolation.
+- Distinguish **authored capability eligibility**, **Runner support**, **runtime availability**, and **actual invocation**:
+    - A binding expresses an authored relationship and its applicable scope.
+    - A compatible Runner must preserve the applicable binding and access-policy semantics for constructs it claims to support.
+    - A binding does not guarantee that the required runtime service, credentials, backend, or execution environment is available.
+    - A binding does not independently grant permission to bypass applicable access restrictions or execution authorization requirements.
+    - APDS does not mandate a particular capability-discovery mechanism, Tool invocation architecture, approval interface, or runtime provisioning strategy.
+- Define **MCP binding semantics** to the extent represented in the existing Agent manifest. MCP imports identify external capabilities available within their declared binding scope. Imported capabilities remain subject to applicable authored access restrictions, including Loop Tool-access policy where relevant. APDS must not imply that an MCP import bypasses restrictions applicable to equivalent directly bound capabilities. MCP connection management, transport, authentication, discovery, and invocation remain implementation-defined unless explicitly required by the authored contract. Do not invent precedence or conflict-resolution rules absent from the existing APDS semantics.
+- Define the meaning of **consumer context** as authored contextual input associated with Agent composition, according to the existing manifest fields. Distinguish contextual information from capability grants, bindings, and execution permissions. APDS may establish its applicability and reference semantics but must not require a particular model prompt structure, context-injection technique, or ordering strategy.
+- Distinguish **semantic requirements from implementation strategies**. APDS defines the scope and effective meaning of bindings and access restrictions, but does not mandate how a Runner constructs internal capability tables, caches resolved bindings, assembles model context, presents available Tools, or dispatches execution. Implementations may use different mechanisms provided they preserve the applicable authored semantics.
 
 **Chapter 5 — Skills and inherited Tools**
 
-- A Skill may list declared Tool dependencies in its own manifest; these are reusable Component
-  relationships, not an Agent code import.
-- Globally bound Skill → its Tool dependencies are available as global candidates (subject to Loop restrictions).
-- Phase-bound Skill → its Tool dependencies are candidates **only** for that phase (subject to Loop restrictions).
-- If a Skill and Tool are both bound directly, duplicate availability must not arbitrarily double-expose
-  the same exact capability; preserve traceability and de-dup semantics where supported.
-- Skill references and scripts describe packaged content; scripts are not automatically executed by merely
-  binding the Skill.
-- A shell-executor Tool *may* run a Skill script through normal Runner execution/approval, but no automatic
-  script privilege is granted by APDS.
+- Define the relationship between Skills and their declared Tool dependencies according to the existing manifest schema. A Skill may declare Tools as reusable Component dependencies. These declarations establish dependency and capability relationships, not an implicit code import, automatic Tool invocation, or additional Agent dependency declaration.
+- Define **Tool capability inheritance through globally bound Skills**. When an Agent binds a Skill globally, the Tool dependencies declared by that Skill become applicable Tool capability candidates throughout the Agent run, subject to the active Loop's access restrictions and other applicable authored constraints. An Agent does not need to declare duplicate direct Tool bindings solely to make these inherited capabilities available.
+- Define **Tool capability inheritance through phase-bound Skills**. When an Agent binds a Skill to a particular phase, its declared Tool dependencies become applicable capability candidates within that phase only, unless those Tools are independently available through another applicable binding. A phase-bound Skill does not implicitly make its Tools available globally or in unrelated phases.
+- Define how **direct and inherited Tool bindings interact**:
+    - A Tool may be available through a direct Agent binding, one or more bound Skills, or both.
+    - Multiple binding paths to the same resolved Tool capability do not create additional execution permissions or change the identity of that capability.
+    - Each applicable binding path contributes according to its own scope. A narrower binding does not remove availability established through an independent, broader binding.
+    - Capability identity must be determined using the resolved dependency context, not merely a matching Tool name. Distinct versions or distinct resolved capabilities must not be incorrectly treated as identical.
+    - APDS defines the resulting capability semantics but does not prescribe a particular internal de-duplication algorithm, capability registry, or presentation strategy.
+- Distinguish **Skill content from Tool execution**. A Skill may contain authored instructions, references, and scripts according to its artifact contract. Binding a Skill makes its applicable content and declared capabilities available within the relevant scope; the binding itself does not constitute a command to execute its scripts. The presence of executable content in a Skill does not automatically grant execution privileges or bypass applicable access restrictions.
+- Define the boundary between **Skill declarations and Runner execution**. A compatible Runner must preserve the authored dependency, inheritance, binding-scope, and access-restriction semantics for supported Skills. How the Runner presents Skill instructions, loads references, makes scripts accessible, or executes authorized capabilities remains implementation-defined. APDS does not mandate a shell executor, a particular script execution mechanism, or an approval interface.
+
+- **Non-normative implementation example**
+
+A Runner may allow an authorized Tool, such as a shell-execution Tool, to invoke a script packaged with a Skill when permitted by the applicable bindings, Loop access policy, and Runner execution controls. This is one possible implementation strategy, not an APDS requirement or an automatic privilege conferred by binding the Skill.
 
 **Chapter 6 — Loops and authored orchestration**
 
-- Distinguish a Loop package's graph from the acting runtime Agent. State required authored `entry_phase`,
-  phases, transitions, optional outcomes, `limits.max_steps`, optional checkpoints/error policies.
-- When a phase omits outcomes, its default outcome is the existing implicit `complete` behavior; document
-  precisely how legal transitions/termination are validated against current code.
-- Check phase ID uniqueness, entry validity, transition sources, outcome names and target phase/terminal
-  marker validity at appropriate validation levels.
-- Terminal targets include `$end`, `$abort`, `$handoff` where currently supported; preserve authored
-  meaning, avoid adding new terminals.
-- Graph may cycle or branch; a UI may show linear cards only as a derived simplification, never
-  misrepresent the normative graph.
-- A compatible Runner honors declared limits, transitions, access restrictions, checkpoints and error
-  policy, but APDS does not mandate a particular event bus/TUI or prompt algorithm.
-- A structurally conformant Agent without a Loop remains conformant; the current Harness may legitimately
-  mark it incompatible/not runnable.
+- Define a Loop as a reusable, declarative orchestration contract that describes the phases, possible outcomes, transitions, and execution constraints of an Agent workflow. Distinguish the authored Loop graph from the runtime Agent executing it. Define the meaning of the existing manifest fields, including required `entry_phase`, `phases`, and `transitions`, and optional phase `outcomes`, `limits`, `checkpoints`, and `error_policy`. Do not introduce additional orchestration constructs beyond those supported by APDS v1.0.0.
+- Define **phase and outcome semantics**:
+    - Each phase has a stable identifier and an authored `objective` describing its intended purpose.
+    - `entry_phase` identifies the phase where execution of the Loop begins.
+    - Phases may declare explicit outcomes representing the possible results of completing that phase.
+    - When a phase omits outcomes, it has exactly one implicit outcome with the identifier complete. This identifier is part of the APDS control-flow contract and may be referenced by transitions through on: "complete". A compatible Runner may use its own mechanism to determine phase completion, but must preserve the defined outcome identifier and its transition semantics.
+    - Outcome identifiers are authored control-flow values, distinct from the specific mechanism a Runner uses to obtain or represent phase results.
+    - APDS does not mandate a particular model-prompt format, structured-output mechanism, or phase-result serialization unless separately defined by the standard.
+- Define **transition semantics and graph validity**:
+    - A transition associates a source phase (`from`) and an outcome (`on`) with a destination (`to`).
+    - Transition sources must identify declared phases, and outcome references must correspond to valid outcomes of their source phases, including the implicit `complete` outcome where applicable.
+    - Transition destinations must identify another declared phase or a supported terminal target.
+    - Define the applicable uniqueness, determinism, and transition-completeness requirements based on the established Loop contract. In particular, determine which combinations of source phase and outcome constitute ambiguous or invalid transitions; do not silently invent fallback transitions.
+    - Validate phase identifier uniqueness, entry-phase existence, transition references, outcome identifiers, and checkpoint references at the appropriate validation level.
+    - A Loop may contain branches and cycles. Its semantics must not assume a linear sequence or prohibit revisiting phases unless an explicit authored constraint requires it.
+- Define the portable meaning of the three supported **terminal targets**:
+    - `$end` represents normal termination of the Loop.
+    - `$abort` represents termination through an abort path.
+    - `$handoff` represents termination that yields control for a handoff rather than continuing the current Loop.
+    - A compatible Runner must preserve these distinctions when interpreting authored transitions.
+    - APDS does not mandate the particular output format, event representation, external handoff mechanism, or user interface used to realize terminal behavior.
+- Define **authored execution limits**:
+    - `limits.max_steps`, when declared, constrains the number of permitted Loop phase executions according to the existing contract.
+    - A compatible Runner must not silently exceed an applicable authored limit.
+    - Define the intended counting and limit-exhaustion semantics sufficiently to preserve the meaning of the declaration across implementations.
+    - The mechanism for tracking execution counts, reporting limit exhaustion, and managing runtime resources remains implementation-defined except where necessary to preserve the authored constraint.
+- Define **checkpoint semantics** according to the supported approval-checkpoint contract:
+    - A checkpoint declares a control-flow condition associated with execution of a specified phase.
+    - The existing `approval` checkpoint type represents an approval requirement before entering its declared `before_phase`.
+    - `on_reject` identifies the declared transition destination when approval is rejected.
+    - A compatible Runner supporting approval checkpoints must preserve their control-flow meaning and must not silently treat an unsatisfied checkpoint as approved.
+    - APDS does not mandate a particular approval interface, human-interaction mechanism, callback API, or approval-storage implementation.
+    - Clearly distinguish unsupported checkpoint capabilities from valid checkpoints that are supported but awaiting approval.
+- Define **error-policy semantics** according to the existing manifest contract:
+    - Distinguish Tool failure handling from phase failure handling where separately declared.
+    - Define the authored meanings of supported actions such as retry, fail-phase, abort, and handoff, including retry limits and exhaustion behavior where applicable.
+    - A compatible Runner supporting the declared error-policy construct must preserve the intended failure-handling behavior rather than silently replacing it with an unrelated policy.
+    - APDS does not mandate internal exception types, retry scheduling algorithms, logging infrastructure, or error-presentation mechanisms.
+    - Where an error policy is omitted, distinguish requirements explicitly defined by APDS from defaults or recovery decisions left to the Runner. Do not elevate incidental implementation defaults into normative behavior without deliberate justification.
+- Define the relationship between **Loop access policy and Agent bindings**:
+    - Loop phases may constrain effective Tool, Knowledge, and Memory capabilities according to their declared access policies.
+    - Phase access restrictions apply to the capabilities made applicable through global bindings, phase bindings, and inherited dependencies.
+    - A globally bound or inherited capability does not override a restriction declared by the active phase.
+    - Preserve the distinction between direct Memory space access and Blueprint-governed Memory operations, as defined in the relevant chapters.
+    - APDS defines the authored meaning of access restrictions, not the internal capability-filtering or execution-dispatch mechanism used by a Runner.
+- Distinguish **Loop conformance from Runner executability**. A Loop may be structurally and semantically conformant independently of whether a particular Runner supports its declared execution features. Likewise, an Agent Package may conform to APDS without declaring a Loop. Runner compatibility and local execution readiness must be evaluated separately from artifact conformance.
+
+**Implementation guidance for Codex and Claude Code — not normative APDS content**
+
+- Reconcile the exact transition-determinism, outcome-completeness, step-counting, and omitted-policy behaviors against the existing Loop schema and established semantics before finalizing normative rules. Do not treat every Harness recovery behavior or default as an interoperability requirement.
+- Treat execution mechanisms—including prompt assembly, model-driven outcome selection, retry scheduling, approval UI, internal event buses, tracing, and output rendering—as Runner implementation decisions unless a specific observable guarantee is necessary to preserve the authored Loop contract.
+- The AgentPM website may simplify a Loop into a linear visual summary for readability, but must not misrepresent branches, cycles, or terminal transitions. This is an AgentPM UI requirement, not a normative APDS rule.
+- Where existing Runner behavior conflicts with the portable interpretation of an authored Loop declaration, document the discrepancy for reconciliation rather than automatically incorporating the Runner's behavior into APDS.
 
 **Chapter 7 — Instruction Profiles**
 
-- Define Profile identity, objectives, audience, communication, vocabulary, boundaries, constraints and
-  compatibility/hints in terms of the current manifest.
-- Explain composed Profiles global → phase, preserving additive/de-dup behavior and ordering as implemented.
-- Profiles influence prompting/behavior but **do not grant** tool access or waive Loop policy;
-  `capability_hints` are advisory.
-- Compatibility constraints and hints may inform Runner warnings, not prove universal runtime support.
-- Distinguish top-level Agent `description` (purpose) from Profile identity and Loop phase `objective`; no
-  APDS requirement that `description` be injected into any particular model prompt.
+- Define an Instruction Profile as a reusable declaration of an Agent's intended identity, behavioral guidance, communication style, and constraints. Describe the supported fields according to the existing manifest schema, including:
+    - `identity`: role, description, and expertise.
+    - `objectives` and `principles`: durable priorities and decision-making guidance.
+    - `audience`: intended audience, assumed knowledge, and adaptation guidance.
+    - `communication`: tone, verbosity, guidelines, formatting, and vocabulary preferences.
+    - `boundaries`: authored limits on the role's intended behavior or authority.
+    - `constraints`: behavioral instructions identified by stable IDs and an authored `strength` of `required` or `preferred`.
+    - `compatibility`: advisory context requirements and capability expectations expressed through `minimum_context_tokens`, `requires`, and `recommends`.
+    - Preserve the meanings and structural restrictions of the existing schema rather than introducing additional Profile capabilities.
+- Define **Profile binding and composition semantics**:
+    - A globally bound Profile contributes its authored behavioral guidance throughout the Agent run.
+    - A phase-bound Profile contributes its guidance within the declared phase.
+    - Global and phase-bound Profiles are additive. A phase-bound Profile does not implicitly replace or remove globally applicable Profiles.
+    - Multiple applicable Profiles contribute to the Agent's effective behavioral guidance within their respective scopes.
+    - Profile references must resolve through the Agent's declared dependency composition, preserving the intended Profile identity and version.
+    - APDS defines the applicability of Profile guidance but does not mandate a particular prompt-assembly order, concatenation strategy, de-duplication algorithm, or internal representation of the composed guidance.
+- Define the meaning of **behavioral guidance and constraints**:
+    - Profile identity, objectives, principles, audience, and communication declarations express the author's intended behavior for an Agent operating with that Profile.
+    - Boundaries describe behavior or authority the Profile instructs the Agent to avoid.
+    - Constraints with `strength: "required"` express stronger authored behavioral requirements than those marked `preferred`. This distinction must be preserved when interpreting the Profile.
+    - These declarations describe intended Agent behavior; they do not independently grant capabilities, authorize actions, override Loop access restrictions, or supersede applicable runtime authorization and safety controls.
+    - APDS defines the authored meaning and relative strength of Profile guidance without guaranteeing that a probabilistic model will satisfy every behavioral instruction in every execution.
+- Define **compatibility declarations and capability hints**:
+    - `compatibility.minimum_context_tokens` expresses an authored context-capacity expectation.
+    - `compatibility.requires` identifies capabilities the author considers necessary for the intended use of the Profile.
+    - `compatibility.recommends` identifies capabilities considered beneficial but not necessary.
+    - Capability hints such as `tool_use`, `structured_output`, and `multimodal_input` describe compatibility expectations; they do not grant access to those capabilities or require a Runner to provide them.
+    - The distinction between required and recommended capabilities must be preserved when interpreting compatibility information.
+    - Compatibility declarations may inform Runner capability checks, warnings, or compatibility decisions, but do not establish universal executability or independently determine APDS conformance based on the capabilities of a particular runtime.
+- Define the relationship between **Profile guidance and other Agent declarations**:
+    - The Agent's top-level `description` expresses its general purpose.
+    - An Instruction Profile defines reusable role identity, behavioral objectives, principles, communication guidance, and constraints.
+    - A Loop phase's `objective` describes the intended purpose of that execution phase.
+    - These declarations have distinct authored meanings and may contribute to the Agent's effective execution context without being interchangeable.
+    - Profile guidance does not replace the Agent's purpose or the Loop's control-flow and access-policy semantics.
+    - APDS does not mandate that these declarations be inserted into a particular model prompt, in a particular order, or using a particular instruction hierarchy.
+- Define the boundary between **portable Profile semantics and Runner interpretation**:
+    - A compatible Runner claiming support for Instruction Profiles must preserve the applicability, scope, and intended meaning of supported Profile declarations.
+    - APDS does not prescribe how a Runner converts Profile guidance into model instructions, manages repeated guidance, resolves competing natural-language instructions, or represents behavioral context internally.
+    - Where multiple applicable Profiles contain conflicting guidance, do not invent universal precedence rules based solely on global versus phase scope, declaration order, or implementation-specific prompt construction.
+    - Any normative conflict-resolution or precedence behavior must be explicitly defined as part of the portable standard rather than inferred from an existing Runner's implementation.
+
+**Implementation guidance for Codex and Claude Code — not normative APDS content**
+
+- Review existing Profile composition and prompt-building behavior to identify the authored semantics already established by the manifest and Agent binding model. Do not automatically convert current Harness de-duplication, concatenation order, or prompt-section ordering into normative requirements.
+- Distinguish de-duplicating repeated references to the same resolved Profile from de-duplicating natural-language instruction content. Neither requires a prescribed implementation algorithm, but an implementation must preserve the intended applicability of the authored guidance.
+- Preserve the distinction between author-declared behavioral requirements and runtime-enforced capability restrictions. A Profile constraint marked `required` is not equivalent to a Tool permission or Loop access policy.
+- If existing Profile conflicts reveal a need for defined precedence semantics, document the issue for deliberate consideration rather than inventing a rule based on current prompt ordering.
+- Keep AgentPM-specific prompt assembly, instruction merging, and runtime compatibility-check strategies in implementation documentation rather than the normative APDS specification.
 
 **Chapter 8 — Knowledge**
 
-- Define `context` versus `vector` mode, authored document/corpus metadata, chunks/sources/embedding/index
-  artifacts and provenance where available.
-- State what a Knowledge package declares and how a Runner may retrieve/use it; never require a particular
-  embedding provider, vector DB or retrieval algorithm.
-- Validate referenced artifact paths, index/embedding IDs and intrinsic metadata relationships in a
-  deterministic manner where the current schema supports them.
-- Treat vector dimension/index compatibility as evidence-based capability information, not universal
-  guaranteed executability.
-- Knowledge availability may be phase-gated by Loop access and binding scope independently of whether the
-  package itself is valid.
+- Define a Knowledge package as a reusable artifact containing authored context or prepared retrieval data that may be consumed by an Agent. Describe the supported manifest fields according to the existing schema, including `mode`, `content_type`, `language`, `documents`, `context`, `corpus`, `chunking`, `embedding`, `indexes`, `retrieval`, and `provenance`. Preserve the distinction between authored declarations, build-derived metadata, and packaged data without requiring a particular Knowledge-building tool or workflow.
+- Define the portable meaning of the two supported **Knowledge modes**:
+    - `context` identifies Knowledge intended for direct contextual use. Its declared documents and associated metadata describe content that a consuming Runner may make available to an Agent.
+    - `vector` identifies a prepared retrieval corpus containing chunk/source data and associated embeddings, with optional packaged retrieval indexes.
+    - Vector-mode Knowledge requires the corpus and embedding declarations established by the versioned schema, including the required paths and embedding metadata.
+    - The modes define the type and intended use of packaged Knowledge, not the internal mechanism by which a Runner loads documents, constructs model context, retrieves information, or presents results.
+    - APDS does not require a Runner to inject an entire context-mode corpus into a model prompt or use a particular retrieval technique for vector-mode Knowledge.
+- Define **packaged content and metadata relationships**:
+    - Document, corpus, embedding, index, and provenance paths identify content within the Knowledge artifact according to the supported relative-path rules.
+    - Declared paths and identifiers must retain their intended relationships to the packaged artifacts.
+    - Vector corpus metadata describes the prepared chunks and sources; embedding metadata describes the associated vectors, including their identifier, provider/model labels, dimensions, similarity metric, normalization state, and payload location.
+    - When retrieval indexes are declared, their references to embedding identifiers must correspond to the intended embedding data in the package.
+    - Where the contract defines counts, hashes, dimensions, or other verifiable relationships, implementations performing the applicable validation level should verify their consistency with the available artifact data.
+    - Distinguish validation of manifest metadata from validation requiring access to packaged files. Missing artifact content during standalone manifest validation must not automatically be treated as a confirmed semantic violation.
+    - Do not introduce additional mandatory file layouts, index formats, embedding algorithms, or metadata relationships beyond those established by APDS v1.0.0.
+- Define **embedding and retrieval compatibility semantics**:
+    - Embedding declarations describe properties of the prepared vectors and provide information necessary to evaluate retrieval compatibility.
+    - Dimensions, metric, normalization state, embedding identity, and declared index relationships must retain their authored meaning.
+    - A consuming Runner must not silently reinterpret incompatible embedding or index metadata as though it were compatible.
+    - The existence of a valid vector Knowledge package does not guarantee that a particular Runner supports its embedding representation, retrieval index, or required query-time capabilities.
+    - APDS does not mandate a particular embedding provider, vector database, similarity-search implementation, query-embedding service, or retrieval algorithm.
+- Define **retrieval declarations and defaults**:
+    - Retrieval metadata, where declared, expresses authored retrieval preferences or default behavior, including supported fields such as `strategy`, `default_top_k`, `default_score_threshold`, and `return_citations`.
+    - Distinguish descriptive strategy labels and advisory defaults from requirements that are explicitly normative under the APDS contract.
+    - A compatible Runner may implement retrieval through different mechanisms while preserving the meaning of the supported declarations it interprets.
+    - Do not require a particular ranking algorithm, score normalization scheme, citation presentation format, or context-window assembly strategy unless explicitly established by the standard.
+- Define **provenance semantics**:
+    - Provenance metadata describes the declared origin or preparation of Knowledge, including available source-manifest references, generation timestamps, and builder information.
+    - Authored or build-generated provenance metadata must not automatically be interpreted as independently verified provenance.
+    - APDS may define the structural and semantic validity of provenance declarations, but authentication, attestations, signatures, and independent verification belong to separate trust and distribution mechanisms unless explicitly incorporated into the definition contract.
+    - A valid Knowledge package is not necessarily current, accurate, trustworthy, or suitable for every use case.
+- Define **Knowledge binding and availability semantics**:
+    - An Agent's Knowledge dependency and binding declarations identify which Knowledge packages are applicable in global or phase-specific scopes.
+    - Globally bound Knowledge is applicable throughout the Agent run, while phase-bound Knowledge is applicable only within its declared phase, subject to other independently applicable bindings.
+    - Loop phase access restrictions may prohibit Knowledge use even when the package is otherwise bound and available.
+    - The validity of a Knowledge artifact is independent of whether a particular Runner supports its mode, can access its content, or permits Knowledge use in the current phase.
+    - APDS defines the authored availability and access semantics, not the Runner's storage, loading, caching, retrieval, or model-context construction strategy.
 
-**Chapter 9 — Memory Blueprints and memory operations**
+**Implementation guidance for Codex and Claude Code — not normative APDS content**
 
-- Memory is declarative durable structure/behavior: scopes, record types, spaces (`document`, `collection`,
-  `sequence`), retrieval modes, retention/capacity/governance metadata, and operations.
-- A bound Memory *space* makes a directly readable/writable surface available in its binding scope (subject
-  to Loop access and backend support).
-- A bound Memory *operation* participates when eligible according to its Blueprint trigger; globally bound
-  operations participate throughout the run, phase-bound operations only in the selected phase.
-- The operation MAY read/write/target spaces that are **not directly bound** in that phase; the operation's
-  declared inputs/targets and policy govern it. Reject an implementation that demands direct surface
-  binding of every operation target.
-- Triggers currently include `external`, `interval`, `record_count`, and `capacity` in the inspected
-  schema; any implementation must verify exact fields and intended runtime behavior. `external` requires
-  explicit runtime invocation, not automatic background execution by the manifest.
-- Blueprint validation can establish declared trigger/type/reference consistency, not prove the existence
-  of a durable store. Backends, scheduling, cleanup, model content generation and actual persistence are
-  Runner responsibilities.
+- Reconcile the exact required and optional fields for `context` and `vector` modes against the existing versioned schema. In particular, preserve the current distinction between required vector corpus/embedding declarations and optional retrieval indexes.
+- Separate intrinsic manifest validation, packaged-file consistency validation, and runtime retrieval compatibility. Do not claim that a schema-valid manifest proves every referenced file exists or that its embeddings are usable by every Runner.
+- Review the current Knowledge build output and metadata relationships to identify meaningful portable invariants. Do not automatically standardize AgentPM-specific build commands, directory conventions, index-building algorithms, or runtime loading strategies.
+- Treat retrieval defaults and open-ended strategy labels according to their actual declared meaning. Avoid converting descriptive metadata or advisory preferences into strict execution requirements without a deliberate interoperability reason.
+- Keep AgentPM-specific Knowledge Runtime behavior, provider configuration, indexing implementations, and Package Health presentation outside the normative APDS specification.
+- Where the existing implementation relies on a specific Knowledge format or retrieval strategy that is not already part of the portable contract, document it as an implementation capability or compatibility constraint rather than silently making it a universal APDS requirement.
 
-**Chapter 10 — Templates**
+**Chapter 9 — Memory Blueprints, spaces, and lifecycle operations**
 
-- Templates are separately installable/publishable scaffold artifacts, not synonymous with Agent Packages.
-- Explain `display_name`, `use_case`, `execution_surfaces`, `files_root`, `dependencies`, `entrypoints`,
-  `variables`, and template file paths using existing shape.
-- `agentpm new` produces a workspace/project; it is different from installing a complete Agent Package and
-  attempting to execute it.
-- Stage 1 introduces a `agentpm-harness` Template execution surface; Stage 2 should document what it
-  promises and when it is valid.
-- Template variables are generation-time configuration; don't encourage putting secrets or credentials into
-  authored published templates.
+- Define a Memory Blueprint as a reusable, declarative contract describing an Agent's intended durable Memory structures, record formats, retrieval capabilities, lifecycle policies, and operations. A Memory Blueprint defines **what durable Memory represents and how it is intended to behave**, not which storage engine or runtime service implements it. Describe the supported manifest fields according to the versioned schema, including `scopes`, `record_types`, `spaces`, and optional `operations`. Do not introduce additional Memory models, operation types, or execution requirements beyond those established by APDS v1.0.0.
+- Define **Memory scopes and record contracts**:
+    - `scopes` declares reusable logical scope keys used to distinguish or partition Memory records.
+    - `record_types` defines named record content contracts, each with its own version, description, and reference to a packaged JSON Schema.
+    - Record type versions are independent of the Memory Blueprint's artifact version and the APDS standard version.
+    - Record schemas define the expected structure of durable record content. A compatible implementation supporting record validation must preserve those authored content constraints.
+    - A Memory space's `scope` declaration identifies the ordered scope keys that participate in its logical record identity. The meaning of the declared scope keys must be preserved without requiring a particular database key format, tenant model, or storage partitioning strategy.
+    - A Memory space's `record_types` declaration identifies which declared record types the space permits.
+    - References between spaces, scope keys, and record types must resolve to the corresponding declarations within the Blueprint.
+- Define the three supported **Memory space models**:
+    - `document` represents a logical Memory space organized around document-style durable content.
+    - `collection` represents a logical Memory space containing multiple records that can be managed and retrieved according to its declared contract.
+    - `sequence` represents a logical Memory space whose records have meaningful ordering.
+    - Each model must preserve its distinct authored meaning. A compatible implementation must not silently treat an ordered sequence as an unordered collection, or otherwise discard distinctions necessary to interpret the declared model.
+    - Define any applicable cardinality, ordering, identity, and update semantics that are explicitly established by the APDS v1.0.0 contract. Do not invent additional restrictions based solely on a particular storage backend's implementation.
+    - APDS does not require a relational database, document store, vector database, filesystem layout, or other particular persistence technology.
+- Define **retrieval semantics**:
+    - Each Memory space declares supported logical retrieval modes through `retrieval.modes`.
+    - The current supported modes are `key`, `filter`, `chronological`, `full_text`, and `semantic`.
+    - These modes describe the retrieval capabilities the Memory space is intended to expose, not the internal algorithms used to implement them.
+    - `chronological` retrieval must preserve the relevant ordering semantics of the stored records.
+    - `semantic` retrieval expresses a requirement for meaning-based retrieval capability without prescribing an embedding provider, vector representation, or search algorithm.
+    - A consuming Runner must distinguish supported retrieval modes from modes it cannot realize. An unsupported retrieval capability does not, by itself, make the authored Blueprint nonconformant.
+    - Do not prescribe query languages, ranking algorithms, embedding models, or API response formats unless explicitly defined elsewhere in the APDS contract.
+- Define **capacity, retention, and space constraints**:
+    - `capacity.max_records` expresses an authored maximum record count for a space.
+    - `retention.ttl` expresses the intended duration for which applicable records remain active.
+    - `retention.on_expire` distinguishes the supported `delete` and `archive` outcomes for expired records.
+    - `constraints.append_only`, when declared, expresses the authored restriction on modifying existing records versus appending new records.
+    - These declarations have distinct meanings and must not be silently reinterpreted as interchangeable advisory labels.
+    - Define the portable meaning of each declaration and the observable requirements for implementations that claim to enforce it.
+    - Do not prescribe a particular cleanup scheduler, transaction mechanism, archival storage system, or garbage-collection strategy.
+    - Distinguish an APDS-conformant Blueprint from a runtime environment that can actually satisfy its declared capacity, retention, and persistence requirements.
+- Define **direct Memory space bindings**:
+    - An Agent may bind individual Memory spaces globally or within specific phases.
+    - A globally bound Memory space establishes a directly accessible Memory surface throughout the Agent run, subject to applicable Loop access restrictions and runtime support.
+    - A phase-bound Memory space establishes a directly accessible surface within that phase only, unless independently bound through another applicable scope.
+    - Global and phase bindings are additive; binding a space in a phase does not remove an independently declared global binding.
+    - Direct space bindings determine which Memory surfaces are available for direct Agent access. They do not independently define the inputs, outputs, or targets of Blueprint lifecycle operations.
+    - Preserve the distinction between direct Memory reads/writes and operation-mediated Memory access. A space not directly bound in a phase is not thereby prohibited from being accessed by an eligible, authorized Blueprint operation.
+- Define **Memory lifecycle operation types**:
+    - `consolidate` declares an operation that derives destination Memory records from one or more source record contracts.
+    - `transform` declares an operation that converts source record content into a destination record contract, subject to its declared output behavior.
+    - `delete` declares an operation targeting one or more Memory spaces for deletion according to its authored policy.
+    - Each operation has its own declared identity, description, trigger, and type-specific references or policies.
+    - Consolidation and transformation operations declare their source inputs and output destinations using space-and-record-type references.
+    - Delete operations declare target spaces and the supported derived-record cascading policy.
+    - Operation references must identify valid declared spaces and applicable record types. Validation must distinguish invalid references from cases where required artifact content is unavailable.
+    - APDS defines the meaning of these operations and their declared relationships, not the algorithm used to summarize, transform, generate, or otherwise process record content.
+- Define **Memory operation binding and participation semantics**:
+    - A Memory operation is a separately bindable lifecycle capability, distinct from directly exposing a Memory space to the Agent.
+    - A globally bound operation participates throughout the Agent run, subject to its Blueprint trigger and applicable execution restrictions.
+    - A phase-bound operation participates only within its declared phase, subject to its Blueprint trigger and applicable execution restrictions.
+    - Global and phase operation bindings are additive.
+    - Binding an operation establishes its participation scope; the operation becomes eligible according to its declared trigger rather than merely because a phase has started or a binding exists.
+    - **An operation may read, write, transform, or delete records in spaces that are not directly bound in the current phase**, provided those spaces are valid targets under the operation's declared contract and its execution is otherwise permitted.
+    - An implementation must not require every operation input, output, or target space to be independently exposed through a direct Agent space binding.
+    - Operation participation and operation eligibility must be distinguished from actual execution. A Runner may implement different scheduling and dispatch mechanisms while preserving the meaning of the authored trigger and operation scope.
+- Define the four supported **Memory operation triggers**:
+    - `external` declares an operation intended to be invoked through an explicit external or runtime action. Merely declaring or binding an externally triggered operation does not schedule or execute it automatically.
+    - `interval` declares recurring eligibility based on the authored elapsed-time interval expressed by `every`.
+    - `record_count` declares eligibility when the referenced Memory space reaches the specified record-count `threshold`.
+    - `capacity` declares eligibility when the referenced Memory space reaches its declared capacity.
+    - Trigger references must identify valid spaces where applicable. A capacity trigger must refer to a space with a meaningful declared capacity.
+    - Define trigger eligibility independently from the internal mechanism used to detect the condition or schedule execution.
+    - Do not prescribe polling frequencies, timer implementations, background worker architectures, or trigger-dispatch algorithms.
+    - Clarify that trigger eligibility does not necessarily imply immediate execution, successful completion, or availability of the required backend.
+    - Preserve the distinction between a Blueprint's trigger definition, an Agent's operation binding scope, and a Runner's ability to invoke or schedule the operation.
+- Define **operation output and source-handling policies**:
+    - `source_handling` expresses the authored disposition of source records after a successful consolidation or transformation.
+    - Preserve the distinct meanings of `retain`, `retain_until_expiration`, and `delete_after_success`.
+    - A transform's `output_mode`, when declared, distinguishes creation of a new output record from replacement of the input record where supported.
+    - `preserve_provenance` expresses whether the operation should retain source-record provenance in derived output.
+    - A delete operation's `cascade_derived_records` declaration expresses whether derived records are included in its intended deletion scope.
+    - Define the portable meaning of successful completion and the relevant source/output relationships sufficiently to preserve authored lifecycle intent.
+    - APDS does not mandate a particular transaction engine, record-processing algorithm, retry strategy, or internal provenance representation unless necessary to preserve an explicitly defined observable guarantee.
+- Define **Memory governance and data-handling annotations**:
+    - Record content schemas may contain supported governance annotations describing data classification, sensitivity, persistence restrictions, or sharing restrictions.
+    - Define the recognized annotation names and values according to the APDS v1.0.0 contract, including currently supported `x-agentpm-*` annotations where applicable.
+    - Distinguish descriptive classification metadata from explicit restrictions such as non-persistable or non-shareable content.
+    - A compatible implementation claiming support for these restrictions must preserve their intended meaning and must not silently reinterpret restrictive declarations as permission to retain or disclose data.
+    - APDS does not establish universal privacy-law compliance, encryption requirements, identity management, organizational policy, or regulatory certification merely because a Blueprint includes governance annotations.
+    - Where the existing governance annotations do not define an enforceable portable contract, clarify their status rather than inventing enforcement obligations from their names alone.
+- Define the relationship between **Memory and Loop access policy**:
+    - Loop phases may constrain Memory read and write access according to their declared policies.
+    - Direct Memory space access is governed by the applicable Agent binding scope and Loop access restrictions.
+    - Blueprint lifecycle operations are governed by their declared operation contracts, triggers, binding participation scopes, and applicable execution restrictions.
+    - A restriction on directly exposed Memory surfaces must not automatically be interpreted as a requirement to directly bind every space targeted by an operation.
+    - APDS should define the intended interaction between authored Memory access restrictions and operation eligibility without assuming that all Memory access occurs through direct Agent-facing read/write operations.
+    - Do not invent additional authorization paths or imply that lifecycle operations bypass applicable restrictions merely because their targets need not be directly bound.
+- Define **Memory conformance and execution boundaries**:
+    - Intrinsic Blueprint validation establishes that the declared scopes, record types, spaces, retrieval modes, operations, and triggers satisfy their applicable structural and semantic requirements.
+    - Validation involving packaged record schemas must verify applicable schema references and relationships when those artifacts are available.
+    - Resolved-composition validation establishes that Agent Memory bindings reference the intended Blueprint, spaces, and operations, and that phase references are valid.
+    - APDS conformance does not prove that a durable Memory store exists, that records have actually been persisted, that a Runner supports every retrieval capability, or that retention and lifecycle operations have executed successfully.
+    - Compatible Runners must preserve the semantics of the Memory constructs they claim to support, but may use different backends, scheduling systems, storage layouts, content-generation techniques, and execution architectures.
+    - Missing backend capabilities or unavailable runtime services must be distinguished from invalid authored Memory declarations.
 
-**Chapter 11 — Conformance, interpretation, and backwards compatibility**
+**Implementation guidance for Codex and Claude Code — not normative APDS content**
 
-- Validators distinguish intrinsic structural validation from resolved graph validation; not every APDS
-  rule can be evaluated with only one manifest.
-- A result can be `conformant` for the executed validation level while graph-level checks remain `not
-  evaluated`; UI must not label such result a full-graph conformance verification.
-- `nonconformant` means definite violations, `incomplete` means external information needed, and
-  `unsupported` means that the declared standard is not implemented by this validator/Runner. Don't
-  translate unsupported into an implicit latest version.
-- Legacy inference is an AgentPM compatibility mechanism and must not forge declaration, recompute
-  published checksums, or assert retrospective validation that never happened.
-- APDS conformance, Registry trust/permissions/scanning, Runner standard support, and local readiness are
-  distinct axes with distinct diagnostics.
+- Reconcile the exact Memory fields, optionality, operation variants, record-schema requirements, and cross-reference rules against the existing manifest schema and Phase 6C/7A decisions before finalizing APDS v1.0.0.
+- Treat the established distinction between **direct space bindings and operation bindings** as a fixed semantic requirement. This includes the ability of an eligible operation to target valid spaces that are not directly bound in the active phase. Do not inadvertently weaken or reverse this behavior while formalizing the standard.
+- Reconcile the exact interaction between Loop Memory read/write policy and Blueprint lifecycle operations. Do not assume that a Loop's direct-space restrictions automatically invalidate an otherwise valid operation target, and do not invent an unrestricted operation execution bypass.
+- Distinguish trigger eligibility, operation participation, invocation, and execution. In particular, preserve externally triggered operations as explicitly invoked capabilities rather than treating their declaration as permission for autonomous background execution.
+- Reconcile omitted policy values, transform output modes, source handling, provenance, and derived-record deletion behavior against the current contract. Do not automatically elevate Harness-specific scheduling, retry, or cleanup defaults into normative APDS requirements.
+- Review the currently supported governance annotations, including their `x-agentpm-*` names, and distinguish which have defined portable meanings from those that are descriptive or dependent on implementation capabilities. Do not claim universal privacy or security guarantees without an explicit contract.
+- Create conformance fixtures covering all three space models, supported retrieval modes, valid and invalid cross-references, the four trigger types, global versus phase operation scopes, operation targets that are not directly bound, source-handling policies, and missing runtime capabilities.
+- Where a proposed Memory semantic is not clearly established by the current schema or prior design decisions, document it for deliberate reconciliation rather than inferring it from the behavior of one Memory Runtime implementation.
 
-#### Concrete binding/composition cases that must become normative fixtures
+**Chapter 10 — Templates and project scaffolding**
 
-These are behavioral **expected outcomes**, not a request to copy this pseudo-manifest as if it were
-schema-valid JSON. Codex must create schema-valid actual manifests using existing field forms and real
-references for conformance fixtures.
+- Define a Template as a reusable artifact describing how to generate a project or workspace from packaged files, declared variables, dependencies, and entrypoints. Templates are a distinct APDS artifact kind, not synonymous with Agent Packages. Instantiating a Template creates a project or workspace that may contain or depend on Agent Packages and Components; the Template itself does not become an Agent Package merely because it generates one. APDS does not require Templates to be published to or retrieved from a particular Registry.
+- Define the supported **Template manifest structure** according to the versioned schema:
+    - `display_name` and `use_case` describe the Template's intended purpose.
+    - `stack` optionally describes the technologies or project environments associated with the Template.
+    - `execution_surfaces` declares the execution or integration environments the generated project is intended to support.
+    - `files_root` identifies the packaged directory containing the source files used to instantiate the Template.
+    - `variables` declares generation-time configuration values.
+    - `dependencies` identifies the Agent Packages and Components associated with the generated project.
+    - `entrypoints` declares suggested commands for interacting with the generated project.
+    - Preserve the existing field shapes, required properties, and supported values rather than introducing a new scaffolding contract.
+- Define **Template file and instantiation semantics**:
+    - `files_root` identifies a safe, artifact-relative location containing the files from which the generated project is constructed.
+    - Template instantiation produces project files derived from the packaged content and applicable variable substitutions.
+    - Define the supported `{{ variable_name }}` placeholder syntax and its relationship to declared Template variables, according to the existing contract.
+    - File references and instantiation behavior must preserve the intended packaged content and must not permit authored relative paths to escape their permitted boundaries.
+    - APDS does not prescribe a particular filesystem API, destination-directory naming convention, interactive setup wizard, or project-generation command.
+- Define **Template variable semantics**:
+    - Variables have declared names, descriptions, required status, and optional defaults.
+    - Required variables express values that must be resolved for the generated project where applicable.
+    - Declared defaults provide values when no explicit value is supplied.
+    - Variable substitution must preserve the distinction between declared placeholders and unrelated file content.
+    - Template variables are intended for non-secret generation-time configuration, not for embedding runtime credentials into published artifacts.
+    - APDS defines the meaning of variable declarations and supported substitution syntax without requiring a particular prompting interface, configuration source, or secrets-management implementation.
+- Define **Template dependency semantics**:
+    - `dependencies` identifies Agent Packages and reusable Components associated with the generated project, using the supported dependency groups and reference formats.
+    - These references retain their declared artifact identities, kinds, and version constraints.
+    - Template dependencies describe the intended composition or requirements of the generated workspace; they are distinct from the Template artifact's own identity.
+    - APDS does not mandate when or how dependencies are installed, which package manager performs resolution, or how the resulting workspace stores its resolved dependency graph.
+- Define **execution surface semantics**:
+    - `execution_surfaces` declares the intended execution or integration environments for the generated project.
+    - Define the meanings of the existing supported values, including `python-sdk`, `node-sdk`, `agentpm-run`, `agentpm-harness`, `agentpm-serve-mcp`, and `multi-agent-workspace`.
+    - An execution surface declaration expresses authored compatibility intent. It does not guarantee that the consuming environment has the required dependencies, services, credentials, or runtime capabilities.
+    - A compatible implementation must preserve the meaning of execution surface identifiers it interprets, but is not required to provide every declared execution environment.
+    - APDS does not mandate a particular Runner, SDK implementation, process-launch mechanism, or execution interface.
+- Define **Template entrypoint semantics**:
+    - Each entrypoint declares a human-readable `label` and an associated `command` intended for use with the generated project.
+    - Entrypoints identify available or recommended ways to interact with the generated workspace.
+    - Declaring an entrypoint does not automatically execute its command during Template instantiation.
+    - APDS does not mandate a particular command executor, shell, terminal interface, or automated execution policy.
+    - The ability to execute an entrypoint depends on the consuming environment and its applicable execution controls.
+- Distinguish **Template conformance, successful instantiation, and project executability**:
+    - APDS conformance establishes that the Template's authored structure and semantic relationships satisfy the applicable definition contract.
+    - Validation involving packaged files or referenced dependencies may require additional artifact context beyond the standalone manifest.
+    - Successful Template instantiation establishes that the intended project files were generated, but does not by itself establish that every declared dependency is installed or every entrypoint can execute successfully.
+    - A generated project may target a Runner or integration environment that is unavailable to the current consumer without making the Template itself nonconformant.
+    - APDS does not require a particular CLI command, Registry workflow, or project bootstrap implementation.
 
-| Case | Global binding | Phase-specific binding | Loop access | Required interpretation |
-|---|---|---|---|---|
-| A: additive Tool | Skill S (declares Tool T) | Phase `draft`: Tool U | Tools allowed | In `draft`, T and U are candidates; other phases see T only |
-| B: inherited Tool blocked | Skill S (declares Tool T) | None | `review` Tools denied | T is not executable in `review` despite global Skill binding |
-| C: phase inheritance | None | Phase `research`: Skill S → Tool T | `research` Tools allowed | T is available only in `research`, not `publish` |
-| D: invalid phase key | None | Phase `nonexistent`: Skill S | Loop has `research` and `publish` | Resolved validation fails with unknown phase, not a missing runtime-model error |
-| E: profile hint | Profile P recommends tool use | None | All Tools denied | Hint does not grant any Tool; Profile remains a valid authored package |
-| F: Memory space vs operation | Memory operation O bound in `review` | Space X *not* directly bound in `review` | Memory operation allowed by policy | O may target X as declared in Blueprint; direct space availability remains restricted |
-| G: Memory external trigger | Operation O trigger `external` | Bound globally | Runner never invokes O | Merely binding O must not schedule/execute it |
-| H: valid but nonrunnable | No Loop or Tools | None | N/A | APDS intrinsic validation passes; current Harness reports not runnable/incompatible |
-| I: versioned workspace | Skill S and Tool T exist at two versions | Binding references versionless identity | Phase allows Tools | Effective dependency picks the exact locked instance in the selected Agent graph, never first name match |
+**Implementation guidance for Codex and Claude Code — not normative APDS content**
 
-Explicitly test both **global and phase** paths for Skill Tool inheritance, and both **direct** and
-**operation-mediated** Memory access. These were carefully established in Phase 7A and must not be
-rewritten as stricter direct-binding rules.
+- Reconcile the exact Template field requirements, supported dependency groups, execution surface identifiers, file path rules, variable placeholders, and entrypoint structures against the existing versioned manifest schema.
+- Preserve the distinction between the Template artifact, the generated workspace, and any Agent Packages or Components referenced by that workspace.
+- Review `agentpm new` as one implementation of Template instantiation. Its command syntax, prompts, generated workspace configuration, dependency installation behavior, and user experience must not automatically become normative APDS requirements.
+- Define the portable meaning of `agentpm-harness` and other existing execution surface identifiers without requiring independent implementations to use AgentPM's CLI or Harness.
+- Distinguish Template definition validation from packaged-file verification, successful project generation, dependency installation, and runtime execution.
+- Preserve the existing non-secret purpose of Template variables. Do not introduce requirements for a universal credential-management system or imply that manifest validation can detect every sensitive value.
+- Where the current Template generator has implementation-specific defaults for file copying, substitution, overwrite handling, or workspace layout, do not automatically elevate those details into normative requirements unless they are necessary for the portable meaning of an authored Template.
+
+**Chapter 11 — Conformance, interpretation, and compatibility**
+
+- Define **APDS conformance as a property of an artifact and its applicable authored relationships**, evaluated against the normative requirements of its declared standard version. Distinguish an artifact's actual conformance from a particular implementation's ability to verify that conformance. A successful validation result establishes only that the requirements within the performed validation scope were satisfied.
+- Define **validation levels and their applicability**:
+    - **Standalone validation** evaluates structural and intrinsic semantic requirements that can be determined from an artifact without resolving external dependencies.
+    - **Resolved-composition validation** evaluates semantic relationships requiring referenced artifacts, such as dependency kinds, binding targets, Loop phase references, and cross-artifact composition constraints.
+    - **Packaged-content validation**, where applicable, evaluates requirements involving files or generated artifacts referenced by the manifest, such as Knowledge payload metadata or Memory record schemas.
+    - Passing one validation level does not imply that all other applicable levels have been evaluated or satisfied.
+    - Requirements that cannot be evaluated because the necessary dependency graph or artifact content is unavailable must not automatically be treated as violations.
+- Define the **meaning of conformance outcomes**:
+    - **Conformant:** All applicable normative requirements within the completed validation scope have been satisfied.
+    - **Nonconformant:** One or more definite violations of applicable normative requirements have been established.
+    - **Incomplete / not fully evaluated:** The available information is insufficient to determine whether all applicable requirements are satisfied.
+    - **Unsupported:** The implementation does not support the declared standard identity/version, validation level, or relevant interpretation capability.
+    - Clearly distinguish an established violation from an inability to evaluate a requirement.
+    - These terms describe logical validation outcomes. APDS does not mandate a particular API response schema, result enum, diagnostic format, or user-interface representation unless separately standardized.
+- Define **conformance claims and verification boundaries**:
+    - A validator must not claim verification of requirements it has not evaluated.
+    - A successful standalone validation result must not be presented as proof of full resolved-composition conformance.
+    - An implementation may support only particular validation levels or conformance roles, provided its claims accurately describe that support.
+    - A validator must not silently substitute another standard version when the declared version is unsupported.
+    - A declaration identifying a supported APDS standard does not itself establish that the artifact satisfies that standard.
+    - Unsupported validation must not be misrepresented as either successful verification or a confirmed semantic violation.
+- Define **standard-version interpretation**:
+    - An artifact's declared `standard` identifies the normative structural and semantic contract against which its conformance is evaluated.
+    - Compatible implementations must interpret supported declarations according to the identified standard version rather than silently applying unrelated or newer semantics.
+    - Changes to a standard's normative requirements must follow its versioning rules.
+    - Implementations may support multiple standard versions, but support for one version does not imply support for every other version.
+    - Compatibility mechanisms for artifacts created under older or different definition contracts must remain distinguishable from explicit conformance to the declared APDS version.
+- Distinguish **artifact conformance from distribution, runtime compatibility, and execution readiness**:
+    - **APDS conformance** concerns the validity and portable meaning of the authored artifact and its applicable relationships.
+    - **Distribution trust** concerns matters such as artifact provenance, signatures, attestations, permissions, and security scanning.
+    - **Runner compatibility** concerns whether a particular Runner supports the declared standard and relevant execution constructs.
+    - **Execution readiness** concerns whether the current environment has the required configuration, services, credentials, and resources.
+    - These are independent determinations. None establishes the others automatically.
+    - A conformant Agent Package may be unsupported by a particular Runner or not ready to execute in a particular environment without becoming nonconformant.
+- Define **conformance reporting and diagnostic principles**:
+    - Normative requirements should have stable rule identifiers that allow validation findings to be associated with the relevant standard requirements.
+    - Validation results should identify the evaluated standard version and scope sufficiently to support accurate interpretation of the outcome.
+    - Findings should distinguish confirmed violations, unevaluated requirements, and unsupported capabilities.
+    - APDS may provide shared conformance fixtures and expected semantic outcomes to support independent implementations.
+    - The standard does not require identical diagnostic wording, error serialization, reporting interfaces, or internal validation architecture.
+
+**Implementation guidance for Codex and Claude Code — not normative APDS content**
+
+- Implement the distinction between standalone, resolved-composition, and packaged-content validation using the actual requirements of APDS v1.0.0. Not every artifact kind necessarily requires every validation level.
+- Use shared conformance fixtures to verify that the Rust CLI and Python Registry validators agree on applicable normative outcomes. They need not have identical internal architectures or user-facing diagnostic formats.
+- Preserve AgentPM's legacy compatibility behavior for previously published artifacts that lack an explicit `standard` declaration. Legacy inference must not modify immutable published artifacts, recompute historical integrity values, invent manifest declarations, or imply that validation occurred when it did not.
+- Keep legacy-inferred standard interpretation distinguishable from explicitly declared and independently verified APDS conformance in Registry metadata, CLI output, lockfile handling, and Package Health.
+- Preserve the distinction between APDS validity, Registry publication/security checks, Harness compatibility, and local Harness readiness.
+- Do not automatically classify missing dependency context, unavailable runtime services, unsupported Runner capabilities, or unsupported standard versions as APDS semantic violations.
+- Codex and Claude should determine the most maintainable internal validation result representation, provided these distinctions remain observable and tests prevent misleading conformance claims.
+- Do not introduce a universal validation API, certification process, or third-party conformance service as part of APDS v1.0.0.
+
+#### Concrete binding and composition cases for APDS conformance fixtures
+
+The following cases define expected interpretations of authored APDS relationships and provide a shared behavioral reference for independent validators and compatible Runners.
+
+These are **semantic expectations**, not a requirement to copy the examples directly into manifests. Codex must create schema-valid fixture artifacts using the actual APDS v1.0.0 field structures, supported references, and declared dependency relationships.
+
+Distinguish three forms of verification:
+
+- **Standalone validation:** Confirm intrinsic manifest validity without requiring referenced artifacts.
+- **Resolved-composition validation:** Confirm cross-artifact relationships, dependency identities, binding references, phase references, and other semantics that require a resolved graph.
+- **Runner interpretation tests:** Confirm that a Runner claiming support for a construct preserves its normative meaning during execution or capability evaluation.
+
+Not every case requires all three forms of verification. Conformance fixtures should establish expected normative outcomes without requiring every APDS implementation to provide a Runner or adopt AgentPM-specific execution mechanisms.
+
+| Case | Authored composition / bindings | Relevant conditions | Required APDS interpretation |
+|---|---|---|---|
+| **A — Additive Tool bindings** | Skill S declares Tool T and is bound globally. Tool U is bound to phase `draft`. | Tool access is permitted in the applicable phases. | During `draft`, both T and U are applicable Tool candidates. Other phases retain T through the global Skill binding but do not inherit U solely from its `draft` binding. |
+| **B — Inherited Tool restricted by Loop** | Skill S declares Tool T and is bound globally. | Phase `review` prohibits Tool use. | T remains part of the authored composition but cannot be exercised in `review`. Skill inheritance does not bypass Loop access restrictions. |
+| **C — Phase-scoped Skill inheritance** | Skill S declares Tool T and is bound only to phase `research`. | The Loop also contains phase `publish`. | T is applicable through S in `research`, but not in `publish` unless independently available through another applicable binding. |
+| **D — Invalid phase reference** | Skill S is bound to phase `nonexistent`. | The resolved Loop declares only `research` and `publish`. | Resolved-composition validation establishes an invalid phase reference. This is an authored composition violation, not a missing runtime capability. |
+| **E — Profile capability hints** | Profile P declares `compatibility.requires.tool_use: true` or an equivalent supported capability expectation. | The active Loop phase prohibits Tool use. | P's compatibility declaration does not grant Tool access or override Loop policy. The Profile can remain APDS-conformant independently of whether the selected Runner satisfies its declared compatibility expectations. |
+| **F — Memory operation targeting an unbound space** | Memory operation O is bound in phase `review` and declares Memory space X as an input, output, or target. X is not directly bound in `review`. | O's trigger is eligible and its execution is permitted under applicable policy. | O may access X through its declared operation contract. X does not become a directly accessible Agent Memory surface merely because O references it. Direct space binding is not required solely for operation-mediated access. |
+| **G — Externally triggered Memory operation** | Operation O declares trigger `external` and is bound globally. | No explicit invocation of O occurs. | Binding O does not automatically execute or schedule it. Its declared trigger requires explicit invocation through a supported execution mechanism. |
+| **H — Conformant Agent without a Loop** | An otherwise valid Agent Package declares neither a Loop nor Tool dependencies. | The manifest satisfies its applicable APDS structural and intrinsic semantic requirements. | The Agent Package is not nonconformant merely because it lacks a Loop or Tools. Whether a particular Runner can execute it is a separate compatibility/readiness determination. |
+| **I — Versioned dependency identity** | Skill S and Tool T each exist in multiple installed versions. The Agent's bindings reference their versionless identities. | The Agent has a resolved composition selecting specific versions. | References resolve to the appropriate artifacts within that Agent's resolved dependency context, not arbitrary installed artifacts with matching names. APDS does not mandate a particular lockfile or dependency-resolution implementation. |
+| **J — Multiple paths to the same Tool** | Tool T is bound directly and is also inherited through globally bound Skill S. | Both paths resolve to the same Tool artifact/version. | The paths do not create additional execution permissions or alter T's capability identity. APDS does not mandate a specific internal de-duplication algorithm or presentation format. |
+| **K — Additive Instruction Profiles** | Profile A is bound globally; Profile B is bound to phase `review`. | Both Profiles are valid and resolved. | Both A and B contribute applicable guidance during `review`. Other phases receive A without automatically receiving B. APDS does not prescribe prompt concatenation order, instruction merging, or natural-language conflict resolution. |
+| **L — Direct Memory space binding scope** | Space X is bound globally; space Y is bound only in phase `review`. | Direct Memory access is permitted by the applicable Loop policy. | X remains directly applicable across phases. Y is directly applicable in `review` but not other phases solely because of that binding. Read/write permissions remain subject to the applicable Loop restrictions. |
+| **M — Phase-scoped Memory operation** | Operation O is bound only to phase `review`. | O's declared trigger becomes eligible while another phase is active. | O does not gain participation outside `review` solely because its trigger condition is satisfied. Trigger eligibility and binding participation scope are distinct requirements. |
+| **N — Incomplete composition context** | An Agent declares references to external Components. | The validator receives the Agent manifest but not the referenced Component definitions. | Standalone validation may succeed, while dependent resolved-composition checks remain unevaluated. Missing context alone must not be reported as confirmed nonconformance. |
+| **O — Implicit Loop outcome** | Phase `research` omits explicit `outcomes`. A transition declares `from: "research"`, `on: "complete"`, and a valid destination. | The Loop otherwise satisfies its structural and semantic requirements. | The phase has the APDS-defined implicit outcome `complete`. The transition refers to that outcome validly. A Runner may choose how phase completion is determined but must preserve the declared outcome and transition meaning. |
+| **P — Conformance versus runtime support** | An Agent Package has a valid Knowledge, Memory, or other Component dependency. | The selected Runner cannot provide a required runtime capability or backend. | Artifact conformance and Runner compatibility/readiness remain separate determinations. A missing runtime capability does not retroactively invalidate an otherwise conformant authored artifact. |
+
+**Required fixture coverage and interpretation rules**
+
+- Create actual schema-valid manifests for all positive cases, and deliberately invalid manifests or resolved graphs for negative cases.
+- Exercise both global and phase-specific Skill-to-Tool inheritance, including cases where Loop Tool access permits and prohibits execution.
+- Exercise direct Tool bindings and inherited Tool bindings independently and together, including repeated paths to the same resolved Tool.
+- Exercise global and phase-specific Instruction Profile applicability without making prompt order or natural-language conflict resolution a normative requirement.
+- Exercise both direct Memory space access and operation-mediated Memory access, including valid operation targets that are not directly bound.
+- Exercise Memory operation binding participation separately from trigger eligibility and execution.
+- Exercise version-aware dependency references using a resolved graph containing multiple versions, without requiring a particular AgentPM lockfile format.
+- Exercise valid standalone manifests whose resolved-composition checks cannot yet be completed, distinguishing incomplete evaluation from confirmed semantic violations.
+- Exercise the implicit Loop outcome `complete` and its relationship to authored transitions.
+- Exercise the distinction between APDS artifact conformance and unsupported or unavailable Runner capabilities.
+- Associate each fixture with the applicable normative rule IDs, required validation level, and expected outcome.
+- Keep validation fixtures deterministic. Where a case requires runtime interpretation, specify the observable semantic expectation without prescribing the Runner's internal implementation.
+- Do not turn AgentPM-specific CLI commands, prompt construction, storage strategies, scheduling mechanisms, or UI representations into requirements for independent APDS implementations.
+
+These fixtures must preserve the Phase 7A composition decisions, particularly **additive binding scopes**, **Skill Tool inheritance**, and the distinction between **direct Memory space bindings and Blueprint operation bindings**. Formalizing APDS must not weaken those authored semantics or introduce stricter direct-binding requirements that were not part of the original contract.
 
 #### Validator result shape — proposed contract, not fixed API
 
