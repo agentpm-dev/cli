@@ -66,6 +66,12 @@ fn success(output: Output) -> Output {
 
 #[test]
 fn all_eight_init_commands_lint_clean_and_accept_only_the_standard_root_extension() {
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../schemas/agentpm.manifest.schema.json"
+    ))
+    .unwrap();
+    assert_eq!(schema["properties"]["standard"], json!({}));
+    assert_eq!(schema["additionalProperties"], json!(false));
     for kind in [
         "tool",
         "agent",
@@ -116,6 +122,20 @@ fn all_eight_init_commands_lint_clean_and_accept_only_the_standard_root_extensio
                     .any(|issue| issue["schema_path"] == "/additionalProperties")
             );
         }
+        let mut invalid = original;
+        invalid["standard"] = json!({"opaque": [1, null, true]});
+        let required_field = match kind {
+            "agent" => "tools",
+            "tool" => "entrypoint",
+            _ => kind,
+        };
+        invalid.as_object_mut().unwrap().remove(required_field);
+        project.write(&invalid);
+        assert_eq!(
+            project.cli(&["lint"]).status.code(),
+            Some(1),
+            "standard must not mask missing {required_field} on {kind}"
+        );
     }
 }
 
@@ -293,4 +313,186 @@ fn knowledge_write_preserves_standard_and_unknown_typed_fields_under_a_local_sch
     assert_eq!(written["standard"], value["standard"]);
     assert_eq!(written["future_extension"], value["future_extension"]);
     assert_eq!(written["knowledge"]["context"]["document_count"], 1);
+    let mut unchanged = written;
+    unchanged["knowledge"] = value["knowledge"].clone();
+    assert_eq!(unchanged, value, "only Knowledge build metadata may change");
+    let first_bytes = fs::read(project.0.join("agent.json")).unwrap();
+    success(project.cli(&["knowledge", "build"]));
+    assert_eq!(
+        fs::read(project.0.join("agent.json")).unwrap(),
+        first_bytes,
+        "a second Knowledge build must not lose fields or churn serialization"
+    );
+}
+
+#[test]
+fn standard_survives_content_builds_and_dry_run_archives_for_all_eight_kinds() {
+    for kind in [
+        "tool",
+        "agent",
+        "template",
+        "skill",
+        "knowledge",
+        "memory",
+        "profile",
+        "loop",
+    ] {
+        let project = Project::new();
+        project.init(kind);
+        let mut manifest = project.manifest();
+        let standard = json!({"future": {"opaque": [null, true, 7, "value"]}});
+        manifest["standard"] = standard.clone();
+        project.write(&manifest);
+        if kind == "knowledge" || kind == "memory" {
+            let before = fs::read(project.0.join("agent.json")).unwrap();
+            success(project.cli(&[kind, "build"]));
+            assert_eq!(project.manifest()["standard"], standard);
+            if kind == "memory" {
+                assert_eq!(fs::read(project.0.join("agent.json")).unwrap(), before);
+                assert!(project.0.join("memory/build.json").is_file());
+                assert!(project.0.join("memory/contracts/index.json").is_file());
+            }
+        }
+        let before = fs::read(project.0.join("agent.json")).unwrap();
+        success(project.cli(&[
+            "publish",
+            "--dry-run",
+            "--strict",
+            "--token",
+            "fixture-token",
+            "--quiet",
+        ]));
+        assert_eq!(fs::read(project.0.join("agent.json")).unwrap(), before);
+        let archive = fs::read_dir(project.0.join("target/agentpm"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.to_string_lossy().ends_with(".tar.gz"))
+            .expect("dry run must produce an archive");
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(
+            fs::File::open(archive).unwrap(),
+        ));
+        let mut manifests = Vec::new();
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            if entry.path().unwrap().as_ref() == std::path::Path::new("agent.json") {
+                manifests.push(serde_json::from_reader::<_, Value>(&mut entry).unwrap());
+            }
+        }
+        assert_eq!(
+            manifests,
+            vec![project.manifest()],
+            "{kind} archive manifest"
+        );
+    }
+}
+
+#[test]
+fn new_preserves_standard_in_template_agents_and_still_blocks_unknown_keys() {
+    let project = Project::new();
+    project.init("template");
+    let mut template = project.manifest();
+    template["standard"] = json!("opaque-template-standard");
+    project.write(&template);
+    let agent = Project::new();
+    agent.init("agent");
+    let mut manifest = agent.manifest();
+    manifest["standard"] = json!({"future": {"opaque": [3, 2, 1]}});
+    let agents = project.0.join("template/agents");
+    fs::create_dir_all(&agents).unwrap();
+    let source = agents.join("starter.agent.json");
+    fs::write(&source, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    success(project.cli(&[
+        "new",
+        ".",
+        "generated",
+        "--var",
+        "project_name=generated",
+        "--quiet",
+    ]));
+    let generated = project.0.join("generated");
+    let written: Value =
+        serde_json::from_slice(&fs::read(generated.join("agents/starter.agent.json")).unwrap())
+            .unwrap();
+    assert_eq!(written, manifest, "generated Agent metadata must survive");
+    success(project.cli(&["lint", "generated/agents/starter.agent.json", "--strict"]));
+    for path in [
+        "agent.json",
+        "agentpm.workspace.json",
+        ".agentpm/template.json",
+    ] {
+        let value: Value =
+            serde_json::from_slice(&fs::read(generated.join(path)).unwrap()).unwrap();
+        assert!(
+            value.get("standard").is_none(),
+            "new must not invent standard on {path}"
+        );
+    }
+    manifest["standrad"] = json!({});
+    fs::write(&source, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    let rejected = project.cli(&[
+        "new",
+        ".",
+        "rejected",
+        "--var",
+        "project_name=rejected",
+        "--quiet",
+    ]);
+    assert_eq!(rejected.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        error.contains("generated manifest agents/starter.agent.json"),
+        "{error}"
+    );
+    assert!(error.contains("standrad"), "{error}");
+    assert!(
+        !project.0.join("rejected").exists(),
+        "failed new must clean its output"
+    );
+}
+
+#[test]
+fn export_reads_standard_bearing_tools_without_emitting_it_in_fresh_skills() {
+    let project = Project::new();
+    project.init("tool");
+    let mut manifest = project.manifest();
+    manifest["standard"] = json!({"future": {"version": 7}});
+    project.write(&manifest);
+    let installed = project.0.join(".agentpm/tools/fixture/starter/0.1.0");
+    fs::create_dir_all(&installed).unwrap();
+    fs::copy(project.0.join("agent.json"), installed.join("agent.json")).unwrap();
+    fs::copy(project.0.join("main.py"), installed.join("main.py")).unwrap();
+    fs::write(
+        project.0.join("agent.lock"),
+        serde_json::to_vec_pretty(&json!({
+            "lockfile_version": 2,
+            "generated": "2026-11-13T00:00:00Z",
+            "packages": {
+                "tool:@fixture/starter@0.1.0": {
+                    "kind": "tool", "name": "@fixture/starter", "version": "0.1.0",
+                    "integrity": "fixture-not-downloaded"
+                }
+            },
+            "roots": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let before = fs::read(installed.join("agent.json")).unwrap();
+    success(project.cli(&[
+        "export",
+        "--skill",
+        "@fixture/starter@0.1.0",
+        "--manifest",
+        "--output",
+        "exported",
+    ]));
+    let skill: Value =
+        serde_json::from_slice(&fs::read(project.0.join("exported/agent.json")).unwrap()).unwrap();
+    assert_eq!(skill["kind"], "skill");
+    assert!(
+        skill.get("standard").is_none(),
+        "export must not emit standard yet"
+    );
+    assert_eq!(fs::read(installed.join("agent.json")).unwrap(), before);
+    success(project.cli(&["lint", "exported/agent.json"]));
 }

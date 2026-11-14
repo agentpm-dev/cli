@@ -316,8 +316,8 @@ now satisfied; its M1B/M2B dependencies and other acceptance requirements are
 not waived.** The publication record is in
 [`Stage 1 Release Band 5`](../2026-10-06-immediate-hardening/tasks.md#release-band-5-cli-authoring-and-messaging-quality).
 
-**REQUIRED, and sequenced before M3A.** The root schema is `additionalProperties: false`, so every CLI
-already in users' hands hard-rejects a manifest carrying `standard`: verified on 0.1.33, `agentpm lint`
+**REQUIRED, and sequenced before M3A.** The root schema is `additionalProperties: false`, so pre-tolerance
+clients hard-reject a manifest carrying `standard`: verified on 0.1.33, `agentpm lint`
 returns `[ERROR] Additional properties are not allowed ('standard' was unexpected)` and exits 1. The
 affected commands are the schema-validating ones — `lint`, `publish` preflight, `new`, `export`,
 `knowledge build`, `memory build`. `install`, `harness`, `run` and `serve` perform no schema validation and
@@ -349,9 +349,9 @@ branch at implementation time:
 | Path | Behavior | Preserves unknown fields |
 |---|---|---|
 | `agentpm install <pkg>` (`commands/install.rs`) | writes back the loaded `manifest_value` after mutating dependency entries | **Yes** |
-| `knowledge build --write` (`commands/knowledge.rs`) | loads the Value, mutates only the `knowledge` object, writes the whole Value | **Yes** |
-| `memory build` (`commands/memory.rs`) | reads the manifest; writes only `.agentpm/memory/build.json` | n/a — never rewrites `agent.json` |
-| `agentpm export` (`commands/export.rs`) | builds a **fresh** `json!` Skill scaffold | n/a — but **must be updated to emit `standard`**, since it generates an `agent.json` and the init-focused scaffold tasks do not name it |
+| `knowledge build` (`commands/knowledge.rs`) | loads the Value, mutates only the `knowledge` object, writes the whole Value by default; there is no `--write` flag | **Yes** |
+| `memory build` (`commands/memory.rs`) | reads the manifest; writes `memory/contracts/` and `memory/build.json` | n/a — never rewrites `agent.json` |
+| `agentpm export` (`commands/export.rs`) | builds a **fresh** `json!` Skill scaffold | n/a — emit `standard` in M3A, not in the tolerance milestone |
 | `workspace.rs` metadata writers | typed structs → `to_value` | **No** — unknown fields dropped. These are workspace/template metadata files, not manifests; keep `standard` out of them |
 
 `serde_json` is pinned **without** `preserve_order` deliberately (`crates/agentpm-cli/Cargo.toml`: publish

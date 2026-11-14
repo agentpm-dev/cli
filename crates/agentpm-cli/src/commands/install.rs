@@ -4753,19 +4753,22 @@ mod tests {
     async fn direct_skill_install_updates_local_agent_manifest_skills_field() {
         let root = temp_root("install-local-agent-skill");
         fs::create_dir_all(&root).unwrap();
-        crate::manifest::write_manifest_pretty_atomic(
-            &root.join("agent.json"),
-            &json!({
-                "kind": "agent",
-                "name": "support-agent",
-                "standard": {"name": "future-standard", "version": 7},
-                "future_extension": {"opaque": [3, 2, 1]},
-                "version": "0.1.0",
-                "tools": [{"name":"@zack/echo","version":"0.1.0"}],
-                "skills": []
-            }),
-        )
-        .unwrap();
+        // Deliberately authored out of sorted-key order: the first real install
+        // may alphabetize it, but neither install may drop opaque manifest data.
+        let authored = br#"{
+  "version": "0.1.0",
+  "tools": [{"name":"@zack/echo","version":"0.1.0"}],
+  "standard": {"name":"future-standard","version":7},
+  "skills": [],
+  "name": "support-agent",
+  "kind": "agent",
+  "future_extension": {"opaque":[3,2,1]},
+  "description": "Local Agent with forward-compatible metadata"
+}
+"#;
+        fs::write(root.join("agent.json"), authored).unwrap();
+        let mut expected: Value = serde_json::from_slice(authored).unwrap();
+        expected["skills"] = json!([{"name":"@zack/triage-skill","version":"0.1.0"}]);
         crate::manifest::write_lock(
             &root,
             &Lock::V2(LockV2 {
@@ -4833,10 +4836,23 @@ mod tests {
             token: None,
         };
 
-        args.run(base_url).await.unwrap();
+        args.clone().run(base_url.clone()).await.unwrap();
 
-        let manifest_after: Value =
-            serde_json::from_str(&fs::read_to_string(root.join("agent.json")).unwrap()).unwrap();
+        let first_bytes = fs::read(root.join("agent.json")).unwrap();
+        let manifest_after: Value = serde_json::from_slice(&first_bytes).unwrap();
+        assert_eq!(
+            manifest_after, expected,
+            "only the selected dependency changes"
+        );
+        assert_ne!(first_bytes, authored);
+        let sorted_keys: Vec<_> = manifest_after.as_object().unwrap().keys().collect();
+        assert!(sorted_keys.windows(2).all(|keys| keys[0] < keys[1]));
+        args.run(base_url).await.unwrap();
+        assert_eq!(
+            fs::read(root.join("agent.json")).unwrap(),
+            first_bytes,
+            "a second install must preserve every field without duplicate entries or serialization churn"
+        );
         assert_eq!(
             manifest_after["standard"],
             json!({"name": "future-standard", "version": 7})
