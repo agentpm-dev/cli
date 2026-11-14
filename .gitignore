@@ -1,4 +1,5 @@
 /target/
+/.venv-apds/
 **/*.rs.bk
 __pycache__/
 *.pyc

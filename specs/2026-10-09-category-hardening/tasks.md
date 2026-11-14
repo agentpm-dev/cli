@@ -242,25 +242,28 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 
 **Implementation checklist**
 
-- [ ] Define fixture index format with case ID, root manifest, optional resolved graph/packaged files, conformance subject, validation level and expected results; distinguish validator outcomes from Runner-observation expectations.
-- [ ] Add one valid authored manifest for each of the eight kinds.
-- [ ] Add the dependency-free valid Agent case with no `tools`, `loop` or Profiles.
-- [ ] Add a multi-component valid Agent case with real schema-shaped references.
-- [ ] Add paired global Skill inherited Tool and phase Skill inherited Tool cases, plus repeated direct/inherited paths to the same resolved Tool without additional permissions (cases A–C and J).
-- [ ] Add additive global+phase bindings with Loop allowing and denying tools in different phases.
-- [ ] Add wrong phase and wrong-kind reference failures with stable rule IDs.
-- [ ] Add Loop missing entry, unknown transition/outcome, invalid target and omitted-outcome `complete` valid cases; include defined checkpoint/limit/error-policy semantics without assuming Harness-only prompt or recovery defaults (case O).
-- [ ] Add Profile `compatibility.requires.tool_use` versus Loop prohibition plus additive global/phase Profile applicability; do not assert prompt ordering or text de-duplication (cases E and K).
-- [ ] Add Memory direct space versus operation-mediated access, phase-scoped operation participation versus trigger eligibility, unbound-but-declared operation targets, external trigger without invocation, and valid/invalid operation references (cases F, G, L and M).
-- [ ] Cover all three Memory space models; record-type/schema references; retrieval modes; `external`, `interval`, `record_count`, `capacity` triggers; retention/source-handling/output/provenance/cascade and supported governance annotation shapes where applicable.
-- [ ] Add Knowledge `context`/`vector` and Template scaffold positives/negatives, including packaged-file/embedding/index relationships, non-secret variables, declared execution surfaces and entrypoints that are not executed by declaration.
-- [ ] Add selector missing, unsupported, malformed and whitespace description failures. The whitespace-description case must assert **error** severity, not a warning, and must come from the pinned schema rather than CLI-only logic.
-- [ ] Add incomplete resolved-graph and unavailable packaged-content cases; distinguish standalone conformance from unverified graph/content and from unsupported Runtime capabilities (cases H, N and P).
-- [ ] Add separate AgentPM legacy-inference compatibility fixtures without claiming historical undeclared artifacts are explicitly APDS-conformant; keep these outside the normative APDS authoring-validity corpus.
-- [ ] Map each of the sixteen semantic cases A–P to standalone/resolved/packaged-content validator fixtures, Runner interpretation tests, or both; include supplemental Q–T stateful trigger observations (initial armed count, no refire, rearm, interval baseline/reset) on the Runner side. Cover multi-version graph selection and exact capability identity (case I) without mandating an AgentPM lockfile.
-- [ ] Pin normative fixture bytes/version for v1.0.0 and document controlled fixture updates.
-- [ ] Keep detailed fixture expectations, paths and result metadata in the fixture index rather than duplicating them as verbose text in `semantics.md`; link from concise normative rules.
-- [ ] Review examples against actual parser before declaring case validity.
+- [x] Define fixture index format with case ID, root manifest, optional resolved graph/packaged files, conformance subject, validation level and expected results; distinguish validator outcomes from Runner-observation expectations.
+- [x] Add a short implementer quickstart to `conformance/README.md`: prerequisites, working directory, copyable commands for the available corpus checks, expected output/exit status, and how to run one case or the full available suite. Explain that an intentionally invalid fixture passes its test when the expected violation is detected, and show how another implementation can consume the index. Require no hosted Registry or credentials. State each command's coverage accurately; M2B/M2C must extend the instructions with their validator-suite commands when implemented, keeping Runner observations separate.
+- [x] Add one valid authored manifest for each of the eight kinds.
+- [x] Add the dependency-free valid Agent case with no `tools`, `loop` or Profiles.
+- [x] Add a multi-component valid Agent case with real schema-shaped references.
+- [x] Add paired global Skill inherited Tool and phase Skill inherited Tool cases, plus repeated direct/inherited paths to the same resolved Tool without additional permissions (cases A–C and J).
+- [x] Add additive global+phase bindings with Loop allowing and denying tools in different phases.
+- [x] Add wrong phase and wrong-kind reference failures with stable rule IDs.
+- [x] Add Loop missing entry, unknown transition/outcome, invalid target and omitted-outcome `complete` valid cases; include defined checkpoint/limit/error-policy semantics without assuming Harness-only prompt or recovery defaults (case O).
+- [x] Add Profile `compatibility.requires.tool_use` versus Loop prohibition plus additive global/phase Profile applicability; do not assert prompt ordering or text de-duplication (cases E and K).
+- [x] Add Memory direct space versus operation-mediated access, phase-scoped operation participation versus trigger eligibility, unbound-but-declared operation targets, external trigger without invocation, and valid/invalid operation references (cases F, G, L and M).
+- [x] Cover all three Memory space models; record-type/schema references; retrieval modes; `external`, `interval`, `record_count`, `capacity` triggers; retention/source-handling/output/provenance/cascade and supported governance annotation shapes where applicable.
+- [x] Add Knowledge `context`/`vector` and Template scaffold positives/negatives, including packaged-file/embedding/index relationships, non-secret variables, declared execution surfaces and entrypoints that are not executed by declaration.
+- [x] Add selector missing, unsupported, malformed and whitespace description failures. The whitespace-description case must assert **error** severity, not a warning, and must come from the pinned schema rather than CLI-only logic.
+- [x] Add incomplete resolved-graph and unavailable packaged-content cases; distinguish standalone conformance from unverified graph/content and from unsupported Runtime capabilities (cases H, N and P).
+- [x] Add separate AgentPM legacy-inference compatibility fixtures without claiming historical undeclared artifacts are explicitly APDS-conformant; keep these outside the normative APDS authoring-validity corpus.
+- [x] Map each of the sixteen semantic cases A–P to standalone/resolved/packaged-content validator fixtures, Runner interpretation tests, or both; include supplemental Q–T stateful trigger observations (initial armed count, no refire, rearm, interval baseline/reset) on the Runner side. Cover multi-version graph selection and exact capability identity (case I) without mandating an AgentPM lockfile.
+- [x] Pin normative fixture bytes/version for v1.0.0 and document controlled fixture updates.
+- [x] Keep detailed fixture expectations, paths and result metadata in the fixture index rather than duplicating them as verbose text in `semantics.md`; link from concise normative rules.
+- [x] Review examples against actual parser before declaring case validity.
+
+**Completion evidence — 2026-11-14:** [Verification and decision record](m2a-verification.md) maps 129 shared validation cases, 28 separate Runner observations and all 56 semantic rules to the required coverage. The portable quickstart/comparator, 19 Python checks, five Rust integration tests, 41 actual CLI-positive probes and actual vector-reader positive/truncation checks pass locally. The schema and production behavior are unchanged. **User confirmed Claude review complete with no remaining findings on 2026-11-14; M2A is complete.** Hosted CI remains unverified. Semantic engines/parity remain M2B/M2C; Runner execution remains M6A/M6B. No standard publication or deployment is claimed.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 

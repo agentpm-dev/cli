@@ -1,0 +1,45 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "description": "Starter AgentPM project",
+  "kind": "knowledge",
+  "knowledge": {
+    "corpus": {
+      "chunk_count": 1,
+      "chunks_path": "chunks.jsonl",
+      "content_hash": "sha256:38b74a137a5fc628c870280096b955758240a392c330d4cff1b2ff3c3a16e985",
+      "source_count": 1,
+      "sources_path": "sources.jsonl"
+    },
+    "embedding": {
+      "dimensions": 2,
+      "id": "default",
+      "metric": "cosine",
+      "model": "fixture-2d",
+      "normalized": false,
+      "provider": "fixture",
+      "vector_count": 1,
+      "vectors_hash": "sha256:bfa5538a8f3284f327823c89a6d203566809b93710aad4316466893e4d39b942",
+      "vectors_path": "vectors.f32"
+    },
+    "indexes": [
+      {
+        "embedding_id": "other",
+        "generated_by": "agentpm knowledge build",
+        "id": "default",
+        "path": "knowledge/indexes/default",
+        "type": "agentpm-local"
+      }
+    ],
+    "mode": "vector",
+    "retrieval": {
+      "default_top_k": 1,
+      "return_citations": true
+    }
+  },
+  "name": "vector",
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  },
+  "version": "0.1.0"
+}

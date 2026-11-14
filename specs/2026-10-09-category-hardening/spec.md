@@ -235,7 +235,7 @@ advertisement for no product benefit.
 
 **M1B implementation evidence (2026-11-14):** [Canonical structural candidate](../../standards/agentpm/1.0.0/README.md), [before/after schema diff](m1b-structural-diff.json), and [verification/decision record](m1b-verification.md). Semantic rules and the complete conformance corpus remain with M1C/M2A; this is not a publication claim.
 
-**M1C implementation evidence (2026-11-14):** [Semantic reference](../../standards/agentpm/1.0.0/semantics.md), [rule index](../../standards/agentpm/1.0.0/conformance/rule-index.md), [A–T case map](../../standards/agentpm/1.0.0/conformance/semantic-cases.md), [chapter verification](m1c-verification.md) and [reconciliation decisions](m1c-reconciliation.md). User confirmed independent contract/readability review passed with no remaining findings on 2026-11-14; M1C is complete. Initial M2A fixture review remains required before freeze/publication.
+**M1C implementation evidence (2026-11-14):** [Semantic reference](../../standards/agentpm/1.0.0/semantics.md), [rule index](../../standards/agentpm/1.0.0/conformance/rule-index.md), [A–T case map](../../standards/agentpm/1.0.0/conformance/semantic-cases.md), [chapter verification](m1c-verification.md) and [reconciliation decisions](m1c-reconciliation.md). User confirmed independent contract/readability review passed with no remaining findings on 2026-11-14; M1C is complete. The initial M2A fixture review prerequisite was subsequently satisfied by the user-confirmed sign-off recorded below; publication remains separate.
 
 **REQUIRED:** Publish a discoverable, versioned immutable **AgentPM APDS v1.0.0** specification containing
 the same JSON structural contract as the current schema **plus** normative semantic rules and executable
@@ -1277,6 +1277,9 @@ verified without evidence. A migration tool is optional, but new authoring and n
 strict. Do not silently permit a bypass using an old publish-client endpoint.
 
 #### APDS conformance fixture and CI execution design
+
+**M2A completion evidence (2026-11-14):** [Shared corpus and quickstart](../../standards/agentpm/1.0.0/conformance/README.md), [validation inputs/results](../../standards/agentpm/1.0.0/conformance/fixture-index.json), [separate Runner observations](../../standards/agentpm/1.0.0/conformance/runner-observations.json) and [verification/decision record](m2a-verification.md). The generic checks are portable; AgentPM-specific acceptance probes remain outside the standard bundle. User confirmed independent corpus review complete with no remaining findings on **2026-11-14**; **M2A is complete**. Hosted CI remains unverified; M2B/M2C semantic parity and public publication are not claimed.
+
 
 Use a **single fixture corpus** that neither Rust nor Python is allowed to customize to hide differences. A
 fixture should declare input file(s), validation level, expected status, expected violated rule IDs and

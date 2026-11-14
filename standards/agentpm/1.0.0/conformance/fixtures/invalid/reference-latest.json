@@ -1,0 +1,11 @@
+{
+  "kind": "agent",
+  "name": "minimal-agent",
+  "version": "1.0.0",
+  "description": "A portable Agent declaration.",
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  },
+  "tools": ["@example/tool@latest"]
+}

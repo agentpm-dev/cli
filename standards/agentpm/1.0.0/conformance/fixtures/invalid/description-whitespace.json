@@ -1,0 +1,10 @@
+{
+  "kind": "agent",
+  "name": "minimal-agent",
+  "version": "1.0.0",
+  "description": "\t 　",
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  }
+}

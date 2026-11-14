@@ -1,0 +1,5938 @@
+{
+  "format_version": 1,
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  },
+  "cases": [
+    {
+      "case_id": "valid-agent",
+      "description": "Valid agent.",
+      "root": "fixtures/valid/agent.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-001", "APDS-ID-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "invalid-agent-required",
+      "description": "Invalid agent required.",
+      "root": "fixtures/invalid/invalid-agent-required.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-002",
+            "document": "fixtures/invalid/invalid-agent-required.json",
+            "path": "/description",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "valid-agent"
+    },
+    {
+      "case_id": "valid-tool",
+      "description": "Valid tool.",
+      "root": "fixtures/valid/tool.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-001", "APDS-TOOL-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "invalid-tool-required",
+      "description": "Invalid tool required.",
+      "root": "fixtures/invalid/invalid-tool-required.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-TOOL-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-TOOL-002",
+            "document": "fixtures/invalid/invalid-tool-required.json",
+            "path": "/entrypoint",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "valid-tool"
+    },
+    {
+      "case_id": "valid-skill",
+      "description": "Valid skill.",
+      "root": "fixtures/valid/skill.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-001", "APDS-SKILL-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "invalid-skill-required",
+      "description": "Invalid skill required.",
+      "root": "fixtures/invalid/invalid-skill-required.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-SKILL-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-SKILL-001",
+            "document": "fixtures/invalid/invalid-skill-required.json",
+            "path": "/skill",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "valid-skill"
+    },
+    {
+      "case_id": "valid-knowledge",
+      "description": "Valid knowledge.",
+      "root": "fixtures/valid/knowledge.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-001", "APDS-KNOW-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "invalid-knowledge-required",
+      "description": "Invalid knowledge required.",
+      "root": "fixtures/invalid/invalid-knowledge-required.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-KNOW-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-KNOW-001",
+            "document": "fixtures/invalid/invalid-knowledge-required.json",
+            "path": "/knowledge",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "valid-knowledge"
+    },
+    {
+      "case_id": "valid-memory",
+      "description": "Valid memory.",
+      "root": "fixtures/valid/memory.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-001", "APDS-MEM-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "invalid-memory-required",
+      "description": "Invalid memory required.",
+      "root": "fixtures/invalid/invalid-memory-required.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-MEM-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-001",
+            "document": "fixtures/invalid/invalid-memory-required.json",
+            "path": "/memory",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "valid-memory"
+    },
+    {
+      "case_id": "valid-profile",
+      "description": "Valid profile.",
+      "root": "fixtures/valid/profile.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-001", "APDS-PROFILE-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "invalid-profile-required",
+      "description": "Invalid profile required.",
+      "root": "fixtures/invalid/invalid-profile-required.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-PROFILE-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-PROFILE-001",
+            "document": "fixtures/invalid/invalid-profile-required.json",
+            "path": "/profile",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "valid-profile"
+    },
+    {
+      "case_id": "valid-loop",
+      "description": "Valid loop.",
+      "root": "fixtures/valid/loop.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-001", "APDS-LOOP-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "invalid-loop-required",
+      "description": "Invalid loop required.",
+      "root": "fixtures/invalid/invalid-loop-required.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-LOOP-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-001",
+            "document": "fixtures/invalid/invalid-loop-required.json",
+            "path": "/loop",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "valid-loop"
+    },
+    {
+      "case_id": "valid-template",
+      "description": "Valid template.",
+      "root": "fixtures/valid/template.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-001", "APDS-TEMPLATE-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "invalid-template-required",
+      "description": "Invalid template required.",
+      "root": "fixtures/invalid/invalid-template-required.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-TEMPLATE-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-TEMPLATE-001",
+            "document": "fixtures/invalid/invalid-template-required.json",
+            "path": "/template",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "valid-template"
+    },
+    {
+      "case_id": "minimal-agent",
+      "description": "Minimal agent.",
+      "root": "fixtures/valid/minimal-agent.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": [
+        "APDS-GRAPH-001",
+        "APDS-ID-001",
+        "APDS-ID-002",
+        "APDS-CONF-003",
+        "APDS-CONF-005"
+      ],
+      "semantic_cases": ["H"],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "selector-missing",
+      "description": "Selector missing.",
+      "root": "fixtures/invalid/selector-missing.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-001",
+            "document": "fixtures/invalid/selector-missing.json",
+            "path": "/standard",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "minimal-agent"
+    },
+    {
+      "case_id": "selector-malformed",
+      "description": "Selector malformed.",
+      "root": "fixtures/invalid/selector-malformed.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-001",
+            "document": "fixtures/invalid/selector-malformed.json",
+            "path": "/standard",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "minimal-agent"
+    },
+    {
+      "case_id": "selector-unsupported",
+      "description": "Selector unsupported.",
+      "root": "fixtures/invalid/selector-unsupported.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-001", "APDS-CONF-003", "APDS-CONF-005"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "unsupported",
+        "findings": [],
+        "unevaluated": []
+      },
+      "counterpart": "minimal-agent"
+    },
+    {
+      "case_id": "selector-other-id",
+      "description": "Selector other id.",
+      "root": "fixtures/invalid/selector-other-id.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "unsupported",
+        "findings": [],
+        "unevaluated": []
+      },
+      "counterpart": "minimal-agent"
+    },
+    {
+      "case_id": "description-blank",
+      "description": "Description blank.",
+      "root": "fixtures/invalid/description-blank.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-002",
+            "document": "fixtures/invalid/description-blank.json",
+            "path": "/description",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "minimal-agent"
+    },
+    {
+      "case_id": "description-whitespace",
+      "description": "Description whitespace.",
+      "root": "fixtures/invalid/description-whitespace.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-002", "APDS-CONF-003", "APDS-CONF-005"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-002",
+            "document": "fixtures/invalid/description-whitespace.json",
+            "path": "/description",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "minimal-agent"
+    },
+    {
+      "case_id": "local-name-namespaced",
+      "description": "Local name namespaced.",
+      "root": "fixtures/invalid/local-name-namespaced.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-002",
+            "document": "fixtures/invalid/local-name-namespaced.json",
+            "path": "/name",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "minimal-agent"
+    },
+    {
+      "case_id": "unknown-root-field",
+      "description": "Unknown root field.",
+      "root": "fixtures/invalid/unknown-root-field.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-GRAPH-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-GRAPH-001",
+            "document": "fixtures/invalid/unknown-root-field.json",
+            "path": "/standrad",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "minimal-agent"
+    },
+    {
+      "case_id": "unknown-kind",
+      "description": "Unknown kind.",
+      "root": "fixtures/invalid/unknown-kind.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-GRAPH-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-GRAPH-001",
+            "document": "fixtures/invalid/unknown-kind.json",
+            "path": "/kind",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "minimal-agent"
+    },
+    {
+      "case_id": "reference-latest",
+      "description": "Reference latest.",
+      "root": "fixtures/invalid/reference-latest.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-003",
+            "document": "fixtures/invalid/reference-latest.json",
+            "path": "/tools/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "reference-supported"
+    },
+    {
+      "case_id": "reference-caret",
+      "description": "Reference caret.",
+      "root": "fixtures/invalid/reference-caret.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-003",
+            "document": "fixtures/invalid/reference-caret.json",
+            "path": "/tools/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "reference-supported"
+    },
+    {
+      "case_id": "reference-tilde",
+      "description": "Reference tilde.",
+      "root": "fixtures/invalid/reference-tilde.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-003",
+            "document": "fixtures/invalid/reference-tilde.json",
+            "path": "/tools/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "reference-supported"
+    },
+    {
+      "case_id": "reference-wildcard",
+      "description": "Reference wildcard.",
+      "root": "fixtures/invalid/reference-wildcard.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-003",
+            "document": "fixtures/invalid/reference-wildcard.json",
+            "path": "/tools/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "reference-supported"
+    },
+    {
+      "case_id": "reference-comparison",
+      "description": "Reference comparison.",
+      "root": "fixtures/invalid/reference-comparison.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-003",
+            "document": "fixtures/invalid/reference-comparison.json",
+            "path": "/tools/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "reference-supported"
+    },
+    {
+      "case_id": "reference-malformed",
+      "description": "Reference malformed.",
+      "root": "fixtures/invalid/reference-malformed.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-003",
+            "document": "fixtures/invalid/reference-malformed.json",
+            "path": "/tools/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "reference-supported"
+    },
+    {
+      "case_id": "reference-supported",
+      "description": "Reference supported.",
+      "root": "fixtures/valid-cases/reference-supported.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-ID-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "composition-complete",
+      "description": "Composition complete.",
+      "root": "fixtures/resolved/composition-complete.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": [
+        "APDS-GRAPH-002",
+        "APDS-BIND-001",
+        "APDS-BIND-002",
+        "APDS-BIND-005",
+        "APDS-GRAPH-003",
+        "APDS-CONF-003",
+        "APDS-CONF-005"
+      ],
+      "semantic_cases": ["A", "B", "E", "F", "I", "J", "K", "L", "M", "P"],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "phase-unknown",
+      "description": "Phase unknown.",
+      "root": "fixtures/invalid/phase-unknown.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-002"],
+      "semantic_cases": ["D"],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-BIND-002",
+            "document": "fixtures/invalid/phase-unknown.json",
+            "path": "/bindings/phases/nonexistent",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "binding-undeclared",
+      "description": "Binding undeclared.",
+      "root": "fixtures/invalid/binding-undeclared.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-BIND-001",
+            "document": "fixtures/invalid/binding-undeclared.json",
+            "path": "/bindings/global/tools/1",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "binding-space-unknown",
+      "description": "Binding space unknown.",
+      "root": "fixtures/invalid/binding-space-unknown.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-BIND-001",
+            "document": "fixtures/invalid/binding-space-unknown.json",
+            "path": "/bindings/global/memory/0/spaces/1",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "binding-operation-unknown",
+      "description": "Binding operation unknown.",
+      "root": "fixtures/invalid/binding-operation-unknown.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-BIND-001",
+            "document": "fixtures/invalid/binding-operation-unknown.json",
+            "path": "/bindings/phases/review/memory/0/operations/2",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "mcp-id-duplicate",
+      "description": "Mcp id duplicate.",
+      "root": "fixtures/invalid/mcp-id-duplicate.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-005"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-BIND-005",
+            "document": "fixtures/invalid/mcp-id-duplicate.json",
+            "path": "/bindings/mcp/1/id",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "mcp-tool-undeclared",
+      "description": "Mcp tool undeclared.",
+      "root": "fixtures/invalid/mcp-tool-undeclared.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-005"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-BIND-005",
+            "document": "fixtures/invalid/mcp-tool-undeclared.json",
+            "path": "/bindings/mcp/0/tools/1",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "dependency-duplicate-identity",
+      "description": "Dependency duplicate identity.",
+      "root": "fixtures/invalid/dependency-duplicate-identity.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-GRAPH-003",
+            "document": "fixtures/invalid/dependency-duplicate-identity.json",
+            "path": "/tools/2",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "phase-without-loop",
+      "description": "Phase without loop.",
+      "root": "fixtures/invalid/phase-without-loop.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-BIND-002",
+            "document": "fixtures/invalid/phase-without-loop.json",
+            "path": "/bindings/phases",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "selection-wrong-kind",
+      "description": "Selection wrong kind.",
+      "root": "fixtures/resolved/composition-complete.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-002"],
+      "semantic_cases": ["I"],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-GRAPH-002",
+            "document": "fixtures/resolved/composition-complete.json",
+            "path": "/tools/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "selection-wrong-version",
+      "description": "Selection wrong version.",
+      "root": "fixtures/resolved/composition-complete.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-002"],
+      "semantic_cases": ["I"],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-GRAPH-002",
+            "document": "fixtures/resolved/composition-complete.json",
+            "path": "/tools/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "graph-unavailable",
+      "description": "Graph unavailable.",
+      "root": "fixtures/resolved/composition-complete.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-CONF-002", "APDS-CONF-003", "APDS-CONF-005"],
+      "semantic_cases": ["D", "N"],
+      "expected": {
+        "status": "incomplete",
+        "findings": [],
+        "unevaluated": ["APDS-BIND-002", "APDS-GRAPH-002"]
+      },
+      "graph": {
+        "complete": false,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "standalone-without-graph",
+      "description": "Standalone without graph.",
+      "root": "fixtures/resolved/composition-complete.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-CONF-001", "APDS-CONF-003", "APDS-CONF-005"],
+      "semantic_cases": ["N"],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "skill-phase-only",
+      "description": "Skill phase only.",
+      "root": "fixtures/resolved/skill-phase-only.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-001"],
+      "semantic_cases": ["C"],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "skill-inherited-only",
+      "description": "Skill inherited only.",
+      "root": "fixtures/resolved/skill-inherited-only.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-001"],
+      "semantic_cases": ["A", "B"],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "memory-operation-only",
+      "description": "Memory operation only.",
+      "root": "fixtures/resolved/memory-operation-only.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-001"],
+      "semantic_cases": ["F"],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "memory-phase-trigger",
+      "description": "Memory phase trigger.",
+      "root": "fixtures/resolved/memory-phase-trigger.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-001"],
+      "semantic_cases": ["M"],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "memory-external-bound",
+      "description": "Memory external bound.",
+      "root": "fixtures/resolved/memory-external-bound.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-001"],
+      "semantic_cases": ["G"],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "composition-two-tool-versions",
+      "description": "Composition two tool versions.",
+      "root": "fixtures/resolved/composition-two-tool-versions.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-002"],
+      "semantic_cases": ["I", "J"],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@2.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "known-violation-with-incomplete-graph",
+      "description": "Known violation with incomplete graph.",
+      "root": "fixtures/invalid/known-violation-with-incomplete-graph.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-BIND-001", "APDS-CONF-003", "APDS-CONF-005"],
+      "semantic_cases": ["N"],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-BIND-001",
+            "document": "fixtures/invalid/known-violation-with-incomplete-graph.json",
+            "path": "/bindings/global/tools/1",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": ["APDS-BIND-002", "APDS-GRAPH-002"]
+      },
+      "graph": {
+        "complete": false,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          }
+        ]
+      },
+      "counterpart": "composition-complete"
+    },
+    {
+      "case_id": "loop-complete",
+      "description": "Loop complete.",
+      "root": "fixtures/valid-cases/loop-complete.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": [
+        "APDS-LOOP-001",
+        "APDS-LOOP-002",
+        "APDS-LOOP-005",
+        "APDS-LOOP-006"
+      ],
+      "semantic_cases": ["O"],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "loop-entry-unknown",
+      "description": "Loop entry unknown.",
+      "root": "fixtures/invalid/loop-entry-unknown.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-001",
+            "document": "fixtures/invalid/loop-entry-unknown.json",
+            "path": "/loop/entry_phase",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-phase-duplicate",
+      "description": "Loop phase duplicate.",
+      "root": "fixtures/invalid/loop-phase-duplicate.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-001",
+            "document": "fixtures/invalid/loop-phase-duplicate.json",
+            "path": "/loop/phases/4/id",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-objective-blank",
+      "description": "Loop objective blank.",
+      "root": "fixtures/invalid/loop-objective-blank.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-001",
+            "document": "fixtures/invalid/loop-objective-blank.json",
+            "path": "/loop/phases/0/objective",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-source-unknown",
+      "description": "Loop source unknown.",
+      "root": "fixtures/invalid/loop-source-unknown.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-002",
+            "document": "fixtures/invalid/loop-source-unknown.json",
+            "path": "/loop/transitions/0/from",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-outcome-unknown",
+      "description": "Loop outcome unknown.",
+      "root": "fixtures/invalid/loop-outcome-unknown.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-002",
+            "document": "fixtures/invalid/loop-outcome-unknown.json",
+            "path": "/loop/transitions/0/on",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-target-unknown",
+      "description": "Loop target unknown.",
+      "root": "fixtures/invalid/loop-target-unknown.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-002",
+            "document": "fixtures/invalid/loop-target-unknown.json",
+            "path": "/loop/transitions/0/to",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-transition-missing",
+      "description": "Loop transition missing.",
+      "root": "fixtures/invalid/loop-transition-missing.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-002",
+            "document": "fixtures/invalid/loop-transition-missing.json",
+            "path": "/loop/transitions",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-transition-duplicate",
+      "description": "Loop transition duplicate.",
+      "root": "fixtures/invalid/loop-transition-duplicate.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-002",
+            "document": "fixtures/invalid/loop-transition-duplicate.json",
+            "path": "/loop/transitions/4",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-unreachable",
+      "description": "Loop unreachable.",
+      "root": "fixtures/invalid/loop-unreachable.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-002",
+            "document": "fixtures/invalid/loop-unreachable.json",
+            "path": "/loop/phases/4/id",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-no-terminal",
+      "description": "Loop no terminal.",
+      "root": "fixtures/invalid/loop-no-terminal.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-002",
+            "document": "fixtures/invalid/loop-no-terminal.json",
+            "path": "/loop/transitions",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-checkpoint-phase",
+      "description": "Loop checkpoint phase.",
+      "root": "fixtures/invalid/loop-checkpoint-phase.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-005"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-005",
+            "document": "fixtures/invalid/loop-checkpoint-phase.json",
+            "path": "/loop/checkpoints/0/before_phase",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-checkpoint-rejection",
+      "description": "Loop checkpoint rejection.",
+      "root": "fixtures/invalid/loop-checkpoint-rejection.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-005"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-005",
+            "document": "fixtures/invalid/loop-checkpoint-rejection.json",
+            "path": "/loop/checkpoints/0/on_reject",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-checkpoint-duplicate",
+      "description": "Loop checkpoint duplicate.",
+      "root": "fixtures/invalid/loop-checkpoint-duplicate.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-005"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-005",
+            "document": "fixtures/invalid/loop-checkpoint-duplicate.json",
+            "path": "/loop/checkpoints/1/id",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-policy-phase-missing",
+      "description": "Loop policy phase missing.",
+      "root": "fixtures/invalid/loop-policy-phase-missing.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-006"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-006",
+            "document": "fixtures/invalid/loop-policy-phase-missing.json",
+            "path": "/loop/error_policy/phase_failure",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-explicit-outcomes",
+      "description": "Loop explicit outcomes.",
+      "root": "fixtures/valid-cases/loop-explicit-outcomes.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-001", "APDS-LOOP-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-explicit-no-implicit-complete",
+      "description": "Loop explicit no implicit complete.",
+      "root": "fixtures/invalid/loop-explicit-no-implicit-complete.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-002",
+            "document": "fixtures/invalid/loop-explicit-no-implicit-complete.json",
+            "path": "/loop/transitions/0/on",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-explicit-outcomes"
+    },
+    {
+      "case_id": "memory-all-models",
+      "description": "Memory all models.",
+      "root": "fixtures/valid-cases/memory-all-models.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": [
+        "APDS-MEM-001",
+        "APDS-MEM-003",
+        "APDS-MEM-004",
+        "APDS-MEM-005",
+        "APDS-MEM-007",
+        "APDS-MEM-008",
+        "APDS-MEM-010"
+      ],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "memory-scope-unknown",
+      "description": "Memory scope unknown.",
+      "root": "fixtures/invalid/memory-scope-unknown.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-001",
+            "document": "fixtures/invalid/memory-scope-unknown.json",
+            "path": "/memory/spaces/notes/scope/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-record-type-unknown",
+      "description": "Memory record type unknown.",
+      "root": "fixtures/invalid/memory-record-type-unknown.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-001",
+            "document": "fixtures/invalid/memory-record-type-unknown.json",
+            "path": "/memory/spaces/notes/record_types/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-operation-space",
+      "description": "Memory operation space.",
+      "root": "fixtures/invalid/memory-operation-space.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-001",
+            "document": "fixtures/invalid/memory-operation-space.json",
+            "path": "/memory/operations/transform/inputs/0/space",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-operation-pairing",
+      "description": "Memory operation pairing.",
+      "root": "fixtures/invalid/memory-operation-pairing.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-001",
+            "document": "fixtures/invalid/memory-operation-pairing.json",
+            "path": "/memory/operations/transform/inputs/0/record_type",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-delete-target",
+      "description": "Memory delete target.",
+      "root": "fixtures/invalid/memory-delete-target.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-001",
+            "document": "fixtures/invalid/memory-delete-target.json",
+            "path": "/memory/operations/delete/targets/0/space",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-document-retrieval",
+      "description": "Memory document retrieval.",
+      "root": "fixtures/invalid/memory-document-retrieval.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-003",
+            "document": "fixtures/invalid/memory-document-retrieval.json",
+            "path": "/memory/spaces/summary/retrieval/modes",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-sequence-retrieval",
+      "description": "Memory sequence retrieval.",
+      "root": "fixtures/invalid/memory-sequence-retrieval.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-003",
+            "document": "fixtures/invalid/memory-sequence-retrieval.json",
+            "path": "/memory/spaces/events/retrieval/modes",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-document-append-only",
+      "description": "Memory document append only.",
+      "root": "fixtures/invalid/memory-document-append-only.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-005"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-005",
+            "document": "fixtures/invalid/memory-document-append-only.json",
+            "path": "/memory/spaces/summary/constraints/append_only",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-capacity-missing",
+      "description": "Memory capacity missing.",
+      "root": "fixtures/invalid/memory-capacity-missing.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-008"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-008",
+            "document": "fixtures/invalid/memory-capacity-missing.json",
+            "path": "/memory/operations/capacity/trigger/space",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-trigger-space",
+      "description": "Memory trigger space.",
+      "root": "fixtures/invalid/memory-trigger-space.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-001",
+            "document": "fixtures/invalid/memory-trigger-space.json",
+            "path": "/memory/operations/summarize/trigger/space",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-replace-wrong-target",
+      "description": "Memory replace wrong target.",
+      "root": "fixtures/invalid/memory-replace-wrong-target.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-010"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-010",
+            "document": "fixtures/invalid/memory-replace-wrong-target.json",
+            "path": "/memory/operations/transform/output_mode",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-retention-missing",
+      "description": "Memory retention missing.",
+      "root": "fixtures/invalid/memory-retention-missing.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-010"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-010",
+            "document": "fixtures/invalid/memory-retention-missing.json",
+            "path": "/memory/operations/transform/source_handling",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-duration-0",
+      "description": "Memory duration 0.",
+      "root": "fixtures/invalid/memory-duration-0.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-004"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-004",
+            "document": "fixtures/invalid/memory-duration-0.json",
+            "path": "/memory/operations/interval/trigger/every",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-duration-1",
+      "description": "Memory duration 1.",
+      "root": "fixtures/invalid/memory-duration-1.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-004"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-004",
+            "document": "fixtures/invalid/memory-duration-1.json",
+            "path": "/memory/operations/interval/trigger/every",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-duration-2",
+      "description": "Memory duration 2.",
+      "root": "fixtures/invalid/memory-duration-2.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-004"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-004",
+            "document": "fixtures/invalid/memory-duration-2.json",
+            "path": "/memory/operations/interval/trigger/every",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-duration-3",
+      "description": "Memory duration 3.",
+      "root": "fixtures/invalid/memory-duration-3.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-004"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-004",
+            "document": "fixtures/invalid/memory-duration-3.json",
+            "path": "/memory/operations/interval/trigger/every",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-duration-4",
+      "description": "Memory duration 4.",
+      "root": "fixtures/invalid/memory-duration-4.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-004"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-004",
+            "document": "fixtures/invalid/memory-duration-4.json",
+            "path": "/memory/operations/interval/trigger/every",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-replace-append-only",
+      "description": "Memory replace append only.",
+      "root": "fixtures/valid-cases/memory-replace-append-only.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-010"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-replace-source-handling",
+      "description": "Memory replace source handling.",
+      "root": "fixtures/invalid/memory-replace-source-handling.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-010"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-010",
+            "document": "fixtures/invalid/memory-replace-source-handling.json",
+            "path": "/memory/operations/transform/source_handling",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-replace-append-only"
+    },
+    {
+      "case_id": "memory-delete-after-success",
+      "description": "Memory delete after success.",
+      "root": "fixtures/valid-cases/memory-delete-after-success.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-010"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-retain-until-expiration",
+      "description": "Memory retain until expiration.",
+      "root": "fixtures/valid-cases/memory-retain-until-expiration.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-010"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-ttl-calendar-month",
+      "description": "Memory ttl calendar month.",
+      "root": "fixtures/invalid/memory-ttl-calendar-month.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-004"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-004",
+            "document": "fixtures/invalid/memory-ttl-calendar-month.json",
+            "path": "/memory/spaces/notes/retention/ttl",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "memory-transform-two-inputs",
+      "description": "Memory transform two inputs.",
+      "root": "fixtures/invalid/memory-transform-two-inputs.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-MEM-007"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-007",
+            "document": "fixtures/invalid/memory-transform-two-inputs.json",
+            "path": "/memory/operations/transform/inputs",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "memory-all-models"
+    },
+    {
+      "case_id": "knowledge-context-files",
+      "description": "Knowledge context files.",
+      "root": "fixtures/packaged/knowledge-context-files/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-KNOW-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/knowledge-context-files"
+      }
+    },
+    {
+      "case_id": "knowledge-context-missing",
+      "description": "Knowledge context missing.",
+      "root": "fixtures/packaged/knowledge-context-missing/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-KNOW-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-KNOW-002",
+            "document": "fixtures/packaged/knowledge-context-missing/agent.json",
+            "path": "/knowledge/documents/0/path",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/knowledge-context-missing"
+      },
+      "counterpart": "knowledge-context-files"
+    },
+    {
+      "case_id": "knowledge-context-count",
+      "description": "Knowledge context count.",
+      "root": "fixtures/packaged/knowledge-context-count/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-KNOW-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-KNOW-002",
+            "document": "fixtures/packaged/knowledge-context-count/agent.json",
+            "path": "/knowledge/context/document_count",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/knowledge-context-count"
+      },
+      "counterpart": "knowledge-context-files"
+    },
+    {
+      "case_id": "knowledge-context-bytes",
+      "description": "Knowledge context bytes.",
+      "root": "fixtures/packaged/knowledge-context-bytes/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-KNOW-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-KNOW-002",
+            "document": "fixtures/packaged/knowledge-context-bytes/agent.json",
+            "path": "/knowledge/context/total_bytes",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/knowledge-context-bytes"
+      },
+      "counterpart": "knowledge-context-files"
+    },
+    {
+      "case_id": "knowledge-vector-files",
+      "description": "Knowledge vector files.",
+      "root": "fixtures/packaged/knowledge-vector-files/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-KNOW-001", "APDS-KNOW-002", "APDS-KNOW-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/knowledge-vector-files"
+      }
+    },
+    {
+      "case_id": "knowledge-index-embedding",
+      "description": "Knowledge index embedding.",
+      "root": "fixtures/packaged/knowledge-index-embedding/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-KNOW-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-KNOW-003",
+            "document": "fixtures/packaged/knowledge-index-embedding/agent.json",
+            "path": "/knowledge/indexes/0/embedding_id",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/knowledge-index-embedding"
+      },
+      "counterpart": "knowledge-vector-files"
+    },
+    {
+      "case_id": "knowledge-index-duplicate",
+      "description": "Knowledge index duplicate.",
+      "root": "fixtures/packaged/knowledge-index-duplicate/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-KNOW-003"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-KNOW-003",
+            "document": "fixtures/packaged/knowledge-index-duplicate/agent.json",
+            "path": "/knowledge/indexes/1/id",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/knowledge-index-duplicate"
+      },
+      "counterpart": "knowledge-vector-files"
+    },
+    {
+      "case_id": "knowledge-corpus-count",
+      "description": "Knowledge corpus count.",
+      "root": "fixtures/packaged/knowledge-corpus-count/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-KNOW-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-KNOW-002",
+            "document": "fixtures/packaged/knowledge-corpus-count/agent.json",
+            "path": "/knowledge/corpus/chunk_count",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/knowledge-corpus-count"
+      },
+      "counterpart": "knowledge-vector-files"
+    },
+    {
+      "case_id": "knowledge-content-unavailable",
+      "description": "Knowledge content unavailable.",
+      "root": "fixtures/valid-cases/context.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-CONF-002", "APDS-CONF-003", "APDS-CONF-005"],
+      "semantic_cases": ["N"],
+      "expected": {
+        "status": "incomplete",
+        "findings": [],
+        "unevaluated": ["APDS-KNOW-002"]
+      },
+      "package": {
+        "availability": "unavailable"
+      },
+      "counterpart": "knowledge-context-files"
+    },
+    {
+      "case_id": "memory-schema-local-ref",
+      "description": "Memory schema local ref.",
+      "root": "fixtures/packaged/memory-schema-local-ref/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-006"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/memory-schema-local-ref"
+      },
+      "counterpart": "memory-record-schemas"
+    },
+    {
+      "case_id": "memory-record-schemas",
+      "description": "Memory record schemas.",
+      "root": "fixtures/packaged/memory-record-schemas/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-006", "APDS-MEM-012"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/memory-record-schemas"
+      }
+    },
+    {
+      "case_id": "memory-schema-remote-ref",
+      "description": "Memory schema remote ref.",
+      "root": "fixtures/packaged/memory-schema-remote-ref/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-006"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-006",
+            "document": "fixtures/packaged/memory-schema-remote-ref/schemas/note.json",
+            "path": "/properties/text/$ref",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/memory-schema-remote-ref"
+      },
+      "counterpart": "memory-record-schemas"
+    },
+    {
+      "case_id": "memory-schema-required-nonpersistable",
+      "description": "Memory schema required nonpersistable.",
+      "root": "fixtures/packaged/memory-schema-required-nonpersistable/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-006"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-006",
+            "document": "fixtures/packaged/memory-schema-required-nonpersistable/schemas/note.json",
+            "path": "/required/1",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/memory-schema-required-nonpersistable"
+      },
+      "counterpart": "memory-record-schemas"
+    },
+    {
+      "case_id": "memory-schema-governance-unknown",
+      "description": "Memory schema governance unknown.",
+      "root": "fixtures/packaged/memory-schema-governance-unknown/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-012"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-012",
+            "document": "fixtures/packaged/memory-schema-governance-unknown/schemas/note.json",
+            "path": "/properties/text/x-agentpm-secret",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/memory-schema-governance-unknown"
+      },
+      "counterpart": "memory-record-schemas"
+    },
+    {
+      "case_id": "memory-schema-governance-value",
+      "description": "Memory schema governance value.",
+      "root": "fixtures/packaged/memory-schema-governance-value/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-012"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-012",
+            "document": "fixtures/packaged/memory-schema-governance-value/schemas/note.json",
+            "path": "/properties/text/x-agentpm-shareable",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/memory-schema-governance-value"
+      },
+      "counterpart": "memory-record-schemas"
+    },
+    {
+      "case_id": "memory-schema-governance-class",
+      "description": "Memory schema governance class.",
+      "root": "fixtures/packaged/memory-schema-governance-class/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-012"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-012",
+            "document": "fixtures/packaged/memory-schema-governance-class/schemas/note.json",
+            "path": "/properties/text/x-agentpm-data-class",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/memory-schema-governance-class"
+      },
+      "counterpart": "memory-record-schemas"
+    },
+    {
+      "case_id": "memory-schema-invalid-schema",
+      "description": "Memory schema invalid schema.",
+      "root": "fixtures/packaged/memory-schema-invalid-schema/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-006"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-006",
+            "document": "fixtures/packaged/memory-schema-invalid-schema/schemas/note.json",
+            "path": "/type",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/memory-schema-invalid-schema"
+      },
+      "counterpart": "memory-record-schemas"
+    },
+    {
+      "case_id": "memory-schema-missing",
+      "description": "Memory schema missing.",
+      "root": "fixtures/packaged/memory-schema-missing/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-MEM-006"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-MEM-006",
+            "document": "fixtures/packaged/memory-schema-missing/agent.json",
+            "path": "/memory/record_types/note/schema",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/memory-schema-missing"
+      },
+      "counterpart": "memory-record-schemas"
+    },
+    {
+      "case_id": "memory-schemas-unavailable",
+      "description": "Memory schemas unavailable.",
+      "root": "fixtures/valid-cases/memory-all-models.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-CONF-002"],
+      "semantic_cases": ["N"],
+      "expected": {
+        "status": "incomplete",
+        "findings": [],
+        "unevaluated": ["APDS-MEM-006", "APDS-MEM-012"]
+      },
+      "package": {
+        "availability": "unavailable"
+      },
+      "counterpart": "memory-record-schemas"
+    },
+    {
+      "case_id": "skill-files",
+      "description": "Skill files.",
+      "root": "fixtures/packaged/skill-files/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-SKILL-001", "APDS-ID-004"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/skill-files"
+      }
+    },
+    {
+      "case_id": "skill-file-missing",
+      "description": "Skill file missing.",
+      "root": "fixtures/packaged/skill-file-missing/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-SKILL-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-SKILL-001",
+            "document": "fixtures/packaged/skill-file-missing/agent.json",
+            "path": "/skill/entrypoint",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/skill-file-missing"
+      },
+      "counterpart": "skill-files"
+    },
+    {
+      "case_id": "skill-path-escape",
+      "description": "Skill path escape.",
+      "root": "fixtures/invalid/skill-path-escape.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-004"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-004",
+            "document": "fixtures/invalid/skill-path-escape.json",
+            "path": "/skill/entrypoint",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "skill-files"
+    },
+    {
+      "case_id": "template-files",
+      "description": "Template files.",
+      "root": "fixtures/packaged/template-files/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": [
+        "APDS-TEMPLATE-001",
+        "APDS-TEMPLATE-002",
+        "APDS-TEMPLATE-003",
+        "APDS-ID-004"
+      ],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/template-files"
+      }
+    },
+    {
+      "case_id": "template-root-missing",
+      "description": "Template root missing.",
+      "root": "fixtures/packaged/template-root-missing/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-TEMPLATE-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-TEMPLATE-001",
+            "document": "fixtures/packaged/template-root-missing/agent.json",
+            "path": "/template/files_root",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/template-root-missing"
+      },
+      "counterpart": "template-files"
+    },
+    {
+      "case_id": "template-selected-dependencies",
+      "description": "Template selected dependencies.",
+      "root": "fixtures/resolved/template-selected-dependencies.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          },
+          {
+            "id": "agent:composed@1.0.0",
+            "identity": "@example/composed",
+            "kind": "agent",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/composition-complete.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/template/dependencies/agents/0",
+            "to": "agent:composed@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/template/dependencies/tools/0",
+            "to": "tool:echo@1.0.0"
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "template-dependency-wrong-kind",
+      "description": "Template dependency wrong kind.",
+      "root": "fixtures/resolved/template-selected-dependencies.json",
+      "subject": "validator",
+      "level": "resolved",
+      "schema_valid": true,
+      "rules": ["APDS-GRAPH-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-GRAPH-002",
+            "document": "fixtures/resolved/template-selected-dependencies.json",
+            "path": "/template/dependencies/tools/0",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "graph": {
+        "complete": true,
+        "artifacts": [
+          {
+            "id": "tool:echo@1.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-1.0.0.json"
+          },
+          {
+            "id": "tool:echo@2.0.0",
+            "identity": "@example/echo",
+            "kind": "tool",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-echo-2.0.0.json"
+          },
+          {
+            "id": "tool:publish@1.0.0",
+            "identity": "@example/publish",
+            "kind": "tool",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/tool-publish-1.0.0.json"
+          },
+          {
+            "id": "skill:review@1.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-1.0.0.json"
+          },
+          {
+            "id": "skill:review@2.0.0",
+            "identity": "@example/review",
+            "kind": "skill",
+            "version": "2.0.0",
+            "manifest": "fixtures/resolved/artifacts/skill-review-2.0.0.json"
+          },
+          {
+            "id": "profile:global@1.0.0",
+            "identity": "@example/global",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-global-1.0.0.json"
+          },
+          {
+            "id": "profile:phase@1.0.0",
+            "identity": "@example/phase",
+            "kind": "profile",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/profile-phase-1.0.0.json"
+          },
+          {
+            "id": "knowledge:guide@1.0.0",
+            "identity": "@example/guide",
+            "kind": "knowledge",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/knowledge-guide-1.0.0.json"
+          },
+          {
+            "id": "loop:workflow@1.0.0",
+            "identity": "@example/workflow",
+            "kind": "loop",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/loop-workflow-1.0.0.json"
+          },
+          {
+            "id": "memory:notes@1.0.0",
+            "identity": "@example/notes",
+            "kind": "memory",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/artifacts/memory-notes-1.0.0.json"
+          },
+          {
+            "id": "agent:composed@1.0.0",
+            "identity": "@example/composed",
+            "kind": "agent",
+            "version": "1.0.0",
+            "manifest": "fixtures/resolved/composition-complete.json"
+          }
+        ],
+        "edges": [
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/tools/1",
+            "to": "tool:publish@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/skills/0",
+            "to": "skill:review@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/profiles/0",
+            "to": "profile:global@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/profiles/1",
+            "to": "profile:phase@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/knowledge/0",
+            "to": "knowledge:guide@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/memory/0",
+            "to": "memory:notes@1.0.0"
+          },
+          {
+            "from": "agent:composed@1.0.0",
+            "field": "/loop",
+            "to": "loop:workflow@1.0.0"
+          },
+          {
+            "from": "skill:review@1.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@1.0.0"
+          },
+          {
+            "from": "skill:review@2.0.0",
+            "field": "/tools/0",
+            "to": "tool:echo@2.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/template/dependencies/agents/0",
+            "to": "agent:composed@1.0.0"
+          },
+          {
+            "from": "root",
+            "field": "/template/dependencies/tools/0",
+            "to": "skill:review@1.0.0"
+          }
+        ]
+      },
+      "counterpart": "template-selected-dependencies"
+    },
+    {
+      "case_id": "template-variable-duplicate",
+      "description": "Template variable duplicate.",
+      "root": "fixtures/invalid/template-variable-duplicate.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-TEMPLATE-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-TEMPLATE-001",
+            "document": "fixtures/invalid/template-variable-duplicate.json",
+            "path": "/template/variables/1/name",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "template-files"
+    },
+    {
+      "case_id": "template-path-escape",
+      "description": "Template path escape.",
+      "root": "fixtures/invalid/template-path-escape.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-ID-004"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-ID-004",
+            "document": "fixtures/invalid/template-path-escape.json",
+            "path": "/template/files_root",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "template-files"
+    },
+    {
+      "case_id": "profile-guidance",
+      "description": "Profile guidance.",
+      "root": "fixtures/valid-cases/profile-guidance.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-PROFILE-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "conformant",
+        "findings": [],
+        "unevaluated": []
+      }
+    },
+    {
+      "case_id": "profile-constraint-duplicate",
+      "description": "Profile constraint duplicate.",
+      "root": "fixtures/invalid/profile-constraint-duplicate.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-PROFILE-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-PROFILE-001",
+            "document": "fixtures/invalid/profile-constraint-duplicate.json",
+            "path": "/profile/constraints/2/id",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "profile-guidance"
+    },
+    {
+      "case_id": "tool-runtime-mismatch",
+      "description": "Tool runtime mismatch.",
+      "root": "fixtures/invalid/tool-runtime-mismatch.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-TOOL-002"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-TOOL-002",
+            "document": "fixtures/invalid/tool-runtime-mismatch.json",
+            "path": "/runtime/type",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "valid-tool"
+    },
+    {
+      "case_id": "loop-policy-retry-missing",
+      "description": "Loop policy retry missing.",
+      "root": "fixtures/invalid/loop-policy-retry-missing.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-LOOP-006"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-006",
+            "document": "fixtures/invalid/loop-policy-retry-missing.json",
+            "path": "/loop/error_policy/tool_failure/max_retries",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-complete"
+    },
+    {
+      "case_id": "loop-outcome-duplicate",
+      "description": "Loop outcome duplicate.",
+      "root": "fixtures/invalid/loop-outcome-duplicate.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": true,
+      "rules": ["APDS-LOOP-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-LOOP-001",
+            "document": "fixtures/invalid/loop-outcome-duplicate.json",
+            "path": "/loop/phases/0/outcomes/1/id",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "loop-explicit-outcomes"
+    },
+    {
+      "case_id": "knowledge-vector-embedding-missing",
+      "description": "Knowledge vector embedding missing.",
+      "root": "fixtures/invalid/knowledge-vector-embedding-missing.json",
+      "subject": "validator",
+      "level": "standalone",
+      "schema_valid": false,
+      "rules": ["APDS-KNOW-001"],
+      "semantic_cases": [],
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-KNOW-001",
+            "document": "fixtures/invalid/knowledge-vector-embedding-missing.json",
+            "path": "/knowledge/embedding",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "knowledge-vector-files"
+    },
+    {
+      "case_id": "knowledge-vector-truncated",
+      "description": "A complete supplied vector payload has a truncated final float.",
+      "root": "fixtures/packaged/knowledge-vector-truncated/agent.json",
+      "subject": "validator",
+      "level": "packaged",
+      "schema_valid": true,
+      "rules": ["APDS-KNOW-002"],
+      "semantic_cases": [],
+      "package": {
+        "availability": "complete",
+        "root": "fixtures/packaged/knowledge-vector-truncated"
+      },
+      "expected": {
+        "status": "nonconformant",
+        "findings": [
+          {
+            "rule_id": "APDS-KNOW-002",
+            "document": "fixtures/packaged/knowledge-vector-truncated/agent.json",
+            "path": "/knowledge/embedding/vectors_path",
+            "severity": "error"
+          }
+        ],
+        "unevaluated": []
+      },
+      "counterpart": "knowledge-vector-files"
+    }
+  ],
+  "rule_coverage": [
+    {
+      "rule_id": "APDS-SCOPE-001",
+      "validator_cases": [],
+      "runner_observations": ["unsupported-backend"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-SCOPE-002",
+      "validator_cases": [],
+      "runner_observations": [],
+      "note": "Contract/reporting requirement: assess version immutability and truthful role/scope claims alongside the corpus; no artificial invalid manifest."
+    },
+    {
+      "rule_id": "APDS-ID-001",
+      "validator_cases": [
+        "minimal-agent",
+        "selector-missing",
+        "selector-malformed",
+        "selector-unsupported",
+        "selector-other-id"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-ID-002",
+      "validator_cases": [
+        "valid-agent",
+        "invalid-agent-required",
+        "minimal-agent",
+        "description-blank",
+        "description-whitespace",
+        "local-name-namespaced"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-ID-003",
+      "validator_cases": [
+        "reference-latest",
+        "reference-caret",
+        "reference-tilde",
+        "reference-wildcard",
+        "reference-comparison",
+        "reference-malformed",
+        "reference-supported"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-ID-004",
+      "validator_cases": [
+        "skill-files",
+        "skill-path-escape",
+        "template-files",
+        "template-path-escape"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-GRAPH-001",
+      "validator_cases": [
+        "valid-agent",
+        "valid-tool",
+        "valid-skill",
+        "valid-knowledge",
+        "valid-memory",
+        "valid-profile",
+        "valid-loop",
+        "valid-template",
+        "minimal-agent",
+        "unknown-root-field",
+        "unknown-kind"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-GRAPH-002",
+      "validator_cases": [
+        "composition-complete",
+        "selection-wrong-kind",
+        "selection-wrong-version",
+        "graph-unavailable",
+        "composition-two-tool-versions",
+        "known-violation-with-incomplete-graph",
+        "template-selected-dependencies",
+        "template-dependency-wrong-kind"
+      ],
+      "runner_observations": [
+        "exact-selected-versions",
+        "distinct-selected-tool-versions"
+      ],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-GRAPH-003",
+      "validator_cases": [
+        "composition-complete",
+        "dependency-duplicate-identity"
+      ],
+      "runner_observations": ["exact-selected-versions"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-BIND-001",
+      "validator_cases": [
+        "composition-complete",
+        "binding-undeclared",
+        "binding-space-unknown",
+        "binding-operation-unknown",
+        "skill-phase-only",
+        "skill-inherited-only",
+        "memory-operation-only",
+        "memory-phase-trigger",
+        "memory-external-bound",
+        "known-violation-with-incomplete-graph"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-BIND-002",
+      "validator_cases": [
+        "composition-complete",
+        "phase-unknown",
+        "phase-without-loop",
+        "graph-unavailable",
+        "known-violation-with-incomplete-graph"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-BIND-003",
+      "validator_cases": [],
+      "runner_observations": ["additive-tools", "additive-profiles"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-BIND-004",
+      "validator_cases": [],
+      "runner_observations": [
+        "loop-denies-inherited-mcp",
+        "external-not-invoked"
+      ],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-BIND-005",
+      "validator_cases": [
+        "composition-complete",
+        "mcp-id-duplicate",
+        "mcp-tool-undeclared"
+      ],
+      "runner_observations": ["loop-denies-inherited-mcp"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-SKILL-001",
+      "validator_cases": [
+        "valid-skill",
+        "invalid-skill-required",
+        "skill-files",
+        "skill-file-missing"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-SKILL-002",
+      "validator_cases": [],
+      "runner_observations": ["additive-tools", "phase-skill"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-SKILL-003",
+      "validator_cases": [],
+      "runner_observations": [
+        "additive-tools",
+        "exact-selected-versions",
+        "distinct-selected-tool-versions"
+      ],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-TOOL-001",
+      "validator_cases": [],
+      "runner_observations": ["tool-json-boundary"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-TOOL-002",
+      "validator_cases": [
+        "valid-tool",
+        "invalid-tool-required",
+        "tool-runtime-mismatch"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-TOOL-003",
+      "validator_cases": [],
+      "runner_observations": ["environment-layers"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-LOOP-001",
+      "validator_cases": [
+        "valid-loop",
+        "invalid-loop-required",
+        "loop-complete",
+        "loop-entry-unknown",
+        "loop-phase-duplicate",
+        "loop-objective-blank",
+        "loop-explicit-outcomes",
+        "loop-outcome-duplicate"
+      ],
+      "runner_observations": ["implicit-complete"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-LOOP-002",
+      "validator_cases": [
+        "loop-complete",
+        "loop-source-unknown",
+        "loop-outcome-unknown",
+        "loop-target-unknown",
+        "loop-transition-missing",
+        "loop-transition-duplicate",
+        "loop-unreachable",
+        "loop-no-terminal",
+        "loop-explicit-outcomes",
+        "loop-explicit-no-implicit-complete"
+      ],
+      "runner_observations": ["implicit-complete"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-LOOP-003",
+      "validator_cases": [],
+      "runner_observations": ["implicit-complete"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-LOOP-004",
+      "validator_cases": [],
+      "runner_observations": ["loop-limits-checkpoints"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-LOOP-005",
+      "validator_cases": [
+        "loop-complete",
+        "loop-checkpoint-phase",
+        "loop-checkpoint-rejection",
+        "loop-checkpoint-duplicate"
+      ],
+      "runner_observations": ["loop-limits-checkpoints"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-LOOP-006",
+      "validator_cases": [
+        "loop-complete",
+        "loop-policy-phase-missing",
+        "loop-policy-retry-missing"
+      ],
+      "runner_observations": ["loop-limits-checkpoints"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-LOOP-007",
+      "validator_cases": [],
+      "runner_observations": [
+        "loop-denies-inherited-mcp",
+        "profile-hint-does-not-grant",
+        "memory-space-scope"
+      ],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-PROFILE-001",
+      "validator_cases": [
+        "valid-profile",
+        "invalid-profile-required",
+        "profile-guidance",
+        "profile-constraint-duplicate"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-PROFILE-002",
+      "validator_cases": [],
+      "runner_observations": ["additive-profiles"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-PROFILE-003",
+      "validator_cases": [],
+      "runner_observations": ["profile-hint-does-not-grant"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-KNOW-001",
+      "validator_cases": [
+        "valid-knowledge",
+        "invalid-knowledge-required",
+        "knowledge-vector-files",
+        "knowledge-vector-embedding-missing"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-KNOW-002",
+      "validator_cases": [
+        "knowledge-context-files",
+        "knowledge-context-missing",
+        "knowledge-context-count",
+        "knowledge-context-bytes",
+        "knowledge-vector-files",
+        "knowledge-corpus-count",
+        "knowledge-content-unavailable",
+        "knowledge-vector-truncated"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-KNOW-003",
+      "validator_cases": [
+        "knowledge-vector-files",
+        "knowledge-index-embedding",
+        "knowledge-index-duplicate"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-KNOW-004",
+      "validator_cases": [],
+      "runner_observations": ["knowledge-preferences"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-KNOW-005",
+      "validator_cases": [],
+      "runner_observations": ["knowledge-preferences"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-MEM-001",
+      "validator_cases": [
+        "valid-memory",
+        "invalid-memory-required",
+        "memory-all-models",
+        "memory-scope-unknown",
+        "memory-record-type-unknown",
+        "memory-operation-space",
+        "memory-operation-pairing",
+        "memory-delete-target",
+        "memory-trigger-space"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-MEM-002",
+      "validator_cases": [],
+      "runner_observations": ["memory-record-models"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-MEM-003",
+      "validator_cases": [
+        "memory-all-models",
+        "memory-document-retrieval",
+        "memory-sequence-retrieval"
+      ],
+      "runner_observations": ["memory-record-models"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-MEM-004",
+      "validator_cases": [
+        "memory-all-models",
+        "memory-duration-0",
+        "memory-duration-1",
+        "memory-duration-2",
+        "memory-duration-3",
+        "memory-duration-4",
+        "memory-ttl-calendar-month"
+      ],
+      "runner_observations": ["memory-record-models"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-MEM-005",
+      "validator_cases": ["memory-all-models", "memory-document-append-only"],
+      "runner_observations": ["memory-record-models"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-MEM-006",
+      "validator_cases": [
+        "memory-schema-local-ref",
+        "memory-record-schemas",
+        "memory-schema-remote-ref",
+        "memory-schema-required-nonpersistable",
+        "memory-schema-invalid-schema",
+        "memory-schema-missing",
+        "memory-schemas-unavailable"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-MEM-007",
+      "validator_cases": ["memory-all-models", "memory-transform-two-inputs"],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-MEM-008",
+      "validator_cases": ["memory-all-models", "memory-capacity-missing"],
+      "runner_observations": [
+        "external-not-invoked",
+        "operation-participation",
+        "trigger-initial-record_count",
+        "trigger-unchanged-record_count",
+        "trigger-rearm-record_count",
+        "trigger-initial-capacity",
+        "trigger-unchanged-capacity",
+        "trigger-rearm-capacity",
+        "interval-baseline"
+      ],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-MEM-009",
+      "validator_cases": [],
+      "runner_observations": [
+        "operation-without-direct-access",
+        "memory-space-scope",
+        "operation-participation",
+        "interval-baseline"
+      ],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-MEM-010",
+      "validator_cases": [
+        "memory-all-models",
+        "memory-replace-wrong-target",
+        "memory-retention-missing",
+        "memory-replace-append-only",
+        "memory-replace-source-handling",
+        "memory-delete-after-success",
+        "memory-retain-until-expiration"
+      ],
+      "runner_observations": ["memory-record-models"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-MEM-011",
+      "validator_cases": [],
+      "runner_observations": ["operation-without-direct-access"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-MEM-012",
+      "validator_cases": [
+        "memory-record-schemas",
+        "memory-schema-governance-unknown",
+        "memory-schema-governance-value",
+        "memory-schema-governance-class",
+        "memory-schemas-unavailable"
+      ],
+      "runner_observations": ["governance-boundaries"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-MEM-013",
+      "validator_cases": [],
+      "runner_observations": ["memory-record-models"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-TEMPLATE-001",
+      "validator_cases": [
+        "valid-template",
+        "invalid-template-required",
+        "template-files",
+        "template-root-missing",
+        "template-variable-duplicate"
+      ],
+      "runner_observations": ["template-instantiation"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-TEMPLATE-002",
+      "validator_cases": ["template-files"],
+      "runner_observations": ["template-instantiation"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-TEMPLATE-003",
+      "validator_cases": ["template-files"],
+      "runner_observations": ["template-instantiation"],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-CONF-001",
+      "validator_cases": ["standalone-without-graph"],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-CONF-002",
+      "validator_cases": [
+        "graph-unavailable",
+        "knowledge-content-unavailable",
+        "memory-schemas-unavailable"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-CONF-003",
+      "validator_cases": [
+        "minimal-agent",
+        "selector-unsupported",
+        "description-whitespace",
+        "composition-complete",
+        "graph-unavailable",
+        "standalone-without-graph",
+        "known-violation-with-incomplete-graph",
+        "knowledge-content-unavailable"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    },
+    {
+      "rule_id": "APDS-CONF-004",
+      "validator_cases": [],
+      "runner_observations": ["minimal-agent-readiness", "unsupported-backend"],
+      "note": "Case links cover the applicable authored checks and observable behavior; they do not certify unrelated roles."
+    },
+    {
+      "rule_id": "APDS-CONF-005",
+      "validator_cases": [
+        "minimal-agent",
+        "selector-unsupported",
+        "description-whitespace",
+        "composition-complete",
+        "graph-unavailable",
+        "standalone-without-graph",
+        "known-violation-with-incomplete-graph",
+        "knowledge-content-unavailable"
+      ],
+      "runner_observations": [],
+      "note": "Cases exercise the applicable declarations, evaluation levels and reporting distinctions; Runner execution remains separate."
+    }
+  ]
+}

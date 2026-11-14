@@ -1,0 +1,117 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "kind": "loop",
+  "name": "workflow",
+  "version": "1.0.0",
+  "description": "Starter AgentPM project",
+  "loop": {
+    "entry_phase": "research",
+    "phases": [
+      {
+        "id": "research",
+        "objective": "Complete research.",
+        "access": {
+          "tools": true,
+          "knowledge": true,
+          "memory": {
+            "read": true,
+            "write": true
+          }
+        },
+        "outcomes": [
+          {
+            "id": "ready",
+            "description": "Ready."
+          },
+          {
+            "id": "ready",
+            "description": "Ready."
+          }
+        ]
+      },
+      {
+        "id": "draft",
+        "objective": "Complete draft.",
+        "access": {
+          "tools": true,
+          "knowledge": true,
+          "memory": {
+            "read": true,
+            "write": true
+          }
+        }
+      },
+      {
+        "id": "review",
+        "objective": "Complete review.",
+        "access": {
+          "tools": false,
+          "knowledge": true,
+          "memory": {
+            "read": false,
+            "write": false
+          }
+        }
+      },
+      {
+        "id": "publish",
+        "objective": "Complete publish.",
+        "access": {
+          "tools": true,
+          "knowledge": true,
+          "memory": {
+            "read": true,
+            "write": true
+          }
+        }
+      }
+    ],
+    "transitions": [
+      {
+        "from": "research",
+        "on": "ready",
+        "to": "draft"
+      },
+      {
+        "from": "draft",
+        "on": "complete",
+        "to": "review"
+      },
+      {
+        "from": "review",
+        "on": "complete",
+        "to": "publish"
+      },
+      {
+        "from": "publish",
+        "on": "complete",
+        "to": "$end"
+      }
+    ],
+    "limits": {
+      "max_steps": 8
+    },
+    "checkpoints": [
+      {
+        "id": "approval",
+        "type": "approval",
+        "before_phase": "publish",
+        "on_reject": "$handoff"
+      }
+    ],
+    "error_policy": {
+      "tool_failure": {
+        "action": "retry",
+        "max_retries": 1,
+        "on_exhausted": "fail_phase"
+      },
+      "phase_failure": {
+        "action": "handoff"
+      }
+    }
+  },
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  }
+}

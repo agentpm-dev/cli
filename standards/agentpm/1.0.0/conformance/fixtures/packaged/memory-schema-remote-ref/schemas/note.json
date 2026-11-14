@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "text": {
+      "type": "string",
+      "x-agentpm-data-class": "personal",
+      "x-agentpm-sensitivity": "moderate",
+      "x-agentpm-persist": true,
+      "x-agentpm-shareable": false,
+      "$ref": "https://example.invalid/schema"
+    },
+    "temporary": {
+      "type": "string",
+      "x-agentpm-persist": false
+    }
+  },
+  "required": ["text"],
+  "additionalProperties": false
+}

@@ -1,0 +1,181 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "kind": "memory",
+  "name": "notes",
+  "version": "1.0.0",
+  "description": "Starter AgentPM project",
+  "memory": {
+    "scopes": {
+      "user": {
+        "description": "The current user."
+      }
+    },
+    "record_types": {
+      "note": {
+        "version": "1.0.0",
+        "description": "A note.",
+        "schema": "schemas/note.json"
+      },
+      "summary": {
+        "version": "1.0.0",
+        "description": "A summary.",
+        "schema": "schemas/summary.json"
+      }
+    },
+    "spaces": {
+      "notes": {
+        "description": "Scoped notes.",
+        "model": "collection",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": {
+          "modes": ["key", "filter", "full_text", "semantic"]
+        },
+        "capacity": {
+          "max_records": 3
+        },
+        "retention": {
+          "ttl": "P1M",
+          "on_expire": "archive"
+        },
+        "constraints": {
+          "append_only": true
+        }
+      },
+      "events": {
+        "description": "Scoped events.",
+        "model": "sequence",
+        "record_types": ["note"],
+        "scope": ["user"],
+        "retrieval": {
+          "modes": ["chronological"]
+        },
+        "capacity": {
+          "max_records": 3
+        },
+        "retention": {
+          "ttl": "P7D",
+          "on_expire": "archive"
+        },
+        "constraints": {
+          "append_only": true
+        }
+      },
+      "summary": {
+        "description": "Scoped summary.",
+        "model": "document",
+        "record_types": ["summary"],
+        "scope": ["user"],
+        "retrieval": {
+          "modes": ["key"]
+        },
+        "capacity": {
+          "max_records": 3
+        },
+        "retention": {
+          "ttl": "P7D",
+          "on_expire": "archive"
+        }
+      }
+    },
+    "operations": {
+      "summarize": {
+        "type": "consolidate",
+        "description": "Prepare derived memory.",
+        "trigger": {
+          "type": "record_count",
+          "space": "notes",
+          "threshold": 2
+        },
+        "inputs": [
+          {
+            "space": "notes",
+            "record_type": "note"
+          }
+        ],
+        "output": {
+          "space": "summary",
+          "record_type": "summary"
+        },
+        "source_handling": "retain",
+        "preserve_provenance": true
+      },
+      "transform": {
+        "type": "transform",
+        "description": "Prepare derived memory.",
+        "trigger": {
+          "type": "external"
+        },
+        "inputs": [
+          {
+            "space": "notes",
+            "record_type": "note"
+          }
+        ],
+        "output": {
+          "space": "summary",
+          "record_type": "summary"
+        },
+        "source_handling": "retain",
+        "preserve_provenance": true
+      },
+      "capacity": {
+        "type": "consolidate",
+        "description": "Prepare derived memory.",
+        "trigger": {
+          "type": "capacity",
+          "space": "notes"
+        },
+        "inputs": [
+          {
+            "space": "notes",
+            "record_type": "note"
+          }
+        ],
+        "output": {
+          "space": "summary",
+          "record_type": "summary"
+        },
+        "source_handling": "retain",
+        "preserve_provenance": true
+      },
+      "interval": {
+        "type": "consolidate",
+        "description": "Prepare derived memory.",
+        "trigger": {
+          "type": "interval",
+          "every": "PT10M"
+        },
+        "inputs": [
+          {
+            "space": "notes",
+            "record_type": "note"
+          }
+        ],
+        "output": {
+          "space": "summary",
+          "record_type": "summary"
+        },
+        "source_handling": "retain",
+        "preserve_provenance": true
+      },
+      "delete": {
+        "type": "delete",
+        "description": "Delete scoped notes.",
+        "trigger": {
+          "type": "external"
+        },
+        "targets": [
+          {
+            "space": "notes"
+          }
+        ],
+        "cascade_derived_records": true
+      }
+    }
+  },
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  }
+}

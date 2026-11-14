@@ -4,6 +4,8 @@
 
 This document defines what APDS 1.0.0 declarations mean. Start with the [README](README.md) for the artifact kinds and roles; use the [schema](manifest.schema.json) for exact field shapes. The [rule index](conformance/rule-index.md) lists each rule's subjects, evaluation scopes and related [semantic cases](conformance/semantic-cases.md).
 
+The [fixture index](conformance/fixture-index.json) supplies validation inputs and expected outcomes; [Runner observations](conformance/runner-observations.json) describe separate behavior checks. Follow the [conformance quickstart](conformance/README.md#run-the-corpus-checks) to use them with an implementation.
+
 ## 1. Scope, roles and normative language
 
 An author defines an artifact. A validator checks supplied declarations, dependencies or files. A Manager selects and manages artifacts. A Registry distributes them. A Runner interprets supported declarations during execution. One implementation can perform several roles.

@@ -16,16 +16,18 @@ A structural pass alone does not establish full conformance to APDS 1.0.0. The s
 
 ## Documents and precedence
 
-| Document                                                               | Role                                                            |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [manifest.schema.json](manifest.schema.json)                           | Defines valid manifest structure                                |
-| [semantics.md](semantics.md)                                           | Defines what declarations mean and how they must be interpreted |
-| [conformance/rule-index.md](conformance/rule-index.md)                 | Locates semantic rules by subject and evaluation scope          |
-| [conformance/semantic-cases.md](conformance/semantic-cases.md)         | Illustrates composition and Runner interpretation expectations  |
-| [conformance/README.md](conformance/README.md)                         | Explains validation and conformance tests                       |
-| [conformance/fixtures/valid/](conformance/fixtures/valid/)             | Expected structurally valid manifests for all eight kinds       |
-| [conformance/structural-cases.json](conformance/structural-cases.json) | Expected acceptance and rejection of description edge cases     |
-| [checksums.json](checksums.json)                                       | Identifies the versioned files and their checksums              |
+| Document                                                                     | Role                                                            |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| [manifest.schema.json](manifest.schema.json)                                 | Defines valid manifest structure                                |
+| [semantics.md](semantics.md)                                                 | Defines what declarations mean and how they must be interpreted |
+| [conformance/rule-index.md](conformance/rule-index.md)                       | Locates semantic rules by subject and evaluation scope          |
+| [conformance/semantic-cases.md](conformance/semantic-cases.md)               | Illustrates composition and Runner interpretation expectations  |
+| [conformance/README.md](conformance/README.md)                               | Explains validation and conformance tests                       |
+| [conformance/fixture-index.json](conformance/fixture-index.json)             | Supplies validation inputs, context and expected results        |
+| [conformance/runner-observations.json](conformance/runner-observations.json) | Supplies separate Manager/Runner behavior scenarios             |
+| [conformance/fixtures/valid/](conformance/fixtures/valid/)                   | Expected structurally valid manifests for all eight kinds       |
+| [conformance/structural-cases.json](conformance/structural-cases.json)       | Expected acceptance and rejection of description edge cases     |
+| [checksums.json](checksums.json)                                             | Identifies the versioned files and their checksums              |
 
 The schema and semantic rules apply together. Fixtures illustrate expected outcomes; they do not override either document. Resolve conflicts explicitly before release. Examples and implementation guidance do not introduce additional normative requirements.
 
@@ -36,7 +38,7 @@ To start implementing structural validation:
 3. Check that the nine [valid fixtures](conformance/fixtures/valid/) pass, including the minimal Agent with no Components.
 4. Apply the description cases in [structural-cases.json](conformance/structural-cases.json) and compare results with each case's expected outcome.
 
-Then use [semantics.md](semantics.md) and the [conformance guidance](conformance/README.md) for checks beyond structure.
+Then follow the [conformance quickstart](conformance/README.md#run-the-corpus-checks) and use [semantics.md](semantics.md) with the shared [fixture index](conformance/fixture-index.json) for checks beyond structure.
 
 ## Terminology and roles
 

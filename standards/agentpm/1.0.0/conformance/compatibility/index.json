@@ -1,0 +1,14 @@
+{
+  "format_version": 1,
+  "cases": [
+    {
+      "case_id": "historical-missing-standard",
+      "root": "fixtures/compatibility/legacy-agent.json",
+      "expected": {
+        "interpretation": "legacy_inferred",
+        "explicit_declaration": false,
+        "conformance": "not_verified"
+      }
+    }
+  ]
+}

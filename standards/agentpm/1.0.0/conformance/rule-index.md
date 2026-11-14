@@ -2,6 +2,8 @@
 
 Each link identifies a rule in [semantics.md](../semantics.md). The rule text defines the requirement; this index locates its subjects, checks and related [semantic cases](semantic-cases.md). A case describes expected interpretation, not an additional requirement.
 
+For exact validation inputs/results and Runner scenario IDs, use `rule_coverage` in the [fixture index](fixture-index.json). The [conformance guide](README.md) explains how to run corpus checks and compare an implementation's results.
+
 **Subjects:** A = author, V = validator, M = Manager, R = Runner. A Registry performing validation has V responsibilities. Consumers making support/verification claims also follow the scope and reporting rules.
 
 **Checks:** S = standalone, C = resolved-composition, P = packaged-content, R = Runner interpretation. S/C/P checks establish applicable declaration validity; R checks observe execution or capability behavior. A validator need not execute a Runner to evaluate its own scope. Runtime-only rules do not manufacture invalid-manifest cases.
