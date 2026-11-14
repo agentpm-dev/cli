@@ -51,7 +51,7 @@ pub struct PublishArgs {
     #[arg(long, default_value = "agent.json")]
     pub manifest: String,
 
-    /// Override schema URL or path (same flag as lint)
+    /// Retained for compatibility; overrides are rejected by publish preflight
     #[arg(long, value_name = "URL|PATH")]
     pub schema: Option<String>,
 
@@ -106,7 +106,17 @@ pub struct PublishArgs {
 }
 
 impl PublishArgs {
+    fn reject_schema_override(&self) -> Result<()> {
+        if self.schema.is_some() {
+            bail!(
+                "Schema overrides cannot be used for publish/package preflight. Remove --schema to validate with the bundled APDS contract; use agentpm lint --schema FILE only for non-authoritative development checks."
+            );
+        }
+        Ok(())
+    }
+
     pub async fn run(self, base_url: String) -> Result<()> {
+        self.reject_schema_override()?;
         if self.refresh_python && !self.dry_run {
             bail!(
                 "--refresh-python requires --dry-run. Run `agentpm publish --dry-run --refresh-python`, review and commit agent.lock, then run `agentpm publish`."
@@ -201,6 +211,8 @@ impl PublishArgs {
     }
 
     pub(super) async fn prepare(&self, cfg: &Config, quiet: bool) -> Result<PreparedPackage> {
+        // PackageArgs also invokes prepare directly; guard both entrypoints.
+        self.reject_schema_override()?;
         // 2) Validate manifest using the same schema as `lint`
         let mut s = Step::new("Validating manifest", quiet);
         let manifest_path = PathBuf::from(&self.manifest);
@@ -2368,17 +2380,10 @@ mod tests {
         out
     }
 
-    fn schema_source() -> String {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../schemas/agentpm.manifest.schema.json")
-            .to_string_lossy()
-            .into_owned()
-    }
-
     fn dry_run_args(manifest_path: &Path) -> PublishArgs {
         PublishArgs {
             manifest: manifest_path.to_string_lossy().into_owned(),
-            schema: Some(schema_source()),
+            schema: None,
             strict: false,
             dry_run: true,
             quiet: true,
@@ -2683,12 +2688,7 @@ mod tests {
 
         let args = PublishArgs {
             manifest: manifest_path.to_string_lossy().into_owned(),
-            schema: Some(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            schema: None,
             strict: false,
             dry_run: true,
             quiet: true,
@@ -2740,12 +2740,7 @@ mod tests {
 
         let args = PublishArgs {
             manifest: manifest_path.to_string_lossy().into_owned(),
-            schema: Some(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            schema: None,
             strict: false,
             dry_run: true,
             quiet: true,
@@ -3195,12 +3190,7 @@ mod tests {
 
         let args = PublishArgs {
             manifest: manifest_path.to_string_lossy().into_owned(),
-            schema: Some(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            schema: None,
             strict: false,
             dry_run: true,
             quiet: true,
@@ -4031,12 +4021,7 @@ mod tests {
 
         let args = PublishArgs {
             manifest: manifest_path.to_string_lossy().into_owned(),
-            schema: Some(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            schema: None,
             strict: false,
             dry_run: true,
             quiet: true,
@@ -4100,12 +4085,7 @@ mod tests {
 
         let args = PublishArgs {
             manifest: manifest_path.to_string_lossy().into_owned(),
-            schema: Some(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            schema: None,
             strict: false,
             dry_run: true,
             quiet: true,
@@ -4166,12 +4146,7 @@ mod tests {
 
         let args = PublishArgs {
             manifest: manifest_path.to_string_lossy().into_owned(),
-            schema: Some(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            schema: None,
             strict: false,
             dry_run: true,
             quiet: true,
@@ -4229,12 +4204,7 @@ mod tests {
 
         let args = PublishArgs {
             manifest: manifest_path.to_string_lossy().into_owned(),
-            schema: Some(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            schema: None,
             strict: false,
             dry_run: true,
             quiet: true,
@@ -4279,12 +4249,7 @@ mod tests {
 
         let args = PublishArgs {
             manifest: manifest_path.to_string_lossy().into_owned(),
-            schema: Some(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            schema: None,
             strict: false,
             dry_run: true,
             quiet: true,
@@ -4330,12 +4295,7 @@ mod tests {
 
         let args = PublishArgs {
             manifest: manifest_path.to_string_lossy().into_owned(),
-            schema: Some(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            schema: None,
             strict: false,
             dry_run: true,
             quiet: true,

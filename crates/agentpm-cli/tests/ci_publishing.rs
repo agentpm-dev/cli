@@ -51,8 +51,7 @@ impl Fixture {
     fn package(&self) -> Value {
         let output = self
             .command("package")
-            .args(["--machine", "--schema"])
-            .arg(schema())
+            .args(["--machine"])
             .output()
             .unwrap();
         assert!(output.status.success(), "{}", text(&output));
@@ -88,9 +87,7 @@ impl Drop for Fixture {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
-fn schema() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/agentpm.manifest.schema.json")
-}
+
 fn text(output: &Output) -> String {
     format!(
         "{}{}",
@@ -155,14 +152,76 @@ fn machine_failure_preserves_typed_payload_diagnostics() {
     fs::write(fixture.0.join("icon.png"), b"GIF89a").unwrap();
     let output = fixture
         .command("package")
-        .args(["--machine", "--schema"])
-        .arg(schema())
+        .args(["--machine"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["status"], "error");
     assert_eq!(value["error"]["diagnostics"][0]["code"], "format_mismatch");
+}
+
+#[test]
+fn saved_build_rechecks_the_pinned_schema_even_when_all_byte_digests_agree() {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let fixture = Fixture::new("agent");
+    let packaged = fixture.package();
+    let descriptor = fixture.0.join("target/agentpm/build/package-build.json");
+    let mut build = packaged["build"].clone();
+    build["metadata"]["manifest"]["description"] = json!(" \t ");
+    build["manifest_digest"] =
+        agentpm_sdk::release::manifest_digest(&build["metadata"]["manifest"])
+            .unwrap()
+            .into();
+    let archive = descriptor
+        .parent()
+        .unwrap()
+        .join(build["artifact_path"].as_str().unwrap());
+    let mut source = tar::Archive::new(flate2::read::GzDecoder::new(
+        fs::File::open(&archive).unwrap(),
+    ));
+    let mut rewritten = tar::Builder::new(flate2::write::GzEncoder::new(
+        Vec::new(),
+        flate2::Compression::default(),
+    ));
+    for entry in source.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        let path = entry.path().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        if path == Path::new("agent.json") {
+            bytes = serde_json::to_vec(&build["metadata"]["manifest"]).unwrap();
+        }
+        let mut header = entry.header().clone();
+        header.set_size(bytes.len() as u64);
+        header.set_cksum();
+        rewritten
+            .append_data(&mut header, path, bytes.as_slice())
+            .unwrap();
+    }
+    let bytes = rewritten.into_inner().unwrap().finish().unwrap();
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    build["artifact_sha256"] = format!("sha256:{digest}").into();
+    build["artifact_size"] = json!(bytes.len());
+    build["metadata"]["sha256"] = digest.into();
+    build["metadata"]["size"] = json!(bytes.len());
+    fs::write(&archive, bytes).unwrap();
+    fs::write(&descriptor, serde_json::to_vec(&build).unwrap()).unwrap();
+    let output = fixture
+        .command("publish")
+        .arg("--build")
+        .arg(descriptor)
+        .args(["--namespace", "fixture", "--token", "fixture-only"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        text(&output).contains("Saved build manifest failed bundled validation"),
+        "{}",
+        text(&output)
+    );
+    assert!(text(&output).contains("/description"), "{}", text(&output));
 }
 
 #[test]

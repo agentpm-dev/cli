@@ -68,6 +68,8 @@ The table below lets Codex and Claude find the relevant **named tests** without 
 | M17B — docs rewrite | T-DOCS-02–03 + T-APDS-21 | Canonical readable standard linked, no authored README rewrite |
 | M17C — final verification | T-DOCS-01–04 + all T suites | All D01–D21 and S2-AC-01–22 evidence reviewed |
 
+**M1B completion evidence (2026-11-14):** [Verification record](m1b-verification.md), [structural diff](m1b-structural-diff.json) and the [reviewed entrypoint](../../standards/agentpm/1.0.0/README.md) cover the structural/authority portion of T-APDS-01–05,16–18,21. Rust and Python consume the same structural fixtures. User confirmed Claude's full review, including newcomer/readability review, passed with no remaining findings; **M1B is complete**. Full semantic parity, complete corpus, hosted CI and public contract-tag publication are not claimed by this completion record.
+
 ### Suggested commands grounded in current repository structure
 
 These are baseline commands, not proof that all projects currently expose the same runner. Codex should reconcile exact CI/build paths and add specific newly authored tests when implementing.

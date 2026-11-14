@@ -51,11 +51,7 @@ impl Fixture {
             .env("XDG_DATA_HOME", self.0.join("home/data"))
             .env("AGENTPM_TELEMETRY", "0")
             .env("AGENTPM_BASE_URL", "http://127.0.0.1:1")
-            .args(["publish", "--token", "fixture-only", "--schema"])
-            .arg(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json"),
-            );
+            .args(["publish", "--token", "fixture-only"]);
         command
     }
 

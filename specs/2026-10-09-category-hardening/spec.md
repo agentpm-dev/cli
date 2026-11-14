@@ -233,6 +233,8 @@ advertisement for no product benefit.
 
 ### 2. APDS v1.0.0 — authoritative contract bundle (strong preferred design)
 
+**M1B implementation evidence (2026-11-14):** [Canonical structural candidate](../../standards/agentpm/1.0.0/README.md), [before/after schema diff](m1b-structural-diff.json), and [verification/decision record](m1b-verification.md). Semantic rules and the complete conformance corpus remain with M1C/M2A; this is not a publication claim.
+
 **REQUIRED:** Publish a discoverable, versioned immutable **AgentPM APDS v1.0.0** specification containing
 the same JSON structural contract as the current schema **plus** normative semantic rules and executable
 cross-implementation conformance expectations.

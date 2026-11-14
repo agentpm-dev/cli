@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
   "kind": "template",
   "name": "{{TEMPLATE_NAME}}",
   "version": "0.1.0",

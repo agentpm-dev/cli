@@ -19,7 +19,7 @@ This repo is the Rust CLI and schema layer.
 - user-facing behavior changes with no documentation update when docs should change
 
 ## Specific Review Checks
-- If manifest behavior changed, compare the implementation against both `schemas/agentpm.manifest.schema.json` and `crates/agentpm-cli/src/manifest.rs`.
+- If manifest behavior changed, compare the implementation against canonical `standards/agentpm/1.0.0/manifest.schema.json`, its generated `schemas/agentpm.manifest.schema.json` copy, and `crates/agentpm-cli/src/manifest.rs`.
 - If lockfile behavior changed, treat it as contract-sensitive and inspect the install/resolution path plus any `agent.lock` read/write behavior.
 - If publish or install behavior changed, review both the CLI command and the shared Rust SDK client path.
 - If command output or error wording changed, verify the change is intentional and not incidental drift.

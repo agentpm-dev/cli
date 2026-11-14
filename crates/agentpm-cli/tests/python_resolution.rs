@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Output},
 };
 
@@ -35,9 +35,6 @@ impl Fixture {
             .env("XDG_CACHE_HOME", self.0.join("cache"))
             .env("AGENTPM_TELEMETRY", "0")
             .arg(verb);
-        if matches!(verb, "lint" | "publish") {
-            command.args(["--schema", &schema().to_string_lossy()]);
-        }
         command
     }
 }
@@ -46,9 +43,7 @@ impl Drop for Fixture {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
-fn schema() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/agentpm.manifest.schema.json")
-}
+
 fn text(output: &Output) -> String {
     format!(
         "{}{}",

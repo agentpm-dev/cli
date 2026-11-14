@@ -1,0 +1,16 @@
+{
+  "README.md": "759a5c0d68e480ca9e8f8d31b1a4416bf1cbc1652f7de05de18f3f214898ebd4",
+  "conformance/README.md": "ec589ccf926a85380a8d0ed716cd4540c7aee5f69e362844a8c8a9ffc1d5d2be",
+  "conformance/fixtures/valid/agent.json": "5beadb4adca4975ab1db2db353f6405437cf5f7ee784bb23004086415b806fbf",
+  "conformance/fixtures/valid/knowledge.json": "cdc457c83234fe5fc246bffa5b337fdd706087d0842420b999d4a8f635959461",
+  "conformance/fixtures/valid/loop.json": "656cda1166262770502eb04ff2580a8eedce99ffe457fccdc0cda8011a37bbbf",
+  "conformance/fixtures/valid/memory.json": "2e5b61c7702713a94b2cfc3fb2ebe13127eba6dbd7a4c736678ebf4db5720bea",
+  "conformance/fixtures/valid/minimal-agent.json": "38612738d3e4ae2809bb554d8942039a096aacc325806f0a1e6313323e28aba0",
+  "conformance/fixtures/valid/profile.json": "7162fb7f52a0b33003ef8c48efb9c90f79abe242ae213f6769ee366d3f93922d",
+  "conformance/fixtures/valid/skill.json": "1a0bfde6b1d9623165f4244708da3f81fc13b609dd88440323c9cf39df86ed8f",
+  "conformance/fixtures/valid/template.json": "2cfc547ba57dd1d972477c74f0acbdda542bd4e8d865760c30bbfed36b6e97ed",
+  "conformance/fixtures/valid/tool.json": "6d18fb94316d69fda8456197ac4141773c6bb81d6582fcdbd216111b311b1ea2",
+  "conformance/structural-cases.json": "0f714da293ae3bbe1a81cc1faca06c561eb037ccf355f0420c0f3024199e7593",
+  "manifest.schema.json": "f123150ff42cea4b29edb5076d7d70697269d20ad85118b4a07fe5af5cf2ab04",
+  "semantics.md": "16df4337abc9fd11d76027097cf0578c36a199a2a12919378c449dfa1d1eaa3a"
+}

@@ -398,13 +398,7 @@ fn load_local_template_source(template_ref: &str, quiet: bool) -> Result<LoadedT
 }
 
 fn local_validation_schema_source() -> String {
-    let repo_schema =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/agentpm.manifest.schema.json");
-    if repo_schema.exists() {
-        repo_schema.to_string_lossy().into_owned()
-    } else {
-        resolve_schema_source(None)
-    }
+    resolve_schema_source(None)
 }
 
 fn parse_template_ref(spec: &str) -> Result<agentpm_sdk::models::install::PackageRequirement> {
@@ -869,6 +863,7 @@ fn synthesize_root_manifest(
     let profile_refs = resolved_profile_manifest_refs(template_manifest, plan)?;
     let loop_ref = resolved_loop_manifest_ref(template_manifest, plan)?;
     let mut manifest = json!({
+        "$schema": crate::manifest::DEFAULT_MANIFEST_SCHEMA_URL,
         "kind": "agent",
         "name": resolved_vars
             .get("project_name")

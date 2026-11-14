@@ -208,6 +208,7 @@ fn write_skill_scaffold(output_dir: &Path, resolved: &ExportResolvedTool) -> Res
 
 fn write_skill_manifest(output_dir: &Path, resolved: &ExportResolvedTool) -> Result<()> {
     let manifest = serde_json::json!({
+        "$schema": crate::manifest::DEFAULT_MANIFEST_SCHEMA_URL,
         "kind": "skill",
         "name": format!("{}-skill", slugify_tool_name(&resolved.package)),
         "version": "0.1.0",

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "kind": "knowledge",
+  "name": "example",
+  "version": "0.1.0",
+  "description": "Starter AgentPM project",
+  "knowledge": {
+    "mode": "context",
+    "content_type": "documentation",
+    "documents": [
+      {
+        "path": "knowledge/docs/context.md",
+        "content_type": "text/markdown",
+        "role": "context",
+        "description": "Starter context document."
+      }
+    ],
+    "retrieval": {
+      "strategy": "full_context"
+    }
+  },
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  }
+}

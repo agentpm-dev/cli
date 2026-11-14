@@ -128,34 +128,36 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 
 **Implementation checklist**
 
-- [ ] **Gate check before any other task here:** confirm Stage 1 M2 and M11A manifest-schema additions are merged, and record the exact commits/schema diff inspected. Also confirm Stage 1 M12 kept payload classification out of `agent.json`; if it did not, this gate extends to M12. If any is outstanding, stop — this milestone is blocked, not startable with a planned-field placeholder.
+- [x] **Gate check before any other task here:** confirm Stage 1 M2 and M11A manifest-schema additions are merged, and record the exact commits/schema diff inspected. Also confirm Stage 1 M12 kept payload classification out of `agent.json`; if it did not, this gate extends to M12. If any is outstanding, stop — this milestone is blocked, not startable with a planned-field placeholder.
 
-Stage 1 M11A handoff (2026-10-22, working-tree implementation, not merge evidence):
+Historical Stage 1 M11A handoff (2026-10-22, working-tree implementation, not merge evidence; superseded by the 2026-11-14 merged-code verification in [M1B evidence](m1b-verification.md)):
 `$defs/runtime` now accepts optional Python `dependencies` and rejects the field
 for Node; requirement semantics are validated by the CLI. The portable
 `agentpm.python-resolution.v1` type includes non-empty SHA-256 distribution
 digest sets and conditional markers. Inspect the merged schema/type/tests before
 lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 
-- [ ] Include Stage 1's landed schema additions in the frozen v1.0.0 structural contract: `agentpm-harness` in `$defs/templateMetadata.execution_surfaces` and optional Python `dependencies` on `$defs/runtime`. Add positive fixtures for each in M2A.
-- [ ] Create `standards/agentpm/1.0.0/` (or justified equivalent) and make the intended files independently readable.
-- [ ] Add `standard.id` and `standard.version` to the existing common schema with a fixed supported-v1 expectation.
-- [ ] Make nonblank `description` a **hard conformance error**, owned by the schema. Today the schema types it as bare `{"type": "string"}` and the Rust CLI emits a separate semantic `[WARN] description should not be empty` (verified on 0.1.33: whitespace-only lints with a warning, not an error). Express it structurally in the pinned schema (`minLength` + non-whitespace `pattern` or equivalent) so Rust and Python both enforce it from the contract.
-- [ ] Remove or replace the existing CLI-side description warning so the same defect is not reported twice at two severities; confirm trimming semantics are identical in Rust and Python and covered by a shared fixture.
-- [ ] Remove the incorrect unconditional Agent `tools` requirement while preserving kind-specific Tool requirements.
-- [ ] Verify optional `loop`, `profile`/`profiles`, bindings, empty deps and omitted deps on minimal Agent manifests.
-- [ ] Preserve the local `name` shape; do not rewrite it as `@namespace/name`.
-- [ ] Preserve exact existing eight-kind vocabulary and avoid adding `AgentPackage` as a new machine kind.
-- [ ] Give normative schema a version-stable `$id`, distinct from optional editor `$schema`.
-- [ ] Decide and record the pinned `$schema` URL that scaffolds should emit, so new manifests are edited against the same frozen contract they are validated against.
-- [ ] Select a reproducible build/vendoring mechanism so no two schemas are independently edited.
-- [ ] Add a CI or build assertion detecting old-path versus canonical-schema drift.
-- [ ] **Close the runtime schema-source override.** `manifest.rs::resolve_schema_source()` currently prefers a working-directory-relative `schemas/agentpm.manifest.schema.json` over the compiled-in schema, and `--schema` is honored by both `lint` and `publish` (which can point at an `http(s)` URL that `load_schema_value()` fetches). Verified on CLI 0.1.33: a permissive local copy makes lint pass manifests the bundled contract rejects. Make the pinned bundled contract authoritative for APDS validation; an overridden schema must never yield a `conformant` APDS result, must be labeled non-authoritative in output, and must not reach `publish` preflight as if it proved conformance.
-- [ ] Write the normative `README.md` covering every element the binding requirement below enumerates, including the version/immutability/extension policy and what changes force a new standard version.
-- [ ] Give the README a human-first editorial pass: plain-language definition, scope, conformance roles, key guarantees and a quick map to schema/semantics/fixtures; remove duplicated field-by-field schema explanations and unnecessary formality.
-- [ ] Ask Claude to review the README as a technically capable newcomer without access to AgentPM's code or this planning history; address unclear terms and navigation before the standard is frozen.
-- [ ] Demonstrate that offline validation doesn't fetch a mutable repository URL.
-- [ ] Record selected path/build relationship and a structural before/after diff.
+- [x] Include Stage 1's landed schema additions in the frozen v1.0.0 structural contract: `agentpm-harness` in `$defs/templateMetadata.execution_surfaces` and optional Python `dependencies` on `$defs/runtime`. Add positive fixtures for each in M2A.
+- [x] Create `standards/agentpm/1.0.0/` (or justified equivalent) and make the intended files independently readable.
+- [x] Add `standard.id` and `standard.version` to the existing common schema with a fixed supported-v1 expectation.
+- [x] Make nonblank `description` a **hard conformance error**, owned by the schema. Today the schema types it as bare `{"type": "string"}` and the Rust CLI emits a separate semantic `[WARN] description should not be empty` (verified on 0.1.33: whitespace-only lints with a warning, not an error). Express it structurally in the pinned schema (`minLength` + non-whitespace `pattern` or equivalent) so Rust and Python both enforce it from the contract.
+- [x] Remove or replace the existing CLI-side description warning so the same defect is not reported twice at two severities; confirm trimming semantics are identical in Rust and Python and covered by a shared fixture.
+- [x] Remove the incorrect unconditional Agent `tools` requirement while preserving kind-specific Tool requirements.
+- [x] Verify optional `loop`, `profile`/`profiles`, bindings, empty deps and omitted deps on minimal Agent manifests.
+- [x] Preserve the local `name` shape; do not rewrite it as `@namespace/name`.
+- [x] Preserve exact existing eight-kind vocabulary and avoid adding `AgentPackage` as a new machine kind.
+- [x] Give normative schema a version-stable `$id`, distinct from optional editor `$schema`.
+- [x] Decide and record the pinned `$schema` URL that scaffolds should emit, so new manifests are edited against the same frozen contract they are validated against.
+- [x] Select a reproducible build/vendoring mechanism so no two schemas are independently edited.
+- [x] Add a CI or build assertion detecting old-path versus canonical-schema drift.
+- [x] **Close the runtime schema-source override.** `manifest.rs::resolve_schema_source()` currently prefers a working-directory-relative `schemas/agentpm.manifest.schema.json` over the compiled-in schema, and `--schema` is honored by both `lint` and `publish` (which can point at an `http(s)` URL that `load_schema_value()` fetches). Verified on CLI 0.1.33: a permissive local copy makes lint pass manifests the bundled contract rejects. Make the pinned bundled contract authoritative for APDS validation; an overridden schema must never yield a `conformant` APDS result, must be labeled non-authoritative in output, and must not reach `publish` preflight as if it proved conformance.
+- [x] Write the normative `README.md` covering every element the binding requirement below enumerates, including the version/immutability/extension policy and what changes force a new standard version.
+- [x] Give the README a human-first editorial pass: plain-language definition, scope, conformance roles, key guarantees and a quick map to schema/semantics/fixtures; remove duplicated field-by-field schema explanations and unnecessary formality.
+- [x] Ask Claude to review the README as a technically capable newcomer without access to AgentPM's code or this planning history; address unclear terms and navigation before the standard is frozen. User confirmed full review complete with no remaining findings on **2026-11-14**.
+- [x] Demonstrate that offline validation doesn't fetch a mutable repository URL.
+- [x] Record selected path/build relationship and a structural before/after diff.
+
+**Completion evidence — 2026-11-14:** [M1B verification](m1b-verification.md) records exact prerequisite commits, D02/D19, test commands, compatibility decisions and S2-AC-01/03 contributions. [Structural before/after diff](m1b-structural-diff.json) limits changes to five paths and confirms all 78 definitions are unchanged. User confirmed Claude's full review, including the [canonical README](../../standards/agentpm/1.0.0/README.md), passed with no remaining findings. **M1B is complete.** The bundle remains unpublished; M1C/M2A own completion of semantics/corpus and the release gate still requires publishing/verifying the immutable tag. No conformance DTO, declaration emission or Registry enforcement is claimed here.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -198,7 +200,7 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 - [ ] Explicitly exclude Runner model selection, prompt ordering, approvals UI, hook architecture, storage/retrieval algorithms, scheduling, retry engines and traces unless a specific authored behavior requires an observable guarantee.
 - [ ] Give each normative rule a stable ID, clear requirement, conformance subject and applicability; keep validation levels, diagnostic expectations, rationale when needed and fixture links traceable without forcing a long repeated prose template. Keep AgentPM diagnostic presentation separate from APDS semantics.
 - [ ] Create a concise rule index so future validation errors and Registry reference pages can deep link correctly.
-- [ ] Perform a separate human-readability edit of all eleven chapters: introduce concepts in plain language, shorten abstract sentences, remove redundant rules and implementation-boundary disclaimers, avoid repeating schema definitions, and use compact examples or tables where they explain difficult distinctions. Preserve every actual semantic guarantee.
+- [ ] Perform a separate human-readability edit of all eleven chapters: use the reviewed APDS README as the writing benchmark; introduce concepts in plain language, shorten abstract sentences, remove redundant rules and implementation-boundary disclaimers, avoid repeating schema definitions, and use compact examples or tables where they explain difficult distinctions. Preserve every actual semantic guarantee.
 - [ ] Have Claude read `semantics.md` as a technically capable developer new to APDS: can they find the rules relevant to their role, identify guarantees and implementation freedoms, and understand a representative fixture without the source code or an AI explanation? Resolve unclear or needlessly dense passages.
 - [ ] Verify every semantic example uses schema-accurate fields; do not copy mockup-generated `type` or `apds` fields or describe internal product behavior as universal.
 - [ ] Produce a semantic reconciliation log identifying ambiguous intended behavior, implementation-only defaults and any schema/runtime contradictions; escalate actual product-semantic decisions before freezing.
@@ -481,6 +483,7 @@ This gives AgentPM one pinned APDS v1.0.0 definition derived from its current sc
 - [ ] Confirm the M1A.1 tolerance release shipped **before** any command emits `standard`, that its version is recorded as the minimum CLI floor, and that round-trip preservation is proven by test.
 - [ ] Confirm Stage 1 M2/M11A schema additions were merged **before** the v1.0.0 freeze and are represented in the frozen contract plus fixtures.
 - [ ] Confirm one canonical immutable schema, normative rules and shared fixture corpus, with offline parity across Rust and Python.
+- [ ] After complete schema/semantics/corpus and independent contract/readability review, publish the immutable CLI-repo `apds-v1.0.0` tag containing `standards/agentpm/1.0.0/`. Verify the pinned raw schema URL is available **before releasing the CLI that emits those editor links**. M1B creates the candidate and chooses the URI; it does not publish this tag or ship a complete standard.
 - [ ] Confirm the APDS README and `semantics.md` pass independent newcomer readability review: concise rules, skimmable navigation, clear guarantees, and no unnecessary schema duplication or implementation-specific prose.
 - [ ] Confirm all eight newly authored kinds lint, default init is Agent, explicit Tool scaffold remains valid.
 - [ ] Run custom-client server bypass attempts and in-flight/legacy/new-version migration matrix.

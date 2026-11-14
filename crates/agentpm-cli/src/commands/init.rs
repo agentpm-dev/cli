@@ -718,7 +718,7 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
         assert_eq!(
             manifest_json["$schema"],
-            "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json"
+            crate::manifest::DEFAULT_MANIFEST_SCHEMA_URL
         );
         assert_eq!(manifest_json["kind"], "loop");
         assert_eq!(manifest_json["name"], "incident-response-loop");

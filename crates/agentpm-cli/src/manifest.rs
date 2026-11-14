@@ -10,9 +10,10 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-const DEFAULT_MANIFEST_SCHEMA_URL: &str = "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json";
+pub(crate) const DEFAULT_MANIFEST_SCHEMA_URL: &str = "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json";
+const LEGACY_MANIFEST_SCHEMA_URL: &str = "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json";
 const EMBEDDED_MANIFEST_SCHEMA_JSON: &str =
-    include_str!("../../../schemas/agentpm.manifest.schema.json");
+    include_str!("../../../standards/agentpm/1.0.0/manifest.schema.json");
 
 #[derive(Serialize, Debug, Clone)]
 pub struct LintIssue {
@@ -803,29 +804,20 @@ pub enum PublishManifest {
     Loop(Box<LoopManifest>),
 }
 
-/// Resolve the schema source (local file if present; else hosted URL)
+/// The bundled pinned contract wins unless development lint explicitly opts out.
 pub fn resolve_schema_source(override_opt: Option<String>) -> String {
-    if let Some(x) = override_opt {
-        return x;
-    }
-    let local_path = PathBuf::from("schemas/agentpm.manifest.schema.json");
-    if local_path.exists() {
-        local_path.to_string_lossy().into_owned()
-    } else {
-        DEFAULT_MANIFEST_SCHEMA_URL.to_string()
-    }
+    override_opt.unwrap_or_else(|| DEFAULT_MANIFEST_SCHEMA_URL.to_string())
 }
 
 /// Load a JSON schema from a file or URL.
 pub fn load_schema_value(source: &str) -> Result<Value> {
-    if source == DEFAULT_MANIFEST_SCHEMA_URL {
+    if source == DEFAULT_MANIFEST_SCHEMA_URL || source == LEGACY_MANIFEST_SCHEMA_URL {
         return Ok(serde_json::from_str(EMBEDDED_MANIFEST_SCHEMA_JSON)?);
     }
     if source.starts_with("http://") || source.starts_with("https://") {
-        let resp = reqwest::blocking::get(source)
-            .with_context(|| format!("fetching schema from {source}"))?;
-        let text = resp.text()?;
-        Ok(serde_json::from_str(&text)?)
+        bail!(
+            "Remote schema overrides are not supported; use a local file for non-authoritative development lint. Routine validation uses the bundled APDS schema."
+        )
     } else {
         let text = fs::read_to_string(source)
             .with_context(|| format!("reading schema from {}", source))?;
@@ -860,7 +852,7 @@ pub fn validate_manifest_value(
     )
 }
 
-fn validate_manifest_value_with_manifest_path(
+pub(crate) fn validate_manifest_value_with_manifest_path(
     schema_source: &str,
     file_label: &str,
     value: &mut Value,
@@ -868,7 +860,23 @@ fn validate_manifest_value_with_manifest_path(
     manifest_path: Option<&Path>,
 ) -> Result<(bool, Vec<LintIssue>)> {
     // Compile schema (keep simple for now; we can cache later if needed)
-    let schema_value = load_schema_value(schema_source)?;
+    let mut schema_value = if value.get("standard").is_some() {
+        // A declared package cannot substitute a developer's schema for APDS.
+        load_schema_value(DEFAULT_MANIFEST_SCHEMA_URL)?
+    } else {
+        load_schema_value(schema_source)?
+    };
+    // Temporary legacy-authoring adapter: declaration emission and mandatory
+    // declaration checks are separate rollout steps. Never infer or write one.
+    // The canonical schema itself always requires the explicit selector.
+    if value.get("standard").is_none()
+        && schema_value.get("$id").and_then(Value::as_str) == Some(DEFAULT_MANIFEST_SCHEMA_URL)
+        && let Some(required) = schema_value
+            .get_mut("required")
+            .and_then(Value::as_array_mut)
+    {
+        required.retain(|field| field.as_str() != Some("standard"));
+    }
     let mut issues = crate::lint_output::schema_issues(&schema_value, file_label, value)?;
 
     // Semantic warnings (mirror what `lint` had)
@@ -884,23 +892,11 @@ fn validate_manifest_value_with_manifest_path(
             details: Vec::new(),
         });
         if fix && let Some(obj) = value.as_object_mut() {
-            obj.insert("$schema".into(), Value::String(schema_source.to_string()));
+            obj.insert(
+                "$schema".into(),
+                Value::String(DEFAULT_MANIFEST_SCHEMA_URL.to_string()),
+            );
         }
-    }
-
-    if let Some(Value::String(desc)) = value.get("description")
-        && desc.trim().is_empty()
-    {
-        issues.push(LintIssue {
-            file: file_label.to_string(),
-            level: "warning",
-            message: "`description` should not be empty".into(),
-            instance_path: "/description".into(),
-            schema_path: "".into(),
-            rule_id: None,
-            human_message: None,
-            details: Vec::new(),
-        });
     }
 
     if value.get("kind").and_then(Value::as_str) == Some("template")
@@ -3232,10 +3228,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn schema_path() -> String {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../schemas/agentpm.manifest.schema.json")
-            .to_string_lossy()
-            .into_owned()
+        DEFAULT_MANIFEST_SCHEMA_URL.to_string()
     }
 
     #[test]
@@ -6539,8 +6532,8 @@ mod tests {
     }
 
     #[test]
-    fn reserved_future_fields_do_not_replace_required_tools() {
-        let issues = assert_manifest_invalid(json!({
+    fn agent_components_do_not_require_a_tools_field() {
+        assert_manifest_ok(json!({
             "kind": "agent",
             "name": "missing-tools-agent",
             "version": "0.1.0",
@@ -6550,11 +6543,6 @@ mod tests {
             "memory": [],
             "profiles": []
         }));
-
-        assert!(
-            issues.iter().any(|issue| issue.instance_path.is_empty()),
-            "expected missing-tools validation error, got: {issues:#?}"
-        );
     }
 
     #[test]

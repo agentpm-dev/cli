@@ -12,8 +12,8 @@ pub struct LintArgs {
     #[arg(value_name = "PATHS")]
     paths: Vec<String>,
 
-    /// Override schema URL or path
-    #[arg(long, value_name = "URL|PATH")]
+    /// Local schema for non-authoritative development lint (not APDS conformance)
+    #[arg(long, value_name = "PATH")]
     schema: Option<String>,
 
     /// Treat warnings as errors
@@ -32,7 +32,13 @@ pub struct LintArgs {
 impl LintArgs {
     pub async fn run(self) -> Result<()> {
         // Resolve schema
+        let overridden = self.schema.is_some();
         let schema_source = resolve_schema_source(self.schema);
+        // Reject arbitrary remote inputs even when the manifest declares APDS
+        // and would otherwise be checked solely against the bundled contract.
+        if overridden {
+            crate::manifest::load_schema_value(&schema_source)?;
+        }
 
         // Discover manifests via shared helper
         let files = discover_manifest_files(&self.paths)?;
@@ -66,12 +72,24 @@ impl LintArgs {
                 }
             };
 
-            let (schema_ok, issues) = validate_manifest_value(
+            let (schema_ok, mut issues) = validate_manifest_value(
                 &schema_source,
                 &file.to_string_lossy(),
                 &mut value,
                 self.fix,
             )?;
+            if overridden {
+                issues.push(LintIssue {
+                    file: file.to_string_lossy().into_owned(),
+                    level: "warning",
+                    message: "Schema override: non-authoritative development validation; this result does not establish APDS conformance. Declared APDS manifests still use the bundled contract.".into(),
+                    instance_path: "".into(),
+                    schema_path: "".into(),
+                    rule_id: Some("schema.override".into()),
+                    human_message: None,
+                    details: Vec::new(),
+                });
+            }
 
             let has_error = issues.iter().any(|i| i.level == "error");
             let has_warning = issues.iter().any(|i| i.level == "warning");

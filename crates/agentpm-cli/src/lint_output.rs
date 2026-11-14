@@ -497,12 +497,16 @@ mod tests {
     #[test]
     fn root_kind_dispatch_exposes_actual_required_field_in_all_formats() {
         let report = report(
-            json!({"kind":"agent","name":"missing-tools","version":"0.1.0","description":"An agent."}),
+            json!({"kind":"tool","name":"missing-entrypoint","version":"0.1.0","description":"A Tool.","files":["tool.py"],"inputs":{},"outputs":{}}),
         );
         assert!(!report.ok);
-        assert!(report.issues.iter().any(
-            |issue| issue.instance_path == "/tools" && issue.schema_path == "/oneOf/0/required"
-        ));
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.instance_path == "/entrypoint"
+                    && issue.schema_path == "/oneOf/1/required")
+        );
         assert!(
             !report
                 .issues
@@ -511,7 +515,7 @@ mod tests {
         );
         let text = render_lint_report(&report);
         assert!(
-            text.contains("/tools") && text.contains("Missing required field"),
+            text.contains("/entrypoint") && text.contains("Missing required field"),
             "{text}"
         );
         assert!(!text.contains("\"description\":"), "{text}");

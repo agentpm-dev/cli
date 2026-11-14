@@ -33,7 +33,7 @@ pub struct PackageArgs {
     /// Manifest to package; Python dependencies require a prepared agent.lock
     #[arg(long, default_value = "agent.json")]
     pub manifest: String,
-    /// Override the bundled schema with a URL or file
+    /// Retained for compatibility; overrides are rejected by package preflight
     #[arg(long)]
     pub schema: Option<String>,
     /// Treat manifest-lint warnings as errors
@@ -193,6 +193,24 @@ impl PackageBuild {
             "manifest digest differs from package-build descriptor"
         );
         crate::manifest::parse_publish_manifest(&build.metadata["manifest"])?;
+        let mut manifest = build.metadata["manifest"].clone();
+        let (valid, issues) = crate::manifest::validate_manifest_value_with_manifest_path(
+            &crate::manifest::resolve_schema_source(None),
+            "saved build manifest",
+            &mut manifest,
+            false,
+            None, // A saved descriptor supplies metadata, not extracted package files.
+        )?;
+        if !valid {
+            bail!(
+                "Saved build manifest failed bundled validation: {}",
+                crate::lint_output::render_lint_report(&crate::manifest::LintFileReport {
+                    file: "saved build manifest".into(),
+                    ok: false,
+                    issues,
+                })
+            );
+        }
         let python = build.metadata["manifest"]["kind"] == "tool"
             && build.metadata["manifest"]["runtime"]["type"] == "python";
         ensure!(

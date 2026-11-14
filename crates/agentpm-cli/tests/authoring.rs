@@ -65,12 +65,15 @@ fn success(output: Output) -> Output {
 }
 
 #[test]
-fn all_eight_init_commands_lint_clean_and_accept_only_the_standard_root_extension() {
+fn all_eight_init_commands_lint_clean_and_validate_the_standard_selector() {
     let schema: Value = serde_json::from_str(include_str!(
         "../../../schemas/agentpm.manifest.schema.json"
     ))
     .unwrap();
-    assert_eq!(schema["properties"]["standard"], json!({}));
+    assert_eq!(
+        schema["properties"]["standard"]["properties"]["version"],
+        json!({"const":"1.0.0"})
+    );
     assert_eq!(schema["additionalProperties"], json!(false));
     for kind in [
         "tool",
@@ -92,6 +95,10 @@ fn all_eight_init_commands_lint_clean_and_accept_only_the_standard_root_extensio
             original.get("standard").is_none(),
             "init must not emit standard"
         );
+        let mut declared = original.clone();
+        declared["standard"] = json!({"id":"agentpm", "version":"1.0.0"});
+        project.write(&declared);
+        success(project.cli(&["lint", "--strict"]));
         for standard in [
             json!({"future":"value"}),
             json!("unrecognized"),
@@ -100,13 +107,15 @@ fn all_eight_init_commands_lint_clean_and_accept_only_the_standard_root_extensio
             json!([1, 2]),
             json!(42),
         ] {
-            let mut value = original.clone();
-            value["standard"] = standard;
-            project.write(&value);
-            let output = success(project.cli(&["lint", "--strict", "--format", "json"]));
-            let reports: Value = serde_json::from_slice(&output.stdout).unwrap();
-            assert_eq!(reports[0]["issues"], json!([]), "{kind}: {reports}");
+            let mut invalid = original.clone();
+            invalid["standard"] = standard;
+            project.write(&invalid);
+            assert_eq!(project.cli(&["lint"]).status.code(), Some(1));
         }
+        assert_eq!(
+            original["$schema"], schema["$id"],
+            "scaffolds pin the editor schema"
+        );
         for typo in ["standrad", "tool"] {
             let mut value = original.clone();
             value[typo] = json!({});
@@ -123,9 +132,9 @@ fn all_eight_init_commands_lint_clean_and_accept_only_the_standard_root_extensio
             );
         }
         let mut invalid = original;
-        invalid["standard"] = json!({"opaque": [1, null, true]});
+        invalid["standard"] = json!({"id":"agentpm", "version":"1.0.0"});
         let required_field = match kind {
-            "agent" => "tools",
+            "agent" => "name",
             "tool" => "entrypoint",
             _ => kind,
         };
@@ -278,51 +287,21 @@ fn missing_literal_tool_files_block_publish_without_a_partial_artifact() {
 }
 
 #[test]
-fn knowledge_write_preserves_standard_and_unknown_typed_fields_under_a_local_schema() {
+fn knowledge_write_preserves_standard_and_schema_fields_outside_the_typed_manifest() {
     let project = Project::new();
     project.init("knowledge");
     let mut value = project.manifest();
-    value["standard"] = json!({"name":"future-standard", "opaque":{"version":7}});
+    value["standard"] = json!({"id":"agentpm", "version":"1.0.0"});
+    // This existing root field is schema-valid but absent from KnowledgeManifest.
+    value["environment"] = json!({"vars":{"EXAMPLE":{"required":false,"description":"Opaque to the Knowledge writer", "default":"value"}}});
     project.write(&value);
     success(project.cli(&["knowledge", "build"]));
-    assert_eq!(project.manifest()["standard"], value["standard"]);
-    value = project.manifest();
-    value["future_extension"] = json!({"opaque":[3, 2, 1]});
-    project.write(&value);
-    assert_eq!(
-        project.cli(&["lint"]).status.code(),
-        Some(1),
-        "bundled schema must remain closed"
-    );
-    // A documented local schema override allows testing forward fields that the
-    // typed Knowledge manifest does not know, without relaxing the bundled root.
-    let mut schema: Value = serde_json::from_str(include_str!(
-        "../../../schemas/agentpm.manifest.schema.json"
-    ))
-    .unwrap();
-    schema["properties"]["future_extension"] = json!({});
-    fs::create_dir(project.0.join("schemas")).unwrap();
-    fs::write(
-        project.0.join("schemas/agentpm.manifest.schema.json"),
-        serde_json::to_vec(&schema).unwrap(),
-    )
-    .unwrap();
-    success(project.cli(&["lint", "--strict"]));
-    success(project.cli(&["knowledge", "build"]));
-    let written = project.manifest();
-    assert_eq!(written["standard"], value["standard"]);
-    assert_eq!(written["future_extension"], value["future_extension"]);
-    assert_eq!(written["knowledge"]["context"]["document_count"], 1);
-    let mut unchanged = written;
-    unchanged["knowledge"] = value["knowledge"].clone();
-    assert_eq!(unchanged, value, "only Knowledge build metadata may change");
+    let mut written = project.manifest();
+    written["knowledge"] = value["knowledge"].clone();
+    assert_eq!(written, value, "only Knowledge metadata may change");
     let first_bytes = fs::read(project.0.join("agent.json")).unwrap();
     success(project.cli(&["knowledge", "build"]));
-    assert_eq!(
-        fs::read(project.0.join("agent.json")).unwrap(),
-        first_bytes,
-        "a second Knowledge build must not lose fields or churn serialization"
-    );
+    assert_eq!(fs::read(project.0.join("agent.json")).unwrap(), first_bytes);
 }
 
 #[test]
@@ -340,7 +319,7 @@ fn standard_survives_content_builds_and_dry_run_archives_for_all_eight_kinds() {
         let project = Project::new();
         project.init(kind);
         let mut manifest = project.manifest();
-        let standard = json!({"future": {"opaque": [null, true, 7, "value"]}});
+        let standard = json!({"id":"agentpm", "version":"1.0.0"});
         manifest["standard"] = standard.clone();
         project.write(&manifest);
         if kind == "knowledge" || kind == "memory" {
@@ -391,12 +370,12 @@ fn new_preserves_standard_in_template_agents_and_still_blocks_unknown_keys() {
     let project = Project::new();
     project.init("template");
     let mut template = project.manifest();
-    template["standard"] = json!("opaque-template-standard");
+    template["standard"] = json!({"id":"agentpm", "version":"1.0.0"});
     project.write(&template);
     let agent = Project::new();
     agent.init("agent");
     let mut manifest = agent.manifest();
-    manifest["standard"] = json!({"future": {"opaque": [3, 2, 1]}});
+    manifest["standard"] = json!({"id":"agentpm", "version":"1.0.0"});
     let agents = project.0.join("template/agents");
     fs::create_dir_all(&agents).unwrap();
     let source = agents.join("starter.agent.json");
@@ -455,7 +434,7 @@ fn export_reads_standard_bearing_tools_without_emitting_it_in_fresh_skills() {
     let project = Project::new();
     project.init("tool");
     let mut manifest = project.manifest();
-    manifest["standard"] = json!({"future": {"version": 7}});
+    manifest["standard"] = json!({"id":"agentpm", "version":"1.0.0"});
     project.write(&manifest);
     let installed = project.0.join(".agentpm/tools/fixture/starter/0.1.0");
     fs::create_dir_all(&installed).unwrap();

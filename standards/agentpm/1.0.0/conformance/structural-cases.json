@@ -1,0 +1,60 @@
+{
+  "description_cases": [
+    {
+      "value": "",
+      "valid": false
+    },
+    {
+      "value": " ",
+      "valid": false
+    },
+    {
+      "value": "\t\r\n",
+      "valid": false
+    },
+    {
+      "value": "\u0085",
+      "valid": false
+    },
+    {
+      "value": "\u00a0",
+      "valid": false
+    },
+    {
+      "value": "\u1680",
+      "valid": false
+    },
+    {
+      "value": "\u2000\u200a",
+      "valid": false
+    },
+    {
+      "value": "\u2028\u2029",
+      "valid": false
+    },
+    {
+      "value": "\u202f",
+      "valid": false
+    },
+    {
+      "value": "\u205f",
+      "valid": false
+    },
+    {
+      "value": "\u3000",
+      "valid": false
+    },
+    {
+      "value": "  useful\t",
+      "valid": true
+    },
+    {
+      "value": "\u200b",
+      "valid": true
+    },
+    {
+      "value": "\u001c",
+      "valid": true
+    }
+  ]
+}

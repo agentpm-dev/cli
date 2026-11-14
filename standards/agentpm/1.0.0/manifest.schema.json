@@ -1,0 +1,1869 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+
+  "$defs": {
+    "packageRef": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^@[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}(?:@(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:\\.(0|[1-9]\\d*))?(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?)?$"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^@[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}$"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:\\.(0|[1-9]\\d*))?(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+            }
+          }
+        }
+      ]
+    },
+    "packageIdentity": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^@[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}$",
+      "description": "Versionless package identity used by Agent bindings to reference already-declared dependencies."
+    },
+    "promptExample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "prompt"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string", "minLength": 1 }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "version"],
+      "properties": {
+        "type": { "type": "string", "enum": ["python", "node"] },
+        "version": {
+          "type": "string",
+          "description": "Minimum required runtime version",
+          "pattern": "^\\d+(\\.\\d+){0,2}$"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Python-only distribution requirements resolved by AgentPM."
+        }
+      },
+      "allOf": [{
+        "if": { "properties": { "type": { "const": "node" } }, "required": ["type"] },
+        "then": { "not": { "required": ["dependencies"] } }
+      }]
+    },
+    "envVar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "description"],
+      "properties": {
+        "required": { "type": "boolean", "default": false },
+        "description": { "type": "string" },
+        "default": { "type": "string" }
+      }
+    },
+    "templateVariable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "description", "required"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Generation-time scaffold variable name. Use only for non-secret template values."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Describe how the scaffold value is used. Do not use template variables for API keys, tokens, passwords, or runtime secrets."
+        },
+        "required": { "type": "boolean" },
+        "default": { "type": "string" }
+      }
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!\\\\\\\\)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    },
+    "memoryKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Stable identifier used for Memory Blueprint scopes, record types, spaces, and operations."
+    },
+    "memoryGovernanceDataClass": {
+      "type": "string",
+      "enum": [
+        "public",
+        "internal",
+        "personal",
+        "authentication",
+        "financial",
+        "health",
+        "legal",
+        "operational",
+        "other"
+      ],
+      "description": "Supported AgentPM governance classification value for x-agentpm-data-class annotations in Memory content schemas."
+    },
+    "memoryGovernanceSensitivity": {
+      "type": "string",
+      "enum": ["low", "moderate", "high", "critical"],
+      "description": "Supported AgentPM sensitivity value for x-agentpm-sensitivity annotations in Memory content schemas."
+    },
+    "memoryGovernanceAnnotations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x-agentpm-data-class": {
+          "$ref": "#/$defs/memoryGovernanceDataClass"
+        },
+        "x-agentpm-sensitivity": {
+          "$ref": "#/$defs/memoryGovernanceSensitivity"
+        },
+        "x-agentpm-persist": {
+          "type": "boolean",
+          "description": "Supported AgentPM governance flag for marking values as non-persistable durable memory."
+        },
+        "x-agentpm-shareable": {
+          "type": "boolean",
+          "description": "Supported AgentPM governance flag for restricting cross-boundary sharing."
+        }
+      },
+      "description": "Supported AgentPM-owned governance annotation names and value types for Memory content schemas."
+    },
+    "memoryScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the logical scope key."
+        }
+      }
+    },
+    "memoryScopes": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/memoryKey" },
+      "additionalProperties": { "$ref": "#/$defs/memoryScope" },
+      "description": "Author-declared reusable scope keys for the Memory Blueprint."
+    },
+    "memoryRecordType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "description", "schema"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+          "description": "Required semantic version for the authored record content schema."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the record type."
+        },
+        "schema": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required safe package-relative path to the Draft 2020-12 JSON Schema for the record content payload."
+        }
+      }
+    },
+    "memoryRecordTypes": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/memoryKey" },
+      "additionalProperties": { "$ref": "#/$defs/memoryRecordType" },
+      "description": "Author-declared record type contracts for the Memory Blueprint."
+    },
+    "memoryRetrievalMode": {
+      "type": "string",
+      "enum": ["key", "filter", "chronological", "full_text", "semantic"],
+      "description": "Supported logical retrieval mode for a Memory space."
+    },
+    "memoryRetrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modes"],
+      "properties": {
+        "modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryRetrievalMode" },
+          "description": "Required unique set of logical retrieval capabilities that a compatible runtime must support."
+        }
+      }
+    },
+    "memoryCapacity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_records"],
+      "properties": {
+        "max_records": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional declarative maximum record count for the space."
+        }
+      }
+    },
+    "memoryRetention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ttl", "on_expire"],
+      "properties": {
+        "ttl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required ISO 8601 duration string describing how long active records should remain available."
+        },
+        "on_expire": {
+          "type": "string",
+          "enum": ["delete", "archive"],
+          "description": "Required declarative behavior for expired records."
+        }
+      }
+    },
+    "memoryConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "append_only": {
+          "type": "boolean",
+          "description": "Optional declarative constraint indicating that new records are appended rather than updated in place."
+        }
+      }
+    },
+    "memorySpace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "model", "record_types", "scope", "retrieval"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the logical memory space."
+        },
+        "model": {
+          "type": "string",
+          "enum": ["document", "collection", "sequence"],
+          "description": "Required logical storage model for the space."
+        },
+        "record_types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryKey" },
+          "description": "Required unique list of record types permitted in the space."
+        },
+        "scope": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryKey" },
+          "description": "Required ordered scope keys that define the logical identity of records in the space."
+        },
+        "retrieval": {
+          "$ref": "#/$defs/memoryRetrieval",
+          "description": "Required logical retrieval capabilities for the space."
+        },
+        "capacity": {
+          "$ref": "#/$defs/memoryCapacity",
+          "description": "Optional declarative capacity metadata for the space."
+        },
+        "retention": {
+          "$ref": "#/$defs/memoryRetention",
+          "description": "Optional declarative retention metadata for the space."
+        },
+        "constraints": {
+          "$ref": "#/$defs/memoryConstraints",
+          "description": "Optional declarative constraints for the space."
+        }
+      }
+    },
+    "memorySpaces": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/memoryKey" },
+      "additionalProperties": { "$ref": "#/$defs/memorySpace" },
+      "description": "Author-declared logical spaces in the Memory Blueprint."
+    },
+    "memoryOperationRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["space", "record_type"],
+      "properties": {
+        "space": {
+          "$ref": "#/$defs/memoryKey",
+          "description": "Declared space key referenced by the operation."
+        },
+        "record_type": {
+          "$ref": "#/$defs/memoryKey",
+          "description": "Declared record type key referenced by the operation."
+        }
+      }
+    },
+    "memoryOperationTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["space"],
+      "properties": {
+        "space": {
+          "$ref": "#/$defs/memoryKey",
+          "description": "Declared target space key referenced by a delete operation."
+        }
+      }
+    },
+    "memoryTrigger": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": {
+              "const": "external",
+              "description": "Operation is invoked by an external application, future binding, or harness."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "space", "threshold"],
+          "properties": {
+            "type": {
+              "const": "record_count",
+              "description": "Operation becomes eligible when a space reaches a record threshold."
+            },
+            "space": {
+              "$ref": "#/$defs/memoryKey",
+              "description": "Declared space key monitored by the trigger."
+            },
+            "threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Required positive record threshold."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "space"],
+          "properties": {
+            "type": {
+              "const": "capacity",
+              "description": "Operation becomes eligible when a space reaches its declared capacity."
+            },
+            "space": {
+              "$ref": "#/$defs/memoryKey",
+              "description": "Declared space key monitored by the trigger."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "every"],
+          "properties": {
+            "type": {
+              "const": "interval",
+              "description": "Operation becomes eligible on a recurring elapsed-time interval."
+            },
+            "every": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Required ISO 8601 duration string for the recurring interval."
+            }
+          }
+        }
+      ]
+    },
+    "memorySourceHandling": {
+      "type": "string",
+      "enum": ["retain", "retain_until_expiration", "delete_after_success"],
+      "description": "Supported declarative source-handling policy for lifecycle operations."
+    },
+    "memoryConsolidateOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "description",
+        "trigger",
+        "inputs",
+        "output",
+        "source_handling",
+        "preserve_provenance"
+      ],
+      "properties": {
+        "type": {
+          "const": "consolidate",
+          "description": "Operation converts one or more source records into a destination record."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the operation."
+        },
+        "trigger": {
+          "$ref": "#/$defs/memoryTrigger",
+          "description": "Required declarative trigger for the operation."
+        },
+        "inputs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryOperationRef" },
+          "description": "Required unique source space-and-record-type pairings."
+        },
+        "output": {
+          "$ref": "#/$defs/memoryOperationRef",
+          "description": "Required destination space-and-record-type pairing."
+        },
+        "source_handling": {
+          "$ref": "#/$defs/memorySourceHandling",
+          "description": "Required declarative policy for source records after successful completion."
+        },
+        "preserve_provenance": {
+          "type": "boolean",
+          "description": "Required flag indicating whether derived records should retain source provenance."
+        }
+      }
+    },
+    "memoryTransformOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "description",
+        "trigger",
+        "inputs",
+        "output",
+        "source_handling",
+        "preserve_provenance"
+      ],
+      "properties": {
+        "type": {
+          "const": "transform",
+          "description": "Operation converts one source record contract into another record contract."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the operation."
+        },
+        "trigger": {
+          "$ref": "#/$defs/memoryTrigger",
+          "description": "Required declarative trigger for the operation."
+        },
+        "inputs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryOperationRef" },
+          "description": "Required single source space-and-record-type pairing."
+        },
+        "output": {
+          "$ref": "#/$defs/memoryOperationRef",
+          "description": "Required destination space-and-record-type pairing."
+        },
+        "source_handling": {
+          "$ref": "#/$defs/memorySourceHandling",
+          "description": "Required declarative policy for source records after successful completion."
+        },
+        "output_mode": {
+          "type": "string",
+          "enum": ["create", "replace_input"],
+          "default": "create",
+          "description": "Optional transform output mode. create writes a new output record; replace_input updates the single input record in place."
+        },
+        "preserve_provenance": {
+          "type": "boolean",
+          "description": "Required flag indicating whether derived records should retain source provenance."
+        }
+      }
+    },
+    "memoryDeleteOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "description", "trigger", "targets", "cascade_derived_records"],
+      "properties": {
+        "type": {
+          "const": "delete",
+          "description": "Operation declares a set of spaces that may be deleted as one lifecycle action."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of the operation."
+        },
+        "trigger": {
+          "$ref": "#/$defs/memoryTrigger",
+          "description": "Required declarative trigger for the operation."
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryOperationTarget" },
+          "description": "Required unique set of target spaces affected by the delete operation."
+        },
+        "cascade_derived_records": {
+          "type": "boolean",
+          "description": "Required flag indicating whether derived records should also be removed."
+        }
+      }
+    },
+    "memoryOperation": {
+      "oneOf": [
+        { "$ref": "#/$defs/memoryConsolidateOperation" },
+        { "$ref": "#/$defs/memoryTransformOperation" },
+        { "$ref": "#/$defs/memoryDeleteOperation" }
+      ],
+      "description": "Supported declarative lifecycle operation contract for a Memory Blueprint."
+    },
+    "memoryOperations": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/memoryKey" },
+      "additionalProperties": { "$ref": "#/$defs/memoryOperation" },
+      "description": "Optional declarative lifecycle operations for the Memory Blueprint."
+    },
+    "memoryMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scopes", "record_types", "spaces"],
+      "properties": {
+        "scopes": {
+          "$ref": "#/$defs/memoryScopes",
+          "description": "Required reusable scope declarations for the Memory Blueprint."
+        },
+        "record_types": {
+          "$ref": "#/$defs/memoryRecordTypes",
+          "description": "Required record type declarations for the Memory Blueprint."
+        },
+        "spaces": {
+          "$ref": "#/$defs/memorySpaces",
+          "description": "Required logical spaces declared by the Memory Blueprint."
+        },
+        "operations": {
+          "$ref": "#/$defs/memoryOperations",
+          "description": "Optional declarative lifecycle operations for the Memory Blueprint."
+        }
+      }
+    },
+    "skillCompatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Descriptive compatibility metadata for a Skill. These values are informational and not runtime-enforced.",
+      "properties": {
+        "model_families": {
+          "type": "array",
+          "description": "Optional open-ended model family labels the Skill was authored or reviewed against.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "runtimes": {
+          "type": "array",
+          "description": "Optional known runtimes or execution surfaces this Skill is intended to work well with.",
+          "items": {
+            "type": "string",
+            "enum": ["agentpm-run", "shell", "python-sdk", "node-sdk", "markdown"]
+          }
+        },
+        "environments": {
+          "type": "array",
+          "description": "Optional open-ended operating system, shell, or workspace environment labels assumed by the Skill.",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "skillMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entrypoint"],
+      "description": "Skill-specific metadata describing the primary authored instructions and any supporting files packaged with the Skill.",
+      "properties": {
+        "entrypoint": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required relative path to the main Skill instructions file, typically SKILL.md."
+        },
+        "references": {
+          "type": "array",
+          "description": "Optional additional authored reference files that support the Skill instructions.",
+          "items": { "$ref": "#/$defs/safeRelativePath" }
+        },
+        "scripts": {
+          "type": "array",
+          "description": "Optional helper scripts packaged with the Skill for local execution or demonstration.",
+          "items": { "$ref": "#/$defs/safeRelativePath" }
+        },
+        "compatibility": {
+          "$ref": "#/$defs/skillCompatibility",
+          "description": "Optional descriptive compatibility hints for models, runtimes, environments, or export targets."
+        }
+      }
+    },
+    "knowledgeDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required relative path to a packaged document intended for direct context loading."
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional MIME type or content classification for the document."
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional role label describing how the document should be used, such as context or reference."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional human-readable note about the purpose of the document."
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived byte size of the declared document."
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional build-derived content hash for the declared document."
+        }
+      }
+    },
+    "knowledgeContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "document_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived count of declared context documents."
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived total byte size across declared context documents."
+        },
+        "content_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional build-derived aggregate content hash for the context corpus."
+        }
+      }
+    },
+    "knowledgeCorpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chunks_path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Relative path to the packaged chunks JSONL file for vector-mode Knowledge."
+        },
+        "sources_path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Relative path to the packaged sources JSONL file for vector-mode Knowledge."
+        },
+        "chunk_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived count of chunks in the vector corpus."
+        },
+        "source_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived count of unique sources in the vector corpus."
+        },
+        "content_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional build-derived aggregate content hash for the chunks and sources payload."
+        }
+      }
+    },
+    "knowledgeChunking": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional open-ended label describing the chunking strategy used to prepare the corpus."
+        },
+        "chunk_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional chunk size used during corpus preparation."
+        },
+        "overlap": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional overlap size used during corpus preparation."
+        }
+      }
+    },
+    "knowledgeEmbedding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "provider", "model", "dimensions", "metric", "normalized", "vectors_path"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required embedding payload identifier, used to associate vectors and indexes."
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required embedding provider label recorded for provenance and compatibility."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required embedding model label recorded for provenance and compatibility."
+        },
+        "dimensions": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required vector dimensionality for the packaged embeddings."
+        },
+        "metric": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required similarity metric label for the packaged embeddings."
+        },
+        "normalized": {
+          "type": "boolean",
+          "description": "Required flag indicating whether the packaged vectors are already normalized."
+        },
+        "vectors_path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required relative path to the packaged raw vector payload."
+        },
+        "vector_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional build-derived number of vectors in the packaged embedding payload."
+        },
+        "vectors_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional build-derived hash of the packaged vector payload."
+        }
+      }
+    },
+    "knowledgeIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "path", "embedding_id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required index identifier, typically matching the default packaged retrieval index."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["agentpm-local"],
+          "description": "Required index type label for the packaged retrieval index."
+        },
+        "path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required relative path to the packaged local retrieval index directory or file."
+        },
+        "embedding_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required embedding identifier that this index was built against."
+        },
+        "generated_by": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional generator label recorded for provenance, such as agentpm knowledge build."
+        }
+      }
+    },
+    "knowledgeRetrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional open-ended retrieval strategy label, such as full_context, vector, or future hybrid variants."
+        },
+        "default_top_k": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional default result count to use during vector retrieval."
+        },
+        "default_score_threshold": {
+          "type": "number",
+          "description": "Optional score threshold hint for retrieval filtering."
+        },
+        "return_citations": {
+          "type": "boolean",
+          "description": "Optional flag indicating whether retrieval consumers should return citations by default."
+        }
+      }
+    },
+    "knowledgeBuilder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "knowledgeProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sources_manifest_path": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Optional relative path to a detailed provenance or sources manifest packaged with the Knowledge artifact."
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional timestamp indicating when the Knowledge artifact metadata was generated."
+        },
+        "builder": {
+          "$ref": "#/$defs/knowledgeBuilder",
+          "description": "Optional builder metadata describing the process or tool that generated the packaged Knowledge metadata."
+        }
+      }
+    },
+    "knowledgeMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["context", "vector"],
+          "description": "Required Knowledge artifact mode. Use context for direct-context document bundles and vector for prepared retrieval corpora."
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional high-level content classification for the Knowledge artifact, such as documentation or policy."
+        },
+        "language": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional primary language label for the packaged content."
+        },
+        "documents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/knowledgeDocument" },
+          "description": "Declared documents packaged for direct context loading in context mode."
+        },
+        "context": {
+          "$ref": "#/$defs/knowledgeContext",
+          "description": "Optional build-derived aggregate metadata for context-mode documents."
+        },
+        "corpus": {
+          "$ref": "#/$defs/knowledgeCorpus",
+          "description": "Vector-mode corpus metadata describing packaged chunks and sources."
+        },
+        "chunking": {
+          "$ref": "#/$defs/knowledgeChunking",
+          "description": "Optional descriptive metadata about how the vector corpus was chunked."
+        },
+        "embedding": {
+          "$ref": "#/$defs/knowledgeEmbedding",
+          "description": "Vector-mode embedding metadata describing the packaged vectors."
+        },
+        "indexes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/knowledgeIndex" },
+          "description": "Optional packaged retrieval indexes associated with the vector corpus."
+        },
+        "retrieval": {
+          "$ref": "#/$defs/knowledgeRetrieval",
+          "description": "Optional retrieval defaults or strategy hints for consumers of the Knowledge artifact."
+        },
+        "provenance": {
+          "$ref": "#/$defs/knowledgeProvenance",
+          "description": "Optional provenance metadata describing how the Knowledge artifact was generated."
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "mode": { "const": "context" }
+          }
+        },
+        {
+          "properties": {
+            "mode": { "const": "vector" }
+          },
+          "required": ["corpus", "embedding"],
+          "allOf": [
+            {
+              "properties": {
+                "corpus": {
+                  "required": ["chunks_path", "sources_path"]
+                }
+              }
+            },
+            {
+              "properties": {
+                "embedding": {
+                  "required": ["id", "provider", "model", "dimensions", "metric", "normalized", "vectors_path"]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "templateDependencyGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tools", "agents"],
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "agents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "skills": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "knowledge": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "memory": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        "loop": {
+          "$ref": "#/$defs/packageRef"
+        }
+      }
+    },
+    "loopAccessMemory": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "read": {
+          "type": "boolean",
+          "description": "Optional Loop-authored intent for whether Memory reads are permitted in this phase."
+        },
+        "write": {
+          "type": "boolean",
+          "description": "Optional Loop-authored intent for whether Memory writes are permitted in this phase."
+        }
+      }
+    },
+    "loopPhaseAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "type": "boolean",
+          "description": "Optional Loop-authored intent for whether Tool use is permitted in this phase."
+        },
+        "knowledge": {
+          "type": "boolean",
+          "description": "Optional Loop-authored intent for whether Knowledge use is permitted in this phase."
+        },
+        "memory": {
+          "$ref": "#/$defs/loopAccessMemory",
+          "description": "Optional Loop-authored intent for whether Memory reads and writes are permitted in this phase."
+        }
+      }
+    },
+    "loopOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required stable identifier for the authored phase outcome."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable description of what the outcome means."
+        }
+      }
+    },
+    "loopPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "objective"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required stable phase identifier."
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required human-readable objective describing what this phase is intended to accomplish."
+        },
+        "access": {
+          "$ref": "#/$defs/loopPhaseAccess",
+          "description": "Optional declarative access-intent metadata for this phase."
+        },
+        "outcomes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/loopOutcome" },
+          "description": "Optional explicit authored outcomes for this phase. When omitted, the phase uses an implicit `complete` outcome."
+        }
+      }
+    },
+    "loopTerminalTarget": {
+      "type": "string",
+      "enum": ["$end", "$abort", "$handoff"],
+      "description": "Standardized Loop terminal target."
+    },
+    "loopTransitionTarget": {
+      "oneOf": [
+        { "$ref": "#/$defs/stableKebabId" },
+        { "$ref": "#/$defs/loopTerminalTarget" }
+      ]
+    },
+    "loopTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "on", "to"],
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required source phase identifier."
+        },
+        "on": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required outcome identifier for the source phase."
+        },
+        "to": {
+          "$ref": "#/$defs/loopTransitionTarget",
+          "description": "Required target phase identifier or standardized terminal target."
+        }
+      }
+    },
+    "loopLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional maximum number of Loop phase executions a compatible runtime may allow."
+        }
+      }
+    },
+    "loopCheckpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "before_phase", "on_reject"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required stable identifier for the declared checkpoint."
+        },
+        "type": {
+          "type": "string",
+          "const": "approval",
+          "description": "Required checkpoint type. approval is the only supported checkpoint type in this contract."
+        },
+        "before_phase": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required phase identifier before which approval should be requested."
+        },
+        "on_reject": {
+          "$ref": "#/$defs/loopTransitionTarget",
+          "description": "Required phase identifier or terminal target to transfer control to when approval is rejected."
+        }
+      }
+    },
+    "loopToolFailureRetryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "max_retries", "on_exhausted"],
+      "properties": {
+        "action": { "type": "string", "const": "retry" },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required positive retry count when tool failure handling uses retry."
+        },
+        "on_exhausted": {
+          "type": "string",
+          "enum": ["fail_phase", "abort", "handoff"],
+          "description": "Required resolution path when retries are exhausted."
+        }
+      }
+    },
+    "loopToolFailureDirectPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["fail_phase", "abort", "handoff"],
+          "description": "Required direct tool failure policy action when retries are not used."
+        }
+      }
+    },
+    "loopToolFailurePolicy": {
+      "oneOf": [
+        { "$ref": "#/$defs/loopToolFailureRetryPolicy" },
+        { "$ref": "#/$defs/loopToolFailureDirectPolicy" }
+      ]
+    },
+    "loopPhaseFailurePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["abort", "handoff"],
+          "description": "Required phase failure policy action."
+        }
+      }
+    },
+    "loopErrorPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool_failure": {
+          "$ref": "#/$defs/loopToolFailurePolicy",
+          "description": "Optional Tool failure handling metadata."
+        },
+        "phase_failure": {
+          "$ref": "#/$defs/loopPhaseFailurePolicy",
+          "description": "Optional phase failure handling metadata."
+        }
+      }
+    },
+    "loopMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_phase", "phases", "transitions"],
+      "properties": {
+        "archetype": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional open-ended descriptive label for the authored orchestration style."
+        },
+        "entry_phase": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required phase identifier that names the graph entry point."
+        },
+        "limits": {
+          "$ref": "#/$defs/loopLimits",
+          "description": "Optional Loop limits metadata."
+        },
+        "phases": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/loopPhase" },
+          "description": "Required authored Loop phases."
+        },
+        "transitions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/loopTransition" },
+          "description": "Required deterministic phase transitions."
+        },
+        "checkpoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/loopCheckpoint" },
+          "description": "Optional approval checkpoint declarations."
+        },
+        "error_policy": {
+          "$ref": "#/$defs/loopErrorPolicy",
+          "description": "Optional Tool and phase failure handling metadata."
+        }
+      }
+    },
+    "agentMemoryBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package"],
+      "properties": {
+        "package": {
+          "$ref": "#/$defs/packageIdentity",
+          "description": "Required versionless Memory Blueprint package identity."
+        },
+        "spaces": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryKey" },
+          "description": "Optional unique Memory space identifiers associated with this binding."
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/memoryKey" },
+          "description": "Optional unique Memory operation identifiers associated with this binding."
+        }
+      },
+      "anyOf": [
+        { "required": ["spaces"] },
+        { "required": ["operations"] }
+      ]
+    },
+    "agentBindingPackageIdentities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/packageIdentity" }
+    },
+    "agentBindingScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "$ref": "#/$defs/agentBindingPackageIdentities",
+          "description": "Optional versionless Tool package identities associated with this binding scope."
+        },
+        "skills": {
+          "$ref": "#/$defs/agentBindingPackageIdentities",
+          "description": "Optional versionless Skill package identities associated with this binding scope."
+        },
+        "knowledge": {
+          "$ref": "#/$defs/agentBindingPackageIdentities",
+          "description": "Optional versionless Knowledge package identities associated with this binding scope."
+        },
+        "memory": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/agentMemoryBinding" },
+          "description": "Optional Memory binding metadata associated with this binding scope."
+        },
+        "profiles": {
+          "$ref": "#/$defs/agentBindingPackageIdentities",
+          "description": "Optional versionless Instruction Profile package identities associated with this binding scope."
+        }
+      }
+    },
+    "agentMcpBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "tools"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableKebabId",
+          "description": "Required stable identifier for the named MCP surface."
+        },
+        "tools": {
+          "$ref": "#/$defs/agentBindingPackageIdentities",
+          "description": "Required non-empty unique versionless Tool package identities exposed through this MCP surface."
+        }
+      }
+    },
+    "agentConsumerContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file"],
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Required safe relative path to the consumer-owned context file."
+        }
+      }
+    },
+    "agentBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "global": {
+          "$ref": "#/$defs/agentBindingScope",
+          "description": "Optional Agent-global authored package bindings."
+        },
+        "phases": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/stableKebabId" },
+          "additionalProperties": { "$ref": "#/$defs/agentBindingScope" },
+          "description": "Optional phase-scoped authored package bindings keyed by authored Loop phase identifier."
+        },
+        "mcp": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/agentMcpBinding" },
+          "description": "Optional named MCP surfaces for bound Tool packages."
+        },
+        "consumer_context": {
+          "$ref": "#/$defs/agentConsumerContext",
+          "description": "Optional consumer-owned context metadata."
+        }
+      }
+    },
+    "templateEntrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "command"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 }
+      }
+    },
+    "templateMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "display_name",
+        "use_case",
+        "execution_surfaces",
+        "files_root",
+        "dependencies",
+        "entrypoints"
+      ],
+      "properties": {
+        "display_name": { "type": "string", "minLength": 1 },
+        "use_case": { "type": "string", "minLength": 1 },
+        "stack": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["python", "node", "shell", "mcp", "workspace"]
+          }
+        },
+        "execution_surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "python-sdk",
+              "node-sdk",
+              "agentpm-run",
+              "agentpm-harness",
+              "agentpm-serve-mcp",
+              "multi-agent-workspace"
+            ]
+          }
+        },
+        "files_root": {
+          "$ref": "#/$defs/safeRelativePath",
+          "description": "Relative directory inside the template artifact that is copied into the generated project. Template text rendering uses {{ variable_name }} placeholders."
+        },
+        "variables": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/templateVariable" },
+          "description": "Generation-time scaffold variables only. Do not use for API keys, tokens, passwords, or runtime secrets."
+        },
+        "dependencies": { "$ref": "#/$defs/templateDependencyGroup" },
+        "entrypoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/templateEntrypoint" }
+        }
+      }
+    },
+    "stableKebabId": {
+      "type": "string",
+      "pattern": "^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){0,63}$",
+      "description": "Stable lowercase kebab-case identifier used by Loop phases, outcomes, checkpoints, MCP surfaces, and Profile constraints."
+    },
+    "profileConstraintId": {
+      "allOf": [
+        { "$ref": "#/$defs/stableKebabId" }
+      ],
+      "description": "Stable lowercase kebab-case identifier for a declared Instruction Profile constraint."
+    },
+    "profileIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role"],
+      "description": "Required role-level identity metadata for an Instruction Profile.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required role the agent should adopt when this Instruction Profile is selected by a consuming runtime."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional additional description of the role and what it represents."
+        },
+        "expertise": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique authored areas of familiarity or perspective for the role."
+        }
+      }
+    },
+    "profileAudience": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Optional audience metadata describing who the Instruction Profile is intended to interact with.",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional high-level description of the intended audience."
+        },
+        "assumed_knowledge": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional description of the baseline knowledge the audience is assumed to have."
+        },
+        "adaptation": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique authored guidance for how communication should adapt to the audience."
+        }
+      }
+    },
+    "profileVocabulary": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Optional vocabulary guidance for preferred and avoided wording.",
+      "properties": {
+        "prefer": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique terms or phrases the authored behavior prefers to use."
+        },
+        "avoid": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique terms or phrases the authored behavior prefers to avoid."
+        }
+      }
+    },
+    "profileCommunication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tone", "verbosity"],
+      "description": "Required communication guidance describing how the agent should speak and present information.",
+      "properties": {
+        "tone": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Required unique open-ended tone labels for the Instruction Profile."
+        },
+        "verbosity": {
+          "type": "string",
+          "enum": ["concise", "balanced", "detailed"],
+          "description": "Required closed verbosity hint for the authored communication style."
+        },
+        "guidelines": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique authored communication guidelines that should generally apply across responses."
+        },
+        "formatting": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique authored formatting guidance for how responses should be structured."
+        },
+        "vocabulary": {
+          "$ref": "#/$defs/profileVocabulary",
+          "description": "Optional preferred and avoided vocabulary guidance."
+        }
+      }
+    },
+    "profileConstraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "strength", "instruction"],
+      "description": "Optional declared behavioral constraint associated with an Instruction Profile.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/profileConstraintId",
+          "description": "Required stable identifier for the declared constraint."
+        },
+        "strength": {
+          "type": "string",
+          "enum": ["required", "preferred"],
+          "description": "Required author-intent strength label for the declared constraint."
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required behavioral instruction expressed by the declared constraint."
+        }
+      }
+    },
+    "profileCapabilityHints": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Optional advisory capability hints describing what a consuming runtime may need or benefit from.",
+      "properties": {
+        "tool_use": {
+          "type": "boolean",
+          "description": "Optional advisory flag describing whether tool use is required or recommended."
+        },
+        "structured_output": {
+          "type": "boolean",
+          "description": "Optional advisory flag describing whether structured output is required or recommended."
+        },
+        "multimodal_input": {
+          "type": "boolean",
+          "description": "Optional advisory flag describing whether multimodal input is required or recommended."
+        }
+      }
+    },
+    "profileCompatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Optional vendor-neutral compatibility hints for consumers of the Instruction Profile.",
+      "properties": {
+        "minimum_context_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional advisory minimum context-window size the authored behavior expects to work comfortably with."
+        },
+        "requires": {
+          "$ref": "#/$defs/profileCapabilityHints",
+          "description": "Optional capability hints the author considers required for best use of the profile."
+        },
+        "recommends": {
+          "$ref": "#/$defs/profileCapabilityHints",
+          "description": "Optional capability hints the author considers beneficial but not strictly required."
+        }
+      }
+    },
+    "profileMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "objectives", "communication"],
+      "description": "Structured Instruction Profile metadata describing role, priorities, communication posture, boundaries, and advisory constraints.",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/profileIdentity",
+          "description": "Required role-level identity the profile defines."
+        },
+        "objectives": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Required unique durable outcomes the role should generally prioritize across tasks."
+        },
+        "principles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique general decision-making principles that should apply across tasks."
+        },
+        "audience": {
+          "$ref": "#/$defs/profileAudience",
+          "description": "Optional audience metadata describing who this profile is intended to interact with."
+        },
+        "communication": {
+          "$ref": "#/$defs/profileCommunication",
+          "description": "Required communication posture for the authored behavior."
+        },
+        "boundaries": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Optional unique authority, representation, or capability boundaries the role should not overstep."
+        },
+        "constraints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/profileConstraint" },
+          "description": "Optional declared behavioral constraints expressing required or preferred author intent."
+        },
+        "compatibility": {
+          "$ref": "#/$defs/profileCompatibility",
+          "description": "Optional advisory compatibility metadata for consumers."
+        }
+      }
+    }
+  },
+
+  "dependentSchemas": {
+    "tools":      { "properties": { "kind": { "enum": ["agent", "skill"] } } },
+    "examples":   { "properties": { "kind": { "const": "agent" } } },
+    "skills":     { "properties": { "kind": { "const": "agent" } } },
+    "knowledge":  {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": { "const": "agent" },
+            "knowledge": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/packageRef" }
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "knowledge" },
+            "knowledge": { "$ref": "#/$defs/knowledgeMetadata" }
+          }
+        }
+      ]
+    },
+    "memory":  {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": { "const": "agent" },
+            "memory": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/packageRef" }
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "memory" },
+            "memory": { "$ref": "#/$defs/memoryMetadata" }
+          }
+        }
+      ]
+    },
+    "loop":  {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": { "const": "agent" },
+            "loop": { "$ref": "#/$defs/packageRef" }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "loop" },
+            "loop": { "$ref": "#/$defs/loopMetadata" }
+          }
+        }
+      ]
+    },
+    "profile":    { "properties": { "kind": { "const": "profile" } } },
+    "profiles":   { "properties": { "kind": { "const": "agent" } } },
+    "bindings":   { "properties": { "kind": { "const": "agent" } } },
+    "entrypoint": {
+      "properties": { "kind": { "const": "tool" } }
+    },
+    "inputs":     { "properties": { "kind": { "const": "tool" } } },
+    "outputs":    { "properties": { "kind": { "const": "tool" } } },
+    "files":      { "properties": { "kind": { "const": "tool" } } },
+    "runtime":    { "properties": { "kind": { "const": "tool" } } },
+    "skill":      { "properties": { "kind": { "const": "skill" } } },
+    "template":   { "properties": { "kind": { "const": "template" } } }
+  },
+
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "standard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "const": "agentpm" },
+        "version": { "const": "1.0.0" }
+      }
+    },
+    "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill", "knowledge", "memory", "profile", "loop"] },
+    "name": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "description": { "type": "string", "minLength": 1, "pattern": "[^\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]" },
+    "tools": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/packageRef" }
+    },
+    "skills": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/packageRef" }
+    },
+    "knowledge": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        {
+          "$ref": "#/$defs/knowledgeMetadata"
+        }
+      ]
+    },
+    "memory": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/packageRef" }
+        },
+        {
+          "$ref": "#/$defs/memoryMetadata"
+        }
+      ]
+    },
+    "loop": {
+      "oneOf": [
+        { "$ref": "#/$defs/packageRef" },
+        { "$ref": "#/$defs/loopMetadata" }
+      ]
+    },
+    "profile": { "$ref": "#/$defs/profileMetadata" },
+    "profiles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/packageRef" }
+    },
+    "bindings": { "$ref": "#/$defs/agentBindings" },
+    "examples": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/promptExample" }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "runtime": { "$ref": "#/$defs/runtime" },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "args"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Bare interpreter name or absolute path to it.",
+          "anyOf": [
+            { "enum": ["node", "nodejs", "python", "python3"] },
+            { "pattern": "^(/|[A-Za-z]:\\\\\\\\|\\\\\\\\\\\\\\\\).+" }
+          ]
+        },
+        "args": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "cwd": { "type": "string" },
+        "timeout_ms": { "type": "number" },
+        "env": { "type": "object" }
+      }
+    },
+    "inputs": { "type": "object" },
+    "outputs": { "type": "object" },
+
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vars": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" },
+          "additionalProperties": { "$ref": "#/$defs/envVar" }
+        }
+      }
+    },
+
+    "readme": { "type": "string", "minLength": 1 },
+    "skill": { "$ref": "#/$defs/skillMetadata" },
+    "template": { "$ref": "#/$defs/templateMetadata" },
+
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spdx": {
+          "type": "string",
+          "description": "SPDX identifier or expression (e.g., MIT, Apache-2.0, MIT OR Apache-2.0)",
+          "minLength": 1
+        },
+        "file": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+
+  "required": ["kind", "name", "version", "description", "standard"],
+
+  "oneOf": [
+    {
+      "properties": { "kind": { "const": "agent" } }
+    },
+    {
+      "properties": { "kind": { "const": "tool" } },
+      "required": ["entrypoint", "inputs", "outputs", "files"]
+    },
+    {
+      "properties": { "kind": { "const": "template" } },
+      "required": ["template"]
+    },
+    {
+      "properties": { "kind": { "const": "skill" } },
+      "required": ["skill"]
+    },
+    {
+      "properties": { "kind": { "const": "knowledge" } },
+      "required": ["knowledge"]
+    },
+    {
+      "properties": { "kind": { "const": "memory" } },
+      "required": ["memory"]
+    },
+    {
+      "properties": { "kind": { "const": "profile" } },
+      "required": ["profile"]
+    },
+    {
+      "properties": { "kind": { "const": "loop" } },
+      "required": ["loop"]
+    }
+  ]
+}
