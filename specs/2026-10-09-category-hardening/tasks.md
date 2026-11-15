@@ -314,26 +314,32 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Milestone 2C: Make Python Registry Independently Validate the Same APDS
+
 > **Scope note:** Add a Registry-side APDS implementation that independently evaluates the same pinned fixture corpus and agrees with Rust. Outside this milestone: Do not shell out to Rust CLI or accept a client-authored `valid=true` assertion as verification.
 > **Implementation notes:**
+>
 > - Stage 2 needs two implementations with one normative contract. Python JSON Schema library behavior/regex matching may diverge from Rust; explicitly test and reconcile instead of masking differences.
 > - **Dependencies:** M2A and M2B expected outcome model.
 > - **Decisions:** D03, D19. **Acceptance:** S2-AC-01, S2-AC-04.
 
 **Implementation checklist**
 
-- [ ] Choose existing Registry Python test/runtime conventions and pin the v1.0.0 schema bundle.
-- [ ] Implement standard ID/version lookup with explicit unsupported result.
-- [ ] Implement schema checks using compatible JSON Schema draft semantics.
-- [ ] Implement semantic rules independently in Python, respecting standalone/resolved-composition/packaged-content levels and excluding Runner-only execution behavior from Registry validation.
-- [ ] Produce stable rule IDs, paths and validation-level/result states.
-- [ ] Run the same **validator-applicable** fixture corpus against Python and compare case-by-case to Rust outcomes; keep Runner interpretation cases in Harness tests, not as Registry execution requirements.
-- [ ] Test regex, optional arrays and malformed/unknown property handling for parity.
-- [ ] Add CI parity/checksum job or equivalent cross-repo fixture synchronization gate.
-- [ ] Test scanner/signing/ACL failures remain separate from APDS results.
-- [ ] Document how canonical fixtures reach both repos without relying on mutable production network.
-- [ ] Have Claude exercise representative same-manifest Rust/Python results independently.
+- [x] Choose existing Registry Python test/runtime conventions and pin the v1.0.0 schema bundle.
+- [x] Implement standard ID/version lookup with explicit unsupported result.
+- [x] Implement schema checks using compatible JSON Schema draft semantics.
+- [x] Implement semantic rules independently in Python, respecting standalone/resolved-composition/packaged-content levels and excluding Runner-only execution behavior from Registry validation.
+- [x] Produce stable rule IDs, paths and validation-level/result states.
+- [x] Run the same **validator-applicable** fixture corpus against Python and compare case-by-case to Rust outcomes; keep Runner interpretation cases in Harness tests, not as Registry execution requirements.
+- [x] Test regex, optional arrays and malformed/unknown property handling for parity.
+- [x] Add CI parity/checksum job or equivalent cross-repo fixture synchronization gate.
+- [x] Test scanner/signing/ACL failures remain separate from APDS results.
+- [x] Document how canonical fixtures reach both repos without relying on mutable production network.
+- [ ] Have Claude exercise representative same-manifest Rust/Python results independently. **Code-review sign-off:** user confirmed Claude found no issues on 2026-11-15; independent command execution was not separately reported.
 - [ ] Freeze v1.0.0 contract only after discrepancies and semantic mismatch log are resolved.
+
+The freeze records approval of the reviewed candidate. Before publication, deliberate revisions can retain version 1.0.0 after synchronization, testing and renewed review. Publishing the immutable `apds-v1.0.0` tag is the separate Release Band 1 commitment.
+
+**Builder evidence — 2026-11-15:** [M2C verification and discrepancy record](m2c-verification.md) maps D03/D19 and S2-AC-01/04 to the independent Python engine, immutable canonical snapshot, full 129-case actual Rust/Python agreement, 39 additional native parity cases, and Registry regression/static checks. The Registry developer guide and parity workflow provide offline commands, checksum synchronization and uploaded actual results; implementation/test adapters remain outside the versioned standard. No schema/rule/fixture expectation, route, migration, publication enforcement, SDK or Runner behavior changed. **User confirmed Claude code review passed with no findings on 2026-11-15. Independent fixture execution is not separately confirmed; hosted parity CI and contract freeze remain pending. M2C is not marked complete.**
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
