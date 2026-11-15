@@ -115,7 +115,6 @@ fn scaffold_files(root: &std::path::Path) -> Value {
 fn default_and_explicit_scaffolds_match_snapshots_and_lint_offline() {
     let help = success(Project::new().cli(&["init", "--help"]));
     let help = String::from_utf8(help.stdout).unwrap();
-    assert!(help.contains("--kind tool"));
     assert!(help.contains("[default: agent]"));
     assert!(help.contains("my-agent"));
     let implicit = Project::new();

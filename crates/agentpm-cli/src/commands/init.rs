@@ -33,7 +33,7 @@ pub enum KnowledgeInitMode {
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// Package kind (defaults to an Agent Package). Existing Tool scripts should pass --kind tool.
+    /// Package kind (defaults to an Agent Package)
     #[arg(long, value_enum, default_value = "agent")]
     kind: InitKind,
 

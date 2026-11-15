@@ -356,7 +356,7 @@ The freeze records approval of the reviewed candidate. Before publication, delib
 > **Scope note:** Change new authoring to start with a valid Agent Package and keep explicit scaffolds for seven other kinds. Outside this milestone: mandatory Loop/Tools/Profile; preserve Stage 1 Tool scaffold repair.
 > **Implementation notes:**
 >
-> - This is an intentional early adopter compatibility change. Existing scripts that relied on `init` producing a Tool should select `--kind tool` explicitly; explain the migration in help.
+> - This is an intentional early adopter compatibility change. Existing scripts that relied on `init` producing a Tool should select `--kind tool` explicitly; explain the migration in README/init docs. Per user direction, `--kind` help describes the default Agent Package and lists values without Tool migration copy.
 > - **Dependencies:** M1B/M2B; **M1A.1 tolerance release 0.1.36 publication prerequisite satisfied by operator confirmation on 2026-10-22**, recorded in Stage 1's Band 5 handoff / Band 7 publication record; Stage 1 M8 CLI authoring improvements. This publication confirmation does not waive M1B/M2B or other M3A acceptance requirements.
 > - **Decisions:** D04. **Acceptance:** S2-AC-02, S2-AC-03.
 
@@ -377,7 +377,7 @@ The freeze records approval of the reviewed candidate. Before publication, delib
 - [x] Check templates, docs snippets and help that previously assumed default Tool.
 - [x] Explain valid-without-Loop but not-yet-Harness-runnable next steps in immediate CLI output.
 
-**Builder evidence (2026-11-15):** [Implementation, migration decision and verification record](m3a-verification.md) maps S2-AC-02/03 and D04 to real CLI tests, nine scaffold snapshots, negative input/collision checks, full workspace regression and feature-local docs. Implementation and local checks pass. User confirmed independent Claude review passed with no remaining findings on **2026-11-15**. Hosted CI and the requested manual testing remain pending; M3A is not yet marked complete. Ordinary authoring enforcement remains M3B.
+**Builder evidence (2026-11-15):** [Implementation, migration decision and verification record](m3a-verification.md) maps S2-AC-02/03 and D04 to real CLI tests, nine scaffold snapshots, negative input/collision checks, full workspace regression and feature-local docs. Implementation and local checks pass. User confirmed independent Claude review passed with no remaining findings on **2026-11-15**. User confirmed all hosted CI passed on **2026-11-15**. The [manual runbook](manual-tests/CLI_M3A_MANUAL_TESTS.md) is prepared and locally replayed. User confirmed all manual tests passed on **2026-11-15**; **M3A is complete**, including the requested operator acceptance. Ordinary authoring enforcement remains M3B.
 
 **Existing-capability clarification:** The plan's "Python/Node Tool scaffolding" wording refers to preserving existing runtime compatibility. The shipped init command has only a Python Tool template; Node regression evidence comes from manually authored Tool manifests and payload packaging. A Node init template would be additional functionality, not an M3A preservation fix.
 
