@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-14. **CLI baseline:** `eda51e0ea3ea31a4bb2bb6d40785982eee0506cb`.
 
-**Status: implementation and review complete; awaiting hosted CI.** User confirmed Claude review passed with no findings on **2026-11-14**. Local verification passed. Hosted CI remains a completion gate; M2B is not yet marked fully complete. No release, deployment, Registry validation, install integration or Runner behavior change is claimed.
+**Status: M2B complete.** User confirmed Claude review passed with no findings and all CLI hosted CI jobs passed on **2026-11-14**. Implementation, local verification, independent review and hosted CLI verification are complete. No release, deployment, Registry validation, install integration or Runner behavior change is claimed.
 
 ## Implementation and scope decision
 
@@ -77,6 +77,6 @@ The manifest schema SHA-256 remains `f123150ff42cea4b29edb5076d7d70697269d20ad85
 - **D19:** Report requested evaluation level and actual certainty. Known violations take precedence over unavailable/unsupported checks; unknown standards are not interpreted using another contract. Runtime interpretation and readiness remain separate. Ordinary authoring rollout and Registry/lock/UI status integration remain in their owning milestones.
 - **Capability limits:** Unknown vector/index representations and complex or ref-mediated non-persistability projection reasoning return `unsupported` with unevaluated rules. Direct source-schema requirements and annotation syntax are checked; the engine does not pretend a shallow scan proves arbitrary composed-schema satisfiability. No Runner-only rule is claimed from these validator results. These limits are explicit in the capability matrix and docs.
 - **Review sign-off:** User confirmed Claude review passed with no findings on **2026-11-14**, including the implementation and recorded probe/fixture corrections.
-- **Remaining M2B acceptance:** Hosted CI must pass against these changes before M2B is marked fully complete. Local test success and independent review do not establish hosted workflow success; no hosted pass is claimed.
+- **Hosted CI sign-off:** User confirmed all CLI CI jobs passed on **2026-11-14**, satisfying the remaining M2B completion gate. This is user-confirmed hosted evidence; no workflow run ID or independently retrieved job log is asserted. **M2B is complete.** Registry Python parity, later rollout and production release remain separate.
 - **Later work:** M2C implements independent Python validation/parity. M3B switches ordinary authoring/preflight defaults. M4 owns Registry publication enforcement, M5 install identity/closure, and M6 Runner preflight/interpretation. No task from those milestones is marked complete here.
 - No new dependencies, schema changes, SDK/API/migration changes, live Registry calls, production mutations, merge, release or deployment. The public lint documentation should be deployed with a CLI release that contains these options; no release version was bumped in this task.

@@ -1324,7 +1324,7 @@ Before freezing v1.0.0, Codex and Claude must explicitly resolve these potential
   v1.0.0 fixtures.
 
 
-**M2B builder evidence (2026-11-14):** [Implementation/verification and corrections](m2b-verification.md), [developer commands/capability matrix](../../scripts/README.md), and explicit Rust CLI validation modes cover the shared corpus without executing Runner behavior. Graph/package context is caller-supplied; the validator does not resolve from the Registry. M3B retains ordinary authoring rollout, and M2C retains independent Python validation/parity. User confirmed Claude review passed with no findings on **2026-11-14**. Hosted CI remains a completion gate; M2B is awaiting hosted verification and is not yet fully complete.
+**M2B completion evidence (2026-11-14):** [Implementation/verification and corrections](m2b-verification.md), [developer commands/capability matrix](../../scripts/README.md), and explicit Rust CLI validation modes cover the shared corpus without executing Runner behavior. Graph/package context is caller-supplied; the validator does not resolve from the Registry. M3B retains ordinary authoring rollout, and M2C retains independent Python validation/parity. User confirmed Claude review passed with no findings and all CLI hosted CI jobs passed on **2026-11-14**; **M2B is complete**.
 
 ### 4. CLI init/lint semantics and migration
 
