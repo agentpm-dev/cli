@@ -263,7 +263,7 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 - [x] Keep detailed fixture expectations, paths and result metadata in the fixture index rather than duplicating them as verbose text in `semantics.md`; link from concise normative rules.
 - [x] Review examples against actual parser before declaring case validity.
 
-**Completion evidence — 2026-11-14:** [Verification and decision record](m2a-verification.md) maps 129 shared validation cases, 28 separate Runner observations and all 56 semantic rules to the required coverage. The portable quickstart/comparator, 19 Python checks, five Rust integration tests, 41 actual CLI-positive probes and actual vector-reader positive/truncation checks pass locally. The schema and production behavior are unchanged. **User confirmed Claude review complete with no remaining findings on 2026-11-14; M2A is complete.** Hosted CI remains unverified. Semantic engines/parity remain M2B/M2C; Runner execution remains M6A/M6B. No standard publication or deployment is claimed.
+**Completion evidence — 2026-11-14:** [Verification and decision record](m2a-verification.md) maps 129 shared validation cases, 28 separate Runner observations and all 56 semantic rules to the required coverage. The portable quickstart/comparator, 19 Python checks, five Rust integration tests, 41 actual CLI-positive probes and actual vector-reader positive/truncation checks pass locally. The schema and production behavior are unchanged. **User confirmed Claude review complete with no remaining findings on 2026-11-14; M2A is complete.** See the subsequent [M2B probe/input corrections](m2b-verification.md#reviewed-corpus-and-probe-corrections). Hosted CI remains unverified. Semantic engines/parity remain M2B/M2C; Runner execution remains M6A/M6B. No standard publication or deployment is claimed.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -286,21 +286,23 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 
 **Implementation checklist**
 
-- [ ] Map manifest `standard` into explicit supported-contract selection.
-- [ ] Bundle authoritative v1.0.0 schema; validate offline with no GitHub fetch.
-- [ ] Verify no schema-source override path (CWD-relative file or `--schema`, including an `http(s)` value) can produce a `conformant` APDS verdict or silently substitute the pinned contract; add a regression test that a permissive local `schemas/agentpm.manifest.schema.json` does not make an invalid manifest pass APDS checks.
-- [ ] Implement intrinsic checks and rule-ID diagnostics with affected JSON paths. Attach rule IDs to the diagnostic shape Stage 1 M8 produced; do **not** re-cut the lint renderer or re-solve root kind dispatch here.
-- [ ] Verify a kind-specific APDS violation reports the offending field/path plus rule ID rather than a bare `/oneOf` verdict. If Stage 1 M8 has not landed, record this as a blocked prerequisite instead of working around it.
-- [ ] Implement resolved-graph checks when dependency definitions are available.
-- [ ] Implement applicable packaged-content checks when referenced artifact files are available; missing files/context must be reported according to whether the validator was actually supplied a complete package.
-- [ ] Return incomplete/not evaluated rather than false failure when graph or packaged-content context is absent.
-- [ ] Return unsupported when declaration is unknown rather than silently using v1.
-- [ ] Preserve human-readable CLI lint formatting and compatible structured output behavior.
-- [ ] Run entire fixture corpus against Rust expected results, not selective handpicked cases.
-- [ ] Test invocation in a disconnected local environment.
-- [ ] Test deterministic diagnostic ordering and duplicate-rule behavior.
-- [ ] Record supported conformance role/level, evaluated rules and unevaluated checks in AgentPM CLI output used by downstream publish/inspect code; do not claim full-graph verification from standalone success.
-- [ ] Document any parser behavior that must be fixed to preserve APDS optional dependencies.
+- [x] Map manifest `standard` into explicit supported-contract selection.
+- [x] Bundle authoritative v1.0.0 schema; validate offline with no GitHub fetch.
+- [x] Verify no schema-source override path (CWD-relative file or `--schema`, including an `http(s)` value) can produce a `conformant` APDS verdict or silently substitute the pinned contract; add a regression test that a permissive local `schemas/agentpm.manifest.schema.json` does not make an invalid manifest pass APDS checks.
+- [x] Implement intrinsic checks and rule-ID diagnostics with affected JSON paths. Attach rule IDs to the diagnostic shape Stage 1 M8 produced; do **not** re-cut the lint renderer or re-solve root kind dispatch here.
+- [x] Verify a kind-specific APDS violation reports the offending field/path plus rule ID rather than a bare `/oneOf` verdict. If Stage 1 M8 has not landed, record this as a blocked prerequisite instead of working around it.
+- [x] Implement resolved-graph checks when dependency definitions are available.
+- [x] Implement applicable packaged-content checks when referenced artifact files are available; missing files/context must be reported according to whether the validator was actually supplied a complete package.
+- [x] Return incomplete/not evaluated rather than false failure when graph or packaged-content context is absent.
+- [x] Return unsupported when declaration is unknown rather than silently using v1.
+- [x] Preserve human-readable CLI lint formatting and compatible structured output behavior.
+- [x] Run entire fixture corpus against Rust expected results, not selective handpicked cases.
+- [x] Test invocation in a disconnected local environment.
+- [x] Test deterministic diagnostic ordering and duplicate-rule behavior.
+- [x] Record supported conformance role/level, evaluated rules and unevaluated checks in AgentPM CLI output used by downstream publish/inspect code; do not claim full-graph verification from standalone success.
+- [x] Document any parser behavior that must be fixed to preserve APDS optional dependencies.
+
+**Builder evidence — 2026-11-14:** [Verification, corrections and capability decisions](m2b-verification.md) records the independent Rust engine, explicit `lint --apds standalone|resolved|packaged` integration, all 129 actual CLI corpus results accepted by the portable comparator, 14 targeted integration tests, 20 Python checks, and full workspace regression. The implementation-specific engine/probes remain outside the standard bundle. The historical positive-probe discovery gap and one contradictory inherited-only Skill input were corrected and documented; schema/rule meanings and expected outcomes are unchanged. **User confirmed Claude review passed with no findings on 2026-11-14. Hosted CI remains a completion gate; M2B is awaiting hosted CI and is not yet fully complete.** M3B retains ordinary authoring/preflight rollout; no later milestone is completed by this work.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 

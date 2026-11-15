@@ -1,6 +1,6 @@
 {
   "README.md": "7607e88683644d70dc3d4848ebb423283c5b5a9802ec404fb296deb0c20febd7",
-  "conformance/README.md": "829ac52cce008e35f7b6a41836a9fd87e62a99a5e57da1b297a699be89c73e80",
+  "conformance/README.md": "19354412247aa49cad066a5f78ced7da17adb7d0d38b6c6b064832e814a519bf",
   "conformance/compatibility/index.json": "ba016d150c22368172b64e634f13b5e820592757677d1615c9359799b38d781e",
   "conformance/fixture-index.json": "de9f6d2ee2b324194b19c6910094a654d6070d7db1abcab069ef717e95d30469",
   "conformance/fixture-index.schema.json": "dc98535b7b407f234cb52350c6544514fad8ddd504ee791bf7b1139a46a0b0df",
@@ -164,7 +164,7 @@
   "conformance/fixtures/resolved/memory-external-bound.json": "74ba6c4d53e0809b13856d6a198b5f16a2a859e67ede5e09c23470e832203273",
   "conformance/fixtures/resolved/memory-operation-only.json": "f7175ebc9422824364b91e85aa48475611676f5f819c2a84e3d0f6b89437bff5",
   "conformance/fixtures/resolved/memory-phase-trigger.json": "e4c7f1bdfc041e04c9580b1cd3270c4233eeeaadb0bd841713b20254217356bc",
-  "conformance/fixtures/resolved/skill-inherited-only.json": "216f78980d05211f46b6626fa5adc1be49ee6bc232c8c84b1569e7fb3f898c07",
+  "conformance/fixtures/resolved/skill-inherited-only.json": "383a30339137fc8dc271ca7b72b2af7e2a59348877f2e02eb9f00ae7102d6ce4",
   "conformance/fixtures/resolved/skill-phase-only.json": "f358a90205a2ad04b116d522874bbf4cad8f6bf34f6ea8f68af953b233a3935d",
   "conformance/fixtures/resolved/template-selected-dependencies.json": "aa2fbe2e6292c3f5e3942da2f458e444c2191699e427a3559f694de4651235a9",
   "conformance/fixtures/valid/agent.json": "5beadb4adca4975ab1db2db353f6405437cf5f7ee784bb23004086415b806fbf",

@@ -58,6 +58,11 @@ jobs:
       - name: test
         run: cargo test --all
 
+      - name: Rust APDS results against shared expectations
+        run: |
+          AGENTPM_APDS_RESULTS=target/apds-rust-results.json cargo test -p agentpm-cli --test apds_validation shared_corpus_matches_actual_rust_validation
+          python3 standards/agentpm/1.0.0/conformance/run.py --results target/apds-rust-results.json
+
       - name: AgentPM positive APDS fixture acceptance
         run: python3 scripts/check_apds_cli_fixtures.py --cli target/debug/agentpm
 

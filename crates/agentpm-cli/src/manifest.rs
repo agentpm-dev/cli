@@ -10,6 +10,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+pub(crate) mod apds;
+
 pub(crate) const DEFAULT_MANIFEST_SCHEMA_URL: &str = "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json";
 const LEGACY_MANIFEST_SCHEMA_URL: &str = "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json";
 const EMBEDDED_MANIFEST_SCHEMA_JSON: &str =

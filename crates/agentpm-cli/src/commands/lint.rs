@@ -1,10 +1,21 @@
 use crate::lint_output::render_lint_report;
+use crate::manifest::apds::{self, Context, Evaluation, Level, ResolvedGraph, Status};
 use crate::manifest::{
     LintFileReport, LintIssue, discover_manifest_files, load_manifest_value, resolve_schema_source,
     validate_manifest_value, write_manifest_pretty,
 };
 use crate::prelude::*;
 use anyhow::anyhow;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+#[derive(serde::Serialize)]
+struct Report<'a> {
+    #[serde(flatten)]
+    lint: &'a LintFileReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    apds: Option<&'a Evaluation>,
+}
 
 #[derive(Args, Debug, Default)]
 pub struct LintArgs {
@@ -27,10 +38,35 @@ pub struct LintArgs {
     /// Attempt automatic fixes (non-invasive)
     #[arg(long)]
     fix: bool,
+
+    /// Evaluate the pinned APDS contract at an explicit scope
+    #[arg(long, value_enum, conflicts_with_all = ["schema", "fix"])]
+    apds: Option<Level>,
+
+    /// Local selected-dependency graph JSON for --apds resolved
+    #[arg(long, value_name = "FILE", requires = "apds")]
+    graph: Option<PathBuf>,
+
+    /// Complete supplied package directory for --apds packaged
+    #[arg(long, value_name = "DIR", requires = "apds")]
+    package_root: Option<PathBuf>,
 }
 
 impl LintArgs {
     pub async fn run(self) -> Result<()> {
+        if self.graph.is_some() && self.apds != Some(Level::Resolved) {
+            return Err(anyhow!("--graph requires --apds resolved"));
+        }
+        if self.package_root.is_some() && self.apds != Some(Level::Packaged) {
+            return Err(anyhow!("--package-root requires --apds packaged"));
+        }
+        let graph = self.graph.as_deref().map(ResolvedGraph::read).transpose()?;
+        let package_root = self
+            .package_root
+            .as_deref()
+            .map(std::fs::canonicalize)
+            .transpose()?;
+        let mut evaluations = BTreeMap::new();
         // Resolve schema
         let overridden = self.schema.is_some();
         let schema_source = resolve_schema_source(self.schema);
@@ -41,8 +77,23 @@ impl LintArgs {
         }
 
         // Discover manifests via shared helper
-        let files = discover_manifest_files(&self.paths)?;
+        let mut files = discover_manifest_files(&self.paths)?;
+        if self.apds.is_some() {
+            for input in &self.paths {
+                let path = PathBuf::from(input);
+                if path.is_file() && !files.contains(&path) {
+                    files.push(path);
+                }
+            }
+            files.sort();
+            files.dedup();
+        }
         if files.is_empty() {
+            if self.apds.is_some() {
+                return Err(anyhow!(
+                    "APDS validation requires an existing manifest file"
+                ));
+            }
             println!("No agent.json found. (Looked at ./agent.json or provided paths)");
             return Ok(());
         }
@@ -72,12 +123,35 @@ impl LintArgs {
                 }
             };
 
-            let (schema_ok, mut issues) = validate_manifest_value(
-                &schema_source,
-                &file.to_string_lossy(),
-                &mut value,
-                self.fix,
-            )?;
+            let (schema_ok, mut issues) = if let Some(level) = self.apds {
+                if let Some(root) = &package_root
+                    && !file.canonicalize()?.starts_with(root)
+                {
+                    return Err(anyhow!(
+                        "Manifest must be inside the supplied complete package root"
+                    ));
+                }
+                let evaluation = apds::evaluate(
+                    &value,
+                    &file.to_string_lossy(),
+                    level,
+                    Context {
+                        graph: graph.as_ref(),
+                        package_root: package_root.as_deref(),
+                    },
+                )?;
+                let ok = evaluation.status == Status::Conformant;
+                let issues = evaluation.issues.clone();
+                evaluations.insert(file.to_string_lossy().into_owned(), evaluation);
+                (ok, issues)
+            } else {
+                validate_manifest_value(
+                    &schema_source,
+                    &file.to_string_lossy(),
+                    &mut value,
+                    self.fix,
+                )?
+            };
             if overridden {
                 issues.push(LintIssue {
                     file: file.to_string_lossy().into_owned(),
@@ -113,12 +187,19 @@ impl LintArgs {
         }
 
         // Output
+        let output: Vec<_> = reports
+            .iter()
+            .map(|report| Report {
+                lint: report,
+                apds: evaluations.get(&report.file),
+            })
+            .collect();
         match self.format.as_str() {
             "json" => {
-                println!("{}", serde_json::to_string_pretty(&reports)?);
+                println!("{}", serde_json::to_string_pretty(&output)?);
             }
             "ndjson" => {
-                for report in &reports {
+                for report in &output {
                     println!("{}", serde_json::to_string(&report)?);
                 }
             }
@@ -126,6 +207,31 @@ impl LintArgs {
                 // pretty
                 for r in &reports {
                     print!("{}", render_lint_report(r));
+                    if let Some(evaluation) = evaluations.get(&r.file) {
+                        println!(
+                            "  APDS {} scope: {}; Runner behavior not evaluated.",
+                            serde_json::to_value(evaluation.level)?
+                                .as_str()
+                                .unwrap_or(""),
+                            serde_json::to_value(evaluation.status)?
+                                .as_str()
+                                .unwrap_or("")
+                        );
+                        if !evaluation.unevaluated.is_empty() {
+                            println!(
+                                "  Unevaluated: {}",
+                                evaluation
+                                    .unevaluated
+                                    .iter()
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            );
+                        }
+                        for note in &evaluation.notes {
+                            println!("  {note}");
+                        }
+                    }
                 }
             }
         }
@@ -186,6 +292,7 @@ mod tests {
             strict: true,
             format: "json".into(),
             fix: false,
+            ..Default::default()
         }
         .run()
         .await;
@@ -227,6 +334,7 @@ mod tests {
             strict: false,
             format: "json".into(),
             fix: false,
+            ..Default::default()
         }
         .run()
         .await;
@@ -241,6 +349,7 @@ mod tests {
             strict: true,
             format: "json".into(),
             fix: false,
+            ..Default::default()
         }
         .run()
         .await;
@@ -282,6 +391,7 @@ mod tests {
                 strict: false,
                 format: format.into(),
                 fix: false,
+                ..Default::default()
             }
             .run()
             .await;
@@ -296,6 +406,7 @@ mod tests {
                 strict: true,
                 format: format.into(),
                 fix: false,
+                ..Default::default()
             }
             .run()
             .await;
@@ -347,6 +458,7 @@ mod tests {
                 strict: false,
                 format: format.into(),
                 fix: false,
+                ..Default::default()
             }
             .run()
             .await;
@@ -361,6 +473,7 @@ mod tests {
                 strict: true,
                 format: format.into(),
                 fix: false,
+                ..Default::default()
             }
             .run()
             .await;

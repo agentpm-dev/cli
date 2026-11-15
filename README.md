@@ -429,6 +429,7 @@ can be reported through [GitHub Issues](https://github.com/agentpm-dev/cli/issue
 
 - Toolchain pinned via rust-toolchain.toml
 - CI checks: cargo fmt, cargo clippy -D warnings, cargo test
+- APDS corpus, actual CLI probes and validation-scope instructions: [development checks](scripts/README.md).
 
 ### Run locally:
 

@@ -34,7 +34,15 @@ def main():
             environment[key] = str(Path(folder) / key)
         for relative in sorted(paths):
             result = subprocess.run(
-                [str(cli), "lint", "--format", "json", str(directory / relative)],
+                [
+                    str(cli),
+                    "lint",
+                    "--apds",
+                    "standalone",
+                    "--format",
+                    "json",
+                    str(directory / relative),
+                ],
                 cwd=folder,
                 env=environment,
                 capture_output=True,
@@ -44,6 +52,14 @@ def main():
             )
             if result.returncode:
                 parser.exit(1, f"FAIL {relative}:\n{result.stdout}\n{result.stderr}\n")
+            try:
+                reports = json.loads(result.stdout)
+                if len(reports) != 1 or reports[0]["apds"]["status"] != "conformant":
+                    raise ValueError(
+                        "Expected one actual conformant standalone APDS report"
+                    )
+            except (ValueError, KeyError, TypeError) as error:
+                parser.exit(1, f"FAIL {relative}: {error}\n{result.stdout}\n")
         print(f"PASS: {len(paths)} positive manifests accepted by actual AgentPM lint.")
         for case_id, should_pass in [
             ("knowledge-vector-files", True),

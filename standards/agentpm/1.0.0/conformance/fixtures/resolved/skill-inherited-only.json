@@ -47,12 +47,6 @@
         ]
       }
     },
-    "mcp": [
-      {
-        "id": "workspace",
-        "tools": ["@example/echo"]
-      }
-    ],
     "consumer_context": {
       "file": "context/user.json"
     }

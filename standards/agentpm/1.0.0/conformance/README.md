@@ -84,6 +84,17 @@ For the full validation suite, omit `--case` and supply results for every indexe
 
 Compare the requested evaluation scope honestly. Standalone success does not establish graph or content validity. `incomplete` means needed inspection context is absent; `unsupported` means the declared standard/version or evaluation capability is unsupported. Neither is an authored violation by itself. Known violations remain violations even if other evidence is unavailable.
 
+### Example integration: AgentPM's Rust CLI
+
+From an AgentPM CLI source checkout, its implementation-specific tests can produce results for this comparator:
+
+```sh
+AGENTPM_APDS_RESULTS=target/apds-rust-results.json cargo test -p agentpm-cli --test apds_validation -- --nocapture
+.venv-apds/bin/python standards/agentpm/1.0.0/conformance/run.py --results target/apds-rust-results.json
+```
+
+Use the Python environment prepared above. In Windows PowerShell, set `$env:AGENTPM_APDS_RESULTS = "target/apds-rust-results.json"` before running Cargo, omit the leading environment assignment, and use `.venv-apds/Scripts/python.exe`. The Rust tests invoke the actual CLI and write the result file only after assertions pass. Implementation code and tests remain outside this bundle. This optional integration requires the CLI repository's Rust toolchain; an independent implementation can produce the same test-only result projection through its own tooling.
+
 ## Test a Manager or Runner
 
 [runner-observations.json](runner-observations.json) supplies separate scenarios with fixture references, initial conditions, actions and expected observations. Use your own runtime test harness to exercise the roles and constructs you support. The corpus checker checks these descriptions and their references; it does not run them or count them as validator successes.
