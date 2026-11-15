@@ -320,8 +320,9 @@ def scaffolds(suite):
         suite.run(f"lint-{kind}", target, ["lint", "--strict"])
         suite.lint_json(f"lint-json-{kind}", target)
         require(
-            "standard" not in read_json(target / "agent.json"),
-            "init must not emit standard",
+            read_json(target / "agent.json").get("standard")
+            == {"id": "agentpm", "version": "1.0.0"},
+            "new scaffolds must declare the supported APDS standard",
         )
 
 

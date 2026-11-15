@@ -9,7 +9,9 @@ use crate::assets::{
 use crate::io::fs::{ensure_dirs, write_atomic};
 use crate::prelude::*;
 use anyhow::bail;
-use std::path::PathBuf;
+use serde::Serialize;
+use serde_json::Value;
+use std::path::{Path, PathBuf};
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum InitKind {
@@ -31,20 +33,40 @@ pub enum KnowledgeInitMode {
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// What to scaffold: a single-tool package, a composed agent, a workflow template, a skill, a knowledge package, a memory blueprint, an instruction profile, or a loop package
-    #[arg(long, value_enum, default_value = "tool")]
+    /// Package kind (defaults to an Agent Package). Existing Tool scripts should pass --kind tool.
+    #[arg(long, value_enum, default_value = "agent")]
     kind: InitKind,
 
     /// Knowledge mode when --kind knowledge: direct context documents or prepared vector corpus
     #[arg(long, value_enum, default_value = "context")]
     mode: KnowledgeInitMode,
 
-    /// Name for the package being initialized
-    #[arg(long, default_value = "my-tool")]
+    /// Local package name; defaults to my-agent, or my-<kind> for an explicit Component/Template
+    #[arg(
+        long,
+        default_value = "my-agent",
+        default_value_if("kind", "tool", "my-tool"),
+        default_value_if("kind", "skill", "my-skill"),
+        default_value_if("kind", "knowledge", "my-knowledge"),
+        default_value_if("kind", "memory", "my-memory"),
+        default_value_if("kind", "profile", "my-profile"),
+        default_value_if("kind", "loop", "my-loop"),
+        default_value_if("kind", "template", "my-template")
+    )]
     name: String,
 
-    /// Description for the package being initialized
-    #[arg(long, default_value = "Starter AgentPM project")]
+    /// Package purpose; the default describes the selected scaffold
+    #[arg(
+        long,
+        default_value = "A reusable Agent Package defining an agent's capabilities and behavior.",
+        default_value_if("kind", "tool", "Echo one JSON input as JSON output."),
+        default_value_if("kind", "skill", "Instructions for completing a repeatable task."),
+        default_value_if("kind", "knowledge", "Reference material for an agent system."),
+        default_value_if("kind", "memory", "A durable memory contract for an agent system."),
+        default_value_if("kind", "profile", "Behavioral guidance for an agent system."),
+        default_value_if("kind", "loop", "An assessment, execution and review workflow."),
+        default_value_if("kind", "template", "A starter project for an agent system.")
+    )]
     description: String,
 
     /// Output directory (defaults to current dir)
@@ -61,6 +83,7 @@ impl InitArgs {
         }
 
         let out = self.out_dir.unwrap_or(std::env::current_dir()?);
+        preflight_output(&out, &self.kind, &self.mode)?;
         match self.kind {
             InitKind::Tool => {
                 let source_path = out.join("main.py");
@@ -68,13 +91,13 @@ impl InitArgs {
                 if !create_source && !source_path.is_file() {
                     bail!("{} already exists and is not a file", source_path.display());
                 }
-                let rendered = render(
+                let rendered = render_manifest(
                     TOOL_AGENT_JSON_TPL,
                     &[
                         ("TOOL_NAME", &self.name),
                         ("TOOL_DESCRIPTION", &self.description),
                     ],
-                );
+                )?;
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
                 println!("Created {}", path.display());
@@ -86,20 +109,24 @@ impl InitArgs {
                 }
             }
             InitKind::Agent => {
-                let rendered = render(
+                let rendered = render_manifest(
                     AGENT_JSON_TPL,
                     &[
                         ("AGENT_NAME", &self.name),
                         ("AGENT_DESCRIPTION", &self.description),
                     ],
-                );
+                )?;
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
                 println!("Created {}", path.display());
+                println!("Agent Package created. Add Components as needed, then run agentpm lint.");
+                println!(
+                    "To run it with agentpm harness, first add a Loop dependency and configure a model."
+                );
             }
             InitKind::Template => {
                 let display_name = humanize_name(&self.name);
-                let rendered = render(
+                let rendered = render_manifest(
                     TEMPLATE_PACKAGE_AGENT_JSON_TPL,
                     &[
                         ("TEMPLATE_NAME", &self.name),
@@ -107,7 +134,7 @@ impl InitArgs {
                         ("TEMPLATE_DISPLAY_NAME", &display_name),
                         ("PROJECT_NAME_DEFAULT", &self.name),
                     ],
-                );
+                )?;
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
                 println!("Created {}", path.display());
@@ -129,24 +156,27 @@ impl InitArgs {
                 println!("Created {}", generated_readme_path.display());
             }
             InitKind::Skill => {
-                let rendered = render(
+                let rendered = render_manifest(
                     SKILL_AGENT_JSON_TPL,
                     &[
                         ("SKILL_NAME", &self.name),
                         ("SKILL_DESCRIPTION", &self.description),
                     ],
-                );
+                )?;
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
                 println!("Created {}", path.display());
 
                 let title = humanize_name(&self.name);
+                // A JSON string is also a quoted YAML scalar, including escaped
+                // newlines and quotes in authored descriptions.
+                let description = serde_json::to_string(&self.description)?;
                 let skill_markdown = render(
                     SKILL_INIT_MD_TPL,
                     &[
                         ("SKILL_NAME", &self.name),
                         ("SKILL_TITLE", &title),
-                        ("SKILL_DESCRIPTION", &self.description),
+                        ("SKILL_DESCRIPTION", &description),
                     ],
                 );
                 let skill_path = out.join("SKILL.md");
@@ -155,20 +185,20 @@ impl InitArgs {
             }
             InitKind::Knowledge => {
                 let rendered = match self.mode {
-                    KnowledgeInitMode::Context => render(
+                    KnowledgeInitMode::Context => render_manifest(
                         KNOWLEDGE_CONTEXT_AGENT_JSON_TPL,
                         &[
                             ("KNOWLEDGE_NAME", &self.name),
                             ("KNOWLEDGE_DESCRIPTION", &self.description),
                         ],
-                    ),
-                    KnowledgeInitMode::Vector => render(
+                    )?,
+                    KnowledgeInitMode::Vector => render_manifest(
                         KNOWLEDGE_VECTOR_AGENT_JSON_TPL,
                         &[
                             ("KNOWLEDGE_NAME", &self.name),
                             ("KNOWLEDGE_DESCRIPTION", &self.description),
                         ],
-                    ),
+                    )?,
                 };
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
@@ -213,13 +243,13 @@ impl InitArgs {
                 }
             }
             InitKind::Memory => {
-                let rendered = render(
+                let rendered = render_manifest(
                     MEMORY_AGENT_JSON_TPL,
                     &[
                         ("MEMORY_NAME", &self.name),
                         ("MEMORY_DESCRIPTION", &self.description),
                     ],
-                );
+                )?;
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
                 println!("Created {}", path.display());
@@ -235,13 +265,13 @@ impl InitArgs {
                 println!("Created {}", schema_path.display());
             }
             InitKind::Profile => {
-                let rendered = render(
+                let rendered = render_manifest(
                     PROFILE_AGENT_JSON_TPL,
                     &[
                         ("PROFILE_NAME", &self.name),
                         ("PROFILE_DESCRIPTION", &self.description),
                     ],
-                );
+                )?;
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
                 println!("Created {}", path.display());
@@ -253,13 +283,13 @@ impl InitArgs {
                 println!("Created {}", readme_path.display());
             }
             InitKind::Loop => {
-                let rendered = render(
+                let rendered = render_manifest(
                     LOOP_AGENT_JSON_TPL,
                     &[
                         ("LOOP_NAME", &self.name),
                         ("LOOP_DESCRIPTION", &self.description),
                     ],
-                );
+                )?;
                 let path = out.join("agent.json");
                 write_atomic(&path, &rendered)?;
                 println!("Created {}", path.display());
@@ -275,13 +305,160 @@ impl InitArgs {
     }
 }
 
-/// Naive renderer: replaces {{KEY}} with value.
+/// Render text resources. JSON manifests use render_manifest instead.
 fn render(tpl: &str, vars: &[(&str, &str)]) -> String {
     let mut out = tpl.to_string();
     for (k, v) in vars {
         out = out.replace(&format!("{{{{{}}}}}", k), v);
     }
     out
+}
+
+fn render_manifest(tpl: &str, vars: &[(&str, &str)]) -> Result<String> {
+    fn replace(value: &mut Value, vars: &[(&str, &str)]) {
+        match value {
+            Value::String(text) => {
+                if let Some((_, replacement)) = vars
+                    .iter()
+                    .find(|(key, _)| *text == format!("{{{{{key}}}}}"))
+                {
+                    *text = replacement.to_string();
+                }
+            }
+            Value::Array(items) => items.iter_mut().for_each(|item| replace(item, vars)),
+            Value::Object(fields) => fields.values_mut().for_each(|item| replace(item, vars)),
+            _ => {}
+        }
+    }
+    let mut value: Value = serde_json::from_str(tpl)?;
+    replace(&mut value, vars);
+    validate_scaffold_manifest(&value)?;
+    // Keep author-facing identity fields near the top without enabling JSON
+    // preserve_order globally (historical signature serialization relies on it
+    // remaining disabled).
+    #[derive(Serialize)]
+    struct Scaffold<'a> {
+        #[serde(rename = "$schema")]
+        schema: &'a Value,
+        standard: &'a Value,
+        kind: &'a Value,
+        name: &'a Value,
+        version: &'a Value,
+        description: &'a Value,
+        #[serde(flatten)]
+        content: std::collections::BTreeMap<&'a str, &'a Value>,
+    }
+    let common = [
+        "$schema",
+        "standard",
+        "kind",
+        "name",
+        "version",
+        "description",
+    ];
+    let scaffold = Scaffold {
+        schema: &value["$schema"],
+        standard: &value["standard"],
+        kind: &value["kind"],
+        name: &value["name"],
+        version: &value["version"],
+        description: &value["description"],
+        content: value
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(key, _)| !common.contains(&key.as_str()))
+            .map(|(key, value)| (key.as_str(), value))
+            .collect(),
+    };
+    Ok(serde_json::to_string_pretty(&scaffold)? + "\n")
+}
+
+pub(super) fn validate_scaffold_manifest(value: &Value) -> Result<()> {
+    use crate::manifest::apds::{Context, Level, Status, evaluate};
+    let result = evaluate(value, "agent.json", Level::Standalone, Context::default())?;
+    if result.status != Status::Conformant {
+        if let Some(issue) = result.issues.first() {
+            bail!(
+                "Cannot create package: {} at {} ({})",
+                issue.message,
+                issue.instance_path,
+                issue.rule_id.as_deref().unwrap_or("APDS")
+            );
+        }
+        bail!("Cannot create package: unsupported scaffold standard");
+    }
+    Ok(())
+}
+
+/// Check the complete output set before any file is written. Existing Tool
+/// source is intentionally retained; other generated files are never replaced.
+fn preflight_output(out: &Path, kind: &InitKind, mode: &KnowledgeInitMode) -> Result<()> {
+    let mut files = vec!["agent.json"];
+    match kind {
+        InitKind::Agent => {}
+        InitKind::Tool => files.push("main.py"),
+        InitKind::Skill => files.push("SKILL.md"),
+        InitKind::Template => files.push("template/README.md"),
+        InitKind::Knowledge => {
+            files.push("README.md");
+            match mode {
+                KnowledgeInitMode::Context => files.push("knowledge/docs/context.md"),
+                KnowledgeInitMode::Vector => {
+                    files.extend(["knowledge/chunks.jsonl", "knowledge/sources.jsonl"]);
+                }
+            }
+        }
+        InitKind::Memory => files.extend(["README.md", "schemas/user-preference.schema.json"]),
+        InitKind::Profile | InitKind::Loop => files.push("README.md"),
+    }
+    fn directories(path: &Path, out: &Path) -> Result<()> {
+        for parent in path.ancestors().filter(|p| !p.as_os_str().is_empty()) {
+            match std::fs::symlink_metadata(parent) {
+                Ok(metadata) => {
+                    if !parent.is_dir()
+                        || metadata.file_type().is_symlink()
+                            && parent != out
+                            && parent.starts_with(out)
+                    {
+                        bail!("{} is not a safe scaffold directory", parent.display());
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+    for relative in files {
+        let path = out.join(relative);
+        directories(path.parent().unwrap_or(out), out)?;
+        let keep_source = matches!(kind, InitKind::Tool) && relative == "main.py";
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) if keep_source && path.is_file() => continue,
+            Ok(_) => bail!(
+                "{} already exists; init does not overwrite existing files",
+                path.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        // The existing atomic writer uses this staging name. Protect preexisting
+        // staging paths too, including broken links, rather than truncating them.
+        let staging = path.with_extension("tmp");
+        match std::fs::symlink_metadata(&staging) {
+            Ok(_) => bail!(
+                "{} already exists; init will not replace it",
+                staging.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if matches!(kind, InitKind::Knowledge) && matches!(mode, KnowledgeInitMode::Vector) {
+        directories(&out.join("knowledge/embeddings"), out)?;
+    }
+    Ok(())
 }
 
 fn humanize_name(name: &str) -> String {
@@ -412,7 +589,9 @@ mod tests {
 
         let skill_markdown = std::fs::read_to_string(&skill_path).unwrap();
         assert!(skill_markdown.contains("name: incident-commander"));
-        assert!(skill_markdown.contains("description: Incident response coordination playbook."));
+        assert!(
+            skill_markdown.contains("description: \"Incident response coordination playbook.\"")
+        );
         assert!(skill_markdown.contains("# Incident Commander"));
         assert!(skill_markdown.contains("Incident response coordination playbook."));
         assert!(!skill_markdown.contains("{{SKILL_NAME}}"));

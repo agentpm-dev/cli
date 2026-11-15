@@ -352,28 +352,34 @@ The freeze records approval of the reviewed candidate. Before publication, delib
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Milestone 3A: Default CLI `init` to an APDS Agent Package
+
 > **Scope note:** Change new authoring to start with a valid Agent Package and keep explicit scaffolds for seven other kinds. Outside this milestone: mandatory Loop/Tools/Profile; preserve Stage 1 Tool scaffold repair.
 > **Implementation notes:**
+>
 > - This is an intentional early adopter compatibility change. Existing scripts that relied on `init` producing a Tool should select `--kind tool` explicitly; explain the migration in help.
 > - **Dependencies:** M1B/M2B; **M1A.1 tolerance release 0.1.36 publication prerequisite satisfied by operator confirmation on 2026-10-22**, recorded in Stage 1's Band 5 handoff / Band 7 publication record; Stage 1 M8 CLI authoring improvements. This publication confirmation does not waive M1B/M2B or other M3A acceptance requirements.
 > - **Decisions:** D04. **Acceptance:** S2-AC-02, S2-AC-03.
 
 **Implementation checklist**
 
-- [ ] Change clap default kind from Tool to Agent.
-- [ ] Set default project/artifact name appropriate for an Agent Package (not `my-tool`).
-- [ ] Write a useful nonblank description and APDS `standard` in default scaffold.
-- [ ] Emit the **pinned versioned** `$schema` URL in all scaffolds instead of the current moving `main` branch URL (`commands/lint.rs` shows the `main` URL in use today, and lint warns when `$schema` is missing, so the field is both emitted and encouraged). New manifests must be edited against the same frozen contract they are validated against. `$schema` stays an editor affordance and must not be treated as the standard selector.
-- [ ] Keep optional component and Loop fields absent or empty without violating APDS.
-- [ ] Generate `standard` for Tool, Skill, Knowledge, Memory, Profile, Loop and Template explicit scaffolds.
-- [ ] Also emit `standard` from `agentpm export`'s generated Skill scaffold (`commands/export.rs` builds a fresh `json!` manifest, so it is a scaffold generator the init-focused tasks above do not cover).
-- [ ] Preserve Stage 1's runtime-valid Tool Python/Node scaffold files and defaults.
-- [ ] Use proper JSON encoding for quotes, slashes, Unicode and newlines in generated descriptions.
-- [ ] Validate invalid local names before writing files; prevent partial/broken files on error.
-- [ ] Ensure `init --kind agent` equals default behavior.
-- [ ] Snapshot no-flags and all eight explicit kind scaffolds and lint them with v1.0.0.
-- [ ] Check templates, docs snippets and help that previously assumed default Tool.
-- [ ] Explain valid-without-Loop but not-yet-Harness-runnable next steps in immediate CLI output.
+- [x] Change clap default kind from Tool to Agent.
+- [x] Set default project/artifact name appropriate for an Agent Package (not `my-tool`).
+- [x] Write a useful nonblank description and APDS `standard` in default scaffold.
+- [x] Emit the **pinned versioned** `$schema` URL in all scaffolds instead of the current moving `main` branch URL (`commands/lint.rs` shows the `main` URL in use today, and lint warns when `$schema` is missing, so the field is both emitted and encouraged). New manifests must be edited against the same frozen contract they are validated against. `$schema` stays an editor affordance and must not be treated as the standard selector.
+- [x] Keep optional component and Loop fields absent or empty without violating APDS.
+- [x] Generate `standard` for Tool, Skill, Knowledge, Memory, Profile, Loop and Template explicit scaffolds.
+- [x] Also emit `standard` from `agentpm export`'s generated Skill scaffold (`commands/export.rs` builds a fresh `json!` manifest, so it is a scaffold generator the init-focused tasks above do not cover).
+- [x] Preserve Stage 1's runnable Python Tool scaffold files/defaults and Python/Node Tool authoring/packaging compatibility. `init --kind tool` generates Python only; there is no existing Node scaffold to preserve or new Node template delivered here.
+- [x] Use proper JSON encoding for quotes, slashes, Unicode and newlines in generated descriptions.
+- [x] Validate invalid local names before writing files; prevent partial/broken files on error.
+- [x] Ensure `init --kind agent` equals default behavior.
+- [x] Snapshot no-flags and all eight explicit kind scaffolds and lint them with v1.0.0.
+- [x] Check templates, docs snippets and help that previously assumed default Tool.
+- [x] Explain valid-without-Loop but not-yet-Harness-runnable next steps in immediate CLI output.
+
+**Builder evidence (2026-11-15):** [Implementation, migration decision and verification record](m3a-verification.md) maps S2-AC-02/03 and D04 to real CLI tests, nine scaffold snapshots, negative input/collision checks, full workspace regression and feature-local docs. Implementation and local checks pass. User confirmed independent Claude review passed with no remaining findings on **2026-11-15**. Hosted CI and the requested manual testing remain pending; M3A is not yet marked complete. Ordinary authoring enforcement remains M3B.
+
+**Existing-capability clarification:** The plan's "Python/Node Tool scaffolding" wording refers to preserving existing runtime compatibility. The shipped init command has only a Python Tool template; Node regression evidence comes from manually authored Tool manifests and payload packaging. A Node init template would be additional functionality, not an M3A preservation fix.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -1489,8 +1495,10 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Milestone 17B: Rewrite Introduction, Quickstart, Guides and AgentPM-owned READMEs
+
 > **Scope note:** Publish one consistent Agent Package-first explanation across docs, help, website and repository-owned READMEs. Outside this milestone: Do not replace technical depth with marketing blurbs or claim universal Runner support.
 > **Implementation notes:**
+>
 > - Quickstart should show a real first Agent Package installation and Harness run before making users learn all six Components. Preserve alternate authoring/Template paths.
 > - **Dependencies:** M17A approved IA and completed Stage 1 prerequisite.
 > - **Decisions:** D18. **Acceptance:** S2-AC-22.
@@ -1506,6 +1514,7 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 - [ ] Update publish, install/lock, legacy migration, frozen and release provenance guidance.
 - [ ] Update Harness Runner and Node/Python SDK integration help with realistic prerequisites.
 - [ ] Update CLI, Registry, SDK, examples and website owned README positioning.
+- [ ] After the final docs rewrite, regenerate `agentpm-examples/knowledge-packages/agentpm-docs` from `agentpm-api/docs/v0.1` using its existing corpus/embedding pipeline; refresh copied sources, chunks, provenance, vectors and CLI-generated Knowledge metadata together. Bump the package version consistently, including the prep script's version constant, validate with `agentpm lint`, `agentpm knowledge build`/`inspect` and a publish dry-run, and arrange a new published version. Never hand-edit the vendored pages or replace an existing published version.
 - [ ] Use Agent Package for artifact, Agent for runtime entity; no blind global replace.
 - [ ] Preserve existing technical references and backwards-compatible docs redirects.
 - [ ] Cross-check every reference link and current CLI syntax with actual shipped code.
@@ -1523,8 +1532,10 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Milestone 17C: Run Final End-to-end Documentation and Cross-product Verification
+
 > **Scope note:** Prove every public first-use example actually works and all Stage 2 contracts agree after the complete docs rewrite. Outside this milestone: unexecuted tests claimed as passed; no changes to settled product semantics just for wording.
 > **Implementation notes:**
+>
 > - The release gate spans Rust CLI, Python Registry, Node/Python SDKs, Next website and real starter. Claude reviews before marking Stage 2 complete.
 > - **Dependencies:** M17A/B; entire Stage 1 and Stage 2 completion.
 > - **Decisions:** D01–D21 closure. **Acceptance:** S2-AC-01, S2-AC-02, S2-AC-03, S2-AC-04, S2-AC-05, S2-AC-06, S2-AC-07, S2-AC-08, S2-AC-09, S2-AC-10, S2-AC-11, S2-AC-12, S2-AC-13, S2-AC-14, S2-AC-15, S2-AC-16, S2-AC-17, S2-AC-18, S2-AC-19, S2-AC-20, S2-AC-21, S2-AC-22.
@@ -1534,6 +1545,7 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 - [ ] Run actual docs commands for install/try, build/lint/publish and Template flows.
 - [ ] Check missing credential and no-Loop valid-but-not-runnable documentation.
 - [ ] Cross-verify docs and homepage code boxes reference the same selected version.
+- [ ] Verify the newly published `agentpm-docs` Knowledge package in a clean consumer: copied sources and retrieved chunks reflect the final docs (including Tool scaffolding and standard selection), vectors/counts/provenance/build hashes agree, and the prior published version remains byte-identical and installable. Record the new version, source revision and query evidence.
 - [ ] Verify all APDS standard/manifest/fixture URLs refer to immutable v1.0.0.
 - [ ] Recheck old/new legacy publication and install behavior after all migrations.
 - [ ] Verify eight kind detail views, Health states and anonymous/private visibility.
@@ -1556,6 +1568,7 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Release Band 6: Final Documentation, Full Integration and Independent Approval
+
 Covered milestones: 17A–17C.
 
 This gives the finished AgentPM ecosystem one accurate Agent Package-first documentation story across docs, CLI, Registry, SDKs and owned READMEs, based on stabilized Stage 1 and Stage 2 contracts. The whole stage is only complete after the high-risk lifecycle and UX matrices pass and Claude has reviewed the evidence.

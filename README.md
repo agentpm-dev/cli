@@ -167,19 +167,35 @@ Tip: different terminals (Terminal.app, iTerm, VS Code) may read different start
 
 ## Quick start
 
-Create a new AgentPM package:
+Create a minimal Agent Package in an empty directory:
 
 ```bash
-agentpm --help
-agentpm init --kind tool --name demo --description "My first tool"
-agentpm init --kind skill --name triage-playbook --description "My first skill"
-agentpm init --kind knowledge --name docs-corpus --description "My first knowledge package"
-agentpm init --kind memory --name conversation-continuity --description "My first memory blueprint"
-agentpm init --kind profile --name support-style --description "My first instruction profile"
-agentpm init --kind loop --name incident-response-loop --description "My first orchestration loop"
-agentpm init --kind agent --name support-agent --description "My first agent"
-agentpm init --kind template --name research-template --description "My workflow template"
+mkdir my-agent && cd my-agent
+agentpm init
+agentpm lint
 ```
+
+The generated manifest declares APDS `agentpm / 1.0.0` and pins its editor schema.
+Component dependencies are optional. To execute the Agent with `agentpm harness`,
+add a Loop dependency and configure a model first.
+
+To create a Component or Template instead, select its kind explicitly. Scripts
+that previously relied on the default Tool scaffold must now pass `--kind tool`.
+Each command below writes to its own directory:
+
+```bash
+agentpm init --kind tool --name demo --out-dir ../demo
+agentpm init --kind skill --name triage-playbook --out-dir ../triage-playbook
+agentpm init --kind knowledge --name docs-corpus --out-dir ../docs-corpus
+agentpm init --kind memory --name conversation-continuity --out-dir ../conversation-continuity
+agentpm init --kind profile --name support-style --out-dir ../support-style
+agentpm init --kind loop --name incident-response-loop --out-dir ../incident-response-loop
+agentpm init --kind agent --name support-agent --out-dir ../support-agent
+agentpm init --kind template --name research-template --out-dir ../research-template
+```
+
+`init` refuses to overwrite generated files. For a Tool, an existing `main.py`
+is retained; otherwise a runnable Python JSON echo script is created.
 
 ### Workflow templates
 

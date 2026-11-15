@@ -64,6 +64,273 @@ fn success(output: Output) -> Output {
     output
 }
 
+const KINDS: [&str; 8] = [
+    "agent",
+    "tool",
+    "skill",
+    "knowledge",
+    "memory",
+    "profile",
+    "loop",
+    "template",
+];
+
+fn scaffold_files(root: &std::path::Path) -> Value {
+    fn collect(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        files: &mut serde_json::Map<String, Value>,
+    ) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect(root, &path, files);
+            } else {
+                let name = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .replace('\\', "/");
+                // Text template checkout endings may be CRLF on Windows; the
+                // snapshot records content rather than a Git checkout setting.
+                let text = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+                files.insert(
+                    name.clone(),
+                    if name == "agent.json" {
+                        serde_json::from_str(&text).unwrap()
+                    } else {
+                        json!(text)
+                    },
+                );
+            }
+        }
+    }
+    let mut files = serde_json::Map::new();
+    collect(root, root, &mut files);
+    Value::Object(files)
+}
+
+#[test]
+fn default_and_explicit_scaffolds_match_snapshots_and_lint_offline() {
+    let help = success(Project::new().cli(&["init", "--help"]));
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.contains("--kind tool"));
+    assert!(help.contains("[default: agent]"));
+    assert!(help.contains("my-agent"));
+    let implicit = Project::new();
+    let output = success(implicit.cli(&["init"]));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Agent Package created"));
+    assert!(text.contains("add a Loop dependency and configure a model"));
+    assert!(!implicit.0.join("main.py").exists());
+    for kind in KINDS.into_iter().chain(["knowledge-vector"]) {
+        let project = Project::new();
+        if kind == "knowledge-vector" {
+            success(project.cli(&["init", "--kind", "knowledge", "--mode", "vector"]));
+        } else {
+            success(project.cli(&["init", "--kind", kind]));
+        }
+        if kind == "agent" {
+            assert_eq!(scaffold_files(&project.0), scaffold_files(&implicit.0));
+        }
+        let snapshot = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("tests/fixtures/scaffolds/{kind}.snapshot.json"));
+        let expected: Value = serde_json::from_slice(&fs::read(snapshot).unwrap()).unwrap();
+        assert_eq!(scaffold_files(&project.0), expected, "{kind}");
+        let manifest = project.manifest();
+        let expected_kind = if kind == "knowledge-vector" {
+            "knowledge"
+        } else {
+            kind
+        };
+        assert_eq!(manifest["name"], format!("my-{expected_kind}"));
+        assert_eq!(manifest["kind"], expected_kind);
+        let raw = fs::read_to_string(project.0.join("agent.json")).unwrap();
+        assert!(raw.find("\"name\"").unwrap() < raw.find("\"description\"").unwrap());
+        assert!(raw.find("\"version\": \"0.1.0\"").unwrap() < raw.find("\"description\"").unwrap());
+        let lint = success(project.cli(&["lint", "--strict", "--format", "json"]));
+        assert!(!String::from_utf8_lossy(&lint.stdout).contains("Missing $schema"));
+        let apds = success(project.cli(&["lint", "--apds", "standalone", "--format", "json"]));
+        let reports: Value = serde_json::from_slice(&apds.stdout).unwrap();
+        assert_eq!(
+            reports[0]["apds"]["status"], "conformant",
+            "{kind}: {reports}"
+        );
+    }
+    let manifest = implicit.manifest();
+    for key in ["tools", "skills", "knowledge", "memory", "profiles"] {
+        assert_eq!(manifest[key], json!([]));
+    }
+    assert!(manifest.get("loop").is_none());
+}
+
+#[test]
+fn descriptions_round_trip_without_replacing_user_placeholders() {
+    let description =
+        "Quotes \" : backslash \\ / Unicode 😀 café\nnext\tline {{AGENT_NAME}} {{SKILL_TITLE}}";
+    for kind in KINDS {
+        let project = Project::new();
+        success(project.cli(&["init", "--kind", kind, "--description", description]));
+        assert_eq!(project.manifest()["description"], description, "{kind}");
+        success(project.cli(&["lint", "--strict"]));
+        if kind == "skill" {
+            let markdown = fs::read_to_string(project.0.join("SKILL.md")).unwrap();
+            let scalar = markdown
+                .lines()
+                .find_map(|line| line.strip_prefix("description: "))
+                .unwrap();
+            assert_eq!(serde_json::from_str::<String>(scalar).unwrap(), description);
+        }
+    }
+}
+
+#[test]
+fn invalid_input_leaves_output_uncreated_and_existing_files_untouched() {
+    let duplicate = Project::new();
+    assert!(
+        !duplicate
+            .cli(&[
+                "init",
+                "--name",
+                "first",
+                "--name",
+                "second",
+                "--out-dir",
+                "new-package"
+            ])
+            .status
+            .success()
+    );
+    assert!(!duplicate.0.join("new-package").exists());
+    for kind in KINDS {
+        for name in [
+            "",
+            "@namespace/name",
+            "../escape",
+            "two words",
+            "quote\"",
+            "line\nfeed",
+            "café",
+            &"a".repeat(65),
+        ] {
+            let project = Project::new();
+            let result = project.cli(&[
+                "init",
+                "--kind",
+                kind,
+                "--name",
+                name,
+                "--out-dir",
+                "new-package",
+            ]);
+            assert!(!result.status.success(), "{kind} accepted {name:?}");
+            assert!(!project.0.join("new-package").exists(), "{kind}: {name:?}");
+        }
+        let project = Project::new();
+        assert!(
+            !project
+                .cli(&[
+                    "init",
+                    "--kind",
+                    kind,
+                    "--description",
+                    " \n\t",
+                    "--out-dir",
+                    "new-package"
+                ])
+                .status
+                .success()
+        );
+        assert!(!project.0.join("new-package").exists());
+        success(project.cli(&["init", "--kind", kind]));
+        let before = scaffold_files(&project.0);
+        assert!(!project.cli(&["init", "--kind", kind]).status.success());
+        assert_eq!(scaffold_files(&project.0), before);
+    }
+}
+
+#[test]
+fn secondary_file_and_staging_collisions_fail_before_creating_manifest() {
+    for (kind, relative) in [
+        ("skill", "SKILL.md"),
+        ("template", "template/README.md"),
+        ("knowledge", "knowledge/docs/context.md"),
+        ("memory", "schemas/user-preference.schema.json"),
+        ("profile", "README.md"),
+        ("loop", "README.md"),
+        ("agent", "agent.tmp"),
+        ("tool", "main.tmp"),
+    ] {
+        let project = Project::new();
+        let path = project.0.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "keep existing content").unwrap();
+        let before = scaffold_files(&project.0);
+        assert!(
+            !project.cli(&["init", "--kind", kind]).status.success(),
+            "{relative}"
+        );
+        assert_eq!(scaffold_files(&project.0), before, "{relative}");
+        assert!(!project.0.join("agent.json").exists());
+    }
+    let project = Project::new();
+    fs::write(project.0.join("knowledge"), "not a directory").unwrap();
+    assert!(
+        !project
+            .cli(&["init", "--kind", "knowledge", "--mode", "vector"])
+            .status
+            .success()
+    );
+    assert!(!project.0.join("agent.json").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn scaffold_does_not_follow_existing_generated_file_or_directory_symlinks() {
+    use std::os::unix::fs::symlink;
+    let project = Project::new();
+    let elsewhere = Project::new();
+    symlink(
+        elsewhere.0.join("missing.json"),
+        project.0.join("agent.json"),
+    )
+    .unwrap();
+    assert!(!project.cli(&["init"]).status.success());
+    assert!(!elsewhere.0.join("missing.json").exists());
+    fs::remove_file(project.0.join("agent.json")).unwrap();
+    symlink(&elsewhere.0, project.0.join("schemas")).unwrap();
+    assert!(!project.cli(&["init", "--kind", "memory"]).status.success());
+    assert!(!project.0.join("agent.json").exists());
+    assert!(fs::read_dir(&elsewhere.0).unwrap().next().is_none());
+}
+
+#[test]
+fn fresh_agent_is_valid_but_harness_reports_missing_loop() {
+    let project = Project::new();
+    success(project.cli(&["init"]));
+    success(project.cli(&["lint"]));
+    // Supply only the supported local-root context; no Registry or model call.
+    fs::write(
+        project.0.join("agent.lock"),
+        serde_json::to_vec_pretty(&json!({
+            "lockfile_version": 2, "generated": "2026-11-15T00:00:00Z", "packages": {},
+            "roots": {"local:agent": {"name": "my-agent", "version": "0.1.0", "tools": []}}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = project.cli(&["harness", "--json"]);
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("agent_missing_loop"),
+        "stdout: {text}, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(text.contains("valid artifacts but are not runnable by Harness"));
+}
+
 #[test]
 fn all_eight_init_commands_lint_clean_and_validate_the_standard_selector() {
     let schema: Value = serde_json::from_str(include_str!(
@@ -91,9 +358,9 @@ fn all_eight_init_commands_lint_clean_and_validate_the_standard_selector() {
         let reports: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(reports[0]["issues"], json!([]), "{kind}: {reports}");
         let original = project.manifest();
-        assert!(
-            original.get("standard").is_none(),
-            "init must not emit standard"
+        assert_eq!(
+            original["standard"],
+            json!({"id":"agentpm", "version":"1.0.0"})
         );
         let mut declared = original.clone();
         declared["standard"] = json!({"id":"agentpm", "version":"1.0.0"});
@@ -430,7 +697,7 @@ fn new_preserves_standard_in_template_agents_and_still_blocks_unknown_keys() {
 }
 
 #[test]
-fn export_reads_standard_bearing_tools_without_emitting_it_in_fresh_skills() {
+fn export_preserves_source_and_declares_standard_in_fresh_skills() {
     let project = Project::new();
     project.init("tool");
     let mut manifest = project.manifest();
@@ -468,9 +735,9 @@ fn export_reads_standard_bearing_tools_without_emitting_it_in_fresh_skills() {
     let skill: Value =
         serde_json::from_slice(&fs::read(project.0.join("exported/agent.json")).unwrap()).unwrap();
     assert_eq!(skill["kind"], "skill");
-    assert!(
-        skill.get("standard").is_none(),
-        "export must not emit standard yet"
+    assert_eq!(
+        skill["standard"],
+        json!({"id":"agentpm", "version":"1.0.0"})
     );
     assert_eq!(fs::read(installed.join("agent.json")).unwrap(), before);
     success(project.cli(&["lint", "exported/agent.json"]));

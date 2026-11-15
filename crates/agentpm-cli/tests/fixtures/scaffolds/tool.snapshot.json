@@ -1,0 +1,25 @@
+{
+  "agent.json": {
+    "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+    "standard": {
+      "id": "agentpm",
+      "version": "1.0.0"
+    },
+    "kind": "tool",
+    "name": "my-tool",
+    "version": "0.1.0",
+    "description": "Echo one JSON input as JSON output.",
+    "entrypoint": {
+      "args": ["main.py"],
+      "command": "python3"
+    },
+    "files": ["main.py"],
+    "inputs": {},
+    "outputs": {},
+    "runtime": {
+      "type": "python",
+      "version": "3"
+    }
+  },
+  "main.py": "import json\nimport sys\n\n\ndef main():\n    request = json.load(sys.stdin)\n    print(json.dumps(request))\n\n\nif __name__ == \"__main__\":\n    main()\n"
+}

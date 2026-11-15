@@ -1,0 +1,38 @@
+{
+  "agent.json": {
+    "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+    "standard": {
+      "id": "agentpm",
+      "version": "1.0.0"
+    },
+    "kind": "template",
+    "name": "my-template",
+    "version": "0.1.0",
+    "description": "A starter project for an agent system.",
+    "template": {
+      "dependencies": {
+        "agents": [],
+        "tools": []
+      },
+      "display_name": "My Template",
+      "entrypoints": [
+        {
+          "command": "cat README.md",
+          "label": "Review generated scaffold"
+        }
+      ],
+      "execution_surfaces": ["agentpm-run"],
+      "files_root": "template",
+      "use_case": "starter",
+      "variables": [
+        {
+          "default": "my-template",
+          "description": "Generated project name. Generation-time only; do not use for API keys, tokens, passwords, or runtime secrets.",
+          "name": "project_name",
+          "required": true
+        }
+      ]
+    }
+  },
+  "template/README.md": "# My Template\n\nThis starter scaffold was generated from the `my-template` workflow template package.\n\nWhen this template is used with `agentpm new`, files in the scaffold can reference render variables like `{ { project_name } }`.\n\n## What to edit first\n\n- This `README.md` should become the starter documentation that ships inside your template scaffold.\n- Add the files you want `agentpm new` to copy or render for consumers under `template.files_root`.\n- Use placeholder syntax such as `{ { variable_name } }` in text files when you want `agentpm new` to render generation-time values.\n- Do not include a root `agent.json` inside `template.files_root`. `agentpm new` synthesizes the generated project's root `agent.json` itself.\n- If your template scaffolds additional local agent manifests, put them under `agents/` using files like `agents/reviewer.agent.json`. `agentpm new` treats `agents/` as the canonical location for extra local workspace agents.\n- Add source files, `.env.example`, and any execution-surface-specific starter assets your template should provide.\n\n## Security note\n\nTemplate variables are for generation-time scaffold values only. Do not use them for API keys, tokens, passwords, or runtime secrets. Put runtime configuration in `.env.example` and manifest `environment.vars` where applicable.\n"
+}

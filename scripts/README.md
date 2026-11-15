@@ -2,6 +2,21 @@
 
 Run these commands from the CLI repository root. The implementation checks here live outside the versioned APDS bundle. The shared inputs, expected results and portable comparator live in `standards/agentpm/1.0.0/conformance/`.
 
+## Check generated package scaffolds
+
+```sh
+cargo test -p agentpm-cli --test authoring
+```
+
+This invokes the real CLI in disposable directories. It compares the default Agent,
+all eight explicit kinds and both Knowledge modes with checked-in scaffold snapshots,
+then checks ordinary strict lint and standalone APDS validation. It also covers
+description encoding, invalid names, existing-file protection, Tool execution/builds,
+Template generation and exported Skill manifests. Results appear in the terminal
+and the normal CLI test job; a failure identifies the command or snapshot mismatch.
+The Harness check supplies local lock context and verifies that a valid Agent without
+a Loop is reported as not runnable. No production publication or model call occurs.
+
 ## Check actual CLI acceptance of APDS examples
 
 Build the current local CLI and run the probe:
