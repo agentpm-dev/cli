@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-15. **Registry baseline:** `861ec91f2354ffae0fa0800792a482504fbf5099`. **Canonical CLI source:** `e308bfefb880f2a3a96cc08f4f87d61d3c55a76a`.
 
-**Status: implementation, local verification and Claude code review complete.** User confirmed code review passed with no findings on **2026-11-15**. Independent same-manifest command execution was not separately reported; hosted parity CI and contract freeze remain pending. No push, merge, production deployment, public standard tag or publication enforcement is claimed.
+**Status: implementation, local verification and Claude code review complete.** User confirmed code review passed with no findings on **2026-11-15**. User also confirmed Python CI passed on **2026-11-15**. User supplied Claude’s completed nine-case independent direct comparison: all contract-visible results agree. The nonblocking native `evaluated_rules` difference is resolved by documented reporting semantics. [D06’s compatibility policy](d06-lockfile-compatibility.md) is settled; **the reviewed v1.0.0 candidate is frozen and M2C is complete as of 2026-11-15**. No merge, production deployment, public standard tag or publication enforcement is claimed.
 
 The [durable parity summary](m2c-parity-report.json) records the actual result counts, source/inventory identities and normalized focused-result digest. Full arrays are reproducible with the commands below and are retained as artifacts by the hosted workflow when it runs.
 
@@ -53,6 +53,22 @@ No cross-language semantic mismatch remains open in the tested corpus or additio
 
 Capability limits are deliberate and disclosed: unknown Knowledge vector/index representations and composed/ref-mediated non-persistability projection compatibility return `unsupported` with unevaluated rules. Neither engine claims arbitrary record-schema satisfiability from a shallow scan.
 
+## Independent review exercise and diagnostic metadata
+
+User supplied Claude’s independent exercise report on **2026-11-15**. Claude invoked both native entrypoints directly and compared their outputs, rather than relying on the exported parity rows. The nine selected cases cover every status/scope combination present in the indexed corpus:
+
+- `valid-agent`, `selector-unsupported`, `invalid-agent-required`
+- `composition-complete`, `phase-unknown`, `graph-unavailable`
+- `knowledge-context-files`, `knowledge-context-missing`, `knowledge-content-unavailable`
+
+All nine agree on the compared conformance fields and index expectations. Eight agree on the reported coverage metadata as well. For `invalid-agent-required`, Rust lists eight `evaluated_rules`; Python lists four. Both report `nonconformant` with identical `unevaluated`. Rust completes optional binding/dependency absence checks despite the missing description; Python stops local relationship checks after the structural error. Claude classified this as nonblocking and outside the normative parity contract.
+
+**Decision:** `evaluated_rules` means IDs associated with checks the implementation completed in the requested scope, including checks that pass because an optional declaration is absent. It does not mean that a test exercised every branch, that every clause of the rule was evaluated, or that Runner behavior was established. The same rule can have other checks left unevaluated. Merely being listed in the standard is insufficient; implementations may complete different checks before stopping on an error.
+
+The CLI lint documentation, both implementation guides and the durable parity report now state this boundary. The comparison includes `case_id`, `level`, `status`, targeted rule/document/path/severity `findings`, and `unevaluated`; it deliberately excludes native `evaluated_rules`, notes, messages and schema paths. No validator code, parity projection, canonical standard, snapshot or expected result was changed to force matching bookkeeping. This closes the reported documentation decision without claiming byte-identical native reports.
+
+Clarification verification: from the Registry root, `REGISTRY_PRIVATE_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= .venv/bin/python -B -m pytest -q tests/test_docs_content.py` passed **5 tests and 150 subtests**, and `.venv/bin/python -B scripts/check_apds.py` passed all **129** Python corpus cases with the unchanged pinned inventory. Touched Markdown/MDX/JSON passed Prettier; `git diff --check` passed in both repositories.
+
 ## Commands actually run
 
 Registry commands run from `agentpm-api`; CLI commands from `agentpm`. Test seed below is public synthetic material, not a production secret.
@@ -73,12 +89,18 @@ Python checks use the cached hook executables corresponding to `.pre-commit-conf
 
 No Rust implementation changed, so the whole CLI workspace was not rerun for this slice. Its actual corpus integration and extra native parity cases ran against the recorded commit; user-confirmed full CLI hosted evidence remains in M2B.
 
+## Reviewed candidate freeze record
+
+Approval covers the unchanged 195-file normative bundle at CLI commit `e308bfefb880f2a3a96cc08f4f87d61d3c55a76a`, inventory SHA-256 `b8580681aec3b113cf8a65061cee9907b07f07aa71c9361822aa8c874310fed6`, and schema SHA-256 `f123150ff42cea4b29edb5076d7d70697269d20ad85118b4a07fe5af5cf2ab04`. The Registry snapshot and generated compatibility schema were rechecked byte-for-byte at sign-off. No canonical bytes changed during approval. The lockfile policy is an AgentPM Manager compatibility decision outside the normative APDS bundle.
+
+M5A still owns the reader/writer changes, metadata shape, concrete minimum CLI release and migration tests. Release Band 1 still owns publishing/verifying the immutable tag. This candidate approval does not mark those later tasks complete.
+
 ## Decisions and remaining gates
 
 - **D03:** One pinned normative corpus, independently implemented Python and Rust semantic evaluation, and a focused test-only projection/comparator. The exact selected graph is supplied inspection context, not a new mandatory Registry protocol. No expected results enter the runtime engine.
 - **D19:** Python records the same declared selector, scope, certainty states and stable diagnostic coordinates as the Rust engine. `runner_evaluated` is false. Missing/unsupported context is not a violation or successful verification by itself. Persisted declaration origin, historical `legacy_inferred` evidence, Registry DTOs, lock and UI rollout remain with their owning milestones.
 - **Code review passed:** User confirmed Claude code review passed with no findings on **2026-11-15**. No new implementation changes were requested.
-- **Independent fixture exercise not separately confirmed:** The checklist also calls for Claude to exercise representative same-manifest results on both engines against the written rules. Code-review sign-off alone does not record which commands Claude ran; builder test results are not attributed to Claude.
-- **Hosted evidence pending:** Run the new Registry parity workflow and its existing jobs on the pushed changes. Local test success is not a hosted run claim.
-- **Freeze pending:** Record candidate approval after the required evidence and decisions are settled. The candidate can be deliberately revised before publication, with synchronized copies and renewed tests/review. Publishing the immutable `apds-v1.0.0` tag remains the separate Release Band 1 step. No tag or immutable public release was created here.
+- **Independent fixture exercise complete:** User supplied Claude’s nine-case direct Rust/Python report on **2026-11-15**. All contract-visible comparisons agree. The nonblocking native coverage-metadata difference and reporting decision are recorded above; these independent results are attributed to Claude’s supplied report, not to builder execution.
+- **Hosted evidence passed:** User confirmed Python CI passed on **2026-11-15**, following the discussion of running the new Registry APDS parity workflow against its pinned CLI commit. This is user-confirmed hosted evidence; no independently retrieved workflow run ID or job log is asserted.
+- **Reviewed candidate freeze approved — 2026-11-15:** The review, independent exercise and hosted CI evidence are complete; there are no open tested semantic mismatches. [D06](d06-lockfile-compatibility.md) records the selected extended-v4/minimum-CLI policy and closes the remaining pre-freeze compatibility decision. M2C is complete. Publishing the immutable `apds-v1.0.0` tag remains the separate Release Band 1 step. Before that publication, deliberately reopening the candidate still requires synchronized copies, tests and renewed review.
 - No live AWS/Registry calls, private signing operations, database mutations, version bump, SDK change, release or deployment occurred. Public docs routes and existing production behavior are unchanged.

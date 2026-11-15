@@ -21,8 +21,39 @@
   "runner_execution_claimed": false,
   "open_tested_mismatches": [],
   "independent_review": "code_review_passed_no_findings",
-  "hosted_parity_ci": "pending",
-  "contract_freeze": "pending",
+  "hosted_parity_ci": "passed_user_confirmed",
+  "contract_freeze": "reviewed_candidate_frozen",
   "independent_review_confirmation_date": "2026-11-15",
-  "independent_fixture_execution": "not_separately_reported"
+  "independent_fixture_execution": "completed_user_supplied_claude_report",
+  "hosted_parity_ci_confirmation_date": "2026-11-15",
+  "independent_fixture_execution_confirmation_date": "2026-11-15",
+  "independent_fixture_cases": 9,
+  "independent_contract_visible_results": "9_of_9_agree",
+  "comparison_fields": [
+    "case_id",
+    "level",
+    "status",
+    "findings",
+    "unevaluated"
+  ],
+  "comparison_excludes": [
+    "evaluated_rules",
+    "notes",
+    "human_messages",
+    "native_schema_paths"
+  ],
+  "comparison_scope_note": "Focused normative findings are compared; implementation-specific completed-check bookkeeping and native diagnostic presentation are deliberately excluded.",
+  "independent_native_difference": {
+    "case_id": "invalid-agent-required",
+    "field": "evaluated_rules",
+    "rust_rule_count": 8,
+    "python_rule_count": 4,
+    "contract_parity_failure": false,
+    "disposition": "Documented completed-check semantics and implementation-specific stopping points; no validator behavior change."
+  },
+  "contract_freeze_date": "2026-11-15",
+  "freeze_scope": "Unchanged reviewed candidate bundle; immutable public tag publication remains Release Band 1.",
+  "lockfile_compatibility_decision": "extended_v4_with_minimum_cli_rollout",
+  "lockfile_compatibility_decision_record": "d06-lockfile-compatibility.md",
+  "milestone_status": "complete"
 }

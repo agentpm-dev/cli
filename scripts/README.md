@@ -32,6 +32,8 @@ In Windows PowerShell, set `$env:AGENTPM_APDS_RESULTS = "target/apds-rust-result
 
 The Rust integration test invokes the actual CLI for every indexed validation case, supplying the requested scope and real graph/package inputs. It asserts status, exit behavior, unevaluated checks and every expected rule/document/path/severity finding. It exports a focused projection of actual native diagnostics for the portable comparator; additional native findings remain visible in the actual CLI reports. No expected answer is supplied to the production validator.
 
+The compared fields are `case_id`, `level`, `status`, targeted `findings` and `unevaluated`. Native metadata such as `evaluated_rules`, notes, human messages and schema paths is implementation-specific and deliberately excluded. `evaluated_rules` records checks completed in the requested scope, including checks that pass because an optional declaration is absent; it is not branch coverage or proof that every clause of a rule was exercised. Different stopping points can produce different lists without changing the conformance result.
+
 The JSON results are written to `target/apds-rust-results.json` only after the corpus test passes. The comparator reports whether those actual results match the shared expectations. In CI this runs under **Rust APDS results against shared expectations**; full test output remains in Actions logs. Runner observation scenarios require separate runtime tests.
 
 ## Validate a package with supplied context

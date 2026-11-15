@@ -1496,6 +1496,8 @@ explicit minimum-CLI rollout, or justify a format bump under D06. See the
 Do not remove strict field rejection without protecting read-modify-write and
 resolve-plan regeneration from losing unknown state or ignoring required semantics.
 
+**D06 selected policy — 2026-11-15:** [Compatibility decision and measured evidence](d06-lockfile-compatibility.md) settle this pre-freeze requirement: retain extended v4 with a documented minimum-compatible-CLI rollout, strict CLI readers and forward-version rejection. APDS metadata on packages or represented local roots requires v4; supported legacy inference is recorded distinctly rather than suppressed. Published SDK 0.1.17 tolerates additional lock fields while rejecting unknown versions. Reader/writer implementation, concrete release floor and rollout tests remain M5A; they are not prerequisites to recording the compatibility policy.
+
 Recommended conceptual locked entry (field names/placement flexible, not a guaranteed current serializer):
 
 ```json
@@ -2482,7 +2484,7 @@ altering an AGREED requirement. The complete list is retained so none are silent
 | **D03** | Conformance fixtures and outputs | **Valid/invalid/resolved fixture directories** + expected rule/status/JSON-path results; standalone/resolved distinction. | JSONL/index alternative permitted if ergonomic; verify Rust/Python independent parity and CI integration. |
 | **D04** | Legacy authored manifests / lint | Strict by default for newly authored; optional explicit upgrade/legacy compatibility mode if useful. | Decide UX and error messages without opening a default bypass; document old local authoring handling. |
 | **D05** | Registry staged validation and release gate | Validate embedded manifest at finalize, compare metadata, atomic rejection; phased migration of legacy clients. | Adjust init-time validation as useful, define queued-session cutoff, prove cannot bypass via custom client. |
-| **D06** | Lockfile format | **Retain Stage 1 `agent.lock` v4**, carry standard+explicit/inferred provenance with forward-version safeguards. | Only justify v5 if v4 cannot safely express facts; document compatibility and migration evidence. |
+| **D06** | Lockfile format | **Retain Stage 1 `agent.lock` v4**, carry standard+explicit/inferred provenance with forward-version safeguards. | [Selected 2026-11-15](d06-lockfile-compatibility.md): extended v4 plus minimum-CLI rollout; strict CLI rejection and SDK 0.1.17 field/version asymmetry verified. Concrete reader/writer and migration evidence remain M5A. |
 | **D07** | Versioned standard web route | **`/standards/agentpm/1.0.0`**, pinned catalog and immutable content. | Build-generated page vs server-side trusted bundle, route nuance; no untrusted runtime fetch. |
 | **D08** | Homepage design | Problem/value → real Agent Package composition → how management works → components/templates → pathways, layered existing brand. | Layout/copy/animation details; mockups are conceptual and existing design tokens authoritative. |
 | **D09** | Agent Package Card visual architecture | Shared data model and responsive card variants for hero/Explore/detail/OG, real metadata only. | One component vs composable primitives, based on existing Stage 1 shell/OG architecture. |
