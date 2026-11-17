@@ -1,0 +1,36 @@
+{
+  "file": "agent.json",
+  "ok": false,
+  "issues": [
+    {
+      "file": "agent.json",
+      "level": "error",
+      "message": "Required field `standard` is missing. Review this local manifest, add `\"standard\":{\"id\":\"agentpm\",\"version\":\"1.0.0\"}`, then run `agentpm lint` again. Existing published artifacts must not be rewritten.",
+      "instance_path": "/standard",
+      "schema_path": "",
+      "rule_id": "APDS-ID-001"
+    }
+  ],
+  "apds": {
+    "standard": null,
+    "level": "standalone",
+    "status": "nonconformant",
+    "evaluated_rules": [
+      "APDS-BIND-001",
+      "APDS-BIND-002",
+      "APDS-BIND-005",
+      "APDS-GRAPH-001",
+      "APDS-GRAPH-003",
+      "APDS-ID-001",
+      "APDS-ID-002",
+      "APDS-ID-003"
+    ],
+    "unevaluated": [],
+    "supported_standard": {
+      "id": "agentpm",
+      "version": "1.0.0"
+    },
+    "runner_evaluated": false,
+    "notes": []
+  }
+}

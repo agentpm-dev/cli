@@ -32,6 +32,18 @@ The script runs each positive manifest through `agentpm lint --apds standalone -
 
 Results appear in the terminal, or in GitHub Actions under **AgentPM positive APDS fixture acceptance**. Success exits 0 and reports the accepted manifest count and Knowledge pair; failure exits 1 with the affected fixture and command output. This probe does not establish complete semantic-corpus coverage.
 
+## Check authoring validation and legacy inspection
+
+```sh
+cargo test -p agentpm-cli --test authoring_validation --test authoring
+```
+
+These invoke the actual CLI for strict selector validation, per-kind rule IDs,
+read-only legacy inspection, no-op fixes, malformed/missing paths, local build
+preflight and installed-package compatibility. Human and JSON snapshots live in
+`crates/agentpm-cli/tests/fixtures/authoring/`; NDJSON is checked against the same
+structured report. These are implementation tests, outside the normative corpus.
+
 ## Run the complete Rust APDS validation corpus
 
 Requirements: the repository's Rust toolchain, Python 3.11 or newer, and the Python dependency listed in the bundle's `conformance/requirements.txt`. For example:
@@ -66,7 +78,7 @@ The JSON results are written to `target/apds-rust-results.json` only after the c
 
 `--graph` accepts the selected graph format described in the shared fixture index: `complete`, `artifacts` and `edges`. Artifact `manifest` paths resolve relative to the graph file, or may be absolute local paths. Each artifact has a unique `id`, namespaced `identity`, `kind`, exact `version` and manifest path. Edges identify the owning artifact (`root` for the evaluated manifest), the dependency field as a JSON Pointer and the selected target ID. The graph contains inputs, not validation verdicts or expected results. It is an AgentPM input format, not a required APDS lockfile or Registry protocol. No network resolution occurs.
 
-Without the requested graph or packaged-file context, dependent checks remain incomplete. A supplied complete package missing required content is nonconformant. A conformant standalone result does not establish resolved-composition or packaged-content conformance. These explicit modes preserve ordinary lint's current authoring/compatibility behavior; they do not change publish/install enforcement.
+Without the requested graph or packaged-file context, dependent checks remain incomplete. A supplied complete package missing required content is nonconformant. A conformant standalone result does not establish resolved-composition or packaged-content conformance. Ordinary lint now uses standalone APDS checks by default. `lint --legacy` is an explicit read-only compatibility adapter for undeclared inputs; it reports `legacy-unverified`, without an APDS verdict. New package/publish preflight is always strict; historical install and execution compatibility remain separate.
 
 ## Validator capability boundaries
 

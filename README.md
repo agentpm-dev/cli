@@ -197,6 +197,26 @@ agentpm init --kind template --name research-template --out-dir ../research-temp
 `init` refuses to overwrite generated files. For a Tool, an existing `main.py`
 is retained; otherwise a runnable Python JSON echo script is created.
 
+### Validate authored manifests
+
+`agentpm lint` checks the declared APDS contract and standalone semantic rules,
+with rule IDs and field paths in human and JSON output. New manifests require
+`"standard": {"id":"agentpm","version":"1.0.0"}`. A standalone pass does not
+establish dependency resolution, packaged-content validity or Runner readiness.
+
+For an older undeclared manifest, `agentpm lint --legacy path/to/agent.json`
+provides a read-only compatibility check using an in-memory inferred declaration.
+It reports `legacy-unverified`, not APDS conformance. To continue authoring, review
+a local editable copy, add the supported declaration explicitly and run ordinary
+lint again. New publication, package builds and local Knowledge/Memory builds
+require the explicit declaration; they have no legacy bypass.
+
+Historical published packages remain usable without rewriting their bytes.
+`agentpm new` declares the standard on its generated root. Older Templates may
+provide additional local Agent manifests without it; the completion notice names
+those files and explains how to upgrade them before strict authoring checks.
+See [lint and local manifest migration](https://www.agentpackagemanager.com/docs/v0.1/cli/lint#older-local-manifests).
+
 ### Workflow templates
 
 Templates are publishable scaffold packages that generate editable AgentPM workspaces.

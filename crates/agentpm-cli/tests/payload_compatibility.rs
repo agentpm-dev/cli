@@ -25,6 +25,7 @@ impl Fixture {
         fs::write(root.join("tool.py"), "print('{}')\n").unwrap();
         let manifest = json!({
             "$schema":"https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
+            "standard":{"id":"agentpm","version":"1.0.0"},
             "kind":"tool", "name":"payload-fixture", "version":"0.1.0",
             "description":"Tool payload compatibility fixture.",
             "entrypoint":{"command":if runtime == "python" {"python3"} else {"node"},"args":["tool.py"]},

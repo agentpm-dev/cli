@@ -11,6 +11,7 @@ use std::{
 };
 
 pub(crate) mod apds;
+pub(crate) mod authoring;
 
 pub(crate) const DEFAULT_MANIFEST_SCHEMA_URL: &str = "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json";
 const LEGACY_MANIFEST_SCHEMA_URL: &str = "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json";
@@ -868,9 +869,10 @@ pub(crate) fn validate_manifest_value_with_manifest_path(
     } else {
         load_schema_value(schema_source)?
     };
-    // Temporary legacy-authoring adapter: declaration emission and mandatory
-    // declaration checks are separate rollout steps. Never infer or write one.
-    // The canonical schema itself always requires the explicit selector.
+    // Compatibility for historical installed artifacts and Template consumers.
+    // New authored lint/build/publish use authoring's canonical APDS evaluator;
+    // this reader never infers or writes a declaration. The canonical schema
+    // itself always requires the explicit selector.
     if value.get("standard").is_none()
         && schema_value.get("$id").and_then(Value::as_str) == Some(DEFAULT_MANIFEST_SCHEMA_URL)
         && let Some(required) = schema_value

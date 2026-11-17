@@ -400,17 +400,19 @@ The freeze records approval of the reviewed candidate. Before publication, delib
 
 **Implementation checklist**
 
-- [ ] Make normal `lint` validate explicitly declared supported standard.
-- [ ] Distinguish missing standard, unknown version, schema defect and resolved-graph issue in output.
-- [ ] Provide targeted remediation including version selector and source path.
-- [ ] Preserve exit statuses, stderr/stdout/machine output guarantees from Stage 1.
-- [ ] Evaluate need for optional opt-in legacy migration/lint mode and record D04 outcome.
-- [ ] Prevent permissive migration mode from becoming default publish authorization.
-- [ ] Ensure build/inspect/publish preflight reuse same canonical validation outcomes.
-- [ ] Regression-check `agentpm new`, `agentpm run`, Tool exports and the existing publish link.
-- [ ] Snapshot interactive and noninteractive diagnostics.
-- [ ] Test whitespace descriptions, malformed names, unknown kinds and incorrect paths.
-- [ ] Have Claude verify users don't confuse APDS validation with Runner readiness.
+- [x] Make normal `lint` validate explicitly declared supported standard.
+- [x] Distinguish missing standard, unknown version, schema defect and resolved-graph issue in output.
+- [x] Provide targeted remediation including version selector and source path.
+- [x] Preserve exit statuses, stderr/stdout/machine output guarantees from Stage 1.
+- [x] Evaluate need for optional opt-in legacy migration/lint mode and record D04 outcome.
+- [x] Prevent permissive migration mode from becoming default publish authorization.
+- [x] Ensure build/inspect/publish preflight reuse same canonical validation outcomes.
+- [x] Regression-check `agentpm new`, `agentpm run`, Tool exports and the existing publish link.
+- [x] Snapshot interactive and noninteractive diagnostics.
+- [x] Test whitespace descriptions, malformed names, unknown kinds and incorrect paths.
+- [x] Have Claude verify users don't confuse APDS validation with Runner readiness.
+
+**Local implementation evidence (2026-11-16):** [Verification and D04 decision](m3b-verification.md) cover strict ordinary lint, the user-selected read-only `--legacy` adapter over the same APDS engine, shared local build/inspect/publish gates and saved-build rejection. Workspace tests pass **1,287 tests (6 ignored)**; the expanded authoring integration suite passes **9 tests**, Clippy/formatting and frozen-schema checks pass, the actual-CLI fixture probe passes 41 positive manifests plus the Knowledge pair, and public docs tests pass **5 tests plus 166 subtests**. Scope/legacy/migration notes and human/machine diagnostic snapshots are recorded. The [Template-generation review correction](m3b-verification.md#review-correction-template-generation-and-the-next-lint-command) adds the supported declaration to the CLI-generated root and generation-time migration guidance for undeclared nested Agents; 16 authoring tests and 30 Template-generation tests pass after that correction. The follow-up Stage 1 messaging correction deliberately updates both goldens, retains one next-step line and groups nested migration notices; the final `cargo test --workspace --no-fail-fast` passes 1,287 tests with 0 failures and 6 ignored. **User confirmed full Claude review passed on 2026-11-16, including the resolved Template-generation and messaging findings. Hosted CI and the requested manual testing remain pending; M3B is not marked complete.**
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 

@@ -10,7 +10,7 @@ use crate::keys::signing::load_publish_key;
 use crate::manifest::{
     AgentManifest, Entrypoint, KnowledgeManifest, LoopManifest, MemoryManifest, ProfileManifest,
     PublishManifest, SkillManifest, TemplateManifest, ToolManifest, load_manifest_value,
-    parse_publish_manifest, resolve_schema_source, validate_manifest_value,
+    parse_publish_manifest,
 };
 use crate::prelude::*;
 use crate::semver::types::declares_python_dependencies;
@@ -219,13 +219,13 @@ impl PublishArgs {
         let (mut manifest_value, _raw) = load_manifest_value(&manifest_path)
             .with_context(|| format!("loading {}", manifest_path.display()))?;
 
-        let schema_source = resolve_schema_source(self.schema.clone());
-        let (schema_ok, issues) = validate_manifest_value(
-            &schema_source,
-            &manifest_path.to_string_lossy(),
+        let evaluation = crate::manifest::authoring::evaluate(
             &mut manifest_value,
-            /*fix=*/ false,
+            &manifest_path.to_string_lossy(),
+            false,
         )?;
+        let schema_ok = evaluation.status == crate::manifest::apds::Status::Conformant;
+        let issues = evaluation.issues.clone();
 
         // strict semantics match lint
         let has_error = issues.iter().any(|i| i.level == "error");
@@ -244,6 +244,7 @@ impl PublishArgs {
                     issues,
                 })
             );
+            eprint!("{}", crate::lint_output::render_apds_summary(&evaluation)?);
         }
         if !ok_flag {
             s.err("failed");
@@ -2422,7 +2423,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "knowledge",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "knowledge",
                 "name": "engineering-playbook",
                 "version": "0.1.0",
                 "description": "Engineering playbook intended for direct context loading.",
@@ -2470,7 +2471,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "knowledge",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "knowledge",
                 "name": "python-docs",
                 "version": "0.1.0",
                 "description": "Prepared retrieval corpus for Python documentation.",
@@ -2528,7 +2529,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "memory",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "memory",
                 "name": "conversation-continuity",
                 "version": "0.1.0",
                 "description": "Remember durable user preferences.",
@@ -2602,7 +2603,7 @@ mod tests {
     #[test]
     fn publish_metadata_includes_namespace_handle_when_provided() {
         let meta = build_publish_metadata(
-            serde_json::json!({"kind": "tool", "name": "demo", "version": "0.1.0"}),
+            serde_json::json!({"standard": {"id":"agentpm","version":"1.0.0"}, "kind": "tool", "name": "demo", "version": "0.1.0"}),
             "abc123",
             42,
             None,
@@ -2620,7 +2621,7 @@ mod tests {
     #[test]
     fn publish_metadata_omits_namespace_handle_when_not_provided() {
         let meta = build_publish_metadata(
-            serde_json::json!({"kind": "tool", "name": "demo", "version": "0.1.0"}),
+            serde_json::json!({"standard": {"id":"agentpm","version":"1.0.0"}, "kind": "tool", "name": "demo", "version": "0.1.0"}),
             "abc123",
             42,
             None,
@@ -2635,7 +2636,7 @@ mod tests {
     #[test]
     fn publish_metadata_includes_skill_manual_when_provided() {
         let meta = build_publish_metadata(
-            serde_json::json!({"kind": "skill", "name": "demo-skill", "version": "0.1.0"}),
+            serde_json::json!({"standard": {"id":"agentpm","version":"1.0.0"}, "kind": "skill", "name": "demo-skill", "version": "0.1.0"}),
             "abc123",
             42,
             None,
@@ -2666,7 +2667,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "tool",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "tool",
                 "name": "tool-pub-test",
                 "version": "0.1.0",
                 "description": "test tool",
@@ -2720,7 +2721,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "agent",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "agent",
                 "name": "agent-pub-test",
                 "version": "0.2.0",
                 "description": "test agent",
@@ -2770,7 +2771,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "agent",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "agent",
                 "name": "agent-pub-test",
                 "version": "0.2.0",
                 "description": "test agent",
@@ -2802,7 +2803,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "profile",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "profile",
                 "name": "customer-success-advocate",
                 "version": "1.0.0",
                 "description": "Support behavior profile.",
@@ -2841,7 +2842,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "loop",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "loop",
                 "name": "incident-response-loop",
                 "version": "0.1.0",
                 "description": "A bounded incident response loop.",
@@ -2895,7 +2896,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "loop",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "loop",
                 "name": "incident-response-loop",
                 "version": "0.1.0",
                 "description": "A bounded incident response loop.",
@@ -2943,7 +2944,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "loop",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "loop",
                 "name": "incident-response-loop",
                 "version": "0.1.0",
                 "description": "Invalid loop.",
@@ -2984,7 +2985,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "loop",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "loop",
                 "name": "incident-response-loop",
                 "version": "0.1.0",
                 "description": "Invalid loop package.",
@@ -3028,7 +3029,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "profile",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "profile",
                 "name": "customer-success-advocate",
                 "version": "1.0.0",
                 "description": "Support behavior profile.",
@@ -3074,7 +3075,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "profile",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "profile",
                 "name": "customer-success-advocate",
                 "version": "1.0.0",
                 "description": "Support behavior profile.",
@@ -3117,7 +3118,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "profile",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "profile",
                 "name": "customer-success-advocate",
                 "version": "1.0.0",
                 "description": "Invalid profile package.",
@@ -3161,7 +3162,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "template",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "template",
                 "name": "template-pub-test",
                 "version": "0.3.0",
                 "description": "test template",
@@ -3225,7 +3226,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "template",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "template",
                 "name": "template-pub-test",
                 "version": "0.3.0",
                 "description": "test template",
@@ -3413,7 +3414,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "knowledge",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "knowledge",
                 "name": "unsafe-context",
                 "version": "0.1.0",
                 "description": "Unsafe context document path should fail.",
@@ -3904,7 +3905,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "memory",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "memory",
                 "name": "conversation-continuity",
                 "version": "0.1.0",
                 "description": "Invalid memory package.",
@@ -3954,7 +3955,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "memory",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "memory",
                 "name": "conversation-continuity",
                 "version": "0.1.0",
                 "description": "Unsafe schema path should fail.",
@@ -4005,7 +4006,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "skill",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "skill",
                 "name": "incident-commander",
                 "version": "0.1.0",
                 "description": "Incident response coordination playbook.",
@@ -4058,7 +4059,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "skill",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "skill",
                 "name": "slack-incident-update",
                 "version": "0.1.0",
                 "description": "A playbook for posting incident updates to Slack.",
@@ -4122,7 +4123,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "skill",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "skill",
                 "name": "governance-review",
                 "version": "0.1.0",
                 "description": "Governance review playbook.",
@@ -4187,7 +4188,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "skill",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "skill",
                 "name": "triage-operator",
                 "version": "0.1.0",
                 "description": "Triage operator playbook.",
@@ -4234,7 +4235,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "skill",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "skill",
                 "name": "missing-file-skill",
                 "version": "0.1.0",
                 "description": "Missing file should fail.",
@@ -4280,7 +4281,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "skill",
+                "standard": {"id":"agentpm","version":"1.0.0"}, "kind": "skill",
                 "name": "unsafe-file-skill",
                 "version": "0.1.0",
                 "description": "Unsafe file should fail.",

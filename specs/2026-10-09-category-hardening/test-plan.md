@@ -159,6 +159,8 @@ The `agentpm init` invocation and `agentpm lint` without flags are based on exis
 - **T-CLI-05:** Lint diagnostics show stable rule identity and useful paths for invalid phase, Skill, Memory, Template or Tool; nonzero exits and machine-mode structures remain compatible.
 - **T-CLI-06:** `init` doesn't overwrite existing project unexpectedly; Tool/Template/SDK/new/run/publish unaffected absent explicitly agreed changes.
 
+**M3B local evidence (2026-11-16):** [Verification and D04 decision](m3b-verification.md) map T-CLI-04–06 and T-CLI-01–03 regressions to actual strict lint/build/inspect/publish paths, saved-build mutation rejection, legacy read-only diagnostics, historical installed inspection, human/JSON/NDJSON snapshots and an actual TTY check. Final `cargo test --workspace --no-fail-fast`: **1,287 passed, 0 failed, 6 ignored**, including deliberately updated Stage 1 completion-output goldens; expanded targeted authoring suite: **9 passed**. The same pinned evaluator is used; no standard bundle, Registry runtime, lock or SDK contract changed. User confirmed full Claude review passed on 2026-11-16. Hosted CI and requested manual testing remain pending.
+
 ### C. Registry independent finalize, rollout, and security (M4A–M4B; S2-AC-04,05)
 
 - **T-PUB-01:** Valid APDS 1.0.0 new Agent Package and every other kind can publish via normal CLI; Registry independently reads staged bytes and validates before finalize.

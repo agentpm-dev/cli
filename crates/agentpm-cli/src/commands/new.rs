@@ -9,9 +9,9 @@ use crate::manifest::{
 use crate::prelude::*;
 use crate::semver::types::{PackageKind, ResolvePlan};
 use crate::workspace::{
-    TemplateOriginMetadata, WorkspaceMetadata, WorkspacePackageRoot, WorkspacePackageRoots,
-    build_workspace_lock, load_workspace_local_manifests, write_template_metadata,
-    write_workspace_metadata,
+    LocalManifestRoot, TemplateOriginMetadata, WorkspaceMetadata, WorkspacePackageRoot,
+    WorkspacePackageRoots, build_workspace_lock, load_workspace_local_manifests,
+    write_template_metadata, write_workspace_metadata,
 };
 use anyhow::anyhow;
 use chrono::Utc;
@@ -231,7 +231,7 @@ impl NewArgs {
                 },
             )?;
 
-            print_success(&target_dir, &downloaded_manifest);
+            print_success(&target_dir, &downloaded_manifest, &local_manifests);
             Ok(())
         }
         .await;
@@ -864,6 +864,7 @@ fn synthesize_root_manifest(
     let loop_ref = resolved_loop_manifest_ref(template_manifest, plan)?;
     let mut manifest = json!({
         "$schema": crate::manifest::DEFAULT_MANIFEST_SCHEMA_URL,
+        "standard": {"id": "agentpm", "version": "1.0.0"},
         "kind": "agent",
         "name": resolved_vars
             .get("project_name")
@@ -1246,17 +1247,36 @@ fn validate_generated_manifests_blocking(
     Ok(())
 }
 
-fn print_success(target_dir: &Path, template_manifest: &TemplateManifest) {
+fn print_success(
+    target_dir: &Path,
+    template_manifest: &TemplateManifest,
+    local_manifests: &[LocalManifestRoot],
+) {
     let target = crate::ui::display_path(target_dir);
     println!("Created project: {target}");
     let readme = target_dir.join("README.md");
     if readme.is_file() {
         println!(
-            "Next: review {} before running the generated entrypoints.",
+            "Next: run `agentpm lint` from {target}, then review {} before running the generated entrypoints.",
             crate::ui::display_path(&readme)
         );
     } else {
-        println!("Next: review the generated project before running its entrypoints.");
+        println!(
+            "Next: run `agentpm lint` from {target}, then review the generated project before running its entrypoints."
+        );
+    }
+    let mut undeclared = local_manifests
+        .iter()
+        .filter(|local| local.manifest_value.get("standard").is_none())
+        .peekable();
+    if undeclared.peek().is_some() {
+        println!("Local manifests missing `standard`:");
+        println!(
+            "  Review these local files and add `\"standard\":{{\"id\":\"agentpm\",\"version\":\"1.0.0\"}}`, then lint each from the generated project:"
+        );
+        for local in undeclared {
+            println!("  {}: agentpm lint {}", local.rel_path, local.rel_path);
+        }
     }
     for entrypoint in &template_manifest.template.entrypoints {
         println!("{}: {}", entrypoint.label, entrypoint.command);

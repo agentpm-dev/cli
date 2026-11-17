@@ -379,7 +379,7 @@ fn help_discloses_default_collection_and_opt_out_without_creating_state() {
 }
 
 #[test]
-fn manual_fixture_manifests_lint_with_the_real_cli() {
+fn historical_manual_fixture_manifests_lint_read_only_with_explicit_legacy_mode() {
     let project = Project::new();
     for path in [
         project.0.clone(),
@@ -387,10 +387,11 @@ fn manual_fixture_manifests_lint_with_the_real_cli() {
             .0
             .join(".agentpm/loops/fixture/telemetry-loop/0.1.0"),
     ] {
+        let before = fs::read(path.join("agent.json")).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_agentpm"))
             .env("AGENTPM_TELEMETRY", "0")
-            .current_dir(path)
-            .args(["lint", "--strict"])
+            .current_dir(&path)
+            .args(["lint", "--legacy", "--strict"])
             .output()
             .unwrap();
         assert!(
@@ -399,5 +400,7 @@ fn manual_fixture_manifests_lint_with_the_real_cli() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Legacy compatibility only"));
+        assert_eq!(fs::read(path.join("agent.json")).unwrap(), before);
     }
 }

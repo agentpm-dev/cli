@@ -192,25 +192,22 @@ impl PackageBuild {
             build.manifest_digest == manifest_digest(&build.metadata["manifest"])?,
             "manifest digest differs from package-build descriptor"
         );
-        crate::manifest::parse_publish_manifest(&build.metadata["manifest"])?;
         let mut manifest = build.metadata["manifest"].clone();
-        let (valid, issues) = crate::manifest::validate_manifest_value_with_manifest_path(
-            &crate::manifest::resolve_schema_source(None),
-            "saved build manifest",
-            &mut manifest,
-            false,
-            None, // A saved descriptor supplies metadata, not extracted package files.
-        )?;
+        let label = format!("{}: saved build manifest", path.display());
+        let evaluation = crate::manifest::authoring::evaluate(&mut manifest, &label, false)?;
+        let valid = evaluation.status == crate::manifest::apds::Status::Conformant;
+        let issues = evaluation.issues;
         if !valid {
             bail!(
                 "Saved build manifest failed bundled validation: {}",
                 crate::lint_output::render_lint_report(&crate::manifest::LintFileReport {
-                    file: "saved build manifest".into(),
+                    file: label,
                     ok: false,
                     issues,
                 })
             );
         }
+        crate::manifest::parse_publish_manifest(&build.metadata["manifest"])?;
         let python = build.metadata["manifest"]["kind"] == "tool"
             && build.metadata["manifest"]["runtime"]["type"] == "python";
         ensure!(

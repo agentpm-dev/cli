@@ -393,6 +393,37 @@ fn flatten<'a>(issue: &'a LintIssue, out: &mut Vec<&'a LintIssue>) {
     }
 }
 
+pub(crate) fn render_apds_summary(
+    evaluation: &crate::manifest::apds::Evaluation,
+) -> Result<String> {
+    let mut output = format!(
+        "  APDS {} scope: {}; Runner behavior not evaluated.\n",
+        serde_json::to_value(evaluation.level)?
+            .as_str()
+            .unwrap_or(""),
+        serde_json::to_value(evaluation.status)?
+            .as_str()
+            .unwrap_or("")
+    );
+    if !evaluation.unevaluated.is_empty() {
+        writeln!(
+            output,
+            "  Unevaluated: {}",
+            evaluation
+                .unevaluated
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .unwrap();
+    }
+    for note in &evaluation.notes {
+        writeln!(output, "  {note}").unwrap();
+    }
+    Ok(output)
+}
+
 pub(crate) fn render_lint_report(report: &LintFileReport) -> String {
     let mut flat = Vec::new();
     for issue in &report.issues {

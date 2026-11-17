@@ -1,0 +1,4 @@
+✗ agent.json
+  [ERROR] [APDS-ID-001] Required field `standard` is missing. Review this local manifest, add `"standard":{"id":"agentpm","version":"1.0.0"}`, then run `agentpm lint` again. Existing published artifacts must not be rewritten.
+        at instance /standard
+  APDS standalone scope: nonconformant; Runner behavior not evaluated.

@@ -188,10 +188,10 @@ fn development_override_is_labeled_and_cannot_replace_declared_apds_or_publish()
         "json",
     ];
     let output = workspace.run(&args);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "A development schema must not bypass the required declaration or unknown-field checks"
     );
     let reports: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(

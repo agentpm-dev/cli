@@ -2,7 +2,7 @@ use crate::lint_output::render_lint_report;
 use crate::manifest::apds::{self, Context, Evaluation, Level, ResolvedGraph, Status};
 use crate::manifest::{
     LintFileReport, LintIssue, discover_manifest_files, load_manifest_value, resolve_schema_source,
-    validate_manifest_value, write_manifest_pretty,
+    write_manifest_pretty,
 };
 use crate::prelude::*;
 use anyhow::anyhow;
@@ -15,6 +15,8 @@ struct Report<'a> {
     lint: &'a LintFileReport,
     #[serde(skip_serializing_if = "Option::is_none")]
     apds: Option<&'a Evaluation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compatibility: Option<&'static str>,
 }
 
 #[derive(Args, Debug, Default)]
@@ -39,7 +41,11 @@ pub struct LintArgs {
     #[arg(long)]
     fix: bool,
 
-    /// Evaluate the pinned APDS contract at an explicit scope
+    /// Read-only compatibility check for undeclared historical manifests
+    #[arg(long, conflicts_with_all = ["apds", "fix", "schema"])]
+    legacy: bool,
+
+    /// APDS validation scope (defaults to standalone)
     #[arg(long, value_enum, conflicts_with_all = ["schema", "fix"])]
     apds: Option<Level>,
 
@@ -67,6 +73,7 @@ impl LintArgs {
             .map(std::fs::canonicalize)
             .transpose()?;
         let mut evaluations = BTreeMap::new();
+        let mut legacy_files = std::collections::BTreeSet::new();
         // Resolve schema
         let overridden = self.schema.is_some();
         let schema_source = resolve_schema_source(self.schema);
@@ -76,27 +83,31 @@ impl LintArgs {
             crate::manifest::load_schema_value(&schema_source)?;
         }
 
-        // Discover manifests via shared helper
-        let mut files = discover_manifest_files(&self.paths)?;
-        if self.apds.is_some() {
-            for input in &self.paths {
-                let path = PathBuf::from(input);
-                if path.is_file() && !files.contains(&path) {
-                    files.push(path);
-                }
+        // Explicit filenames (including *.agent.json) must be evaluated, and a
+        // missing input must never become a successful empty validation run.
+        let inputs = if self.paths.is_empty() {
+            vec!["agent.json".into()]
+        } else {
+            self.paths.clone()
+        };
+        let mut files = Vec::new();
+        for input in &inputs {
+            let path = PathBuf::from(input);
+            let found = discover_manifest_files(std::slice::from_ref(input))?;
+            if path.is_file() {
+                files.push(path);
+            } else if found.is_empty() {
+                files.push(if path.is_dir() {
+                    path.join("agent.json")
+                } else {
+                    path
+                });
+            } else {
+                files.extend(found);
             }
-            files.sort();
-            files.dedup();
         }
-        if files.is_empty() {
-            if self.apds.is_some() {
-                return Err(anyhow!(
-                    "APDS validation requires an existing manifest file"
-                ));
-            }
-            println!("No agent.json found. (Looked at ./agent.json or provided paths)");
-            return Ok(());
-        }
+        files.sort();
+        files.dedup();
 
         // Validate
         let mut reports: Vec<LintFileReport> = Vec::new();
@@ -123,15 +134,23 @@ impl LintArgs {
                 }
             };
 
-            let (schema_ok, mut issues) = if let Some(level) = self.apds {
-                if let Some(root) = &package_root
-                    && !file.canonicalize()?.starts_with(root)
-                {
-                    return Err(anyhow!(
-                        "Manifest must be inside the supplied complete package root"
-                    ));
-                }
-                let evaluation = apds::evaluate(
+            let original = value.clone();
+            let inferred = self.legacy && value.is_object() && value.get("standard").is_none();
+            let mut evaluated_value = value.clone();
+            if inferred {
+                // This temporary selector is never written or presented as an
+                // explicit declaration or APDS-conformant historical release.
+                evaluated_value["standard"] = serde_json::json!({"id":"agentpm","version":"1.0.0"});
+            }
+            if let Some(root) = &package_root
+                && !file.canonicalize()?.starts_with(root)
+            {
+                return Err(anyhow!(
+                    "Manifest must be inside the supplied complete package root"
+                ));
+            }
+            let evaluation = if let Some(level) = self.apds {
+                apds::evaluate(
                     &value,
                     &file.to_string_lossy(),
                     level,
@@ -139,19 +158,25 @@ impl LintArgs {
                         graph: graph.as_ref(),
                         package_root: package_root.as_deref(),
                     },
-                )?;
-                let ok = evaluation.status == Status::Conformant;
-                let issues = evaluation.issues.clone();
-                evaluations.insert(file.to_string_lossy().into_owned(), evaluation);
-                (ok, issues)
-            } else {
-                validate_manifest_value(
-                    &schema_source,
-                    &file.to_string_lossy(),
-                    &mut value,
-                    self.fix,
                 )?
+            } else {
+                let result = crate::manifest::authoring::evaluate(
+                    &mut evaluated_value,
+                    &file.to_string_lossy(),
+                    self.fix,
+                )?;
+                if !inferred {
+                    value = evaluated_value;
+                }
+                result
             };
+            let schema_ok = evaluation.status == Status::Conformant;
+            let mut issues = evaluation.issues.clone();
+            if inferred {
+                legacy_files.insert(file.to_string_lossy().into_owned());
+            } else {
+                evaluations.insert(file.to_string_lossy().into_owned(), evaluation);
+            }
             if overridden {
                 issues.push(LintIssue {
                     file: file.to_string_lossy().into_owned(),
@@ -174,8 +199,8 @@ impl LintArgs {
             };
 
             // If we auto-fixed ($schema), write back once here
-            if self.fix && value.get("$schema").is_some() {
-                // The value may or may not have changed; writing is inexpensive/safe.
+            if self.fix && schema_ok && value != original {
+                // Preserve original formatting and key order when no repair is needed.
                 write_manifest_pretty(&file, &value)?;
             }
 
@@ -192,6 +217,9 @@ impl LintArgs {
             .map(|report| Report {
                 lint: report,
                 apds: evaluations.get(&report.file),
+                compatibility: legacy_files
+                    .contains(&report.file)
+                    .then_some("legacy-unverified"),
             })
             .collect();
         match self.format.as_str() {
@@ -207,30 +235,13 @@ impl LintArgs {
                 // pretty
                 for r in &reports {
                     print!("{}", render_lint_report(r));
-                    if let Some(evaluation) = evaluations.get(&r.file) {
+                    if legacy_files.contains(&r.file) {
                         println!(
-                            "  APDS {} scope: {}; Runner behavior not evaluated.",
-                            serde_json::to_value(evaluation.level)?
-                                .as_str()
-                                .unwrap_or(""),
-                            serde_json::to_value(evaluation.status)?
-                                .as_str()
-                                .unwrap_or("")
+                            "  Legacy compatibility only (inferred agentpm / 1.0.0); APDS conformance and Runner behavior not evaluated. Source unchanged."
                         );
-                        if !evaluation.unevaluated.is_empty() {
-                            println!(
-                                "  Unevaluated: {}",
-                                evaluation
-                                    .unevaluated
-                                    .iter()
-                                    .cloned()
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            );
-                        }
-                        for note in &evaluation.notes {
-                            println!("  {note}");
-                        }
+                    }
+                    if let Some(evaluation) = evaluations.get(&r.file) {
+                        print!("{}", crate::lint_output::render_apds_summary(evaluation)?);
                     }
                 }
             }
@@ -269,6 +280,7 @@ mod tests {
             &manifest_path,
             r#"{
   "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "standard": {"id":"agentpm","version":"1.0.0"},
   "kind": "knowledge",
   "name": "engineering-playbook",
   "version": "0.1.0",
@@ -309,6 +321,7 @@ mod tests {
         std::fs::write(
             &manifest_path,
             r#"{
+  "standard": {"id":"agentpm","version":"1.0.0"},
   "kind": "profile",
   "name": "customer-success-advocate",
   "version": "1.0.0",
@@ -365,6 +378,7 @@ mod tests {
         std::fs::write(
             &manifest_path,
             r#"{
+  "standard": {"id":"agentpm","version":"1.0.0"},
   "kind": "profile",
   "name": "customer-success-advocate",
   "version": "1.0.0",
@@ -426,6 +440,7 @@ mod tests {
         std::fs::write(
             &manifest_path,
             r#"{
+  "standard": {"id":"agentpm","version":"1.0.0"},
   "kind": "loop",
   "name": "incident-response-loop",
   "version": "1.0.0",

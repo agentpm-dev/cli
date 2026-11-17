@@ -16,6 +16,7 @@ impl Fixture {
     }
     fn manifest(&self, runtime: Value) {
         let value = json!({"kind":"tool","name":"python-dependency-test","version":"0.1.0","description":"Python dependency test.",
+            "standard":{"id":"agentpm","version":"1.0.0"},
             "entrypoint":{"command":if runtime["type"] == "node" {"node"} else {"python3"},"args":["tool.py"]},
             "runtime":runtime,"files":["tool.py"],"inputs":{"type":"object"},"outputs":{"type":"object"}});
         fs::write(

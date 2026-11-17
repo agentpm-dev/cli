@@ -394,7 +394,8 @@ fn all_eight_init_commands_lint_clean_and_validate_the_standard_selector() {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|issue| issue["schema_path"] == "/additionalProperties")
+                    .any(|issue| issue["rule_id"] == "APDS-GRAPH-001"
+                        && issue["instance_path"] == format!("/{typo}"))
             );
         }
         let mut invalid = original;
@@ -506,13 +507,14 @@ fn lint_and_publish_share_human_context_ordering_and_preserve_machine_report_fie
         assert_eq!(output.status.code(), Some(1));
         let json: Value = serde_json::from_slice(&output.stdout).unwrap();
         let report = if format == "json" { &json[0] } else { &json };
-        assert_eq!(report.as_object().unwrap().len(), 3);
+        assert_eq!(report.as_object().unwrap().len(), 4);
+        assert_eq!(report["apds"]["status"], "nonconformant");
         assert_eq!(report["file"], "agent.json");
         assert_eq!(report["ok"], false);
         for issue in report["issues"].as_array().unwrap() {
             assert_eq!(
                 issue.as_object().unwrap().len(),
-                5,
+                6,
                 "unexpected machine field: {issue}"
             );
             for key in ["file", "level", "message", "instance_path", "schema_path"] {
@@ -646,7 +648,7 @@ fn new_preserves_standard_in_template_agents_and_still_blocks_unknown_keys() {
     fs::create_dir_all(&agents).unwrap();
     let source = agents.join("starter.agent.json");
     fs::write(&source, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
-    success(project.cli(&[
+    let created = success(project.cli(&[
         "new",
         ".",
         "generated",
@@ -654,17 +656,20 @@ fn new_preserves_standard_in_template_agents_and_still_blocks_unknown_keys() {
         "project_name=generated",
         "--quiet",
     ]));
+    assert!(
+        !String::from_utf8_lossy(&created.stdout).contains("Local manifests missing `standard`:")
+    );
     let generated = project.0.join("generated");
     let written: Value =
         serde_json::from_slice(&fs::read(generated.join("agents/starter.agent.json")).unwrap())
             .unwrap();
     assert_eq!(written, manifest, "generated Agent metadata must survive");
     success(project.cli(&["lint", "generated/agents/starter.agent.json", "--strict"]));
-    for path in [
-        "agent.json",
-        "agentpm.workspace.json",
-        ".agentpm/template.json",
-    ] {
+    let root: Value =
+        serde_json::from_slice(&fs::read(generated.join("agent.json")).unwrap()).unwrap();
+    assert_eq!(root["standard"], json!({"id":"agentpm", "version":"1.0.0"}));
+    success(project.cli(&["lint", "generated/agent.json", "--strict"]));
+    for path in ["agentpm.workspace.json", ".agentpm/template.json"] {
         let value: Value =
             serde_json::from_slice(&fs::read(generated.join(path)).unwrap()).unwrap();
         assert!(
@@ -693,6 +698,85 @@ fn new_preserves_standard_in_template_agents_and_still_blocks_unknown_keys() {
         !project.0.join("rejected").exists(),
         "failed new must clean its output"
     );
+}
+
+#[test]
+fn new_declares_root_and_guides_migration_without_rewriting_template_agents() {
+    let project = Project::new();
+    project.init("template");
+    let agent = Project::new();
+    agent.init("agent");
+    let mut manifest = agent.manifest();
+    manifest.as_object_mut().unwrap().remove("standard");
+    manifest["description"] = json!("An Agent for {{ project_name }}.");
+    let agents = project.0.join("template/agents");
+    fs::create_dir_all(&agents).unwrap();
+    let source = agents.join("legacy.agent.json");
+    let before = serde_json::to_string_pretty(&manifest).unwrap();
+    fs::write(&source, &before).unwrap();
+    manifest["name"] = json!("secondary");
+    let second_before = serde_json::to_string_pretty(&manifest).unwrap();
+    fs::write(agents.join("secondary.agent.json"), &second_before).unwrap();
+    let output = success(project.cli(&[
+        "new",
+        ".",
+        "generated",
+        "--var",
+        "project_name=generated",
+        "--quiet",
+    ]));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("run `agentpm lint`"), "{stdout}");
+    assert_eq!(stdout.matches("Next:").count(), 1, "{stdout}");
+    assert_eq!(
+        stdout
+            .matches("Local manifests missing `standard`:")
+            .count(),
+        1,
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .matches(r#""standard":{"id":"agentpm","version":"1.0.0"}"#)
+            .count(),
+        1,
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("agentpm lint agents/legacy.agent.json"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("agents/secondary.agent.json: agentpm lint agents/secondary.agent.json"),
+        "{stdout}"
+    );
+    assert_eq!(fs::read_to_string(&source).unwrap(), before);
+    assert_eq!(
+        fs::read_to_string(agents.join("secondary.agent.json")).unwrap(),
+        second_before
+    );
+    let generated = Project(project.0.join("generated"));
+    assert_eq!(
+        generated.manifest()["standard"],
+        json!({"id":"agentpm", "version":"1.0.0"})
+    );
+    let lint = success(generated.cli(&["lint", "--strict", "--format", "json"]));
+    let reports: Value = serde_json::from_slice(&lint.stdout).unwrap();
+    assert_eq!(reports[0]["apds"]["status"], "conformant");
+    assert_eq!(reports[0]["apds"]["runner_evaluated"], false);
+    let nested = generated.0.join("agents/legacy.agent.json");
+    let rendered = before.replace("{{ project_name }}", "generated");
+    assert_eq!(fs::read_to_string(&nested).unwrap(), rendered);
+    assert_eq!(
+        fs::read_to_string(generated.0.join("agents/secondary.agent.json")).unwrap(),
+        second_before.replace("{{ project_name }}", "generated")
+    );
+    let rejected = generated.cli(&["lint", "agents/legacy.agent.json", "--format", "json"]);
+    assert_eq!(rejected.status.code(), Some(1));
+    let reports: Value = serde_json::from_slice(&rejected.stdout).unwrap();
+    assert!(reports[0]["issues"].as_array().unwrap().iter().any(|issue| issue["rule_id"] == "APDS-ID-001" && issue["instance_path"] == "/standard"));
+    success(generated.cli(&["lint", "--legacy", "agents/legacy.agent.json", "--strict"]));
+    assert_eq!(fs::read_to_string(&nested).unwrap(), rendered);
 }
 
 #[test]

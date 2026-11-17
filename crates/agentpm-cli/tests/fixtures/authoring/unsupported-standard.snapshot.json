@@ -1,0 +1,32 @@
+{
+  "file": "agent.json",
+  "ok": false,
+  "issues": [
+    {
+      "file": "agent.json",
+      "level": "error",
+      "message": "Unsupported declared standard. This CLI supports {\"id\":\"agentpm\",\"version\":\"1.0.0\"}; use a CLI supporting the declared contract or review the declaration in this local manifest.",
+      "instance_path": "/standard/version",
+      "schema_path": "",
+      "rule_id": "APDS-ID-001"
+    }
+  ],
+  "apds": {
+    "standard": {
+      "id": "agentpm",
+      "version": "2.0.0"
+    },
+    "level": "standalone",
+    "status": "unsupported",
+    "evaluated_rules": [],
+    "unevaluated": [],
+    "supported_standard": {
+      "id": "agentpm",
+      "version": "1.0.0"
+    },
+    "runner_evaluated": false,
+    "notes": [
+      "Unsupported declared standard; no substitute contract was applied."
+    ]
+  }
+}
