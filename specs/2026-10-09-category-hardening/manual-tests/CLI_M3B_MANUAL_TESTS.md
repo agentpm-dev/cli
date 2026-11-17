@@ -2,7 +2,8 @@
 
 Run **one block at a time in one macOS/zsh terminal**, starting in your local
 `agentpm` checkout. Claude review and hosted CI have passed, as confirmed by the
-operator. Manual acceptance is still pending.
+operator. The operator confirmed all manual tests passed on **2026-11-17**,
+completing M3B. The instructions remain available for repeat verification.
 
 All test commands run inside **`agentpm/cli-m3b-test/<run-date>/`**, not a temporary
 system folder. That directory is gitignored. You can open it in your editor and
@@ -633,18 +634,19 @@ print('Keep evidence at:', e)
 PY
 ```
 
-Record these acceptance notes with the evidence directory and hosted CI links:
+Operator confirmed the following acceptance checks passed on **2026-11-17**.
+Keep the evidence directory and hosted CI links with that acceptance:
 
-- [ ] The human messages made each actual defect and its field path clear.
-- [ ] Missing, malformed, unsupported, incomplete and conformant results matched
+- [x] The human messages made each actual defect and its field path clear.
+- [x] Missing, malformed, unsupported, incomplete and conformant results matched
       the explanations, including the no-issues-but-incomplete case.
-- [ ] Legacy preview was clearly unverified/read-only; strict preflight rejected
+- [x] Legacy preview was clearly unverified/read-only; strict preflight rejected
       undeclared input; deliberate migration made new lint/package pass.
-- [ ] Fixes changed only the intended editable project; original cases remained
+- [x] Fixes changed only the intended editable project; original cases remained
       byte-identical. Knowledge/Memory local authoring gates behaved as described.
-- [ ] Template root lint passed, and nested migration guidance was grouped,
+- [x] Template root lint passed, and nested migration guidance was grouped,
       concrete and accurate without editing Template-provided declarations.
-- [ ] Final evidence check passed, with no unexpected failures or skipped sections.
+- [x] Final evidence check passed, with no unexpected failures or skipped sections.
 
 This maps to T-CLI-04–06, scoped S2-AC-02/03/04 and D04. The automated suite
 retains broader all-kind/scaffold, installed historical artifact, execution/export,

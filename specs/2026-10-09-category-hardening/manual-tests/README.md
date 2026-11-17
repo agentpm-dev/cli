@@ -16,4 +16,5 @@ location. Run one block at a time and inspect the results before continuing.
   scope, exit and file change. Includes strict preflight, read-only legacy
   preview, safe fixes, contextual results, Knowledge/Memory gates and Template
   next steps. Workspaces/evidence stay in gitignored `agentpm/cli-m3b-test/`.
-  Review and hosted CI are operator-confirmed passed; manual acceptance is pending.
+  Review and hosted CI are operator-confirmed passed; the operator confirmed all
+  manual tests passed on 2026-11-17, completing M3B.
