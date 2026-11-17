@@ -1,0 +1,68 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "kind": "agent",
+  "name": "composed",
+  "version": "1.0.0",
+  "description": "Starter AgentPM project",
+  "tools": [
+    "@example/echo@1.0.0",
+    "@example/publish@1.0.0",
+    {
+      "name": "@example/echo",
+      "version": "1.0.0"
+    }
+  ],
+  "skills": ["@example/review@1.0.0"],
+  "knowledge": ["@example/guide@1.0.0"],
+  "memory": ["@example/notes@1.0.0"],
+  "profiles": ["@example/global@1.0.0", "@example/phase@1.0.0"],
+  "examples": [
+    {
+      "title": "Example prompt",
+      "prompt": "Describe the user request this agent should handle."
+    }
+  ],
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  },
+  "loop": "@example/workflow@1.0.0",
+  "bindings": {
+    "global": {
+      "skills": ["@example/review"],
+      "tools": ["@example/echo"],
+      "profiles": ["@example/global"],
+      "knowledge": ["@example/guide"],
+      "memory": [
+        {
+          "package": "@example/notes",
+          "spaces": ["summary"]
+        }
+      ]
+    },
+    "phases": {
+      "draft": {
+        "tools": ["@example/publish"]
+      },
+      "review": {
+        "profiles": ["@example/phase"],
+        "memory": [
+          {
+            "package": "@example/notes",
+            "spaces": ["notes"],
+            "operations": ["transform", "summarize"]
+          }
+        ]
+      }
+    },
+    "mcp": [
+      {
+        "id": "workspace",
+        "tools": ["@example/echo"]
+      }
+    ],
+    "consumer_context": {
+      "file": "context/user.json"
+    }
+  }
+}
