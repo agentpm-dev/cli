@@ -37,7 +37,7 @@ The table below lets Codex and Claude find the relevant **named tests** without 
 | M3A — init | T-CLI-01–03,06 | Default Agent but explicit Tool works; valid escaped JSON |
 | M3B — lint | T-CLI-04–06 | Missing/unsupported standard fails strict authored lint |
 | M4A — publish gate | T-PUB-01–03,06–08 | Raw API forged release cannot publish |
-| M4B — rollout | T-PUB-04–05,09 | Old release immutable, old client/inflight behavior |
+| M4B — rollout | T-PUB-04–05,09–10 | Old release immutable, old client/inflight behavior; measured finalize capacity before activation |
 | M5A — lock/APDS | T-LOCK-01,05,07–08 | Standard origin survives ordinary regeneration; forward guard |
 | M5B — frozen/empty | T-LOCK-02–06 | Direct Skill/Agent closure, semver, tamper, empty dependencies |
 | M6A — Harness capability | T-RUN-01–04,07 | Valid no-Loop not APDS-invalid; missing model noninteractive |
@@ -172,6 +172,9 @@ The `agentpm init` invocation and `agentpm lint` without flags are based on exis
 - **T-PUB-07:** Authorization/visibility/namespace-signing policy, malware and stored-byte verification continue to protect finalize; APDS conformance does **not** grant publish permissions.
 - **T-PUB-08:** Resolver/private/transitive dependency context limited or unavailable yields truthful incomplete or explicit failure according to documented policy; not “fully verified” without graph evaluation.
 - **T-PUB-09:** Existing CLI published-url success output preserved; old incompatible CLI receives explicit upgrade guidance naming the **concrete minimum CLI version** (the M1A.1 tolerance release) when the strict gate is active, and the package detail page shows the same floor.
+- **T-PUB-10 (M4B activation gate):** Compare enforcement off/on for the most dependency-heavy realistic Agent Package and Template, representative large compressed/expanded payloads, repeated publications of the same dependency set, and planned concurrent finalize load. Record the actual inventories/sizes, root/dependency GET counts and downloaded bytes, cumulative extraction work, peak temporary disk/RSS, elapsed finalize time, cleanup after success/failure, and configured worker/proxy timeouts. Establish a measured operating envelope and headroom, or record and verify mitigation before activation. Dependency inspections are sequential within a request, but accumulate latency/work and overlap the retained root snapshot/extraction; concurrent requests multiply resource demand. The 256-node/16-MiB metadata bounds and per-artifact byte caps do not establish an aggregate request-byte budget. Request-local cache hits require the same kind/identity/selector; different selectors may re-download the same selected version, and repeated publications have no cross-request cache. Exercise both finalize paths; the single-archive root-read count is not the multi-target baseline. M4A functional tests are not capacity evidence.
+
+**M4A builder evidence (2026-11-17):** [Actual archive, PostgreSQL/Pyway, HTTP and regression results](m4a-verification.md#s2-ac-05-and-test-plan-mapping) map T-PUB-01–03/06–08 and S2-AC-05. Local suite: 1,050 passed, 7 unrelated opt-in skips, 347 subtests passed. All eight kinds are service-tested; normal CLI-to-running-Registry publication remains operator acceptance after review. User confirmed full independent Claude review passed with no remaining findings on 2026-11-17; hosted CI and operator publication acceptance remain pending. T-PUB-04/05/09–10 rollout/capacity gates, real production inventory and enforcement activation remain M4B.
 
 ### D. Resolve/install/lock integrity and `--frozen` (M5A–M5B; S2-AC-06,07)
 
@@ -339,4 +342,3 @@ Claude Code should **request changes** if any of the following holds: the APDS d
 - Implementing full AgentPM Developer guided creation/publishing wizard in Stage 2; only future-stage handoff and valid integration hooks.
 - Full embeddable README Card implementation if D16 investigation justifiably defers it; the **investigation and decision** remain required.
 - Mass-rewriting author-controlled READMEs, changing pricing/billing behavior, or broad API/CLI breaking changes absent explicit product approval.
-

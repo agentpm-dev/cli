@@ -435,19 +435,21 @@ The freeze records approval of the reviewed candidate. Before publication, delib
 
 **Implementation checklist**
 
-- [ ] Trace init/finalize/upload/scan flow and identify the last safe precommit enforcement point.
-- [ ] Add version-scoped standard ID/origin metadata with backward-compatible migrations/serializers.
-- [ ] Load actual embedded `agent.json` from staged artifact using existing secure tar validation.
-- [ ] Run Python APDS structural checks and all resolvable semantic checks.
-- [ ] Compare artifact local identity, Registry namespace mapping, kind and version against init metadata.
-- [ ] Compare embedded declared standard against request metadata; reject mismatches.
-- [ ] Ensure multi-artifact Tool publish applies correct release/artifact association checks.
-- [ ] Keep malware scan, signer verification, Registry attestation, ACL and APDS statuses separate.
-- [ ] Reject before discoverability and preserve atomic rollback/idempotent retry behavior.
-- [ ] Add forged request tests that bypass CLI lint and still fail server.
-- [ ] Add malformed/missing/unsupported schema and mismatched tar negative tests.
-- [ ] Expose precise diagnostics and retain existing successful Registry package link.
-- [ ] Prove unsigned/invalid signature cannot be bypassed merely by APDS conformance.
+- [x] Trace init/finalize/upload/scan flow and identify the last safe precommit enforcement point.
+- [x] Add version-scoped standard ID/origin metadata with backward-compatible migrations/serializers.
+- [x] Load actual embedded `agent.json` from staged artifact using existing secure tar validation.
+- [x] Run Python APDS structural checks and all resolvable semantic checks.
+- [x] Compare artifact local identity, Registry namespace mapping, kind and version against init metadata.
+- [x] Compare embedded declared standard against request metadata; reject mismatches.
+- [x] Ensure multi-artifact Tool publish applies correct release/artifact association checks.
+- [x] Keep malware scan, signer verification, Registry attestation, ACL and APDS statuses separate.
+- [x] Reject before discoverability and preserve atomic rollback/idempotent retry behavior.
+- [x] Add forged request tests that bypass CLI lint and still fail server.
+- [x] Add malformed/missing/unsupported schema and mismatched tar negative tests.
+- [x] Expose precise diagnostics and retain existing successful Registry package link.
+- [x] Prove unsigned/invalid signature cannot be bypassed merely by APDS conformance.
+
+**Builder verification:** [M4A evidence and decisions](m4a-verification.md) records local archive, PostgreSQL/Pyway, HTTP, docs and static checks. User confirmed full independent Claude review passed with no remaining findings on 2026-11-17. Hosted CI and normal-CLI publication smoke remain pending; enforcement defaults off while declaration-only recording remains active. M4B owns production history/session inventory and activation. The milestone exit gate is not yet complete.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -482,6 +484,7 @@ The freeze records approval of the reviewed candidate. Before publication, delib
 - [ ] Exercise rollback on rejected finalize and ensure no phantom discoverable package exists.
 - [ ] Add migration/verification script if backend metadata needs backfill; never re-sign old tar.
 - [ ] Document deployment order of CLI, Registry and public UI to avoid temporary false success.
+- [ ] Before enabling enforcement, measure gate-off/gate-on publication of the most dependency-heavy realistic Agent Package and Template, with representative large artifacts, repeated publications and the planned concurrent finalize load. Record root/dependency GET counts, cumulative compressed/expanded bytes, finalize latency, peak memory/temp-disk use and cleanup against actual worker/proxy timeouts and disk headroom; document an acceptable operating envelope or mitigation before activation. Count/manifest-metadata limits are not a request-wide artifact-byte budget. See T-PUB-10 and [M4A capacity findings](m4a-verification.md#capacity-evidence-required-before-m4b-activation).
 - [ ] Have Claude approve migration/security matrix before server enforcement is enabled.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
