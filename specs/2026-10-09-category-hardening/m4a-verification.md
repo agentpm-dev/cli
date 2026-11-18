@@ -1,9 +1,10 @@
 # M4A — Registry APDS publication validation
 
 Implemented 2026-11-17. Local automated verification passes. User confirmed full
-independent Claude review passed with no remaining findings on 2026-11-17. Hosted
-CI and operator publication acceptance remain pending; production enforcement is
-not activated and the milestone exit gate is not yet complete.
+independent Claude review passed with no remaining findings on 2026-11-17. User
+also confirmed all hosted CI passed on 2026-11-17 and all real-local manual tests
+passed on 2026-11-18. The saved acceptance summary records 36 passing cases.
+**M4A is complete.** Production activation and capacity gates remain M4B.
 
 ## Scope and source inventory
 
@@ -163,15 +164,15 @@ with its owning later milestones.
 
 ## S2-AC-05 and test-plan mapping
 
-| Requirement             | Evidence and boundary                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| T-PUB-01                | Actual tar bytes for all eight kinds pass standalone, packaged and resolved checks. All eight pass the actual single-archive application service against disposable PostgreSQL, preserving the package URL and completed retry. Python multi-target publication also passes. Normal CLI-to-running-Registry publication for all kinds remains operator acceptance after review; these are not live-publication claims. |
-| T-PUB-02–03             | Raw finalize/HTTP cases reject missing/malformed/unsupported declarations, invalid semantics, forged metadata and valid-hash mismatches. Strict JSON and unsafe archive regressions exercise actual bytes. Rejections create no version/signature/attestation or scan publication rows.                                                                                                                                |
-| T-PUB-06                | Multi-target success persists one version; a later Windows target missing its declared file rejects the entire release. Existing inventory/signing/transaction/scan tests also pass.                                                                                                                                                                                                                                   |
-| T-PUB-07                | Active-gate tests retain required author signature rejection, namespace denial, Registry attestation and scan queue creation. Forged S3 metadata cannot replace actual byte hashing; staged replacement after inspection cannot replace the verified final payload. Existing malware rollup, signing and ACL regressions pass. This does not claim live malware-provider execution.                                    |
-| T-PUB-08                | Actual selected Loop bytes override forged historical request metadata. Unknown phases fail, historical missing selectors remain incomplete, missing historical Knowledge files and invalid historical Loop semantics still fail, and inaccessible context is redacted and blocks publication.                                                                                                                         |
-| Migration / idempotency | Real PostgreSQL constraints, competing version insertion, successful repeat finalization, pre-existing immutable object verification, additive legacy-row preservation and an actual Pyway V1.107 upgrade all pass.                                                                                                                                                                                                    |
-| M4B boundary            | T-PUB-04/05/09 production history/backfill, client floor, cutover/grace/restart policy and activation are not completed here. No production changes or version bumps were made.                                                                                                                                                                                                                                        |
+| Requirement             | Evidence and boundary                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T-PUB-01                | Actual tar bytes for all eight kinds pass standalone, packaged and resolved checks. All eight pass the actual single-archive application service against disposable PostgreSQL, preserving the package URL and completed retry. Python multi-target publication also passes. User confirmed all real-local API/CLI publication tests passed on 2026-11-18, including ordinary CLI publication for every kind; this is development publication evidence. |
+| T-PUB-02–03             | Raw finalize/HTTP cases reject missing/malformed/unsupported declarations, invalid semantics, forged metadata and valid-hash mismatches. Strict JSON and unsafe archive regressions exercise actual bytes. Rejections create no version/signature/attestation or scan publication rows.                                                                                                                                                                 |
+| T-PUB-06                | Multi-target success persists one version; a later Windows target missing its declared file rejects the entire release. Existing inventory/signing/transaction/scan tests also pass.                                                                                                                                                                                                                                                                    |
+| T-PUB-07                | Active-gate tests retain required author signature rejection, namespace denial, Registry attestation and scan queue creation. Forged S3 metadata cannot replace actual byte hashing; staged replacement after inspection cannot replace the verified final payload. Existing malware rollup, signing and ACL regressions pass. This does not claim live malware-provider execution.                                                                     |
+| T-PUB-08                | Actual selected Loop bytes override forged historical request metadata. Unknown phases fail, historical missing selectors remain incomplete, missing historical Knowledge files and invalid historical Loop semantics still fail, and inaccessible context is redacted and blocks publication.                                                                                                                                                          |
+| Migration / idempotency | Real PostgreSQL constraints, competing version insertion, successful repeat finalization, pre-existing immutable object verification, additive legacy-row preservation and an actual Pyway V1.107 upgrade all pass.                                                                                                                                                                                                                                     |
+| M4B boundary            | T-PUB-04/05/09 production history/backfill, client floor, cutover/grace/restart policy and activation are not completed here. No production changes or version bumps were made.                                                                                                                                                                                                                                                                         |
 
 ## Commands and actual results
 
@@ -233,14 +234,71 @@ excluded from Flake8 W503 only for the three new publication files, following th
 existing APDS convention. Trailing whitespace, EOF and conflict-marker hooks,
 Prettier for changed Markdown/MDX/YAML, and `git diff --check` pass.
 
-## Remaining acceptance and rollout risks
+## Manual runbook preparation
+
+Prepared [REGISTRY_M4A_MANUAL_TESTS.md](manual-tests/REGISTRY_M4A_MANUAL_TESTS.md)
+and its explicit [fixture helper](manual-tests/fixtures/m4a/README.md). The
+operator confirmed full hosted CI passed on 2026-11-17 and all manual tests passed on 2026-11-18.
+The guide uses actual authenticated HTTP to the local API and writes through it
+to the real Docker application database and development S3; only inspection SQL
+is read-only. The API can run normally in IntelliJ with its existing environment, changing only
+the two local test-phase flags. The optional launcher imports the existing
+`run.py` application and retains real auth/signing/storage/scans; it can disable
+throttling in its own local process. The audit establishes phases from actual
+publication outcomes, without requiring launcher configuration records. The
+operator restores normal settings afterward. It does not create a mock Registry or disposable application DB.
+
+Builder verification is separate: 35 helper tests pass, including exact negative
+rule/path expectations against actual archive validation, real CLI Knowledge and
+Memory builds, signing serialization, transport destination guards, and read-only
+inspection SQL against **isolated PostgreSQL schemas**. The builder checks mock
+HTTP/storage and do not publish to the operator's local API or dev S3. Their pass
+is not operator acceptance. Commands run from the CLI root:
+
+```sh
+PYTHONPATH="$PWD/../agentpm-api:$PWD/../agentpm-api/tests" \
+AGENTPM_M13A_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5433/agentpm_m13a \
+REGISTRY_PRIVATE_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+AWS_EC2_METADATA_DISABLED=true \
+  ../agentpm-api/.venv/bin/python -B -m pytest -q \
+  specs/2026-10-09-category-hardening/manual-tests/fixtures/m4a/test_fixture.py \
+  --basetemp "$PWD/registry-m4a-test/builder-postgres-tests"
+```
+
+Three additional focused phase-evidence regressions pass (`-k phase_evidence`,
+35 deselected), proving the normal IntelliJ launch needs no helper configuration
+files and that a wrong off/on result still fails the audit. No real API was
+started by these builder checks. Existing operator fixtures/archives do not need
+to be recreated after this launcher clarification.
+
+Two existing SQLAlchemy deprecation warnings occur in the legacy finalizer.
+Helper Python is Black/isort formatted, import-checked with Flake8's F checks,
+and the new Markdown is Prettier formatted. All generated builder files stay
+under ignored `registry-m4a-test/`. No source schema or production code changed
+while preparing this runbook. T-PUB-10 capacity evidence remains M4B.
+
+## Operator acceptance — 2026-11-18
+
+The user confirmed all manual tests passed. The retained local acceptance summary
+at `registry-m4a-test/20261118T021239Z/evidence/acceptance-summary.json` was read and
+reports `cases_checked: 36`, `result: pass`, with off/on phases derived from real
+publication responses and persisted version metadata. The operator ran the actual
+local IntelliJ API against the Docker application DB and development S3, including
+ordinary CLI publication for all eight kinds. No manual commands were reissued
+at sign-off, and detailed HTTP/CLI logs were not independently re-reviewed here.
+The existing guide and ignored workspace remain available for repeat testing.
+
+Claude review, hosted CI and real-local operator acceptance are now all complete
+for M4A. Production enforcement, in-flight policy, legacy inventory/backfill and
+T-PUB-10 capacity evidence remain with M4B and were not checked off by this result.
+
+## Acceptance status and rollout risks
 
 - User confirmed independent Claude review passed with no remaining findings on
-  2026-11-17. Hosted Registry CI remains pending.
-- The normal-CLI, running-Registry all-kind publication smoke in T-PUB-01 remains
-  operator acceptance; no manual runbook or production publication was done during
-  implementation. Prepare it after review, following the established local-folder
-  workflow.
+  2026-11-17. User also confirmed all hosted Registry CI passed on 2026-11-17.
+- User confirmed all 36 real-local manual cases passed on 2026-11-18, including
+  the ordinary CLI publication smoke in T-PUB-01. The ignored workspace retains
+  the evidence; no production publication was performed.
 - M4B must inventory production history and pending sessions, finalize compatibility
   and client guidance, and explicitly activate enforcement. Apply V1.107 before
   serving updated ORM queries even while the switch is off.
@@ -253,5 +311,5 @@ Prettier for changed Markdown/MDX/YAML, and `git diff --check` pass.
   a corrected Component version or address compatibility deliberately in M4B.
 
 No production setting, signing root, immutable release, public standard tag or
-schema was changed. This is a builder handoff, not a release or conformance claim
-for Runner behavior.
+schema was changed. M4A completion records publication validation; production
+rollout and Runner verification retain their separate gates.

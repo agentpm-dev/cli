@@ -449,7 +449,7 @@ The freeze records approval of the reviewed candidate. Before publication, delib
 - [x] Expose precise diagnostics and retain existing successful Registry package link.
 - [x] Prove unsigned/invalid signature cannot be bypassed merely by APDS conformance.
 
-**Builder verification:** [M4A evidence and decisions](m4a-verification.md) records local archive, PostgreSQL/Pyway, HTTP, docs and static checks. User confirmed full independent Claude review passed with no remaining findings on 2026-11-17. Hosted CI and normal-CLI publication smoke remain pending; enforcement defaults off while declaration-only recording remains active. M4B owns production history/session inventory and activation. The milestone exit gate is not yet complete.
+**Builder verification:** [M4A evidence and decisions](m4a-verification.md) records local archive, PostgreSQL/Pyway, HTTP, docs and static checks. User confirmed full independent Claude review passed with no remaining findings on 2026-11-17. User confirmed all hosted CI passed on 2026-11-17. User confirmed all [real-local publication manual tests](manual-tests/REGISTRY_M4A_MANUAL_TESTS.md) passed on 2026-11-18; the saved acceptance summary records 36 passing cases. Enforcement defaults off while declaration-only recording remains active. M4B owns production history/session inventory and activation. **M4A is complete.**
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
