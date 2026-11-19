@@ -1,12 +1,14 @@
 # M4B: publication compatibility and rollout
 
-Builder implementation: **2026-11-18**. Scope: M4B only. Claude's migration/security
+**M4B implementation, independent review and PR CI complete: 2026-11-18.** Scope: M4B only. Claude's migration/security
 design approval is granted on the local evidence, as supplied by the user on
 2026-11-18. The user subsequently confirmed full Claude review complete with no
 new findings on 2026-11-18, including closure of the guard coverage correction.
-Hosted CI, production history inspection, measured capacity and the separate
-activation approval remain outstanding. This record does not enable production
-enforcement or close the release band.
+The user confirmed all PR CI passed on 2026-11-18; the CLI runs were also
+independently inspected as recorded below. Production history inspection,
+measured capacity, post-merge push-only checks and the separate activation
+approval remain outstanding. This record does not enable production enforcement
+or close the release band.
 
 Production-only execution is explicitly sequenced in [Release Band 1's ordered
 production rollout](tasks.md#ordered-production-rollout): review/CI, authoring CLI
@@ -178,10 +180,27 @@ These additional checks passed with exit 0:
 
 Rust/SDK/web test suites were not rerun: no implementation in those repositories
 changed. The full Registry suite used the real built CLI for its opt-in native
-comparison, and the separate CLI bundle checksum check passed. Hosted workflow
-execution remains unverified. Claude's design approval and the separate pending
+comparison, and the separate CLI bundle checksum check passed. Hosted PR CI
+passed as recorded below. Claude's design approval and the separate pending
 activation approval are recorded below. The user confirmed full post-fix Claude
 review complete with no new findings on 2026-11-18.
+
+### Hosted PR CI confirmation
+
+On 2026-11-18 the user confirmed all CI passed. The actual CLI PR runs for commit
+`670a996c612d29b771e923b0ee376a4352a3ee5b` were independently inspected via GitHub:
+
+- [CI run 330](https://github.com/agentpm-dev/cli/actions/runs/44435195713): build passed, including formatting, Clippy, workspace tests, APDS drift/corpus and positive CLI fixture checks. `platform-targets` and `Native runtime (${{ matrix.target }})` were skipped as configured for pull requests.
+- [Resolver Contract run 51](https://github.com/agentpm-dev/cli/actions/runs/44435195791): target selection and **all four** native targets passed: macOS arm64, macOS x86_64, Linux x86_64 and Windows x86_64. Every target completed both payload/target compatibility tests and native managed Python environment verification. The user's pasted check list showed only the two macOS rows; GitHub's complete job list includes the successful Linux/Windows rows too.
+- Registry hosted CI success is user-confirmed; its run was not independently queried in this inspection.
+
+In `.github/workflows/ci.yml`, `platform-targets` explicitly requires
+`github.event_name == 'push'`, and `platform-tests` depends on it. These skips on
+a `pull_request` event are intentional. The unexpanded target label is the skipped
+matrix job's name template, not a failed target. The separate Resolver Contract
+workflow supplies actual four-platform native coverage on this PR. After merge
+to main, confirm the push-triggered CI target/native matrix passes before tagging
+the CLI release; those later runs are not claimed as already executed.
 
 ### Review correction: stored metadata contradicting immutable artifacts
 
@@ -239,7 +258,7 @@ activation approval.
 | Migration/backfill                                           | Actual PostgreSQL constraints, every-target inspection including non-first corruption, real signed multi-target author/attestation preservation, malformed declarations, stale metadata, late conflict rollback, idempotence, verified-evidence retention and actual Flask operator command |
 | T-PUB-01–03/06–08 regressions                                | Existing M4A archive, authorization, integrity, private graph, signature and atomicity tests retained in full Registry suite                                                                                                                                                                |
 | T-PUB-10: capacity before activation                         | **Not yet measured on a deployment matching production**; detailed workload/measurement/mitigation procedure prepared; existing functional results are not capacity evidence                                                                                                                |
-| S2-AC-05 / D05 / D19                                         | Implementation and local verification recorded here; migration/security design approved; final post-fix review confirmation, production inventory, measured envelope, hosted CI and separate activation approval/controlled rollout still required                                          |
+| S2-AC-05 / D05 / D19                                         | Implementation and local verification recorded here; full Claude review and PR CI passed; production inventory, measured envelope, post-merge push-only CI and separate activation approval/controlled rollout still required                                                               |
 
 Before activation, capture the most dependency-heavy real Agent Package and
 Template, representative large artifacts, repeat publications and planned
@@ -252,4 +271,4 @@ budget, larger compute tier or timeout is assumed. Claude has approved the
 migration/security design on local evidence; the separate activation approval
 still requires production findings and capacity measurements.
 
-This is a builder handoff, not an assertion that M4B or Release Band 1 is done.
+**M4B is complete** as the implementation/review/PR-CI milestone. Per the user-agreed sequencing, production inspection/backfill, measured capacity, post-merge push-only checks and activation approval/execution remain Release Band 1 gates. They have not been completed or waived, and Release Band 1 remains open.
