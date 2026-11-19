@@ -242,6 +242,7 @@ impl MemoryArgs {
 impl MemoryBuildArgs {
     pub async fn run(self) -> Result<()> {
         let manifest_path = resolve_manifest_path(&self.manifest)?;
+        crate::manifest::authoring::require_path(&manifest_path)?;
         let summary = execute_memory_build(&manifest_path, MemoryBuildMode::Write)?;
         print_build_summary(&summary);
         Ok(())
@@ -251,6 +252,8 @@ impl MemoryBuildArgs {
 impl MemoryInspectArgs {
     pub async fn run(self) -> Result<()> {
         let cwd = std::env::current_dir().context("reading current directory")?;
+        let target = resolve_memory_target(&cwd, &self.target)?;
+        crate::manifest::authoring::require_local_inspect_path(&target.manifest_path)?;
         let rendered = inspect_memory(&cwd, &self)?;
         match rendered {
             MemoryInspectView::Json(json) => {

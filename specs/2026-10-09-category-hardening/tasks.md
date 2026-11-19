@@ -59,18 +59,20 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 
 **Implementation checklist**
 
-- [ ] Inventory top-level schema: `$schema`, `$id`, `kind`, local `name`, version, description, and conditional kind requirements.
-- [ ] Record the eight kinds and separate Agent Package (`agent`) from six Components and `template`.
-- [ ] Map each kind to its actual manifest metadata fields and related CLI commands.
-- [ ] Record how dependency declarations are represented (strings versus object selectors) and how Registry `@namespace/name` differs from local manifest `name`.
-- [ ] Trace global and phase Agent bindings through actual phase lookup and effective capabilities.
-- [ ] Trace Skill Tool inheritance through declared dependencies, bindings and Runner exposure.
-- [ ] Trace Memory spaces and operation triggers including `capacity`, `record_count`, `interval`, and `external`.
-- [ ] Trace Loop terminal outcomes, default omitted outcomes, and phase restrictions.
-- [ ] Classify observed behavior as structural contract, candidate portable semantics, or AgentPM-specific implementation policy; record the evidence and unresolved interpretation instead of treating current code as automatically normative.
-- [ ] List published legacy manifests and known common authored examples that will be used for regression.
-- [ ] Make an explicit cross-repo contract table and attach file paths/line references to the PR.
-- [ ] Have Claude independently review whether the inventory omits a meaningful authoring or execution behavior.
+- [x] Inventory top-level schema: `$schema`, `$id`, `kind`, local `name`, version, description, and conditional kind requirements.
+- [x] Record the eight kinds and separate Agent Package (`agent`) from six Components and `template`.
+- [x] Map each kind to its actual manifest metadata fields and related CLI commands.
+- [x] Record how dependency declarations are represented (strings versus object selectors) and how Registry `@namespace/name` differs from local manifest `name`.
+- [x] Trace global and phase Agent bindings through actual phase lookup and effective capabilities.
+- [x] Trace Skill Tool inheritance through declared dependencies, bindings and Runner exposure.
+- [x] Trace Memory spaces and operation triggers including `capacity`, `record_count`, `interval`, and `external`.
+- [x] Trace Loop terminal outcomes, default omitted outcomes, and phase restrictions.
+- [x] Classify observed behavior as structural contract, candidate portable semantics, or AgentPM-specific implementation policy; record the evidence and unresolved interpretation instead of treating current code as automatically normative.
+- [x] List published legacy manifests and known common authored examples that will be used for regression.
+- [x] Make an explicit cross-repo contract table and attach file paths/line references to the PR.
+- [x] Have Claude independently review whether the inventory omits a meaningful authoring or execution behavior. User confirmed Claude review passed on **2026-11-13**, after the environment-precedence and Tool-invocation additions.
+
+**Builder evidence — 2026-11-13:** [Contract inventory](m1a-contract-inventory.md) includes the cross-repo table/source line references for the review handoff, baseline revisions, regression catalog, S/P/I classification, reconciliation register and D01/D02/D19 decisions. The [schema index](m1a-schema-index.md) covers all 78 manifest and 36 Harness configuration definitions. [Verification](m1a-verification.md) records 421 unique CLI tests (including the review additions for Tool environment precedence and process invocation), 213 Registry tests plus 91 subtests, 137 SDK tests passed with two optional SDK tests skipped, and 38 focused schema/CLI/source-manifest probes. No product/schema/migration/shared Stage 1 contract changed. S2-AC-01/S2-AC-03 contributions and later unmet portions are explicit; Claude review passed, as confirmed by the user on **2026-11-13**, with no remaining findings. **M1A is complete.** No other milestone's checklist is completed by this audit.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -83,7 +85,7 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 ## Milestone 1A.1: Ship the Old-Client Tolerance Release
 > **Scope note:** Make every already-released CLI able to accept and round-trip a `standard` field **before** anything emits it. One narrow schema change plus round-trip verification. Outside this milestone: defining APDS, emitting `standard`, validating it, enforcing it, or any other schema loosening.
 > **Implementation notes:**
-> - **Why this must come first.** The root schema is `additionalProperties: false`, so every CLI in users' hands hard-rejects a manifest carrying `standard`. Verified on 0.1.33: `agentpm lint` returns `[ERROR] Additional properties are not allowed ('standard' was unexpected)` and exits 1. Affected commands are the schema-validating ones — `lint`, `publish` preflight, `new`, `export`, `knowledge build`, `memory build`. `install`, `harness`, `run` and `serve` do no schema validation and no manifest struct uses `deny_unknown_fields`, so install/run of new packages on an old CLI is unaffected.
+> - **Why this must come first.** The root schema is `additionalProperties: false`, so pre-tolerance clients hard-reject a manifest carrying `standard`. Verified on 0.1.33: `agentpm lint` returns `[ERROR] Additional properties are not allowed ('standard' was unexpected)` and exits 1. Affected validation/generation surfaces include `lint`, `publish` preflight, `new`, `export`, `knowledge build`, `memory build`. Export reads the Tool and generates a fresh Skill rather than independently linting the source. `install`, `harness`, `run` and `serve` do no general manifest-schema validation, so accepting the extra root field does not require a new validator on those paths.
 > - `agentpm new` is the sharpest edge because it validates generated manifests through a blocking check (`commands/new.rs::validate_generated_manifests_blocking`): an old CLI scaffolding a Template whose files carry `standard` fails **during `new`**, not at a later lint.
 > - This is `spec.md` §1's add/read → validate → enforce sequencing applied in the client direction, which the rest of the plan applies only to the server.
 > - **Relax the root by exactly one known field.** Do not move to `additionalProperties: true`: an open root permanently stops catching misspelled top-level keys in the version about to be frozen immutable. Later extensions use the §3 ch.2 extension policy.
@@ -93,15 +95,17 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 
 **Implementation checklist**
 
-- [ ] Add `standard` to the existing schema's root `properties` with a permissive shape so it is accepted and ignored. Do not add validation, requirements, or emission.
-- [ ] Confirm nothing else loosens: root stays `additionalProperties: false` for all other keys, and no `$defs` object is opened.
-- [ ] Verify each manifest-rewriting path preserves the field. Current behavior to re-verify against the branch: `agentpm install <pkg>` writes back the loaded `manifest_value` (**preserves**); `knowledge build --write` loads the Value, mutates only the `knowledge` object and writes the whole Value (**preserves**); `memory build` reads the manifest and writes only `.agentpm/memory/build.json` (**never rewrites `agent.json`**); `agentpm export` builds a **fresh** `json!` Skill scaffold (nothing to preserve); `workspace.rs` metadata writers go through typed structs and **drop** unknown fields, but write workspace/template metadata rather than manifests.
-- [ ] Add a regression test: a manifest containing `standard` plus one additional unknown top-level key survives `agentpm install <pkg>` write-back and `knowledge build --write` with no field lost.
-- [ ] Confirm `serde_json` stays pinned **without** `preserve_order` (`crates/agentpm-cli/Cargo.toml` notes publish author signatures depend on it). Rewrites alphabetize keys while losing nothing; that is expected and is consistent with the RFC 8785/JCS canonicalization in M14A-equivalent Stage 2 work.
-- [ ] Verify the tolerance build on every schema-validating command: `lint`, `publish` preflight (dry run), `new`, `export`, `knowledge build`, `memory build` all accept a manifest carrying `standard`.
-- [ ] Verify `agentpm new` from a Template whose scaffolded files carry `standard` completes, including `validate_generated_manifests_blocking`.
-- [x] Confirm publication of **CLI 0.1.36** and record it as the minimum CLI version named by M4B's outdated-client error and by the detail page's install guidance. Operator confirmed publication/installation on **2026-10-22**, and a live Production first-use event reports **0.1.36**. The schema change landed in Stage 1 M8; the Band 5 handoff / Band 7 publication record supersedes the original 0.1.35 target. This satisfies M3A's publication prerequisite only; the remaining M1A.1 verification tasks and M3A dependencies are not implicitly complete.
-- [ ] Do **not** emit `standard` from any command in this milestone; emission is M3A.
+- [x] Add `standard` to the existing schema's root `properties` with a permissive shape so it is accepted and ignored. Do not add validation, requirements, or emission. Already shipped by Stage 1 M8 (`e0143af`); verified without changing the schema in this milestone.
+- [x] Confirm nothing else loosens: root stays `additionalProperties: false` for all other keys, and no `$defs` object is opened. The original tolerance commit changes only that one property; new all-kind negative cases retain required fields and typo rejection.
+- [x] Verify each manifest-rewriting path preserves the field. `agentpm install <pkg>` writes back the loaded `manifest_value` (**preserves**); `knowledge build` writes by default, mutating only the `knowledge` object (**preserves**); `memory build` writes `memory/contracts/` and `memory/build.json` (**never rewrites `agent.json`**); `agentpm export` builds a **fresh** Skill scaffold (no declaration copied or emitted); typed `workspace.rs` writers operate on workspace/template metadata, not manifests.
+- [x] Add a regression test: a manifest containing `standard` plus one additional unknown top-level key survives `agentpm install <pkg>` write-back and `knowledge build` with no field lost. Both repeated operations are byte-stable; the Knowledge extra-key probe uses a local schema override while the bundled root continues to reject that key.
+- [x] Confirm `serde_json` stays pinned **without** `preserve_order` (`crates/agentpm-cli/Cargo.toml` notes publish author signatures depend on it). Rewrites alphabetize keys while losing nothing; Cargo's actual feature graph also confirms no `preserve_order` activation.
+- [x] Verify the tolerance implementation on every named validation/generation surface: `lint`, `publish` preflight (dry run), `new`, `export`, `knowledge build`, `memory build` all accept a manifest carrying `standard`. Current build verification retains the already-shipped tolerance behavior; it is not a claim that a historical 0.1.36 binary was re-executed.
+- [x] Verify `agentpm new` from a Template whose scaffolded files carry `standard` completes, including `validate_generated_manifests_blocking`. The negative counterpart rejects `standrad` and cleans the failed output.
+- [x] Confirm publication of **CLI 0.1.36** and record it as the minimum CLI version named by M4B's outdated-client error and by the detail page's install guidance. Operator confirmed publication/installation on **2026-10-22**, and a live Production first-use event reports **0.1.36**. The schema change landed in Stage 1 M8; the Band 5 handoff / Band 7 publication record supersedes the original 0.1.35 target. This publication record satisfies M3A's publication prerequisite; its other dependencies and acceptance requirements remain unchanged.
+- [x] Do **not** emit `standard` from any command in this milestone; emission is M3A. Init and fresh export/generated-root manifests remain without the field; copied authored Template Agents retain it.
+
+**Builder evidence — 2026-11-13:** [M1A.1 verification](m1a1-verification.md) maps T-APDS-20, D02/D04/D19 and the tolerance portion of S2-AC-02. Changes are regression tests and internal evidence only; no new schema, runtime behavior, migration, version bump or release is needed. The 0.1.36 publication prerequisite remains satisfied by the existing operator record. The user confirmed independent Claude review passed with **no findings on 2026-11-13**. **M1A.1 is complete.**
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -124,34 +128,36 @@ Each milestone then closes with its own **Exit gate**, which is the review bound
 
 **Implementation checklist**
 
-- [ ] **Gate check before any other task here:** confirm Stage 1 M2 and M11A manifest-schema additions are merged, and record the exact commits/schema diff inspected. Also confirm Stage 1 M12 kept payload classification out of `agent.json`; if it did not, this gate extends to M12. If any is outstanding, stop — this milestone is blocked, not startable with a planned-field placeholder.
+- [x] **Gate check before any other task here:** confirm Stage 1 M2 and M11A manifest-schema additions are merged, and record the exact commits/schema diff inspected. Also confirm Stage 1 M12 kept payload classification out of `agent.json`; if it did not, this gate extends to M12. If any is outstanding, stop — this milestone is blocked, not startable with a planned-field placeholder.
 
-Stage 1 M11A handoff (2026-10-22, working-tree implementation, not merge evidence):
+Historical Stage 1 M11A handoff (2026-10-22, working-tree implementation, not merge evidence; superseded by the 2026-11-14 merged-code verification in [M1B evidence](m1b-verification.md)):
 `$defs/runtime` now accepts optional Python `dependencies` and rejects the field
 for Node; requirement semantics are validated by the CLI. The portable
 `agentpm.python-resolution.v1` type includes non-empty SHA-256 distribution
 digest sets and conditional markers. Inspect the merged schema/type/tests before
 lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 
-- [ ] Include Stage 1's landed schema additions in the frozen v1.0.0 structural contract: `agentpm-harness` in `$defs/templateMetadata.execution_surfaces` and optional Python `dependencies` on `$defs/runtime`. Add positive fixtures for each in M2A.
-- [ ] Create `standards/agentpm/1.0.0/` (or justified equivalent) and make the intended files independently readable.
-- [ ] Add `standard.id` and `standard.version` to the existing common schema with a fixed supported-v1 expectation.
-- [ ] Make nonblank `description` a **hard conformance error**, owned by the schema. Today the schema types it as bare `{"type": "string"}` and the Rust CLI emits a separate semantic `[WARN] description should not be empty` (verified on 0.1.33: whitespace-only lints with a warning, not an error). Express it structurally in the pinned schema (`minLength` + non-whitespace `pattern` or equivalent) so Rust and Python both enforce it from the contract.
-- [ ] Remove or replace the existing CLI-side description warning so the same defect is not reported twice at two severities; confirm trimming semantics are identical in Rust and Python and covered by a shared fixture.
-- [ ] Remove the incorrect unconditional Agent `tools` requirement while preserving kind-specific Tool requirements.
-- [ ] Verify optional `loop`, `profile`/`profiles`, bindings, empty deps and omitted deps on minimal Agent manifests.
-- [ ] Preserve the local `name` shape; do not rewrite it as `@namespace/name`.
-- [ ] Preserve exact existing eight-kind vocabulary and avoid adding `AgentPackage` as a new machine kind.
-- [ ] Give normative schema a version-stable `$id`, distinct from optional editor `$schema`.
-- [ ] Decide and record the pinned `$schema` URL that scaffolds should emit, so new manifests are edited against the same frozen contract they are validated against.
-- [ ] Select a reproducible build/vendoring mechanism so no two schemas are independently edited.
-- [ ] Add a CI or build assertion detecting old-path versus canonical-schema drift.
-- [ ] **Close the runtime schema-source override.** `manifest.rs::resolve_schema_source()` currently prefers a working-directory-relative `schemas/agentpm.manifest.schema.json` over the compiled-in schema, and `--schema` is honored by both `lint` and `publish` (which can point at an `http(s)` URL that `load_schema_value()` fetches). Verified on CLI 0.1.33: a permissive local copy makes lint pass manifests the bundled contract rejects. Make the pinned bundled contract authoritative for APDS validation; an overridden schema must never yield a `conformant` APDS result, must be labeled non-authoritative in output, and must not reach `publish` preflight as if it proved conformance.
-- [ ] Write the normative `README.md` covering every element the binding requirement below enumerates, including the version/immutability/extension policy and what changes force a new standard version.
-- [ ] Give the README a human-first editorial pass: plain-language definition, scope, conformance roles, key guarantees and a quick map to schema/semantics/fixtures; remove duplicated field-by-field schema explanations and unnecessary formality.
-- [ ] Ask Claude to review the README as a technically capable newcomer without access to AgentPM's code or this planning history; address unclear terms and navigation before the standard is frozen.
-- [ ] Demonstrate that offline validation doesn't fetch a mutable repository URL.
-- [ ] Record selected path/build relationship and a structural before/after diff.
+- [x] Include Stage 1's landed schema additions in the frozen v1.0.0 structural contract: `agentpm-harness` in `$defs/templateMetadata.execution_surfaces` and optional Python `dependencies` on `$defs/runtime`. Add positive fixtures for each in M2A.
+- [x] Create `standards/agentpm/1.0.0/` (or justified equivalent) and make the intended files independently readable.
+- [x] Add `standard.id` and `standard.version` to the existing common schema with a fixed supported-v1 expectation.
+- [x] Make nonblank `description` a **hard conformance error**, owned by the schema. Today the schema types it as bare `{"type": "string"}` and the Rust CLI emits a separate semantic `[WARN] description should not be empty` (verified on 0.1.33: whitespace-only lints with a warning, not an error). Express it structurally in the pinned schema (`minLength` + non-whitespace `pattern` or equivalent) so Rust and Python both enforce it from the contract.
+- [x] Remove or replace the existing CLI-side description warning so the same defect is not reported twice at two severities; confirm trimming semantics are identical in Rust and Python and covered by a shared fixture.
+- [x] Remove the incorrect unconditional Agent `tools` requirement while preserving kind-specific Tool requirements.
+- [x] Verify optional `loop`, `profile`/`profiles`, bindings, empty deps and omitted deps on minimal Agent manifests.
+- [x] Preserve the local `name` shape; do not rewrite it as `@namespace/name`.
+- [x] Preserve exact existing eight-kind vocabulary and avoid adding `AgentPackage` as a new machine kind.
+- [x] Give normative schema a version-stable `$id`, distinct from optional editor `$schema`.
+- [x] Decide and record the pinned `$schema` URL that scaffolds should emit, so new manifests are edited against the same frozen contract they are validated against.
+- [x] Select a reproducible build/vendoring mechanism so no two schemas are independently edited.
+- [x] Add a CI or build assertion detecting old-path versus canonical-schema drift.
+- [x] **Close the runtime schema-source override.** `manifest.rs::resolve_schema_source()` currently prefers a working-directory-relative `schemas/agentpm.manifest.schema.json` over the compiled-in schema, and `--schema` is honored by both `lint` and `publish` (which can point at an `http(s)` URL that `load_schema_value()` fetches). Verified on CLI 0.1.33: a permissive local copy makes lint pass manifests the bundled contract rejects. Make the pinned bundled contract authoritative for APDS validation; an overridden schema must never yield a `conformant` APDS result, must be labeled non-authoritative in output, and must not reach `publish` preflight as if it proved conformance.
+- [x] Write the normative `README.md` covering every element the binding requirement below enumerates, including the version/immutability/extension policy and what changes force a new standard version.
+- [x] Give the README a human-first editorial pass: plain-language definition, scope, conformance roles, key guarantees and a quick map to schema/semantics/fixtures; remove duplicated field-by-field schema explanations and unnecessary formality.
+- [x] Ask Claude to review the README as a technically capable newcomer without access to AgentPM's code or this planning history; address unclear terms and navigation before the standard is frozen. User confirmed full review complete with no remaining findings on **2026-11-14**.
+- [x] Demonstrate that offline validation doesn't fetch a mutable repository URL.
+- [x] Record selected path/build relationship and a structural before/after diff.
+
+**Completion evidence — 2026-11-14:** [M1B verification](m1b-verification.md) records exact prerequisite commits, D02/D19, test commands, compatibility decisions and S2-AC-01/03 contributions. [Structural before/after diff](m1b-structural-diff.json) limits changes to five paths and confirms all 78 definitions are unchanged. User confirmed Claude's full review, including the [canonical README](../../standards/agentpm/1.0.0/README.md), passed with no remaining findings. **M1B is complete.** The bundle remains unpublished; M1C/M2A own completion of semantics/corpus and the release gate still requires publishing/verifying the immutable tag. No conformance DTO, declaration emission or Registry enforcement is claimed here.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -175,30 +181,32 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 
 **Implementation checklist**
 
-- [ ] Define normative terminology and role-specific conformance subjects (author, validator, Registry, Manager, Runner); a role is not obliged to implement unrelated roles.
-- [ ] Distinguish standalone, resolved-composition and packaged-content validation, unevaluated requirements and unsupported standards; distinguish artifact conformance from the extent of verification.
-- [ ] Apply the normative inclusion test to each candidate rule: necessary for artifact validity, authored meaning or an intended interoperability guarantee. Label implementation-specific explanations as non-normative; do not codify current Harness behavior by default.
-- [ ] Write artifact identity, standard and artifact versions, namespaces, reference kinds, direct/transitive composition and resolved-version meaning without specifying a particular Registry, resolver or lockfile format.
-- [ ] Distinguish dependency declarations from Agent bindings; write global/phase additive binding semantics, Loop restrictions and capability eligibility separately from actual runtime availability/invocation.
-- [ ] Write Skill Tool inheritance for global and phase bindings, logical identity across multiple direct/inherited paths and the absence of automatic Skill-script execution; do not prescribe de-duplication algorithms or a shell-executor Tool.
-- [ ] Write Loop entry/phase/outcome/transition/terminal/limit/access/checkpoint/error-policy semantics; make omitted-outcome `complete` a portable identifier, not a prompt-generation mechanism.
-- [ ] Reconcile transition determinism/completeness, step counting, explicit approval/checkpoint behavior and explicit failure policy without elevating omitted-policy Harness defaults into normative rules.
-- [ ] Write additive global/phase Instruction Profile applicability, authored constraints and advisory compatibility (`compatibility.requires`/`recommends`); do not impose Profile prompt order, de-duplication or universal natural-language conflict precedence.
-- [ ] Write Knowledge `context`/`vector`, paths, corpus/embedding/index identities, retrieval defaults, provenance and compatibility; distinguish manifest and packaged-content checks from Runtime retrieval implementation.
-- [ ] Write Memory scopes, record type schemas/versions, the three space models, retrieval modes, capacity/retention/constraints and governance annotations without specifying a storage backend.
-- [ ] Write Memory direct-space versus lifecycle-operation access, global/phase participation, triggers (`external`, `interval`, `record_count`, `capacity`), trigger eligibility versus invocation, and operation inputs/targets/source-handling/provenance/cascade behavior.
-- [ ] Preserve operation access to valid declared input/output/target spaces not directly bound in the current phase; reconcile applicable Loop policy without granting operations a blanket access bypass.
-- [ ] Write Template files, variable interpolation, dependency and entrypoint declarations, and supported execution-surface meaning; do not make `agentpm new`, Harness installation or automatic command execution normative.
-- [ ] Define accurate conformance claims and portable logical outcomes without requiring every independent implementation to use AgentPM diagnostic formatting, API enums or user interfaces.
-- [ ] Keep AgentPM legacy-inferred handling outside normative APDS; the standard requires explicit identification for v1.0.0 authoring but does not mandate retroactive migration of historical releases.
-- [ ] Explicitly exclude Runner model selection, prompt ordering, approvals UI, hook architecture, storage/retrieval algorithms, scheduling, retry engines and traces unless a specific authored behavior requires an observable guarantee.
-- [ ] Give each normative rule a stable ID, clear requirement, conformance subject and applicability; keep validation levels, diagnostic expectations, rationale when needed and fixture links traceable without forcing a long repeated prose template. Keep AgentPM diagnostic presentation separate from APDS semantics.
-- [ ] Create a concise rule index so future validation errors and Registry reference pages can deep link correctly.
-- [ ] Perform a separate human-readability edit of all eleven chapters: introduce concepts in plain language, shorten abstract sentences, remove redundant rules and implementation-boundary disclaimers, avoid repeating schema definitions, and use compact examples or tables where they explain difficult distinctions. Preserve every actual semantic guarantee.
-- [ ] Have Claude read `semantics.md` as a technically capable developer new to APDS: can they find the rules relevant to their role, identify guarantees and implementation freedoms, and understand a representative fixture without the source code or an AI explanation? Resolve unclear or needlessly dense passages.
-- [ ] Verify every semantic example uses schema-accurate fields; do not copy mockup-generated `type` or `apds` fields or describe internal product behavior as universal.
-- [ ] Produce a semantic reconciliation log identifying ambiguous intended behavior, implementation-only defaults and any schema/runtime contradictions; escalate actual product-semantic decisions before freezing.
-- [ ] Require focused Claude rule-by-rule signoff for all eleven chapters, including an explicit audit for AgentPM implementation details mistakenly made normative.
+- [x] Define normative terminology and role-specific conformance subjects (author, validator, Registry, Manager, Runner); a role is not obliged to implement unrelated roles.
+- [x] Distinguish standalone, resolved-composition and packaged-content validation, unevaluated requirements and unsupported standards; distinguish artifact conformance from the extent of verification.
+- [x] Apply the normative inclusion test to each candidate rule: necessary for artifact validity, authored meaning or an intended interoperability guarantee. Label implementation-specific explanations as non-normative; do not codify current Harness behavior by default.
+- [x] Write artifact identity, standard and artifact versions, namespaces, reference kinds, direct/transitive composition and resolved-version meaning without specifying a particular Registry, resolver or lockfile format.
+- [x] Distinguish dependency declarations from Agent bindings; write global/phase additive binding semantics, Loop restrictions and capability eligibility separately from actual runtime availability/invocation.
+- [x] Write Skill Tool inheritance for global and phase bindings, logical identity across multiple direct/inherited paths and the absence of automatic Skill-script execution; do not prescribe de-duplication algorithms or a shell-executor Tool.
+- [x] Write Loop entry/phase/outcome/transition/terminal/limit/access/checkpoint/error-policy semantics; make omitted-outcome `complete` a portable identifier, not a prompt-generation mechanism.
+- [x] Reconcile transition determinism/completeness, step counting, explicit approval/checkpoint behavior and explicit failure policy without elevating omitted-policy Harness defaults into normative rules.
+- [x] Write additive global/phase Instruction Profile applicability, authored constraints and advisory compatibility (`compatibility.requires`/`recommends`); do not impose Profile prompt order, de-duplication or universal natural-language conflict precedence.
+- [x] Write Knowledge `context`/`vector`, paths, corpus/embedding/index identities, retrieval defaults, provenance and compatibility; distinguish manifest and packaged-content checks from Runtime retrieval implementation.
+- [x] Write Memory scopes, record type schemas/versions, the three space models, retrieval modes, capacity/retention/constraints and governance annotations without specifying a storage backend.
+- [x] Write Memory direct-space versus lifecycle-operation access, global/phase participation, triggers (`external`, `interval`, `record_count`, `capacity`), trigger eligibility versus invocation, and operation inputs/targets/source-handling/provenance/cascade behavior.
+- [x] Preserve operation access to valid declared input/output/target spaces not directly bound in the current phase; reconcile applicable Loop policy without granting operations a blanket access bypass.
+- [x] Write Template files, variable interpolation, dependency and entrypoint declarations, and supported execution-surface meaning; do not make `agentpm new`, Harness installation or automatic command execution normative.
+- [x] Define accurate conformance claims and portable logical outcomes without requiring every independent implementation to use AgentPM diagnostic formatting, API enums or user interfaces.
+- [x] Keep AgentPM legacy-inferred handling outside normative APDS; the standard requires explicit identification for v1.0.0 authoring but does not mandate retroactive migration of historical releases.
+- [x] Explicitly exclude Runner model selection, prompt ordering, approvals UI, hook architecture, storage/retrieval algorithms, scheduling, retry engines and traces unless a specific authored behavior requires an observable guarantee.
+- [x] Give each normative rule a stable ID, clear requirement, conformance subject and applicability; keep validation levels, diagnostic expectations, rationale when needed and fixture links traceable without forcing a long repeated prose template. Keep AgentPM diagnostic presentation separate from APDS semantics.
+- [x] Create a concise rule index so future validation errors and Registry reference pages can deep link correctly.
+- [x] Perform a separate human-readability edit of all eleven chapters: use the reviewed APDS README as the writing benchmark; introduce concepts in plain language, shorten abstract sentences, remove redundant rules and implementation-boundary disclaimers, avoid repeating schema definitions, and use compact examples or tables where they explain difficult distinctions. Preserve every actual semantic guarantee.
+- [x] Have Claude read `semantics.md` as a technically capable developer new to APDS: can they find the rules relevant to their role, identify guarantees and implementation freedoms, and understand a representative fixture without the source code or an AI explanation? Resolve unclear or needlessly dense passages.
+- [x] Verify every semantic example uses schema-accurate fields; do not copy mockup-generated `type` or `apds` fields or describe internal product behavior as universal.
+- [x] Produce a semantic reconciliation log identifying ambiguous intended behavior, implementation-only defaults and any schema/runtime contradictions; escalate actual product-semantic decisions before freezing.
+- [x] Require focused Claude rule-by-rule signoff for all eleven chapters, including an explicit audit for AgentPM implementation details mistakenly made normative.
+
+**Completion evidence — 2026-11-14:** [M1C verification](m1c-verification.md) maps all eleven chapters, tests and acceptance boundaries; [inclusion/reconciliation log](m1c-reconciliation.md) records portable versus implementation/compatibility decisions. The [semantic rules](../../standards/agentpm/1.0.0/semantics.md), [rule index](../../standards/agentpm/1.0.0/conformance/rule-index.md) and [A–T case map](../../standards/agentpm/1.0.0/conformance/semantic-cases.md) passed independent review; user confirmed no remaining findings on **2026-11-14**. **M1C is complete**. Review corrected the Memory authority boundary to preserve Phase 7B: Loop Memory flags constrain direct Agent access, while separately bound operations retain declared lifecycle authority. User explicitly reversed the earlier proposed tightening; M6B retains regression verification, not a new prohibition-enforcement fix. A fixture-only ignore exception plus a Git-visible-bundle regression prevents the Agent fixture being omitted. Review includes the revised Memory authority boundary, trigger cases Q–T and their regression evidence. No schema/runtime behavior changes, full semantic engine, complete executable corpus or publication is claimed; initial M2A fixture review and the release publication gate remain.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -234,25 +242,28 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 
 **Implementation checklist**
 
-- [ ] Define fixture index format with case ID, root manifest, optional resolved graph/packaged files, conformance subject, validation level and expected results; distinguish validator outcomes from Runner-observation expectations.
-- [ ] Add one valid authored manifest for each of the eight kinds.
-- [ ] Add the dependency-free valid Agent case with no `tools`, `loop` or Profiles.
-- [ ] Add a multi-component valid Agent case with real schema-shaped references.
-- [ ] Add paired global Skill inherited Tool and phase Skill inherited Tool cases, plus repeated direct/inherited paths to the same resolved Tool without additional permissions (cases A–C and J).
-- [ ] Add additive global+phase bindings with Loop allowing and denying tools in different phases.
-- [ ] Add wrong phase and wrong-kind reference failures with stable rule IDs.
-- [ ] Add Loop missing entry, unknown transition/outcome, invalid target and omitted-outcome `complete` valid cases; include defined checkpoint/limit/error-policy semantics without assuming Harness-only prompt or recovery defaults (case O).
-- [ ] Add Profile `compatibility.requires.tool_use` versus Loop prohibition plus additive global/phase Profile applicability; do not assert prompt ordering or text de-duplication (cases E and K).
-- [ ] Add Memory direct space versus operation-mediated access, phase-scoped operation participation versus trigger eligibility, unbound-but-declared operation targets, external trigger without invocation, and valid/invalid operation references (cases F, G, L and M).
-- [ ] Cover all three Memory space models; record-type/schema references; retrieval modes; `external`, `interval`, `record_count`, `capacity` triggers; retention/source-handling/output/provenance/cascade and supported governance annotation shapes where applicable.
-- [ ] Add Knowledge `context`/`vector` and Template scaffold positives/negatives, including packaged-file/embedding/index relationships, non-secret variables, declared execution surfaces and entrypoints that are not executed by declaration.
-- [ ] Add selector missing, unsupported, malformed and whitespace description failures. The whitespace-description case must assert **error** severity, not a warning, and must come from the pinned schema rather than CLI-only logic.
-- [ ] Add incomplete resolved-graph and unavailable packaged-content cases; distinguish standalone conformance from unverified graph/content and from unsupported Runtime capabilities (cases H, N and P).
-- [ ] Add separate AgentPM legacy-inference compatibility fixtures without claiming historical undeclared artifacts are explicitly APDS-conformant; keep these outside the normative APDS authoring-validity corpus.
-- [ ] Map each of the sixteen semantic cases A–P to standalone/resolved/packaged-content validator fixtures, Runner interpretation tests, or both; cover multi-version graph selection and exact capability identity (case I) without mandating an AgentPM lockfile.
-- [ ] Pin normative fixture bytes/version for v1.0.0 and document controlled fixture updates.
-- [ ] Keep detailed fixture expectations, paths and result metadata in the fixture index rather than duplicating them as verbose text in `semantics.md`; link from concise normative rules.
-- [ ] Review examples against actual parser before declaring case validity.
+- [x] Define fixture index format with case ID, root manifest, optional resolved graph/packaged files, conformance subject, validation level and expected results; distinguish validator outcomes from Runner-observation expectations.
+- [x] Add a short implementer quickstart to `conformance/README.md`: prerequisites, working directory, copyable commands for the available corpus checks, expected output/exit status, and how to run one case or the full available suite. Explain that an intentionally invalid fixture passes its test when the expected violation is detected, and show how another implementation can consume the index. Require no hosted Registry or credentials. State each command's coverage accurately; M2B/M2C must extend the instructions with their validator-suite commands when implemented, keeping Runner observations separate.
+- [x] Add one valid authored manifest for each of the eight kinds.
+- [x] Add the dependency-free valid Agent case with no `tools`, `loop` or Profiles.
+- [x] Add a multi-component valid Agent case with real schema-shaped references.
+- [x] Add paired global Skill inherited Tool and phase Skill inherited Tool cases, plus repeated direct/inherited paths to the same resolved Tool without additional permissions (cases A–C and J).
+- [x] Add additive global+phase bindings with Loop allowing and denying tools in different phases.
+- [x] Add wrong phase and wrong-kind reference failures with stable rule IDs.
+- [x] Add Loop missing entry, unknown transition/outcome, invalid target and omitted-outcome `complete` valid cases; include defined checkpoint/limit/error-policy semantics without assuming Harness-only prompt or recovery defaults (case O).
+- [x] Add Profile `compatibility.requires.tool_use` versus Loop prohibition plus additive global/phase Profile applicability; do not assert prompt ordering or text de-duplication (cases E and K).
+- [x] Add Memory direct space versus operation-mediated access, phase-scoped operation participation versus trigger eligibility, unbound-but-declared operation targets, external trigger without invocation, and valid/invalid operation references (cases F, G, L and M).
+- [x] Cover all three Memory space models; record-type/schema references; retrieval modes; `external`, `interval`, `record_count`, `capacity` triggers; retention/source-handling/output/provenance/cascade and supported governance annotation shapes where applicable.
+- [x] Add Knowledge `context`/`vector` and Template scaffold positives/negatives, including packaged-file/embedding/index relationships, non-secret variables, declared execution surfaces and entrypoints that are not executed by declaration.
+- [x] Add selector missing, unsupported, malformed and whitespace description failures. The whitespace-description case must assert **error** severity, not a warning, and must come from the pinned schema rather than CLI-only logic.
+- [x] Add incomplete resolved-graph and unavailable packaged-content cases; distinguish standalone conformance from unverified graph/content and from unsupported Runtime capabilities (cases H, N and P).
+- [x] Add separate AgentPM legacy-inference compatibility fixtures without claiming historical undeclared artifacts are explicitly APDS-conformant; keep these outside the normative APDS authoring-validity corpus.
+- [x] Map each of the sixteen semantic cases A–P to standalone/resolved/packaged-content validator fixtures, Runner interpretation tests, or both; include supplemental Q–T stateful trigger observations (initial armed count, no refire, rearm, interval baseline/reset) on the Runner side. Cover multi-version graph selection and exact capability identity (case I) without mandating an AgentPM lockfile.
+- [x] Pin normative fixture bytes/version for v1.0.0 and document controlled fixture updates.
+- [x] Keep detailed fixture expectations, paths and result metadata in the fixture index rather than duplicating them as verbose text in `semantics.md`; link from concise normative rules.
+- [x] Review examples against actual parser before declaring case validity.
+
+**Completion evidence — 2026-11-14:** [Verification and decision record](m2a-verification.md) maps 129 shared validation cases, 28 separate Runner observations and all 56 semantic rules to the required coverage. The portable quickstart/comparator, 19 Python checks, five Rust integration tests, 41 actual CLI-positive probes and actual vector-reader positive/truncation checks pass locally. The schema and production behavior are unchanged. **User confirmed Claude review complete with no remaining findings on 2026-11-14; M2A is complete.** See the subsequent [M2B probe/input corrections](m2b-verification.md#reviewed-corpus-and-probe-corrections). Hosted CI remains unverified. Semantic engines/parity remain M2B/M2C; Runner execution remains M6A/M6B. No standard publication or deployment is claimed.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -275,21 +286,23 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 
 **Implementation checklist**
 
-- [ ] Map manifest `standard` into explicit supported-contract selection.
-- [ ] Bundle authoritative v1.0.0 schema; validate offline with no GitHub fetch.
-- [ ] Verify no schema-source override path (CWD-relative file or `--schema`, including an `http(s)` value) can produce a `conformant` APDS verdict or silently substitute the pinned contract; add a regression test that a permissive local `schemas/agentpm.manifest.schema.json` does not make an invalid manifest pass APDS checks.
-- [ ] Implement intrinsic checks and rule-ID diagnostics with affected JSON paths. Attach rule IDs to the diagnostic shape Stage 1 M8 produced; do **not** re-cut the lint renderer or re-solve root kind dispatch here.
-- [ ] Verify a kind-specific APDS violation reports the offending field/path plus rule ID rather than a bare `/oneOf` verdict. If Stage 1 M8 has not landed, record this as a blocked prerequisite instead of working around it.
-- [ ] Implement resolved-graph checks when dependency definitions are available.
-- [ ] Implement applicable packaged-content checks when referenced artifact files are available; missing files/context must be reported according to whether the validator was actually supplied a complete package.
-- [ ] Return incomplete/not evaluated rather than false failure when graph or packaged-content context is absent.
-- [ ] Return unsupported when declaration is unknown rather than silently using v1.
-- [ ] Preserve human-readable CLI lint formatting and compatible structured output behavior.
-- [ ] Run entire fixture corpus against Rust expected results, not selective handpicked cases.
-- [ ] Test invocation in a disconnected local environment.
-- [ ] Test deterministic diagnostic ordering and duplicate-rule behavior.
-- [ ] Record supported conformance role/level, evaluated rules and unevaluated checks in AgentPM CLI output used by downstream publish/inspect code; do not claim full-graph verification from standalone success.
-- [ ] Document any parser behavior that must be fixed to preserve APDS optional dependencies.
+- [x] Map manifest `standard` into explicit supported-contract selection.
+- [x] Bundle authoritative v1.0.0 schema; validate offline with no GitHub fetch.
+- [x] Verify no schema-source override path (CWD-relative file or `--schema`, including an `http(s)` value) can produce a `conformant` APDS verdict or silently substitute the pinned contract; add a regression test that a permissive local `schemas/agentpm.manifest.schema.json` does not make an invalid manifest pass APDS checks.
+- [x] Implement intrinsic checks and rule-ID diagnostics with affected JSON paths. Attach rule IDs to the diagnostic shape Stage 1 M8 produced; do **not** re-cut the lint renderer or re-solve root kind dispatch here.
+- [x] Verify a kind-specific APDS violation reports the offending field/path plus rule ID rather than a bare `/oneOf` verdict. If Stage 1 M8 has not landed, record this as a blocked prerequisite instead of working around it.
+- [x] Implement resolved-graph checks when dependency definitions are available.
+- [x] Implement applicable packaged-content checks when referenced artifact files are available; missing files/context must be reported according to whether the validator was actually supplied a complete package.
+- [x] Return incomplete/not evaluated rather than false failure when graph or packaged-content context is absent.
+- [x] Return unsupported when declaration is unknown rather than silently using v1.
+- [x] Preserve human-readable CLI lint formatting and compatible structured output behavior.
+- [x] Run entire fixture corpus against Rust expected results, not selective handpicked cases.
+- [x] Test invocation in a disconnected local environment.
+- [x] Test deterministic diagnostic ordering and duplicate-rule behavior.
+- [x] Record supported conformance role/level, evaluated rules and unevaluated checks in AgentPM CLI output used by downstream publish/inspect code; do not claim full-graph verification from standalone success.
+- [x] Document any parser behavior that must be fixed to preserve APDS optional dependencies.
+
+**Completion evidence — 2026-11-14:** [Verification, corrections and capability decisions](m2b-verification.md) records the independent Rust engine, explicit `lint --apds standalone|resolved|packaged` integration, all 129 actual CLI corpus results accepted by the portable comparator, 14 targeted integration tests, 20 Python checks, and full workspace regression. The implementation-specific engine/probes remain outside the standard bundle. The historical positive-probe discovery gap and one contradictory inherited-only Skill input were corrected and documented; schema/rule meanings and expected outcomes are unchanged. **User confirmed Claude review passed with no findings and all CLI hosted CI jobs passed on 2026-11-14; M2B is complete.** M3B retains ordinary authoring/preflight rollout; no later milestone is completed by this work.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -301,26 +314,32 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Milestone 2C: Make Python Registry Independently Validate the Same APDS
+
 > **Scope note:** Add a Registry-side APDS implementation that independently evaluates the same pinned fixture corpus and agrees with Rust. Outside this milestone: Do not shell out to Rust CLI or accept a client-authored `valid=true` assertion as verification.
 > **Implementation notes:**
+>
 > - Stage 2 needs two implementations with one normative contract. Python JSON Schema library behavior/regex matching may diverge from Rust; explicitly test and reconcile instead of masking differences.
 > - **Dependencies:** M2A and M2B expected outcome model.
 > - **Decisions:** D03, D19. **Acceptance:** S2-AC-01, S2-AC-04.
 
 **Implementation checklist**
 
-- [ ] Choose existing Registry Python test/runtime conventions and pin the v1.0.0 schema bundle.
-- [ ] Implement standard ID/version lookup with explicit unsupported result.
-- [ ] Implement schema checks using compatible JSON Schema draft semantics.
-- [ ] Implement semantic rules independently in Python, respecting standalone/resolved-composition/packaged-content levels and excluding Runner-only execution behavior from Registry validation.
-- [ ] Produce stable rule IDs, paths and validation-level/result states.
-- [ ] Run the same **validator-applicable** fixture corpus against Python and compare case-by-case to Rust outcomes; keep Runner interpretation cases in Harness tests, not as Registry execution requirements.
-- [ ] Test regex, optional arrays and malformed/unknown property handling for parity.
-- [ ] Add CI parity/checksum job or equivalent cross-repo fixture synchronization gate.
-- [ ] Test scanner/signing/ACL failures remain separate from APDS results.
-- [ ] Document how canonical fixtures reach both repos without relying on mutable production network.
-- [ ] Have Claude exercise representative same-manifest Rust/Python results independently.
-- [ ] Freeze v1.0.0 contract only after discrepancies and semantic mismatch log are resolved.
+- [x] Choose existing Registry Python test/runtime conventions and pin the v1.0.0 schema bundle.
+- [x] Implement standard ID/version lookup with explicit unsupported result.
+- [x] Implement schema checks using compatible JSON Schema draft semantics.
+- [x] Implement semantic rules independently in Python, respecting standalone/resolved-composition/packaged-content levels and excluding Runner-only execution behavior from Registry validation.
+- [x] Produce stable rule IDs, paths and validation-level/result states.
+- [x] Run the same **validator-applicable** fixture corpus against Python and compare case-by-case to Rust outcomes; keep Runner interpretation cases in Harness tests, not as Registry execution requirements.
+- [x] Test regex, optional arrays and malformed/unknown property handling for parity.
+- [x] Add CI parity/checksum job or equivalent cross-repo fixture synchronization gate.
+- [x] Test scanner/signing/ACL failures remain separate from APDS results.
+- [x] Document how canonical fixtures reach both repos without relying on mutable production network.
+- [x] Have Claude exercise representative same-manifest Rust/Python results independently. **Sign-off:** user supplied Claude’s nine-case direct comparison on 2026-11-15; all contract-visible results agree. The nonblocking `evaluated_rules` difference is documented as implementation-specific completed-check reporting.
+- [x] Freeze v1.0.0 contract only after discrepancies and semantic mismatch log are resolved. **Reviewed candidate baseline approved 2026-11-15:** parity/review gates passed, the diagnostic-metadata difference is resolved, and [D06 compatibility policy](d06-lockfile-compatibility.md) is settled. Public immutable tag publication remains Release Band 1.
+
+The freeze records approval of the reviewed candidate. Before publication, deliberate revisions can retain version 1.0.0 after synchronization, testing and renewed review. Publishing the immutable `apds-v1.0.0` tag is the separate Release Band 1 commitment.
+
+**Completion evidence — 2026-11-15:** [M2C verification and discrepancy record](m2c-verification.md) maps D03/D19 and S2-AC-01/04 to the independent Python engine, immutable canonical snapshot, full 129-case actual Rust/Python agreement, 39 additional native parity cases and Registry regression/static checks. The developer guide and parity workflow provide offline commands, checksum synchronization and actual results; implementation/test adapters remain outside the versioned standard. User confirmed Claude code review and Python CI passed and supplied Claude’s completed nine-case independent comparison. Conformance fields agree; the nonblocking diagnostic-metadata difference is documented. The [D06 compatibility decision](d06-lockfile-compatibility.md) resolves the final pre-freeze policy requirement. **The reviewed v1.0.0 candidate is frozen and M2C is complete as of 2026-11-15.** No canonical schema/rule/fixture change, public tag, deployment, publication enforcement or M5A implementation is claimed.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -333,28 +352,34 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Milestone 3A: Default CLI `init` to an APDS Agent Package
+
 > **Scope note:** Change new authoring to start with a valid Agent Package and keep explicit scaffolds for seven other kinds. Outside this milestone: mandatory Loop/Tools/Profile; preserve Stage 1 Tool scaffold repair.
 > **Implementation notes:**
-> - This is an intentional early adopter compatibility change. Existing scripts that relied on `init` producing a Tool should select `--kind tool` explicitly; explain the migration in help.
+>
+> - This is an intentional early adopter compatibility change. Existing scripts that relied on `init` producing a Tool should select `--kind tool` explicitly; explain the migration in README/init docs. Per user direction, `--kind` help describes the default Agent Package and lists values without Tool migration copy.
 > - **Dependencies:** M1B/M2B; **M1A.1 tolerance release 0.1.36 publication prerequisite satisfied by operator confirmation on 2026-10-22**, recorded in Stage 1's Band 5 handoff / Band 7 publication record; Stage 1 M8 CLI authoring improvements. This publication confirmation does not waive M1B/M2B or other M3A acceptance requirements.
 > - **Decisions:** D04. **Acceptance:** S2-AC-02, S2-AC-03.
 
 **Implementation checklist**
 
-- [ ] Change clap default kind from Tool to Agent.
-- [ ] Set default project/artifact name appropriate for an Agent Package (not `my-tool`).
-- [ ] Write a useful nonblank description and APDS `standard` in default scaffold.
-- [ ] Emit the **pinned versioned** `$schema` URL in all scaffolds instead of the current moving `main` branch URL (`commands/lint.rs` shows the `main` URL in use today, and lint warns when `$schema` is missing, so the field is both emitted and encouraged). New manifests must be edited against the same frozen contract they are validated against. `$schema` stays an editor affordance and must not be treated as the standard selector.
-- [ ] Keep optional component and Loop fields absent or empty without violating APDS.
-- [ ] Generate `standard` for Tool, Skill, Knowledge, Memory, Profile, Loop and Template explicit scaffolds.
-- [ ] Also emit `standard` from `agentpm export`'s generated Skill scaffold (`commands/export.rs` builds a fresh `json!` manifest, so it is a scaffold generator the init-focused tasks above do not cover).
-- [ ] Preserve Stage 1's runtime-valid Tool Python/Node scaffold files and defaults.
-- [ ] Use proper JSON encoding for quotes, slashes, Unicode and newlines in generated descriptions.
-- [ ] Validate invalid local names before writing files; prevent partial/broken files on error.
-- [ ] Ensure `init --kind agent` equals default behavior.
-- [ ] Snapshot no-flags and all eight explicit kind scaffolds and lint them with v1.0.0.
-- [ ] Check templates, docs snippets and help that previously assumed default Tool.
-- [ ] Explain valid-without-Loop but not-yet-Harness-runnable next steps in immediate CLI output.
+- [x] Change clap default kind from Tool to Agent.
+- [x] Set default project/artifact name appropriate for an Agent Package (not `my-tool`).
+- [x] Write a useful nonblank description and APDS `standard` in default scaffold.
+- [x] Emit the **pinned versioned** `$schema` URL in all scaffolds instead of the current moving `main` branch URL (`commands/lint.rs` shows the `main` URL in use today, and lint warns when `$schema` is missing, so the field is both emitted and encouraged). New manifests must be edited against the same frozen contract they are validated against. `$schema` stays an editor affordance and must not be treated as the standard selector.
+- [x] Keep optional component and Loop fields absent or empty without violating APDS.
+- [x] Generate `standard` for Tool, Skill, Knowledge, Memory, Profile, Loop and Template explicit scaffolds.
+- [x] Also emit `standard` from `agentpm export`'s generated Skill scaffold (`commands/export.rs` builds a fresh `json!` manifest, so it is a scaffold generator the init-focused tasks above do not cover).
+- [x] Preserve Stage 1's runnable Python Tool scaffold files/defaults and Python/Node Tool authoring/packaging compatibility. `init --kind tool` generates Python only; there is no existing Node scaffold to preserve or new Node template delivered here.
+- [x] Use proper JSON encoding for quotes, slashes, Unicode and newlines in generated descriptions.
+- [x] Validate invalid local names before writing files; prevent partial/broken files on error.
+- [x] Ensure `init --kind agent` equals default behavior.
+- [x] Snapshot no-flags and all eight explicit kind scaffolds and lint them with v1.0.0.
+- [x] Check templates, docs snippets and help that previously assumed default Tool.
+- [x] Explain valid-without-Loop but not-yet-Harness-runnable next steps in immediate CLI output.
+
+**Builder evidence (2026-11-15):** [Implementation, migration decision and verification record](m3a-verification.md) maps S2-AC-02/03 and D04 to real CLI tests, nine scaffold snapshots, negative input/collision checks, full workspace regression and feature-local docs. Implementation and local checks pass. User confirmed independent Claude review passed with no remaining findings on **2026-11-15**. User confirmed all hosted CI passed on **2026-11-15**. The [manual runbook](manual-tests/CLI_M3A_MANUAL_TESTS.md) is prepared and locally replayed. User confirmed all manual tests passed on **2026-11-15**; **M3A is complete**, including the requested operator acceptance. Ordinary authoring enforcement remains M3B.
+
+**Existing-capability clarification:** The plan's "Python/Node Tool scaffolding" wording refers to preserving existing runtime compatibility. The shipped init command has only a Python Tool template; Node regression evidence comes from manually authored Tool manifests and payload packaging. A Node init template would be additional functionality, not an M3A preservation fix.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -375,17 +400,19 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 
 **Implementation checklist**
 
-- [ ] Make normal `lint` validate explicitly declared supported standard.
-- [ ] Distinguish missing standard, unknown version, schema defect and resolved-graph issue in output.
-- [ ] Provide targeted remediation including version selector and source path.
-- [ ] Preserve exit statuses, stderr/stdout/machine output guarantees from Stage 1.
-- [ ] Evaluate need for optional opt-in legacy migration/lint mode and record D04 outcome.
-- [ ] Prevent permissive migration mode from becoming default publish authorization.
-- [ ] Ensure build/inspect/publish preflight reuse same canonical validation outcomes.
-- [ ] Regression-check `agentpm new`, `agentpm run`, Tool exports and the existing publish link.
-- [ ] Snapshot interactive and noninteractive diagnostics.
-- [ ] Test whitespace descriptions, malformed names, unknown kinds and incorrect paths.
-- [ ] Have Claude verify users don't confuse APDS validation with Runner readiness.
+- [x] Make normal `lint` validate explicitly declared supported standard.
+- [x] Distinguish missing standard, unknown version, schema defect and resolved-graph issue in output.
+- [x] Provide targeted remediation including version selector and source path.
+- [x] Preserve exit statuses, stderr/stdout/machine output guarantees from Stage 1.
+- [x] Evaluate need for optional opt-in legacy migration/lint mode and record D04 outcome.
+- [x] Prevent permissive migration mode from becoming default publish authorization.
+- [x] Ensure build/inspect/publish preflight reuse same canonical validation outcomes.
+- [x] Regression-check `agentpm new`, `agentpm run`, Tool exports and the existing publish link.
+- [x] Snapshot interactive and noninteractive diagnostics.
+- [x] Test whitespace descriptions, malformed names, unknown kinds and incorrect paths.
+- [x] Have Claude verify users don't confuse APDS validation with Runner readiness.
+
+**Local implementation evidence (2026-11-16):** [Verification and D04 decision](m3b-verification.md) cover strict ordinary lint, the user-selected read-only `--legacy` adapter over the same APDS engine, shared local build/inspect/publish gates and saved-build rejection. Workspace tests pass **1,287 tests (6 ignored)**; the expanded authoring integration suite passes **9 tests**, Clippy/formatting and frozen-schema checks pass, the actual-CLI fixture probe passes 41 positive manifests plus the Knowledge pair, and public docs tests pass **5 tests plus 166 subtests**. Scope/legacy/migration notes and human/machine diagnostic snapshots are recorded. The [Template-generation review correction](m3b-verification.md#review-correction-template-generation-and-the-next-lint-command) adds the supported declaration to the CLI-generated root and generation-time migration guidance for undeclared nested Agents; 16 authoring tests and 30 Template-generation tests pass after that correction. The follow-up Stage 1 messaging correction deliberately updates both goldens, retains one next-step line and groups nested migration notices; the final `cargo test --workspace --no-fail-fast` passes 1,287 tests with 0 failures and 6 ignored. **User confirmed full Claude review passed on 2026-11-16, including the resolved Template-generation and messaging findings. User confirmed all hosted CI passed for the reviewed implementation on 2026-11-16. User confirmed all [local-project manual tests](manual-tests/CLI_M3B_MANUAL_TESTS.md) passed on 2026-11-17. **M3B is complete**, including independent review, hosted CI and requested operator acceptance.**
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -408,19 +435,21 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 
 **Implementation checklist**
 
-- [ ] Trace init/finalize/upload/scan flow and identify the last safe precommit enforcement point.
-- [ ] Add version-scoped standard ID/origin metadata with backward-compatible migrations/serializers.
-- [ ] Load actual embedded `agent.json` from staged artifact using existing secure tar validation.
-- [ ] Run Python APDS structural checks and all resolvable semantic checks.
-- [ ] Compare artifact local identity, Registry namespace mapping, kind and version against init metadata.
-- [ ] Compare embedded declared standard against request metadata; reject mismatches.
-- [ ] Ensure multi-artifact Tool publish applies correct release/artifact association checks.
-- [ ] Keep malware scan, signer verification, Registry attestation, ACL and APDS statuses separate.
-- [ ] Reject before discoverability and preserve atomic rollback/idempotent retry behavior.
-- [ ] Add forged request tests that bypass CLI lint and still fail server.
-- [ ] Add malformed/missing/unsupported schema and mismatched tar negative tests.
-- [ ] Expose precise diagnostics and retain existing successful Registry package link.
-- [ ] Prove unsigned/invalid signature cannot be bypassed merely by APDS conformance.
+- [x] Trace init/finalize/upload/scan flow and identify the last safe precommit enforcement point.
+- [x] Add version-scoped standard ID/origin metadata with backward-compatible migrations/serializers.
+- [x] Load actual embedded `agent.json` from staged artifact using existing secure tar validation.
+- [x] Run Python APDS structural checks and all resolvable semantic checks.
+- [x] Compare artifact local identity, Registry namespace mapping, kind and version against init metadata.
+- [x] Compare embedded declared standard against request metadata; reject mismatches.
+- [x] Ensure multi-artifact Tool publish applies correct release/artifact association checks.
+- [x] Keep malware scan, signer verification, Registry attestation, ACL and APDS statuses separate.
+- [x] Reject before discoverability and preserve atomic rollback/idempotent retry behavior.
+- [x] Add forged request tests that bypass CLI lint and still fail server.
+- [x] Add malformed/missing/unsupported schema and mismatched tar negative tests.
+- [x] Expose precise diagnostics and retain existing successful Registry package link.
+- [x] Prove unsigned/invalid signature cannot be bypassed merely by APDS conformance.
+
+**Builder verification:** [M4A evidence and decisions](m4a-verification.md) records local archive, PostgreSQL/Pyway, HTTP, docs and static checks. User confirmed full independent Claude review passed with no remaining findings on 2026-11-17. User confirmed all hosted CI passed on 2026-11-17. User confirmed all [real-local publication manual tests](manual-tests/REGISTRY_M4A_MANUAL_TESTS.md) passed on 2026-11-18; the saved acceptance summary records 36 passing cases. Enforcement defaults off while declaration-only recording remains active. M4B owns production history/session inventory and activation. **M4A is complete.**
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -437,25 +466,28 @@ lifting this gate; no APDS freeze or Stage 2 implementation is claimed here.
 ## Milestone 4B: Roll Out New-Publish Enforcement Without Breaking Legacy Releases
 > **Scope note:** Define safe transition policy for legacy published bytes, new versions of old identities, and sessions in flight at cutover. Outside this milestone: grandfathering of new versions and false retroactive declaration.
 > **Implementation notes:**
-> - This milestone owns the compatibility switch: old immutable releases stay installable, but all new finalized versions need declared v1.0.0 or other explicitly supported APDS.
+> - This milestone implements and verifies the compatibility switch: old immutable releases stay installable, but all new finalized versions need declared v1.0.0 or other explicitly supported APDS when enforcement is active. Per the agreed sequencing, production inspection/backfill, capacity measurements and activation execute as Release Band 1 operator gates; preparing and locally verifying them belongs here.
 > - **Dependencies:** M4A, Stage 1 multi-artifact rollout status.
 > - **Decisions:** D05, D19. **Acceptance:** S2-AC-05.
 
 **Implementation checklist**
 
-- [ ] Inventory real pre-APDS published versions and immutable digest/signature references.
-- [ ] Define server-controlled enforcement boundary for each new finalized release.
-- [ ] Choose and record in-flight session restart/grace policy; do not trust client timestamp.
-- [ ] Make outdated CLI error actionable by naming the **concrete minimum CLI version, 0.1.36** — the M1A.1 tolerance release whose publication was operator-confirmed on 2026-10-22 in Stage 1 Release Band 5 / Release Band 7 — not a generic "upgrade your CLI". Surface the same floor on the package detail page's install guidance. An upgrade error without a version floor is not actionable.
-- [ ] Preserve already published manifest bytes and stored integrity values exactly.
-- [ ] Represent effective legacy `agentpm/1.0.0` interpretation as **inferred**, not verified.
-- [ ] Require explicit standard for new versions of historically legacy package identities.
-- [ ] Test sessions created before deployment and finalized afterward.
-- [ ] Test old released version install/lookup and its new APDS-compliant successor side by side.
-- [ ] Exercise rollback on rejected finalize and ensure no phantom discoverable package exists.
-- [ ] Add migration/verification script if backend metadata needs backfill; never re-sign old tar.
-- [ ] Document deployment order of CLI, Registry and public UI to avoid temporary false success.
-- [ ] Have Claude approve migration/security matrix before server enforcement is enabled.
+- [x] Inventory available real pre-APDS versions and immutable digest/signature references, and prepare the production inventory/archive-inspection command and procedure. Actual production execution is required by Release Band 1 steps 4–5. **Local database inventory complete (2026-11-18):** 113 versions, 16 pending session rows, captured immutable/signature references in ignored `target/m4b/history-local.json`. Production inventory/archive inspection runs during [Release Band 1's ordered production rollout](#ordered-production-rollout), after deploying the audit command with enforcement off and before activation; null rows are not automatically classified as legacy.
+- [x] Define server-controlled enforcement boundary for each new finalized release.
+- [x] Choose and record in-flight session restart/grace policy; do not trust client timestamp.
+- [x] Make outdated CLI error actionable by naming the **concrete minimum CLI version, 0.1.36** — the M1A.1 tolerance release whose publication was operator-confirmed on 2026-10-22 in Stage 1 Release Band 5 / Release Band 7 — not a generic "upgrade your CLI". Document the same floor and concrete upgrade steps in feature-local `agentpm-api/docs` MDX. Package-page guidance is owned by M9B/M10A alongside their APDS/detail work; M4B adds no APDS-facing web UI. An upgrade error without a version floor is not actionable.
+- [x] Preserve already published manifest bytes and stored integrity values exactly.
+- [x] Represent effective legacy `agentpm/1.0.0` interpretation as **inferred**, not verified.
+- [x] Require explicit standard for new versions of historically legacy package identities.
+- [x] Test sessions created before deployment and finalized afterward.
+- [x] Test old released version install/lookup and its new APDS-compliant successor side by side.
+- [x] Exercise rollback on rejected finalize and ensure no phantom discoverable package exists.
+- [x] Add migration/verification script if backend metadata needs backfill; never re-sign old tar.
+- [x] Document deployment order of CLI, Registry and public UI to avoid temporary false success.
+- [x] Prepare the T-PUB-10 capacity procedure and activation gate covering gate-off/gate-on publication of dependency-heavy Agent Packages/Templates, representative large artifacts, repeat versions and planned concurrency; require GET/byte/extraction/latency/RSS/temp-disk/cleanup measurements against actual resource and timeout limits. **Preparation is complete; measurement has not run.** Execution and reviewed operating-envelope evidence remain mandatory at [Release Band 1 step 6](#ordered-production-rollout), before approval or activation. Count/metadata and per-artifact bounds are not an aggregate artifact-byte budget; see [M4A capacity findings](m4a-verification.md#capacity-evidence-required-before-m4b-activation).
+- [x] Have Claude approve migration/security matrix before server enforcement is enabled. **Design/local-evidence approval granted**, as supplied by the user on 2026-11-18. This approval is separate from [Release Band 1 step 7](#ordered-production-rollout), which remains pending production history findings and the measured capacity envelope. The stored-versus-artifact guard finding has been addressed by six passing regression cases, each also failing when the guard is disabled. The user subsequently confirmed full Claude review complete with no new findings on 2026-11-18. Production activation approval is still separate and pending.
+
+**Builder handoff (2026-11-18):** [M4B implementation, compatibility matrix and verification](m4b-verification.md) records the no-grace finalize-time policy, concrete 0.1.36 publisher guidance, explicit artifact-derived history audit/backfill command and local regression evidence. Full Registry suite: **1,071 passed, 7 unrelated opt-in skips, 347 subtests passed**. No production changes or activation occurred. Claude's migration/security design approval is granted, and the user confirmed full Claude review complete with no new findings on 2026-11-18. The user confirmed all PR CI passed on 2026-11-18; actual CLI build and all four Resolver Contract native targets were independently verified in GitHub. Real production inventory/inspection, the measured capacity envelope, post-merge push-only checks and the later activation approval remain outstanding. **M4B is complete** as the implementation/review/PR-CI milestone. The agreed production execution is tracked by Release Band 1 and remains unchecked there; this completion does not certify production capacity or enable enforcement.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -474,13 +506,44 @@ Covered milestones: 1A–4B.
 
 This gives AgentPM one pinned APDS v1.0.0 definition derived from its current schema, well-specified Phase 6/7 semantics, independent Rust/Python conformance, Agent Package-first new authoring, and a server-side new-release gate. Shipping the strict gate must be coordinated with the CLI and legacy session policy. An existing immutable release remains installable, but a new version cannot bypass APDS by using an older client.
 
-- [ ] Confirm the M1A.1 tolerance release shipped **before** any command emits `standard`, that its version is recorded as the minimum CLI floor, and that round-trip preservation is proven by test.
-- [ ] Confirm Stage 1 M2/M11A schema additions were merged **before** the v1.0.0 freeze and are represented in the frozen contract plus fixtures.
-- [ ] Confirm one canonical immutable schema, normative rules and shared fixture corpus, with offline parity across Rust and Python.
-- [ ] Confirm the APDS README and `semantics.md` pass independent newcomer readability review: concise rules, skimmable navigation, clear guarantees, and no unnecessary schema duplication or implementation-specific prose.
-- [ ] Confirm all eight newly authored kinds lint, default init is Agent, explicit Tool scaffold remains valid.
-- [ ] Run custom-client server bypass attempts and in-flight/legacy/new-version migration matrix.
-- [ ] Obtain Claude review of APDS rule coverage, schema/version immutability, security and rollout order.
+- [x] Confirm the M1A.1 tolerance release shipped **before** any command emits `standard`, that its version is recorded as the minimum CLI floor, and that round-trip preservation is proven by test.
+- [x] Confirm Stage 1 M2/M11A schema additions were merged **before** the v1.0.0 freeze and are represented in the frozen contract plus fixtures.
+- [x] Confirm one canonical immutable schema, normative rules and shared fixture corpus, with offline parity across Rust and Python.
+- [ ] After complete schema/semantics/corpus and independent contract/readability review, publish the immutable CLI-repo `apds-v1.0.0` tag containing `standards/agentpm/1.0.0/`. Verify the pinned raw schema URL is available **before releasing the CLI that emits those editor links**. M1B creates the candidate and chooses the URI; it does not publish this tag or ship a complete standard.
+- [x] Confirm the APDS README and `semantics.md` pass independent newcomer readability review: concise rules, skimmable navigation, clear guarantees, and no unnecessary schema duplication or implementation-specific prose.
+- [x] Confirm all eight newly authored kinds lint, default init is Agent, explicit Tool scaffold remains valid.
+- [x] Run custom-client server bypass attempts and in-flight/legacy/new-version migration matrix.
+- [x] Obtain Claude review of APDS rule coverage, schema/version immutability, security and rollout order.
+
+**Release preparation — 2026-11-18:** [Readiness/version/evidence record](release-band-1-readiness.md) reconciles these prerequisites with the completed milestone records and fresh local checks. CLI **0.1.45**, a new public changelog, matching Registry migration-version guidance and Web CLI status marker (planned 2026-11-18) are prepared. SDK versions remain 0.1.17. Fresh Rust/Python corpus executions agree on all 129 cases; the rebuilt CLI and eight scaffold kinds validate. The checklist above records local/review prerequisites, not production execution. The immutable APDS tag/raw URL remains unpublished and unchecked; production tests/activation remain below.
+
+### Ordered production rollout
+
+These are **Release Band 1 operator gates**. Complete code review and hosted CI
+before deploying. Production history inspection requires the new Registry audit
+command to be deployed in Render; it is required **before enforcement activation**,
+not before that initial deployment. Keep enforcement off through inspection and
+capacity verification. The band remains open until the rollout and smoke checks
+below are evidenced. The M4B checklist references these same operational gates;
+local test results do not satisfy them.
+
+Follow this order; the isolated capacity work may run in parallel after the
+reviewed build and intended production configuration are available:
+
+1. [ ] Confirm independent review and all required pre-merge hosted CLI/Registry/Web CI pass for the exact release revisions. M4B review and its prior PR CI passed on 2026-11-18 (including independently inspected CLI build/four-platform Resolver Contract success); the prepared **0.1.45 version/changelog/docs/status changes need fresh hosted checks after push**. CI’s push-only `platform-targets`/Native runtime skips on PRs are expected; post-merge execution remains step 2.
+2. [ ] Complete the immutable APDS tag/raw-schema verification above. After merging the CLI to `main`, confirm the push-triggered `CI / platform-targets` and Native runtime matrix pass before tagging the CLI release. Then release the matching authoring CLI and confirm it is installable through the supported distribution channels. Keep **0.1.36** documented as the already-shipped declaration-tolerance floor; recommend the current release for authoring checks.
+3. [ ] Deploy the reviewed Registry code and matching feature-local MDX with **`APDS_PUBLISH_ENFORCED=false`**. Verify the deployed revision and setting, normal historical lookup/install behavior, and availability of `registry audit-apds-history` in the production Render shell from the directory containing `run.py`. This deploy makes inspection possible; it does not activate enforcement. Deploy the prepared Web CLI status marker only after CLI 0.1.45 is published/installable, using its actual release date. APDS-facing package-page presentation remains with M9B/M10A.
+4. [ ] From that production shell, run `python -m flask --app run registry audit-apds-history --out history-before.json`, then `python -m flask --app run registry audit-apds-history --inspect-artifacts --out history-inspected.json` (or reviewed `--version-id` batches). Retain the production version/digest/signature references and pending-session inventory. Inspect actual archives before deciding declared versus inferred provenance; do not treat null metadata as proof of legacy. Keep the private reports out of Git.
+5. [ ] Review production discrepancies and proposed metadata changes. If backfill is needed, deliberately run the reviewed `--inspect-artifacts --apply` command with a fresh report filename, then inspect again to confirm no missing backfill remains in the selected batch. Compare immutable version/artifact/signature/attestation fingerprints before/after; no archives or signatures may be rewritten. Resolve blockers before activation; a no-change result is valid when no backfill is required.
+6. [ ] Satisfy **T-PUB-10** on an isolated deployment matching intended production compute, workers, timeouts and disk: both protocols, gate off/on, the realistic Agent Package/Template graphs, representative large artifacts, repeated publications and planned concurrency. Record GET counts/bytes, cumulative extraction work, latency, peak worker RSS/temp-disk use and cleanup; review an acceptable operating envelope or verify mitigation. Maximum-load experiments are not required on the live Registry.
+7. [ ] Obtain Claude's activation approval against the production history findings, migration/security matrix and measured capacity envelope. Confirm publisher upgrade guidance and the no-grace pending-session policy are ready. Record the release revisions and retain the evidence before changing the flag.
+8. [ ] Pause publishing, drain running finalize requests, and redeploy/restart **all** Registry workers with **`APDS_PUBLISH_ENFORCED=true`**. Verify old workers are gone before resuming publishing; record server UTC activation time, deployment ID and configuration evidence. Pending sessions receive finalize-time validation regardless of age; compliant unexpired sessions can finish, while invalid sessions need correction, rebuild and a fresh reservation.
+9. [ ] Run controlled production smoke checks on both protocols: historical exact-version lookup/download/install retains the captured integrity/signature references; completed retries return the committed release; undeclared/custom-client publication is rejected without a discoverable version; compliant new versions and compliant pending uploads succeed. Capture the concrete minimum-CLI error and normal success URL. Retain cleanup/rollback evidence and monitor rejection/storage/timeout failures. Ordinary rollback keeps enforcement enabled; any emergency disabling requires a paused/drained, recorded exception and a fresh inventory before reactivation.
+
+Detailed operator commands, inspection semantics and measurement requirements are
+in `agentpm-api/app/apds/ROLLOUT.md`; implementation/test evidence is in
+[M4B verification](m4b-verification.md). Do not close this band solely because the
+code is merged, deployed with enforcement off, or locally verified.
 
 ---
 
@@ -489,6 +552,7 @@ This gives AgentPM one pinned APDS v1.0.0 definition derived from its current sc
 > **Implementation notes:**
 > - The authoritative bytes are the installed artifact manifest; versioned Registry records, resolve DTOs and lock metadata are cached/derived views that must be reconciled rather than blindly trusted.
 > - **Dependencies:** M4B; Stage 1 M11B lock v4, **Stage 1 M14A** release-digest contract (M14A defines release-level SHA-256 over canonical release-manifest bytes and keeps `LockedPackage.integrity` a bare 64-char lowercase hex; M14B covers release-level signature statements and stored-byte integrity, which this milestone does not depend on).
+> - **Pre-freeze decision settled 2026-11-15:** [D06 record](d06-lockfile-compatibility.md) selects extended v4 and a minimum-CLI rollout. Implement known metadata for installed packages and represented local roots, including justified `legacy_inferred`; prove regeneration and SDK 0.1.17 compatibility. The concrete field shape, release floor and all implementation checklist items below remain M5A.
 > - **Decisions:** D06, D19. **Acceptance:** S2-AC-06.
 
 **Implementation checklist**
@@ -599,6 +663,7 @@ This gives AgentPM one pinned APDS v1.0.0 definition derived from its current sc
 - [ ] Test workspace with two Agents binding the same named Tool at different versions.
 - [ ] Verify Skill-inherited Tools are exposed only in valid global/phase scope and Loop policy.
 - [ ] Verify Memory operation target semantics remain as in Phase 7A, including operation access to declared spaces not directly phase-bound and scope/trigger eligibility remaining distinct from actual invocation.
+- [ ] Verify the reviewed M1C/Phase 7B Memory authority boundary: Loop read/write flags restrict direct Agent access, not separately bound lifecycle operations. Check that eligible authorized operations can use declared unbound targets while those spaces remain unavailable for direct Agent access; unbound/out-of-phase/ineligible operations remain restricted. Preserve edge-trigger/rearm and interval baseline/reset meanings without prescribing a scheduler. See [M1C-R06](m1c-reconciliation.md#reconciliation-outcomes).
 - [ ] Test supported Runner interpretation separately from schema validation: global/phase additive Profiles without prescribed prompt ordering; no automatic Skill script execution; Loop implicit `complete` transition and authored access/checkpoint/error-policy meaning, within features Harness actually supports.
 - [ ] Confirm Knowledge backend compatibility and local readiness failures are not reported as APDS invalidity.
 - [ ] Expose standard support list through Node SDK bridge/host APIs.
@@ -865,6 +930,7 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 - [ ] Represent transitions and outcomes including branch/cycle/terminal targets correctly.
 - [ ] Show global and phase bindings and relevant inherited Tools, without inventing permissions.
 - [ ] Make Install primary available action with selected version.
+- [ ] Add minimum CLI version/update guidance from M4B's documented compatibility floor (0.1.36 tolerance floor) beside the existing package actions, using a shared presentation also consumed by M10A. Distinguish new-publication requirements from selected-release installation/Runner requirements; preserve honest historical-version compatibility. M4B owns the MDX/error wording; this milestone owns the Agent detail-page presentation.
 - [ ] Show Run with Harness only when supported, or visible explanation when unavailable.
 - [ ] Show Load via Node/Python SDK with actual current supported package/version syntax.
 - [ ] Link to raw selected-version `agent.json` and exact versioned APDS specification.
@@ -906,6 +972,7 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 - [ ] Preserve Template use case, variables, stack, dependencies, entrypoints, bootstrap.
 - [ ] Add category-correct breadcrumbs/labels without changing stable route IDs.
 - [ ] Add standard manifest/spec links to every applicable kind.
+- [ ] Apply the shared minimum CLI version/update guidance from M9B to Component and Template detail actions, consistent with M4B's Registry errors and MDX migration guidance. Verify all eight kinds and legacy/new selected versions without implying older releases became uninstallable or that the tolerance floor establishes Runner readiness.
 - [ ] Keep author READMEs verbatim and technically relevant tab names accessible.
 - [ ] Verify each kind on legacy, new and empty-content examples.
 - [ ] Check shared shell behavior on responsive layouts and version switching.
@@ -1467,8 +1534,10 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Milestone 17B: Rewrite Introduction, Quickstart, Guides and AgentPM-owned READMEs
+
 > **Scope note:** Publish one consistent Agent Package-first explanation across docs, help, website and repository-owned READMEs. Outside this milestone: Do not replace technical depth with marketing blurbs or claim universal Runner support.
 > **Implementation notes:**
+>
 > - Quickstart should show a real first Agent Package installation and Harness run before making users learn all six Components. Preserve alternate authoring/Template paths.
 > - **Dependencies:** M17A approved IA and completed Stage 1 prerequisite.
 > - **Decisions:** D18. **Acceptance:** S2-AC-22.
@@ -1484,6 +1553,7 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 - [ ] Update publish, install/lock, legacy migration, frozen and release provenance guidance.
 - [ ] Update Harness Runner and Node/Python SDK integration help with realistic prerequisites.
 - [ ] Update CLI, Registry, SDK, examples and website owned README positioning.
+- [ ] After the final docs rewrite, regenerate `agentpm-examples/knowledge-packages/agentpm-docs` from `agentpm-api/docs/v0.1` using its existing corpus/embedding pipeline; refresh copied sources, chunks, provenance, vectors and CLI-generated Knowledge metadata together. Bump the package version consistently, including the prep script's version constant, validate with `agentpm lint`, `agentpm knowledge build`/`inspect` and a publish dry-run, and arrange a new published version. Never hand-edit the vendored pages or replace an existing published version.
 - [ ] Use Agent Package for artifact, Agent for runtime entity; no blind global replace.
 - [ ] Preserve existing technical references and backwards-compatible docs redirects.
 - [ ] Cross-check every reference link and current CLI syntax with actual shipped code.
@@ -1501,8 +1571,10 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Milestone 17C: Run Final End-to-end Documentation and Cross-product Verification
+
 > **Scope note:** Prove every public first-use example actually works and all Stage 2 contracts agree after the complete docs rewrite. Outside this milestone: unexecuted tests claimed as passed; no changes to settled product semantics just for wording.
 > **Implementation notes:**
+>
 > - The release gate spans Rust CLI, Python Registry, Node/Python SDKs, Next website and real starter. Claude reviews before marking Stage 2 complete.
 > - **Dependencies:** M17A/B; entire Stage 1 and Stage 2 completion.
 > - **Decisions:** D01–D21 closure. **Acceptance:** S2-AC-01, S2-AC-02, S2-AC-03, S2-AC-04, S2-AC-05, S2-AC-06, S2-AC-07, S2-AC-08, S2-AC-09, S2-AC-10, S2-AC-11, S2-AC-12, S2-AC-13, S2-AC-14, S2-AC-15, S2-AC-16, S2-AC-17, S2-AC-18, S2-AC-19, S2-AC-20, S2-AC-21, S2-AC-22.
@@ -1512,6 +1584,7 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 - [ ] Run actual docs commands for install/try, build/lint/publish and Template flows.
 - [ ] Check missing credential and no-Loop valid-but-not-runnable documentation.
 - [ ] Cross-verify docs and homepage code boxes reference the same selected version.
+- [ ] Verify the newly published `agentpm-docs` Knowledge package in a clean consumer: copied sources and retrieved chunks reflect the final docs (including Tool scaffolding and standard selection), vectors/counts/provenance/build hashes agree, and the prior published version remains byte-identical and installable. Record the new version, source revision and query evidence.
 - [ ] Verify all APDS standard/manifest/fixture URLs refer to immutable v1.0.0.
 - [ ] Recheck old/new legacy publication and install behavior after all migrations.
 - [ ] Verify eight kind detail views, Health states and anonymous/private visibility.
@@ -1534,6 +1607,7 @@ This gives the CLI explicit Agent Package Manager/Management identity, one real 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Release Band 6: Final Documentation, Full Integration and Independent Approval
+
 Covered milestones: 17A–17C.
 
 This gives the finished AgentPM ecosystem one accurate Agent Package-first documentation story across docs, CLI, Registry, SDKs and owned READMEs, based on stabilized Stage 1 and Stage 2 contracts. The whole stage is only complete after the high-risk lifecycle and UX matrices pass and Claude has reviewed the evidence.

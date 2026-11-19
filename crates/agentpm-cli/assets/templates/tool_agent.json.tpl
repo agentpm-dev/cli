@@ -1,5 +1,6 @@
 {
-  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "standard": { "id": "agentpm", "version": "1.0.0" },
   "kind": "tool",
   "name": "{{TOOL_NAME}}",
   "version": "0.1.0",

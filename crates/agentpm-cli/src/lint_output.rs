@@ -393,6 +393,37 @@ fn flatten<'a>(issue: &'a LintIssue, out: &mut Vec<&'a LintIssue>) {
     }
 }
 
+pub(crate) fn render_apds_summary(
+    evaluation: &crate::manifest::apds::Evaluation,
+) -> Result<String> {
+    let mut output = format!(
+        "  APDS {} scope: {}; Runner behavior not evaluated.\n",
+        serde_json::to_value(evaluation.level)?
+            .as_str()
+            .unwrap_or(""),
+        serde_json::to_value(evaluation.status)?
+            .as_str()
+            .unwrap_or("")
+    );
+    if !evaluation.unevaluated.is_empty() {
+        writeln!(
+            output,
+            "  Unevaluated: {}",
+            evaluation
+                .unevaluated
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .unwrap();
+    }
+    for note in &evaluation.notes {
+        writeln!(output, "  {note}").unwrap();
+    }
+    Ok(output)
+}
+
 pub(crate) fn render_lint_report(report: &LintFileReport) -> String {
     let mut flat = Vec::new();
     for issue in &report.issues {
@@ -497,12 +528,16 @@ mod tests {
     #[test]
     fn root_kind_dispatch_exposes_actual_required_field_in_all_formats() {
         let report = report(
-            json!({"kind":"agent","name":"missing-tools","version":"0.1.0","description":"An agent."}),
+            json!({"kind":"tool","name":"missing-entrypoint","version":"0.1.0","description":"A Tool.","files":["tool.py"],"inputs":{},"outputs":{}}),
         );
         assert!(!report.ok);
-        assert!(report.issues.iter().any(
-            |issue| issue.instance_path == "/tools" && issue.schema_path == "/oneOf/0/required"
-        ));
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.instance_path == "/entrypoint"
+                    && issue.schema_path == "/oneOf/1/required")
+        );
         assert!(
             !report
                 .issues
@@ -511,7 +546,7 @@ mod tests {
         );
         let text = render_lint_report(&report);
         assert!(
-            text.contains("/tools") && text.contains("Missing required field"),
+            text.contains("/entrypoint") && text.contains("Missing required field"),
             "{text}"
         );
         assert!(!text.contains("\"description\":"), "{text}");

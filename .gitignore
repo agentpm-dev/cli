@@ -1,4 +1,5 @@
 /target/
+/.venv-apds/
 **/*.rs.bk
 __pycache__/
 *.pyc
@@ -6,6 +7,7 @@ __pycache__/
 .idea/
 .vscode/
 agent.json
+!/standards/agentpm/*/conformance/fixtures/**/agent.json
 agent.lock
 .agentpm
 pub.txt
@@ -15,4 +17,6 @@ harness-m20a-test/
 harness-release-verify-test/
 cli-m8-test/
 cli-m9-test/
+/cli-m3b-test/
+/registry-m4a-test/
 AgentPM_Marketing - Google Docs.pdf

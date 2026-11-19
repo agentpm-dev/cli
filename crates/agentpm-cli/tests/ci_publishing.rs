@@ -17,11 +17,12 @@ impl Fixture {
         for dir in ["home/AppData/Roaming", "home/AppData/Local"] {
             fs::create_dir_all(root.join(dir)).unwrap();
         }
-        let manifest = if kind == "tool" {
+        let mut manifest = if kind == "tool" {
             json!({"kind":"tool","name":"ci-example","version":"0.1.0","description":"Automated publication example.","runtime":{"type":"python","version":"3.11"},"entrypoint":{"command":"python","args":["tool.py"]},"files":["tool.py"],"inputs":{"type":"object"},"outputs":{"type":"object"}})
         } else {
             json!({"kind":"agent","name":"ci-example","version":"0.1.0","description":"Automated Agent publication example.","tools":[]})
         };
+        manifest["standard"] = json!({"id":"agentpm","version":"1.0.0"});
         fs::write(
             root.join("agent.json"),
             serde_json::to_vec(&manifest).unwrap(),
@@ -51,8 +52,7 @@ impl Fixture {
     fn package(&self) -> Value {
         let output = self
             .command("package")
-            .args(["--machine", "--schema"])
-            .arg(schema())
+            .args(["--machine"])
             .output()
             .unwrap();
         assert!(output.status.success(), "{}", text(&output));
@@ -88,9 +88,7 @@ impl Drop for Fixture {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
-fn schema() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/agentpm.manifest.schema.json")
-}
+
 fn text(output: &Output) -> String {
     format!(
         "{}{}",
@@ -155,14 +153,118 @@ fn machine_failure_preserves_typed_payload_diagnostics() {
     fs::write(fixture.0.join("icon.png"), b"GIF89a").unwrap();
     let output = fixture
         .command("package")
-        .args(["--machine", "--schema"])
-        .arg(schema())
+        .args(["--machine"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["status"], "error");
     assert_eq!(value["error"]["diagnostics"][0]["code"], "format_mismatch");
+}
+
+#[test]
+fn saved_build_rechecks_the_pinned_schema_even_when_all_byte_digests_agree() {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    use std::net::TcpListener;
+
+    for (field, replacement, diagnostic) in [
+        ("description", Some(json!(" \t ")), "/description"),
+        ("standard", None, "/standard"),
+        (
+            "standard",
+            Some(json!({"id":"unknown","version":"1.0.0"})),
+            "/standard/id",
+        ),
+        (
+            "standard",
+            Some(json!({"id":"agentpm","version":"99.0.0"})),
+            "/standard/version",
+        ),
+    ] {
+        let fixture = Fixture::new("agent");
+        let manifest_path = fixture.0.join("agent.json");
+        let authored = fs::read(&manifest_path).unwrap();
+        let packaged = fixture.package();
+        let descriptor = fixture.0.join("target/agentpm/build/package-build.json");
+        let mut build = packaged["build"].clone();
+        if let Some(replacement) = replacement {
+            build["metadata"]["manifest"][field] = replacement;
+        } else {
+            build["metadata"]["manifest"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+        }
+        build["manifest_digest"] =
+            agentpm_sdk::release::manifest_digest(&build["metadata"]["manifest"])
+                .unwrap()
+                .into();
+        let archive = descriptor
+            .parent()
+            .unwrap()
+            .join(build["artifact_path"].as_str().unwrap());
+        let mut source = tar::Archive::new(flate2::read::GzDecoder::new(
+            fs::File::open(&archive).unwrap(),
+        ));
+        let mut rewritten = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::default(),
+        ));
+        for entry in source.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap().into_owned();
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
+            if path == Path::new("agent.json") {
+                bytes = serde_json::to_vec(&build["metadata"]["manifest"]).unwrap();
+            }
+            let mut header = entry.header().clone();
+            header.set_size(bytes.len() as u64);
+            header.set_cksum();
+            rewritten
+                .append_data(&mut header, path, bytes.as_slice())
+                .unwrap();
+        }
+        let bytes = rewritten.into_inner().unwrap().finish().unwrap();
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        build["artifact_sha256"] = format!("sha256:{digest}").into();
+        build["artifact_size"] = json!(bytes.len());
+        build["metadata"]["sha256"] = digest.into();
+        build["metadata"]["size"] = json!(bytes.len());
+        fs::write(&archive, bytes).unwrap();
+        fs::write(&descriptor, serde_json::to_vec(&build).unwrap()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let output = fixture
+            .command("publish")
+            .env(
+                "AGENTPM_BASE_URL",
+                format!("http://{}", listener.local_addr().unwrap()),
+            )
+            .arg("--build")
+            .arg(descriptor)
+            .args(["--namespace", "fixture", "--token", "fixture-only"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            text(&output).contains("Saved build manifest failed bundled validation"),
+            "{}",
+            text(&output)
+        );
+        let output_text = text(&output);
+        assert!(output_text.contains(diagnostic), "{output_text}");
+        if field == "standard" {
+            assert!(output_text.contains("APDS-ID-001"), "{output_text}");
+        }
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        assert_eq!(fs::read(&manifest_path).unwrap(), authored);
+        assert!(!fixture.0.join("agent.lock").exists());
+    }
 }
 
 #[test]
@@ -593,6 +695,7 @@ async fn real_cli_headless_signing_publishes_complete_v2_inventory_and_legacy_v1
             fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
             fs::write(fixture.0.join("native.dat"), "synthetic target fixture").unwrap();
         }
+        let authored = fs::read(fixture.0.join("agent.json")).unwrap();
         let build = fixture.package();
         let mut command = fixture.command("publish");
         command
@@ -623,6 +726,12 @@ async fn real_cli_headless_signing_publishes_complete_v2_inventory_and_legacy_v1
             .await
             .unwrap();
         assert!(output.status.success(), "{}", text(&output));
+        assert!(
+            text(&output).contains("https://fixture.invalid"),
+            "{}",
+            text(&output)
+        );
+        assert_eq!(fs::read(fixture.0.join("agent.json")).unwrap(), authored);
     }
     assert_eq!(*state.signatures.lock().unwrap(), ["v2", "v1"]);
     server.abort();

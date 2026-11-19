@@ -337,12 +337,13 @@ fn new_reports_created_project_and_readme_next_step_when_noninteractive() {
     project.success(&["init", "--kind", "template", "--name", "starter"]);
     let output = project.success(&["new", ".", "./generated", "--quiet"]);
     let text = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        text.starts_with(
-            "Created project: generated\n\
-             Next: review generated/README.md before running the generated entrypoints.\n"
-        ) && text.contains("Review generated scaffold: cat README.md"),
-        "{text}"
+    // Deliberate authoring-guidance update: retain one Next line, the README
+    // path and the Template's authored entrypoint; include root lint first.
+    assert_eq!(
+        text,
+        "Created project: generated\n\
+         Next: run `agentpm lint` from generated, then review generated/README.md before running the generated entrypoints.\n\
+         Review generated scaffold: cat README.md\n"
     );
     assert!(!text.contains("/./"));
     assert!(project.0.join("generated/README.md").exists());
@@ -374,7 +375,7 @@ fn new_uses_generic_next_step_without_readme_and_preserves_authored_entrypoints(
         assert_eq!(
             text,
             "Created project: generated\n\
-             Next: review the generated project before running its entrypoints.\n\
+             Next: run `agentpm lint` from generated, then review the generated project before running its entrypoints.\n\
              Run: echo ready\n"
         );
         assert!(project.0.join("generated/agent.json").is_file());

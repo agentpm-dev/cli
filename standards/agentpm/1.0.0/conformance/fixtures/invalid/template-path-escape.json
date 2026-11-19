@@ -1,0 +1,42 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "kind": "template",
+  "name": "starter",
+  "version": "0.1.0",
+  "description": "Starter AgentPM project",
+  "template": {
+    "display_name": "Example",
+    "use_case": "starter",
+    "execution_surfaces": [
+      "python-sdk",
+      "node-sdk",
+      "agentpm-run",
+      "agentpm-harness",
+      "agentpm-serve-mcp",
+      "multi-agent-workspace"
+    ],
+    "files_root": "../outside",
+    "variables": [
+      {
+        "name": "project_name",
+        "description": "Generated project name. Generation-time only; do not use for API keys, tokens, passwords, or runtime secrets.",
+        "required": true,
+        "default": "example"
+      }
+    ],
+    "dependencies": {
+      "tools": [],
+      "agents": []
+    },
+    "entrypoints": [
+      {
+        "label": "Review generated scaffold",
+        "command": "cat README.md"
+      }
+    ]
+  },
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  }
+}

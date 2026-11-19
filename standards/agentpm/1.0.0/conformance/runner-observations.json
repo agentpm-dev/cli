@@ -1,0 +1,536 @@
+{
+  "format_version": 1,
+  "observations": [
+    {
+      "observation_id": "additive-tools",
+      "fixture_case": "composition-complete",
+      "subject": "runner",
+      "semantic_cases": ["A", "J"],
+      "rules": ["APDS-BIND-003", "APDS-SKILL-002", "APDS-SKILL-003"],
+      "given": {},
+      "steps": ["Evaluate draft, then research."],
+      "expected": {
+        "draft_tools": ["tool:echo@1.0.0", "tool:publish@1.0.0"],
+        "research_tools": ["tool:echo@1.0.0"],
+        "duplicate_paths_grant_extra_permissions": false
+      }
+    },
+    {
+      "observation_id": "loop-denies-inherited-mcp",
+      "fixture_case": "composition-complete",
+      "subject": "runner",
+      "semantic_cases": ["B"],
+      "rules": ["APDS-LOOP-007", "APDS-BIND-004", "APDS-BIND-005"],
+      "given": {
+        "phase": "review"
+      },
+      "steps": ["Evaluate direct, inherited and MCP Tool surfaces."],
+      "expected": {
+        "available_tools": [],
+        "dependencies_removed": false
+      }
+    },
+    {
+      "observation_id": "phase-skill",
+      "fixture_case": "skill-phase-only",
+      "subject": "runner",
+      "semantic_cases": ["C"],
+      "rules": ["APDS-SKILL-002"],
+      "given": {},
+      "steps": ["Evaluate research, then publish."],
+      "expected": {
+        "research_inherited_tools": ["tool:echo@1.0.0"],
+        "publish_inherited_tools": []
+      }
+    },
+    {
+      "observation_id": "profile-hint-does-not-grant",
+      "fixture_case": "composition-complete",
+      "subject": "runner",
+      "semantic_cases": ["E"],
+      "rules": ["APDS-PROFILE-003", "APDS-LOOP-007"],
+      "given": {
+        "phase": "review"
+      },
+      "steps": ["Evaluate requires.tool_use and Loop Tool prohibition."],
+      "expected": {
+        "available_tools": [],
+        "artifact_invalid_due_to_runtime": false
+      }
+    },
+    {
+      "observation_id": "operation-without-direct-access",
+      "fixture_case": "memory-operation-only",
+      "subject": "runner",
+      "semantic_cases": ["F"],
+      "rules": ["APDS-MEM-009", "APDS-MEM-011"],
+      "given": {
+        "phase": "review",
+        "authorized": true,
+        "external_invocation": "transform"
+      },
+      "steps": ["Evaluate direct access; invoke the bound transform."],
+      "expected": {
+        "direct_spaces": [],
+        "operation_can_access": ["notes", "summary"],
+        "loop_direct_access_flags_block_operation": false
+      }
+    },
+    {
+      "observation_id": "external-not-invoked",
+      "fixture_case": "memory-external-bound",
+      "subject": "runner",
+      "semantic_cases": ["G"],
+      "rules": ["APDS-MEM-008", "APDS-BIND-004"],
+      "given": {
+        "external_invocations": []
+      },
+      "steps": ["Evaluate eligible operation bindings."],
+      "expected": {
+        "executions": 0
+      }
+    },
+    {
+      "observation_id": "minimal-agent-readiness",
+      "fixture_case": "minimal-agent",
+      "subject": "runner",
+      "semantic_cases": ["H"],
+      "rules": ["APDS-CONF-004"],
+      "given": {
+        "runner_requires_loop": true
+      },
+      "steps": ["Attempt execution."],
+      "expected": {
+        "artifact_standalone_valid": true,
+        "execution_supported": false
+      }
+    },
+    {
+      "observation_id": "exact-selected-versions",
+      "fixture_case": "composition-complete",
+      "subject": "runner",
+      "semantic_cases": ["I"],
+      "rules": ["APDS-GRAPH-002", "APDS-GRAPH-003", "APDS-SKILL-003"],
+      "given": {
+        "other_versions_present": ["skill:review@2.0.0", "tool:echo@2.0.0"]
+      },
+      "steps": ["Resolve the bound Skill through its owning edge."],
+      "expected": {
+        "selected_skill": "skill:review@1.0.0",
+        "inherited_tool": "tool:echo@1.0.0",
+        "distinct_versions_collapsed": false
+      }
+    },
+    {
+      "observation_id": "distinct-selected-tool-versions",
+      "fixture_case": "composition-two-tool-versions",
+      "subject": "runner",
+      "semantic_cases": ["I", "J"],
+      "rules": ["APDS-GRAPH-002", "APDS-SKILL-003"],
+      "given": {},
+      "steps": [
+        "Evaluate the directly bound Tool and globally inherited Tool."
+      ],
+      "expected": {
+        "selected_tools": ["tool:echo@1.0.0", "tool:echo@2.0.0"],
+        "distinct_versions_collapsed": false
+      }
+    },
+    {
+      "observation_id": "additive-profiles",
+      "fixture_case": "composition-complete",
+      "subject": "runner",
+      "semantic_cases": ["K"],
+      "rules": ["APDS-PROFILE-002", "APDS-BIND-003"],
+      "given": {},
+      "steps": ["Evaluate review, then research."],
+      "expected": {
+        "review_profiles": ["profile:global@1.0.0", "profile:phase@1.0.0"],
+        "research_profiles": ["profile:global@1.0.0"],
+        "prompt_order_prescribed": false
+      }
+    },
+    {
+      "observation_id": "memory-space-scope",
+      "fixture_case": "composition-complete",
+      "subject": "runner",
+      "semantic_cases": ["L"],
+      "rules": ["APDS-MEM-009", "APDS-LOOP-007"],
+      "given": {},
+      "steps": ["Evaluate research and review direct Memory surfaces."],
+      "expected": {
+        "research_spaces": ["summary"],
+        "review_bound_spaces": ["summary", "notes"],
+        "review_direct_read": false,
+        "review_direct_write": false
+      }
+    },
+    {
+      "observation_id": "operation-participation",
+      "fixture_case": "memory-phase-trigger",
+      "subject": "runner",
+      "semantic_cases": ["M"],
+      "rules": ["APDS-MEM-008", "APDS-MEM-009"],
+      "given": {
+        "phase": "research",
+        "operation": "summarize",
+        "scoped_count": 3,
+        "trigger_eligible": true
+      },
+      "steps": ["Evaluate phase-scoped operation."],
+      "expected": {
+        "participates": false,
+        "executes": false
+      }
+    },
+    {
+      "observation_id": "implicit-complete",
+      "fixture_case": "loop-complete",
+      "subject": "runner",
+      "semantic_cases": ["O"],
+      "rules": ["APDS-LOOP-001", "APDS-LOOP-002", "APDS-LOOP-003"],
+      "given": {
+        "phase": "research"
+      },
+      "steps": ["Complete research."],
+      "expected": {
+        "outcome": "complete",
+        "next_phase": "draft"
+      }
+    },
+    {
+      "observation_id": "unsupported-backend",
+      "fixture_case": "composition-complete",
+      "subject": "runner",
+      "semantic_cases": ["P"],
+      "rules": ["APDS-SCOPE-001", "APDS-CONF-004"],
+      "given": {
+        "memory_backend_supported": false
+      },
+      "steps": ["Assess conformance and execution readiness separately."],
+      "expected": {
+        "artifact_invalid_due_to_backend": false,
+        "runtime_status": "unsupported"
+      }
+    },
+    {
+      "observation_id": "trigger-initial-record_count",
+      "fixture_case": "memory-all-models",
+      "subject": "runner",
+      "semantic_cases": ["Q"],
+      "rules": ["APDS-MEM-008"],
+      "given": {
+        "trigger": "record_count",
+        "boundary": 2,
+        "armed": true,
+        "initial_count": 3,
+        "operation": "summarize",
+        "scope": {
+          "user": "example-user"
+        },
+        "participates": true
+      },
+      "steps": ["Observe the initial scoped count."],
+      "expected": {
+        "count_condition_satisfied": true
+      }
+    },
+    {
+      "observation_id": "trigger-unchanged-record_count",
+      "fixture_case": "memory-all-models",
+      "subject": "runner",
+      "semantic_cases": ["R"],
+      "rules": ["APDS-MEM-008"],
+      "given": {
+        "trigger": "record_count",
+        "boundary": 2,
+        "successful_execution": true,
+        "count": 3,
+        "operation": "summarize",
+        "scope": {
+          "user": "example-user"
+        }
+      },
+      "steps": [
+        "Observe count 3 again.",
+        "Advance time, re-enter the phase and observe count 3 again."
+      ],
+      "expected": {
+        "count_condition_satisfied": [false, false],
+        "new_successful_firings": 0
+      }
+    },
+    {
+      "observation_id": "trigger-rearm-record_count",
+      "fixture_case": "memory-all-models",
+      "subject": "runner",
+      "semantic_cases": ["S"],
+      "rules": ["APDS-MEM-008"],
+      "given": {
+        "trigger": "record_count",
+        "boundary": 2,
+        "successful_execution": true,
+        "count": 3,
+        "operation": "summarize",
+        "scope": {
+          "user": "example-user"
+        }
+      },
+      "steps": ["Observe count 1.", "Observe count 2."],
+      "expected": {
+        "count_condition_satisfied": [false, true]
+      }
+    },
+    {
+      "observation_id": "trigger-initial-capacity",
+      "fixture_case": "memory-all-models",
+      "subject": "runner",
+      "semantic_cases": ["Q"],
+      "rules": ["APDS-MEM-008"],
+      "given": {
+        "trigger": "capacity",
+        "boundary": 3,
+        "armed": true,
+        "initial_count": 3,
+        "operation": "capacity",
+        "scope": {
+          "user": "example-user"
+        },
+        "participates": true
+      },
+      "steps": ["Observe the initial scoped count."],
+      "expected": {
+        "count_condition_satisfied": true
+      }
+    },
+    {
+      "observation_id": "trigger-unchanged-capacity",
+      "fixture_case": "memory-all-models",
+      "subject": "runner",
+      "semantic_cases": ["R"],
+      "rules": ["APDS-MEM-008"],
+      "given": {
+        "trigger": "capacity",
+        "boundary": 3,
+        "successful_execution": true,
+        "count": 3,
+        "operation": "capacity",
+        "scope": {
+          "user": "example-user"
+        }
+      },
+      "steps": [
+        "Observe count 3 again.",
+        "Advance time, re-enter the phase and observe count 3 again."
+      ],
+      "expected": {
+        "count_condition_satisfied": [false, false],
+        "new_successful_firings": 0
+      }
+    },
+    {
+      "observation_id": "trigger-rearm-capacity",
+      "fixture_case": "memory-all-models",
+      "subject": "runner",
+      "semantic_cases": ["S"],
+      "rules": ["APDS-MEM-008"],
+      "given": {
+        "trigger": "capacity",
+        "boundary": 3,
+        "successful_execution": true,
+        "count": 3,
+        "operation": "capacity",
+        "scope": {
+          "user": "example-user"
+        }
+      },
+      "steps": ["Observe count 2.", "Observe count 3."],
+      "expected": {
+        "count_condition_satisfied": [false, true]
+      }
+    },
+    {
+      "observation_id": "interval-baseline",
+      "fixture_case": "memory-all-models",
+      "subject": "runner",
+      "semantic_cases": ["T"],
+      "rules": ["APDS-MEM-008", "APDS-MEM-009"],
+      "given": {
+        "trigger": "interval",
+        "operation": "interval",
+        "scope": {
+          "user": "example-user"
+        },
+        "every": "PT10M",
+        "participates": true
+      },
+      "steps": [
+        "11:00: no relevant state.",
+        "12:00: relevant state first exists.",
+        "12:09: re-enter phase.",
+        "12:10: observe eligibility.",
+        "12:12: complete successfully.",
+        "12:21: re-enter phase.",
+        "12:22: observe eligibility."
+      ],
+      "expected": {
+        "11:00": "dormant-no-baseline",
+        "12:09": "ineligible",
+        "12:10": "eligible",
+        "12:21": "ineligible",
+        "12:22": "eligible",
+        "immediate_dispatch_required": false
+      }
+    },
+    {
+      "observation_id": "tool-json-boundary",
+      "fixture_case": "valid-tool",
+      "subject": "runner",
+      "semantic_cases": [],
+      "rules": ["APDS-TOOL-001"],
+      "given": {
+        "input": {
+          "text": "Hello"
+        }
+      },
+      "steps": [
+        "Observe a successful child with one JSON result.",
+        "Observe stdout logs followed by JSON.",
+        "Observe nonzero exit with valid JSON."
+      ],
+      "expected": {
+        "strict_success": [true, false, false],
+        "legacy_adapter_is_strict_conformance": false
+      }
+    },
+    {
+      "observation_id": "environment-layers",
+      "fixture_case": "valid-tool",
+      "subject": "runner",
+      "semantic_cases": [],
+      "rules": ["APDS-TOOL-003"],
+      "given": {
+        "ambient": {
+          "A": "ambient",
+          "EMPTY": ""
+        },
+        "defaults": {
+          "A": "default",
+          "EMPTY": "default",
+          "B": "default"
+        },
+        "entrypoint": {
+          "A": "entrypoint",
+          "C": "entrypoint"
+        },
+        "caller": {
+          "A": "caller"
+        }
+      },
+      "steps": ["Prepare an ordinary Tool invocation environment."],
+      "expected": {
+        "A": "caller",
+        "EMPTY": "",
+        "B": "default",
+        "C": "entrypoint"
+      }
+    },
+    {
+      "observation_id": "loop-limits-checkpoints",
+      "fixture_case": "loop-complete",
+      "subject": "runner",
+      "semantic_cases": [],
+      "rules": ["APDS-LOOP-004", "APDS-LOOP-005", "APDS-LOOP-006"],
+      "given": {
+        "steps_executed": 8,
+        "pending_approval": true
+      },
+      "steps": ["Attempt another phase entry."],
+      "expected": {
+        "new_phase_started": false,
+        "pending_is_approval": false,
+        "tool_calls_count_as_loop_steps": false
+      }
+    },
+    {
+      "observation_id": "memory-record-models",
+      "fixture_case": "memory-all-models",
+      "subject": "runner",
+      "semantic_cases": [],
+      "rules": [
+        "APDS-MEM-002",
+        "APDS-MEM-003",
+        "APDS-MEM-004",
+        "APDS-MEM-005",
+        "APDS-MEM-010",
+        "APDS-MEM-013"
+      ],
+      "given": {
+        "scope": {
+          "user": "example-user"
+        }
+      },
+      "steps": [
+        "Map document, collection and sequence records.",
+        "Attempt direct update on append-only notes.",
+        "Perform separately authorized replace_input with valid output."
+      ],
+      "expected": {
+        "document_max_current_records": 1,
+        "sequence_requires_ordinal": true,
+        "collection_requires_ordinal": false,
+        "direct_update_allowed": false,
+        "authorized_replace_allowed": true,
+        "invalid_output_deletes_sources": false
+      }
+    },
+    {
+      "observation_id": "governance-boundaries",
+      "fixture_case": "memory-record-schemas",
+      "subject": "runner",
+      "semantic_cases": [],
+      "rules": ["APDS-MEM-012"],
+      "given": {
+        "temporary": "not durable",
+        "text": "not shareable"
+      },
+      "steps": ["Persist and export supported governed content."],
+      "expected": {
+        "temporary_persisted": false,
+        "text_exported_across_boundary": false
+      }
+    },
+    {
+      "observation_id": "knowledge-preferences",
+      "fixture_case": "knowledge-vector-files",
+      "subject": "runner",
+      "semantic_cases": [],
+      "rules": ["APDS-KNOW-004", "APDS-KNOW-005"],
+      "given": {
+        "consumer_top_k": 2,
+        "declared_top_k": 1
+      },
+      "steps": ["Apply explicit consumer retrieval choice."],
+      "expected": {
+        "top_k": 2,
+        "provenance_declaration_is_verified_trust": false
+      }
+    },
+    {
+      "observation_id": "template-instantiation",
+      "fixture_case": "template-files",
+      "subject": "runner",
+      "semantic_cases": [],
+      "rules": ["APDS-TEMPLATE-001", "APDS-TEMPLATE-002", "APDS-TEMPLATE-003"],
+      "given": {
+        "project_name": "chosen-name"
+      },
+      "steps": ["Instantiate the scaffold with explicit values."],
+      "expected": {
+        "readme_heading": "# chosen-name",
+        "entrypoint_executed": false,
+        "missing_required_placeholder_is_success": false
+      }
+    }
+  ]
+}

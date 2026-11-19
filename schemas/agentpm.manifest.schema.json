@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+  "$id": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
   "type": "object",
   "additionalProperties": false,
 
@@ -1711,14 +1711,22 @@
 
   "properties": {
     "$schema": { "type": "string", "format": "uri" },
-    "standard": {},
+    "standard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "const": "agentpm" },
+        "version": { "const": "1.0.0" }
+      }
+    },
     "kind": { "type": "string", "enum": ["agent", "tool", "template", "skill", "knowledge", "memory", "profile", "loop"] },
     "name": { "type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9-]{0,63}$" },
     "version": {
       "type": "string",
       "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
     },
-    "description": { "type": "string" },
+    "description": { "type": "string", "minLength": 1, "pattern": "[^\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]" },
     "tools": {
       "type": "array",
       "items": { "$ref": "#/$defs/packageRef" }
@@ -1823,12 +1831,11 @@
     }
   },
 
-  "required": ["kind", "name", "version", "description"],
+  "required": ["kind", "name", "version", "description", "standard"],
 
   "oneOf": [
     {
-      "properties": { "kind": { "const": "agent" } },
-      "required": ["tools"]
+      "properties": { "kind": { "const": "agent" } }
     },
     {
       "properties": { "kind": { "const": "tool" } },

@@ -1,0 +1,7 @@
+{
+  "kind": "agent",
+  "name": "minimal-agent",
+  "version": "1.0.0",
+  "description": "A portable Agent declaration.",
+  "standard": "agentpm/1.0.0"
+}

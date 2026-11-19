@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Output},
 };
 
@@ -16,6 +16,7 @@ impl Fixture {
     }
     fn manifest(&self, runtime: Value) {
         let value = json!({"kind":"tool","name":"python-dependency-test","version":"0.1.0","description":"Python dependency test.",
+            "standard":{"id":"agentpm","version":"1.0.0"},
             "entrypoint":{"command":if runtime["type"] == "node" {"node"} else {"python3"},"args":["tool.py"]},
             "runtime":runtime,"files":["tool.py"],"inputs":{"type":"object"},"outputs":{"type":"object"}});
         fs::write(
@@ -35,9 +36,6 @@ impl Fixture {
             .env("XDG_CACHE_HOME", self.0.join("cache"))
             .env("AGENTPM_TELEMETRY", "0")
             .arg(verb);
-        if matches!(verb, "lint" | "publish") {
-            command.args(["--schema", &schema().to_string_lossy()]);
-        }
         command
     }
 }
@@ -46,9 +44,7 @@ impl Drop for Fixture {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
-fn schema() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/agentpm.manifest.schema.json")
-}
+
 fn text(output: &Output) -> String {
     format!(
         "{}{}",

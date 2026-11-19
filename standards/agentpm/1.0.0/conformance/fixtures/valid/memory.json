@@ -1,0 +1,43 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "kind": "memory",
+  "name": "example",
+  "version": "0.1.0",
+  "description": "Starter AgentPM project",
+  "readme": "README.md",
+  "memory": {
+    "scopes": {
+      "user": {
+        "description": "The user whose memory is being retained."
+      }
+    },
+    "record_types": {
+      "user_preference": {
+        "version": "1.0.0",
+        "description": "Durable structured preferences for one user.",
+        "schema": "schemas/user-preference.schema.json"
+      }
+    },
+    "spaces": {
+      "profile": {
+        "description": "The current durable profile for one user.",
+        "model": "document",
+        "record_types": [
+          "user_preference"
+        ],
+        "scope": [
+          "user"
+        ],
+        "retrieval": {
+          "modes": [
+            "key"
+          ]
+        }
+      }
+    }
+  },
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  }
+}

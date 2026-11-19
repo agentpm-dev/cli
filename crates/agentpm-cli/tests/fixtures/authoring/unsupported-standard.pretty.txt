@@ -1,0 +1,5 @@
+✗ agent.json
+  [ERROR] [APDS-ID-001] Unsupported declared standard. This CLI supports {"id":"agentpm","version":"1.0.0"}; use a CLI supporting the declared contract or review the declaration in this local manifest.
+        at instance /standard/version
+  APDS standalone scope: unsupported; Runner behavior not evaluated.
+  Unsupported declared standard; no substitute contract was applied.

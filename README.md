@@ -167,19 +167,55 @@ Tip: different terminals (Terminal.app, iTerm, VS Code) may read different start
 
 ## Quick start
 
-Create a new AgentPM package:
+Create a minimal Agent Package in an empty directory:
 
 ```bash
-agentpm --help
-agentpm init --kind tool --name demo --description "My first tool"
-agentpm init --kind skill --name triage-playbook --description "My first skill"
-agentpm init --kind knowledge --name docs-corpus --description "My first knowledge package"
-agentpm init --kind memory --name conversation-continuity --description "My first memory blueprint"
-agentpm init --kind profile --name support-style --description "My first instruction profile"
-agentpm init --kind loop --name incident-response-loop --description "My first orchestration loop"
-agentpm init --kind agent --name support-agent --description "My first agent"
-agentpm init --kind template --name research-template --description "My workflow template"
+mkdir my-agent && cd my-agent
+agentpm init
+agentpm lint
 ```
+
+The generated manifest declares APDS `agentpm / 1.0.0` and pins its editor schema.
+Component dependencies are optional. To execute the Agent with `agentpm harness`,
+add a Loop dependency and configure a model first.
+
+To create a Component or Template instead, select its kind explicitly. Scripts
+that previously relied on the default Tool scaffold must now pass `--kind tool`.
+Each command below writes to its own directory:
+
+```bash
+agentpm init --kind tool --name demo --out-dir ../demo
+agentpm init --kind skill --name triage-playbook --out-dir ../triage-playbook
+agentpm init --kind knowledge --name docs-corpus --out-dir ../docs-corpus
+agentpm init --kind memory --name conversation-continuity --out-dir ../conversation-continuity
+agentpm init --kind profile --name support-style --out-dir ../support-style
+agentpm init --kind loop --name incident-response-loop --out-dir ../incident-response-loop
+agentpm init --kind agent --name support-agent --out-dir ../support-agent
+agentpm init --kind template --name research-template --out-dir ../research-template
+```
+
+`init` refuses to overwrite generated files. For a Tool, an existing `main.py`
+is retained; otherwise a runnable Python JSON echo script is created.
+
+### Validate authored manifests
+
+`agentpm lint` checks the declared APDS contract and standalone semantic rules,
+with rule IDs and field paths in human and JSON output. New manifests require
+`"standard": {"id":"agentpm","version":"1.0.0"}`. A standalone pass does not
+establish dependency resolution, packaged-content validity or Runner readiness.
+
+For an older undeclared manifest, `agentpm lint --legacy path/to/agent.json`
+provides a read-only compatibility check using an in-memory inferred declaration.
+It reports `legacy-unverified`, not APDS conformance. To continue authoring, review
+a local editable copy, add the supported declaration explicitly and run ordinary
+lint again. New publication, package builds and local Knowledge/Memory builds
+require the explicit declaration; they have no legacy bypass.
+
+Historical published packages remain usable without rewriting their bytes.
+`agentpm new` declares the standard on its generated root. Older Templates may
+provide additional local Agent manifests without it; the completion notice names
+those files and explains how to upgrade them before strict authoring checks.
+See [lint and local manifest migration](https://www.agentpackagemanager.com/docs/v0.1/cli/lint#older-local-manifests).
 
 ### Workflow templates
 
@@ -429,6 +465,7 @@ can be reported through [GitHub Issues](https://github.com/agentpm-dev/cli/issue
 
 - Toolchain pinned via rust-toolchain.toml
 - CI checks: cargo fmt, cargo clippy -D warnings, cargo test
+- APDS corpus, actual CLI probes and validation-scope instructions: [development checks](scripts/README.md).
 
 ### Run locally:
 

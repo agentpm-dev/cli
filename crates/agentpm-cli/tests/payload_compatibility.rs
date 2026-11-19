@@ -25,6 +25,7 @@ impl Fixture {
         fs::write(root.join("tool.py"), "print('{}')\n").unwrap();
         let manifest = json!({
             "$schema":"https://raw.githubusercontent.com/agentpm-dev/cli/main/schemas/agentpm.manifest.schema.json",
+            "standard":{"id":"agentpm","version":"1.0.0"},
             "kind":"tool", "name":"payload-fixture", "version":"0.1.0",
             "description":"Tool payload compatibility fixture.",
             "entrypoint":{"command":if runtime == "python" {"python3"} else {"node"},"args":["tool.py"]},
@@ -51,11 +52,7 @@ impl Fixture {
             .env("XDG_DATA_HOME", self.0.join("home/data"))
             .env("AGENTPM_TELEMETRY", "0")
             .env("AGENTPM_BASE_URL", "http://127.0.0.1:1")
-            .args(["publish", "--token", "fixture-only", "--schema"])
-            .arg(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../schemas/agentpm.manifest.schema.json"),
-            );
+            .args(["publish", "--token", "fixture-only"]);
         command
     }
 

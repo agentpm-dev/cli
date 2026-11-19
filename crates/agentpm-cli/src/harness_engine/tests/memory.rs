@@ -4633,6 +4633,182 @@ fn memory_lifecycle_consolidate_writes_one_output_and_deletes_sources() {
     }));
 }
 
+fn assert_count_trigger_observations(capacity: bool, observations: usize) {
+    let temp = temp_workspace_dir(if capacity {
+        "capacity-edge-observations"
+    } else {
+        "record-count-edge-observations"
+    });
+    let package_root = temp.join("memory-package");
+    std::fs::create_dir_all(&package_root).unwrap();
+    let runtime = if capacity {
+        runtime_with_m15_capacity_transform_memory(&temp, &package_root)
+    } else {
+        runtime_with_m15_lifecycle_memory(&temp, &package_root)
+    };
+    let snapshot = runtime.memory_operations[0].clone();
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let events = InMemoryEventSink::default();
+    let handle = events.clone();
+    session.emitter.add_sink(Box::new(events));
+    let (value, _) = load_manifest_value(&package_root.join("agent.json")).unwrap();
+    let manifest = parse_memory_manifest(&value).unwrap();
+    let contracts =
+        crate::harness_runtime::memory::validate_and_load_memory_contracts(&package_root).unwrap();
+    let scope = BTreeMap::from([("user".into(), "user-123".into())]);
+    // The first observation sees capacity reached, or a count strictly above
+    // the record-count threshold of one. There is no earlier trigger history.
+    let initial_count = if capacity { 1 } else { 2 };
+    for index in 0..initial_count {
+        session
+            .local_memory_runtime()
+            .unwrap()
+            .write_record(LocalMemoryWriteRequest {
+                package: &snapshot.package,
+                package_version: &snapshot.package_version,
+                manifest: &manifest,
+                contracts: &contracts,
+                space: "notes",
+                record_type: "note",
+                scope: scope.clone(),
+                operation: LocalMemoryWriteOperation::Create,
+                record_id: None,
+                content: Some(json!({ "body": format!("preexisting note {index}") })),
+                provenance: json!({}),
+                now: Utc::now(),
+            })
+            .unwrap();
+    }
+    assert!(
+        session
+            .local_memory_runtime()
+            .unwrap()
+            .load_operation_state(
+                &snapshot.package,
+                &snapshot.package_version,
+                &snapshot.operation,
+                &scope,
+            )
+            .unwrap()
+            .is_none()
+    );
+    let loop_manifest = one_phase_memory_loop(None);
+    let phase = &loop_manifest.r#loop.phases[0];
+    let effective = EffectivePhase::from_phase(phase, &session.runtime_snapshot);
+    let mut state = PhaseExecutionState {
+        phase_execution_id: "edge-observation".into(),
+        phase_id: phase.id.clone(),
+        transcript: Vec::new(),
+        model_calls: 0,
+        accepted_actions: 0,
+        logical_tool_calls: 0,
+        structured_repairs: 0,
+        tool_call_repairs: 0,
+    };
+    session
+        .start_run("observe an already-satisfied count condition".into())
+        .unwrap();
+    session.active_run.as_mut().unwrap().current_phase_id = Some(phase.id.clone());
+    let mut model = ScriptedModelRuntime::new((0..initial_count).map(|index| ModelTurn {
+        assistant_content: Some(json!({ "summary": format!("derived {index}") }).to_string()),
+        actions: Vec::new(),
+        usage: RunUsage::default(),
+        finish_reason: Some("stop".into()),
+        provider_metadata: BTreeMap::new(),
+    }));
+    let mut hooks = NoopHookRuntime;
+    let mut custom_runtime = None;
+    let engine = HarnessEngine::new(loop_manifest.clone(), HarnessEngineOptions::new(limits()));
+    for _ in 0..observations {
+        engine
+            .evaluate_memory_lifecycle_after_write(
+                &mut session,
+                &effective,
+                &mut state,
+                phase,
+                &mut model,
+                &mut hooks,
+                &mut custom_runtime,
+                crate::harness_engine::memory_lifecycle::MemoryChangeContext {
+                    package: snapshot.package.clone(),
+                    space: "notes".into(),
+                    capacity_relief: false,
+                },
+            )
+            .unwrap();
+    }
+    let eligibility = handle
+        .events()
+        .iter()
+        .filter_map(|event| {
+            if event.event_type != HarnessEventType::MemoryTriggerEvaluated {
+                return None;
+            }
+            match &event.payload {
+                HarnessEventPayload::Lifecycle { fields, .. }
+                    if fields.get("operation") == Some(&json!(snapshot.operation)) =>
+                {
+                    fields.get("eligible").and_then(Value::as_bool)
+                }
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut expected = vec![false; observations];
+    expected[0] = true;
+    assert_eq!(eligibility, expected);
+    assert_eq!(model.requests.len(), initial_count);
+    for (space, record_type) in [("notes", "note"), ("summaries", "summary")] {
+        let records = session
+            .local_memory_runtime()
+            .unwrap()
+            .read_records(LocalMemoryReadRequest {
+                package: &snapshot.package,
+                package_version: &snapshot.package_version,
+                manifest: &manifest,
+                space,
+                scope: scope.clone(),
+                mode: LocalMemoryReadMode::Chronological,
+                record_id: None,
+                record_type: Some(record_type.into()),
+                filter: BTreeMap::new(),
+                query: None,
+                limit: None,
+                now: Utc::now(),
+            })
+            .unwrap();
+        assert_eq!(records.len(), initial_count);
+    }
+    let final_state = session
+        .local_memory_runtime()
+        .unwrap()
+        .load_operation_state(
+            &snapshot.package,
+            &snapshot.package_version,
+            &snapshot.operation,
+            &scope,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(!final_state.armed);
+    assert!(final_state.last_completed_at.is_some());
+    assert_eq!(final_state.last_observed_value, Some(initial_count as i64));
+}
+
+#[test]
+fn memory_lifecycle_count_triggers_start_armed_on_initial_boundary_observation() {
+    for capacity in [false, true] {
+        assert_count_trigger_observations(capacity, 1);
+    }
+}
+
+#[test]
+fn memory_lifecycle_count_triggers_do_not_refire_while_count_is_unchanged() {
+    for capacity in [false, true] {
+        assert_count_trigger_observations(capacity, 3);
+    }
+}
+
 #[test]
 fn memory_lifecycle_record_count_rearms_after_delete_success_drops_below_threshold() {
     let temp = temp_workspace_dir("m15-record-count-rearm-after-delete");
@@ -7198,14 +7374,25 @@ fn memory_lifecycle_external_invocation_runs_only_external_participating_operati
         })
         .unwrap();
 
-    let mut engine = HarnessEngine::new(
-        one_phase_memory_loop(None),
-        HarnessEngineOptions::new(limits()),
-    );
-    let effective = EffectivePhase::from_phase(
-        &one_phase_memory_loop(None).r#loop.phases[0],
-        &session.runtime_snapshot,
-    );
+    // Loop flags restrict direct Agent access, not this separately bound
+    // lifecycle operation's authority over its declared target.
+    let loop_manifest = one_phase_memory_loop(Some(LoopPhaseAccess {
+        tools: None,
+        knowledge: None,
+        memory: Some(LoopAccessMemory {
+            read: Some(false),
+            write: Some(false),
+        }),
+    }));
+    let mut engine = HarnessEngine::new(loop_manifest.clone(), HarnessEngineOptions::new(limits()));
+    let effective =
+        EffectivePhase::from_phase(&loop_manifest.r#loop.phases[0], &session.runtime_snapshot);
+    assert!(!effective.capability_catalog.iter().any(|descriptor| {
+        matches!(
+            descriptor.action_kind.as_str(),
+            "memory_read" | "memory_write"
+        )
+    }));
     assert!(effective.active_memory_operations.iter().any(|operation| {
         operation.operation == "external_delete_notes"
             && operation.trigger.get("type") == Some(&json!("external"))

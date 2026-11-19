@@ -1,0 +1,11 @@
+{
+  "kind": "persona",
+  "name": "minimal-agent",
+  "version": "1.0.0",
+  "description": "A portable Agent declaration.",
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  },
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json"
+}

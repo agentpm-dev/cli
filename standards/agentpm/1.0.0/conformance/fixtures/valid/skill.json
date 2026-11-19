@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "kind": "skill",
+  "name": "example",
+  "version": "0.1.0",
+  "description": "Starter AgentPM project",
+  "skill": {
+    "entrypoint": "SKILL.md"
+  },
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  }
+}

@@ -296,6 +296,7 @@ impl KnowledgeArgs {
 impl KnowledgeBuildArgs {
     pub async fn run(self) -> Result<()> {
         let manifest_path = resolve_manifest_path(&self.manifest)?;
+        crate::manifest::authoring::require_path(&manifest_path)?;
         let summary = execute_knowledge_build(&manifest_path, KnowledgeBuildMode::Write)?;
         print_build_summary(&summary);
 
@@ -306,6 +307,8 @@ impl KnowledgeBuildArgs {
 impl KnowledgeInspectArgs {
     pub async fn run(self) -> Result<()> {
         let cwd = std::env::current_dir().context("reading current directory")?;
+        let target = resolve_knowledge_target(&cwd, &self.target)?;
+        crate::manifest::authoring::require_local_inspect_path(&target.manifest_path)?;
         let rendered = inspect_knowledge(&cwd, &self)?;
         if self.json {
             println!("{}", serde_json::to_string_pretty(&rendered.json)?);
@@ -2491,7 +2494,11 @@ mod tests {
     }
 
     fn write_manifest(root: &Path, value: &Value) {
-        write_manifest_pretty_atomic(&root.join("agent.json"), value).unwrap();
+        let mut value = value.clone();
+        if value.is_object() && value.get("standard").is_none() {
+            value["standard"] = json!({"id":"agentpm","version":"1.0.0"});
+        }
+        write_manifest_pretty_atomic(&root.join("agent.json"), &value).unwrap();
     }
 
     fn assert_manifest_valid(path: &Path) {

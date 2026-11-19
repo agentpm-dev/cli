@@ -1,0 +1,51 @@
+{
+  "baseline_commit": "bfd7001d3f1d7bbc75efcacc3d05ff80208731af",
+  "canonical_schema": "standards/agentpm/1.0.0/manifest.schema.json",
+  "canonical_sha256": "f123150ff42cea4b29edb5076d7d70697269d20ad85118b4a07fe5af5cf2ab04",
+  "unchanged_definitions": 78,
+  "changes": [
+    {
+      "path": "/$id",
+      "before": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/heads/main/schemas/agentpm.manifest.schema.json",
+      "after": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json"
+    },
+    {
+      "path": "/properties/standard",
+      "before": {},
+      "after": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "version"],
+        "properties": {
+          "id": {
+            "const": "agentpm"
+          },
+          "version": {
+            "const": "1.0.0"
+          }
+        }
+      }
+    },
+    {
+      "path": "/properties/description",
+      "before": {
+        "type": "string"
+      },
+      "after": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "[^\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]"
+      }
+    },
+    {
+      "path": "/required",
+      "before": ["kind", "name", "version", "description"],
+      "after": ["kind", "name", "version", "description", "standard"]
+    },
+    {
+      "path": "/oneOf/0/required",
+      "before": ["tools"],
+      "after": "removed"
+    }
+  ]
+}

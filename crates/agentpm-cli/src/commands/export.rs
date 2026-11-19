@@ -74,6 +74,12 @@ impl ExportArgs {
             .output
             .clone()
             .unwrap_or_else(|| default_output_dir(project_dir, &resolved));
+        // Validate a generated manifest before creating files or replacing a
+        // previous export, including when --force was explicitly requested.
+        let manifest = self
+            .manifest
+            .then(|| skill_manifest(&resolved))
+            .transpose()?;
 
         if output_dir.exists() {
             if !self.force {
@@ -86,8 +92,8 @@ impl ExportArgs {
         }
 
         write_skill_scaffold(&output_dir, &resolved)?;
-        if self.manifest {
-            write_skill_manifest(&output_dir, &resolved)?;
+        if let Some(manifest) = manifest {
+            write_manifest_pretty_atomic(&output_dir.join("agent.json"), &manifest)?;
         }
         if !namespace_collisions.is_empty() {
             eprintln!(
@@ -206,10 +212,16 @@ fn write_skill_scaffold(output_dir: &Path, resolved: &ExportResolvedTool) -> Res
     Ok(())
 }
 
-fn write_skill_manifest(output_dir: &Path, resolved: &ExportResolvedTool) -> Result<()> {
+fn skill_manifest(resolved: &ExportResolvedTool) -> Result<Value> {
+    let name: String = slugify_tool_name(&resolved.package)
+        .chars()
+        .take(58)
+        .collect();
     let manifest = serde_json::json!({
+        "$schema": crate::manifest::DEFAULT_MANIFEST_SCHEMA_URL,
+        "standard": {"id": "agentpm", "version": "1.0.0"},
         "kind": "skill",
-        "name": format!("{}-skill", slugify_tool_name(&resolved.package)),
+        "name": format!("{name}-skill"),
         "version": "0.1.0",
         "description": format!(
             "Starter skill scaffold for using the {} tool through AgentPM.",
@@ -235,8 +247,8 @@ fn write_skill_manifest(output_dir: &Path, resolved: &ExportResolvedTool) -> Res
             }
         }
     });
-    write_manifest_pretty_atomic(&output_dir.join("agent.json"), &manifest)
-        .with_context(|| format!("writing {}", output_dir.join("agent.json").display()))
+    super::init::validate_scaffold_manifest(&manifest)?;
+    Ok(manifest)
 }
 
 fn remote_export_fallback_allowed(err: &anyhow::Error) -> bool {
@@ -841,6 +853,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_generated_manifest_preserves_existing_export_with_force() {
+        let root = TestProject::new();
+        root.write_lock(lock_for("@zack/echo-json", "0.1.0"));
+        root.write_tool(
+            "@zack/echo-json",
+            "0.1.0",
+            rich_tool_manifest("python3", "0.1.0"),
+            python_echo_script(),
+        );
+        let output = root.path().join("exported");
+        ExportArgs {
+            skill: "@zack/echo-json@0.1.0".to_string(),
+            output: Some(output.clone()),
+            manifest: true,
+            force: false,
+            token: None,
+        }
+        .run_with_dir(root.path(), TEST_BASE_URL, None)
+        .await
+        .unwrap();
+        fs::write(
+            output.join("SKILL.md"),
+            "Authored instructions: keep these.\n",
+        )
+        .unwrap();
+        fs::write(
+            output.join("references/operator-notes.txt"),
+            b"keep\0\xff\n",
+        )
+        .unwrap();
+        let previous: Vec<_> = [
+            "SKILL.md",
+            "agent.json",
+            "references/tool-contract.md",
+            "references/examples.md",
+            "references/operator-notes.txt",
+            "scripts/run.sh",
+        ]
+        .into_iter()
+        .map(|name| (name, fs::read(output.join(name)).unwrap()))
+        .collect();
+
+        // The legacy installed-tool reader accepts this reference. Only the
+        // generated Skill's APDS tools[0].name rejects its over-length scope.
+        let package = format!("@{}/echo-json", "a".repeat(65));
+        let spec = format!("{package}@0.1.0");
+        root.write_lock(lock_for(&package, "0.1.0"));
+        root.write_tool(
+            &package,
+            "0.1.0",
+            rich_tool_manifest("python3", "0.1.0"),
+            python_echo_script(),
+        );
+        let parsed = parse_tool_spec(&spec).unwrap();
+        assert_eq!(parsed.package, package);
+        resolve_installed_tool(root.path(), &parsed).unwrap();
+
+        let err = ExportArgs {
+            skill: spec,
+            output: Some(output.clone()),
+            manifest: true,
+            force: true,
+            token: None,
+        }
+        .run_with_dir(root.path(), TEST_BASE_URL, None)
+        .await
+        .unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("Cannot create package"), "{message}");
+        assert!(message.contains("/tools/0"), "{message}");
+        assert!(message.contains("APDS-ID-003"), "{message}");
+        for (name, bytes) in previous {
+            assert_eq!(
+                fs::read(output.join(name)).unwrap(),
+                bytes,
+                "changed {name}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn writes_manifest_derived_content() {
         let root = TestProject::new();
         root.write_lock(lock_for("@zack/echo-json", "0.1.0"));
@@ -965,6 +1058,44 @@ mod tests {
             .expect("detect namespace collisions");
 
         assert_eq!(collisions, vec!["@acme/echo-json"]);
+    }
+
+    #[tokio::test]
+    async fn exported_manifest_handles_maximum_local_name_and_declares_standard() {
+        let root = TestProject::new();
+        let name = "a".repeat(64);
+        let package = format!("@zack/{name}");
+        root.write_lock(lock_for(&package, "0.1.0"));
+        root.write_tool(
+            &package,
+            "0.1.0",
+            rich_tool_manifest("python3", "0.1.0"),
+            python_echo_script(),
+        );
+        let output = root.path().join("exported");
+        ExportArgs {
+            skill: format!("{package}@0.1.0"),
+            output: Some(output.clone()),
+            manifest: true,
+            force: false,
+            token: None,
+        }
+        .run_with_dir(root.path(), TEST_BASE_URL, None)
+        .await
+        .unwrap();
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(output.join("agent.json")).unwrap()).unwrap();
+        assert_eq!(manifest["name"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            manifest["standard"],
+            serde_json::json!({"id":"agentpm","version":"1.0.0"})
+        );
+        assert_eq!(
+            manifest["$schema"],
+            crate::manifest::DEFAULT_MANIFEST_SCHEMA_URL
+        );
+        assert_eq!(manifest["tools"][0]["name"], package);
+        super::super::init::validate_scaffold_manifest(&manifest).unwrap();
     }
 
     #[tokio::test]

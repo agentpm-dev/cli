@@ -38,6 +38,13 @@ jobs:
           python3 scripts/check_payload_formats.py --check
           python3 -m unittest discover -s scripts -p test_payload_formats.py -v
 
+      - name: APDS corpus, schema, semantic reference and bundle drift checks
+        run: |
+          python3 -m pip install -r standards/agentpm/1.0.0/conformance/requirements.txt
+          python3 scripts/check_apds_schema.py
+          python3 standards/agentpm/1.0.0/conformance/run.py
+          python3 -m unittest discover -s scripts -p 'test_apds_*.py' -v
+
       - name: Release and signing contract parity checker tests
         run: |
           python3 -m unittest discover -s scripts -p test_release_contract.py -v
@@ -50,6 +57,14 @@ jobs:
 
       - name: test
         run: cargo test --all
+
+      - name: Rust APDS results against shared expectations
+        run: |
+          AGENTPM_APDS_RESULTS=target/apds-rust-results.json cargo test -p agentpm-cli --test apds_validation shared_corpus_matches_actual_rust_validation
+          python3 standards/agentpm/1.0.0/conformance/run.py --results target/apds-rust-results.json
+
+      - name: AgentPM positive APDS fixture acceptance
+        run: python3 scripts/check_apds_cli_fixtures.py --cli target/debug/agentpm
 
   platform-targets:
     if: github.event_name == 'push'

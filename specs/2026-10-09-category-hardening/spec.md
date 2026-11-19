@@ -6,6 +6,8 @@ independently reviews.
 **Date:** 2026-10-09  
 **Companions:** [`tasks.md`](tasks.md), [`test-plan.md`](test-plan.md), [`review-checklist.md`](review-checklist.md).
 
+**M1A implementation evidence (2026-11-13):** [Existing contract inventory](m1a-contract-inventory.md), [schema source index](m1a-schema-index.md), and [local verification](m1a-verification.md). This baseline records current behavior and reconciliation items; it does not freeze APDS or supersede the requirements below.
+
 > **North star:** Someone who encounters AgentPM without its creator present understands what an **Agent
   Package** is, why it exists, what AgentPM manages, how the portable contract works, and how to try or
   create one.
@@ -231,6 +233,10 @@ advertisement for no product benefit.
 
 ### 2. APDS v1.0.0 — authoritative contract bundle (strong preferred design)
 
+**M1B implementation evidence (2026-11-14):** [Canonical structural candidate](../../standards/agentpm/1.0.0/README.md), [before/after schema diff](m1b-structural-diff.json), and [verification/decision record](m1b-verification.md). Semantic rules and the complete conformance corpus remain with M1C/M2A; this is not a publication claim.
+
+**M1C implementation evidence (2026-11-14):** [Semantic reference](../../standards/agentpm/1.0.0/semantics.md), [rule index](../../standards/agentpm/1.0.0/conformance/rule-index.md), [A–T case map](../../standards/agentpm/1.0.0/conformance/semantic-cases.md), [chapter verification](m1c-verification.md) and [reconciliation decisions](m1c-reconciliation.md). User confirmed independent contract/readability review passed with no remaining findings on 2026-11-14; M1C is complete. The initial M2A fixture review prerequisite was subsequently satisfied by the user-confirmed sign-off recorded below; publication remains separate.
+
 **REQUIRED:** Publish a discoverable, versioned immutable **AgentPM APDS v1.0.0** specification containing
 the same JSON structural contract as the current schema **plus** normative semantic rules and executable
 cross-implementation conformance expectations.
@@ -314,8 +320,10 @@ now satisfied; its M1B/M2B dependencies and other acceptance requirements are
 not waived.** The publication record is in
 [`Stage 1 Release Band 5`](../2026-10-06-immediate-hardening/tasks.md#release-band-5-cli-authoring-and-messaging-quality).
 
-**REQUIRED, and sequenced before M3A.** The root schema is `additionalProperties: false`, so every CLI
-already in users' hands hard-rejects a manifest carrying `standard`: verified on 0.1.33, `agentpm lint`
+**Sequencing clarification — 2026-11-18:** M4B owns Registry upgrade errors and matching feature-local MDX migration/update guidance. Shared package-detail CLI-version guidance lands with M9B/M10A's APDS/detail presentation. Do not introduce APDS-facing web UI in M4B or imply a publishing compatibility floor invalidates historical installations or establishes Runner readiness.
+
+**REQUIRED, and sequenced before M3A.** The root schema is `additionalProperties: false`, so pre-tolerance
+clients hard-reject a manifest carrying `standard`: verified on 0.1.33, `agentpm lint`
 returns `[ERROR] Additional properties are not allowed ('standard' was unexpected)` and exits 1. The
 affected commands are the schema-validating ones — `lint`, `publish` preflight, `new`, `export`,
 `knowledge build`, `memory build`. `install`, `harness`, `run` and `serve` perform no schema validation and
@@ -347,9 +355,9 @@ branch at implementation time:
 | Path | Behavior | Preserves unknown fields |
 |---|---|---|
 | `agentpm install <pkg>` (`commands/install.rs`) | writes back the loaded `manifest_value` after mutating dependency entries | **Yes** |
-| `knowledge build --write` (`commands/knowledge.rs`) | loads the Value, mutates only the `knowledge` object, writes the whole Value | **Yes** |
-| `memory build` (`commands/memory.rs`) | reads the manifest; writes only `.agentpm/memory/build.json` | n/a — never rewrites `agent.json` |
-| `agentpm export` (`commands/export.rs`) | builds a **fresh** `json!` Skill scaffold | n/a — but **must be updated to emit `standard`**, since it generates an `agent.json` and the init-focused scaffold tasks do not name it |
+| `knowledge build` (`commands/knowledge.rs`) | loads the Value, mutates only the `knowledge` object, writes the whole Value by default; there is no `--write` flag | **Yes** |
+| `memory build` (`commands/memory.rs`) | reads the manifest; writes `memory/contracts/` and `memory/build.json` | n/a — never rewrites `agent.json` |
+| `agentpm export` (`commands/export.rs`) | builds a **fresh** `json!` Skill scaffold | n/a — emit `standard` in M3A, not in the tolerance milestone |
 | `workspace.rs` metadata writers | typed structs → `to_value` | **No** — unknown fields dropped. These are workspace/template metadata files, not manifests; keep `standard` out of them |
 
 `serde_json` is pinned **without** `preserve_order` deliberately (`crates/agentpm-cli/Cargo.toml`: publish
@@ -359,7 +367,8 @@ keys.
 
 **Minimum CLI version.** Once the tolerance release is out, the Registry's outdated-client rejection and the
 package detail page MUST name a concrete minimum version. An "upgrade your CLI" error without a version
-floor is not actionable.
+floor is not actionable. Registry errors and matching MDX upgrade instructions are M4B;
+package-detail presentation is M9B/M10A, alongside the later APDS/detail UI.
 
 **New authored manifest selector:**
 
@@ -1011,7 +1020,7 @@ A Runner may allow an authorized Tool, such as a shell-execution Tool, to invoke
     - `record_count` declares eligibility when the referenced Memory space reaches the specified record-count `threshold`.
     - `capacity` declares eligibility when the referenced Memory space reaches its declared capacity.
     - Trigger references must identify valid spaces where applicable. A capacity trigger must refer to a space with a meaningful declared capacity.
-    - Define trigger eligibility independently from the internal mechanism used to detect the condition or schedule execution.
+    - Define trigger eligibility independently from the internal mechanism used to detect the condition or schedule execution. Preserve Phase 7B’s observable edge/rearm semantics for record-count/capacity and state-dependent baseline/completion-based reset for intervals; polling, yield points, storage and failure cooldowns remain implementation choices.
     - Do not prescribe polling frequencies, timer implementations, background worker architectures, or trigger-dispatch algorithms.
     - Clarify that trigger eligibility does not necessarily imply immediate execution, successful completion, or availability of the required backend.
     - Preserve the distinction between a Blueprint's trigger definition, an Agent's operation binding scope, and a Runner's ability to invoke or schedule the operation.
@@ -1050,6 +1059,8 @@ A Runner may allow an authorized Tool, such as a shell-execution Tool, to invoke
 - Reconcile the exact Memory fields, optionality, operation variants, record-schema requirements, and cross-reference rules against the existing manifest schema and Phase 6C/7A decisions before finalizing APDS v1.0.0.
 - Treat the established distinction between **direct space bindings and operation bindings** as a fixed semantic requirement. This includes the ability of an eligible operation to target valid spaces that are not directly bound in the active phase. Do not inadvertently weaken or reverse this behavior while formalizing the standard.
 - Reconcile the exact interaction between Loop Memory read/write policy and Blueprint lifecycle operations. Do not assume that a Loop's direct-space restrictions automatically invalidate an otherwise valid operation target, and do not invent an unrestricted operation execution bypass.
+
+  **M1C review correction, 2026-11-14:** user reversed the earlier proposed tightening after review identified Phase 7B’s explicit direct-access-only rule. Loop Memory read/write flags constrain direct Agent access, not the internal reads/writes of separately bound lifecycle operations. Operations remain governed by their binding scope, triggers, Blueprint policies, runtime authorization and backend support; their targets need no direct binding and gain no direct Agent exposure. Preserve and verify this existing authority boundary in M6B; no prohibition-enforcement runtime change is requested.
 - Distinguish trigger eligibility, operation participation, invocation, and execution. In particular, preserve externally triggered operations as explicitly invoked capabilities rather than treating their declaration as permission for autonomous background execution.
 - Reconcile omitted policy values, transform output modes, source handling, provenance, and derived-record deletion behavior against the current contract. Do not automatically elevate Harness-specific scheduling, retry, or cleanup defaults into normative APDS requirements.
 - Review the currently supported governance annotations, including their `x-agentpm-*` names, and distinguish which have defined portable meanings from those that are descriptive or dependent on implementation capabilities. Do not claim universal privacy or security guarantees without an explicit contract.
@@ -1202,6 +1213,8 @@ Not every case requires all three forms of verification. Conformance fixtures sh
 | **O — Implicit Loop outcome** | Phase `research` omits explicit `outcomes`. A transition declares `from: "research"`, `on: "complete"`, and a valid destination. | The Loop otherwise satisfies its structural and semantic requirements. | The phase has the APDS-defined implicit outcome `complete`. The transition refers to that outcome validly. A Runner may choose how phase completion is determined but must preserve the declared outcome and transition meaning. |
 | **P — Conformance versus runtime support** | An Agent Package has a valid Knowledge, Memory, or other Component dependency. | The selected Runner cannot provide a required runtime capability or backend. | Artifact conformance and Runner compatibility/readiness remain separate determinations. A missing runtime capability does not retroactively invalidate an otherwise conformant authored artifact. |
 
+**M1C review coverage addition:** the published [semantic-case map](../../standards/agentpm/1.0.0/conformance/semantic-cases.md) supplements A–P with Q–T for MEM-008 initial armed eligibility, unchanged-count no-refire, rearming below the boundary and interval dormancy/baseline/reset. These are Runner observations; no validator is required to execute them.
+
 **Required fixture coverage and interpretation rules**
 
 - Create actual schema-valid manifests for all positive cases, and deliberately invalid manifests or resolved graphs for negative cases.
@@ -1268,6 +1281,9 @@ strict. Do not silently permit a bypass using an old publish-client endpoint.
 
 #### APDS conformance fixture and CI execution design
 
+**M2A completion evidence (2026-11-14):** [Shared corpus and quickstart](../../standards/agentpm/1.0.0/conformance/README.md), [validation inputs/results](../../standards/agentpm/1.0.0/conformance/fixture-index.json), [separate Runner observations](../../standards/agentpm/1.0.0/conformance/runner-observations.json) and [verification/decision record](m2a-verification.md). The generic checks are portable; AgentPM-specific acceptance probes remain outside the standard bundle. User confirmed independent corpus review complete with no remaining findings on **2026-11-14**; **M2A is complete**. Hosted CI remains unverified; M2B/M2C semantic parity and public publication are not claimed.
+
+
 Use a **single fixture corpus** that neither Rust nor Python is allowed to customize to hide differences. A
 fixture should declare input file(s), validation level, expected status, expected violated rule IDs and
 paths where meaningful. Good fixtures include **paired positives and negatives** (one rule changed at a
@@ -1310,6 +1326,8 @@ Before freezing v1.0.0, Codex and Claude must explicitly resolve these potential
 - Any future standard-v1.0.1 change needs an intentional compatibility policy; do not retroactively rewrite
   v1.0.0 fixtures.
 
+
+**M2B completion evidence (2026-11-14):** [Implementation/verification and corrections](m2b-verification.md), [developer commands/capability matrix](../../scripts/README.md), and explicit Rust CLI validation modes cover the shared corpus without executing Runner behavior. Graph/package context is caller-supplied; the validator does not resolve from the Registry. M3B retains ordinary authoring rollout, and M2C retains independent Python validation/parity. User confirmed Claude review passed with no findings and all CLI hosted CI jobs passed on **2026-11-14**; **M2B is complete**.
 
 ### 4. CLI init/lint semantics and migration
 
@@ -1480,6 +1498,8 @@ explicit minimum-CLI rollout, or justify a format bump under D06. See the
 [Stage 1 lockfile compatibility note](../2026-10-06-immediate-hardening/spec.md#21-lockfile-evolution).
 Do not remove strict field rejection without protecting read-modify-write and
 resolve-plan regeneration from losing unknown state or ignoring required semantics.
+
+**D06 selected policy — 2026-11-15:** [Compatibility decision and measured evidence](d06-lockfile-compatibility.md) settle this pre-freeze requirement: retain extended v4 with a documented minimum-compatible-CLI rollout, strict CLI readers and forward-version rejection. APDS metadata on packages or represented local roots requires v4; supported legacy inference is recorded distinctly rather than suppressed. Published SDK 0.1.17 tolerates additional lock fields while rejecting unknown versions. Reader/writer implementation, concrete release floor and rollout tests remain M5A; they are not prerequisites to recording the compatibility policy.
 
 Recommended conceptual locked entry (field names/placement flexible, not a guaranteed current serializer):
 
@@ -2465,9 +2485,9 @@ altering an AGREED requirement. The complete list is retained so none are silent
 | **D01** | APDS rule organization | **One concise, human-readable `semantics.md`** organized by semantic domain with short normative rules, stable IDs and linked fixtures; no bespoke DSL. `README.md` is the approachable entry point. | Split if maintainability clearly benefits; document canonical normative index, non-duplication and fixture consistency. Preserve complete guarantees without bloated rule templates or duplicated schema prose; require independent editorial review. |
 | **D02** | APDS contract directory and schema migration | **`cli/standards/agentpm/1.0.0/`** authoritative, versioned copy of existing schema, old schema path compatibility alias/generated output. | Choose repo/build mechanism after examining CLI bundling and Registry vendoring; prove no drift or live-fetch dependency. |
 | **D03** | Conformance fixtures and outputs | **Valid/invalid/resolved fixture directories** + expected rule/status/JSON-path results; standalone/resolved distinction. | JSONL/index alternative permitted if ergonomic; verify Rust/Python independent parity and CI integration. |
-| **D04** | Legacy authored manifests / lint | Strict by default for newly authored; optional explicit upgrade/legacy compatibility mode if useful. | Decide UX and error messages without opening a default bypass; document old local authoring handling. |
-| **D05** | Registry staged validation and release gate | Validate embedded manifest at finalize, compare metadata, atomic rejection; phased migration of legacy clients. | Adjust init-time validation as useful, define queued-session cutoff, prove cannot bypass via custom client. |
-| **D06** | Lockfile format | **Retain Stage 1 `agent.lock` v4**, carry standard+explicit/inferred provenance with forward-version safeguards. | Only justify v5 if v4 cannot safely express facts; document compatibility and migration evidence. |
+| **D04** | Legacy authored manifests / lint | Strict by default for newly authored; optional explicit upgrade/legacy compatibility mode if useful. | [Selected 2026-11-16](m3b-verification.md#d04-explicit-read-only-legacy-preview): strict authored default; opt-in read-only `lint --legacy` uses the same APDS evaluator, labels inferred input `legacy-unverified`, never writes or authorizes publish. User confirmed Claude review passed on 2026-11-16. |
+| **D05** | Registry staged validation and release gate | Validate embedded manifest at finalize, compare metadata, atomic rejection; phased migration of legacy clients. | [Selected 2026-11-17](m4a-verification.md#d05-authoritative-staged-validation-separately-activated): both finalize paths inspect verified actual bytes and applicable scopes; server-owned enforcement defaults off until M4B cutover. Historical dependency inference remains incomplete. User confirmed full Claude review passed with no remaining findings on 2026-11-17; all real-local manual tests passed on 2026-11-18, completing M4A. Production activation/capacity remain M4B. [M4B builder selection 2026-11-18](m4b-verification.md#d05-finalize-time-policy-without-grandfathering-pending-uploads): finalize-time no-grace policy, fleet drain/redeploy boundary, completed receipts preserved; migration/security design approved on local evidence, and full M4B review confirmed complete with no new findings by the user on 2026-11-18; all PR CI confirmed passed on 2026-11-18, with CLI build/four Resolver Contract targets independently verified; post-merge push-only CI, production findings, capacity and separate activation approval remain pending. |
+| **D06** | Lockfile format | **Retain Stage 1 `agent.lock` v4**, carry standard+explicit/inferred provenance with forward-version safeguards. | [Selected 2026-11-15](d06-lockfile-compatibility.md): extended v4 plus minimum-CLI rollout; strict CLI rejection and SDK 0.1.17 field/version asymmetry verified. Concrete reader/writer and migration evidence remain M5A. |
 | **D07** | Versioned standard web route | **`/standards/agentpm/1.0.0`**, pinned catalog and immutable content. | Build-generated page vs server-side trusted bundle, route nuance; no untrusted runtime fetch. |
 | **D08** | Homepage design | Problem/value → real Agent Package composition → how management works → components/templates → pathways, layered existing brand. | Layout/copy/animation details; mockups are conceptual and existing design tokens authoritative. |
 | **D09** | Agent Package Card visual architecture | Shared data model and responsive card variants for hero/Explore/detail/OG, real metadata only. | One component vs composable primitives, based on existing Stage 1 shell/OG architecture. |
@@ -2480,7 +2500,7 @@ altering an AGREED requirement. The complete list is retained so none are silent
 | **D16** | README-embeddable Agent Package Card | Reuse OG/static image infrastructure; evaluate pinned/latest semantics, security, caching, access. | Investigation deliverable mandatory; decide implementation or defer with estimated cost, prototype, Claude sign-off. |
 | **D17** | Component/Template Health UX | Consistent shared evidence semantics with kind-specific content, preserve specialized detail views. | Shared API/component extension model vs per-kind adapters; no uniform meaningless checklist. |
 | **D18** | Category explainer and SEO copy | Product-centered homepage + deeper `/agent-package-management` page; no inflated category claims. | Final page structure/copy/metadata; verify current SEO contracts and user comprehension. |
-| **D19** | APDS declaration/status schema in Registry/lock/UI | Distinct `declared` vs `legacy_inferred`, conformance level/status, source evidence; avoid conflation. | Field names and serializer shape coordinated across API, CLI, Harness, Health and UI; backward-compatible rollout. |
+| **D19** | APDS declaration/status schema in Registry/lock/UI | Distinct `declared` vs `legacy_inferred`, conformance level/status, source evidence; avoid conflation. | [Registry selection 2026-11-17](m4a-verification.md#d19-declaration-provenance-and-scoped-evidence): nullable version identity/origin observed even with enforcement off, plus separate scoped validation JSON; historical rows remain null and inferred dependencies are not certified. Resolve/lock/Harness/Health/UI integration remains with its owning milestones. [M4B history policy](m4b-verification.md#d19-observed-declarations-versus-inferred-historical-compatibility): explicit verified-archive observation and atomic missing-metadata backfill; absent declarations are inferred without certification, actual declarations retained, immutable references unchanged. Production execution remains pending. User confirmed full Claude review passed with no remaining findings on 2026-11-17 and real-local manual tests passed on 2026-11-18, completing M4A. |
 | **D21** | Mockup adoption scope — what to take from the `-layered` images and what to leave | An explicit **adopt / adapt / reject** pass over every global element and notable styling treatment, decided and signed off **before** the shell is built. Layout and structure are the mockups' strongest contribution; styling is adopted selectively, never by default. Copy, all displayed values, the shipped per-kind color assignment and the generated per-package identity gradient are **excluded from the review** and preserved as-is. | Codex proposes the classification with a one-line reason per element and flags anything where the mockup clearly beats the current treatment; **Zack signs off before implementation**. Claude checks that what shipped matches the signed list, not the images. |
 | **D20** | Runner APDS capability advertisement | Reuse existing Harness machine initialization/preflight and SDK wrappers; don't invent a separate protocol. | Exact surface/serialization; parity tests across TUI/headless/machine SDK and standard-version errors. |
 
@@ -2531,4 +2551,3 @@ altering an AGREED requirement. The complete list is retained so none are silent
   [`assets/explore-layered.png`](assets/explore-layered.png). The three `-layered` images are the
   **authoritative target for structure and layout** across the whole site (see §9.1); the existing live
   website wins on brand styling, design tokens and real facts.
-

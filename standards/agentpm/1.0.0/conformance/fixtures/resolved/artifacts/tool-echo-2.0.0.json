@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/agentpm-dev/cli/refs/tags/apds-v1.0.0/standards/agentpm/1.0.0/manifest.schema.json",
+  "kind": "tool",
+  "name": "echo",
+  "version": "2.0.0",
+  "description": "Starter AgentPM project",
+  "runtime": {
+    "type": "python",
+    "version": "3.11"
+  },
+  "files": ["main.py"],
+  "entrypoint": {
+    "command": "python3",
+    "args": ["main.py"]
+  },
+  "inputs": {},
+  "outputs": {},
+  "standard": {
+    "id": "agentpm",
+    "version": "1.0.0"
+  }
+}
