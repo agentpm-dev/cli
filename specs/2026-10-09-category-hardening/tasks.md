@@ -472,20 +472,22 @@ The freeze records approval of the reviewed candidate. Before publication, delib
 
 **Implementation checklist**
 
-- [ ] Inventory real pre-APDS published versions and immutable digest/signature references.
-- [ ] Define server-controlled enforcement boundary for each new finalized release.
-- [ ] Choose and record in-flight session restart/grace policy; do not trust client timestamp.
-- [ ] Make outdated CLI error actionable by naming the **concrete minimum CLI version, 0.1.36** — the M1A.1 tolerance release whose publication was operator-confirmed on 2026-10-22 in Stage 1 Release Band 5 / Release Band 7 — not a generic "upgrade your CLI". Surface the same floor on the package detail page's install guidance. An upgrade error without a version floor is not actionable.
-- [ ] Preserve already published manifest bytes and stored integrity values exactly.
-- [ ] Represent effective legacy `agentpm/1.0.0` interpretation as **inferred**, not verified.
-- [ ] Require explicit standard for new versions of historically legacy package identities.
-- [ ] Test sessions created before deployment and finalized afterward.
-- [ ] Test old released version install/lookup and its new APDS-compliant successor side by side.
-- [ ] Exercise rollback on rejected finalize and ensure no phantom discoverable package exists.
-- [ ] Add migration/verification script if backend metadata needs backfill; never re-sign old tar.
-- [ ] Document deployment order of CLI, Registry and public UI to avoid temporary false success.
-- [ ] Before enabling enforcement, measure gate-off/gate-on publication of the most dependency-heavy realistic Agent Package and Template, with representative large artifacts, repeated publications and the planned concurrent finalize load. Record root/dependency GET counts, cumulative compressed/expanded bytes, finalize latency, peak memory/temp-disk use and cleanup against actual worker/proxy timeouts and disk headroom; document an acceptable operating envelope or mitigation before activation. Count/manifest-metadata limits are not a request-wide artifact-byte budget. See T-PUB-10 and [M4A capacity findings](m4a-verification.md#capacity-evidence-required-before-m4b-activation).
-- [ ] Have Claude approve migration/security matrix before server enforcement is enabled.
+- [ ] Inventory real pre-APDS published versions and immutable digest/signature references. **Local database inventory complete (2026-11-18):** 113 versions, 16 pending session rows, captured immutable/signature references in ignored `target/m4b/history-local.json`. Production inventory/archive inspection runs during [Release Band 1's ordered production rollout](#ordered-production-rollout), after deploying the audit command with enforcement off and before activation; null rows are not automatically classified as legacy.
+- [x] Define server-controlled enforcement boundary for each new finalized release.
+- [x] Choose and record in-flight session restart/grace policy; do not trust client timestamp.
+- [x] Make outdated CLI error actionable by naming the **concrete minimum CLI version, 0.1.36** — the M1A.1 tolerance release whose publication was operator-confirmed on 2026-10-22 in Stage 1 Release Band 5 / Release Band 7 — not a generic "upgrade your CLI". Document the same floor and concrete upgrade steps in feature-local `agentpm-api/docs` MDX. Package-page guidance is owned by M9B/M10A alongside their APDS/detail work; M4B adds no APDS-facing web UI. An upgrade error without a version floor is not actionable.
+- [x] Preserve already published manifest bytes and stored integrity values exactly.
+- [x] Represent effective legacy `agentpm/1.0.0` interpretation as **inferred**, not verified.
+- [x] Require explicit standard for new versions of historically legacy package identities.
+- [x] Test sessions created before deployment and finalized afterward.
+- [x] Test old released version install/lookup and its new APDS-compliant successor side by side.
+- [x] Exercise rollback on rejected finalize and ensure no phantom discoverable package exists.
+- [x] Add migration/verification script if backend metadata needs backfill; never re-sign old tar.
+- [x] Document deployment order of CLI, Registry and public UI to avoid temporary false success.
+- [ ] Before enabling enforcement, measure gate-off/gate-on publication of the most dependency-heavy realistic Agent Package and Template, with representative large artifacts, repeated publications and the planned concurrent finalize load. Record root/dependency GET counts, cumulative compressed/expanded bytes, finalize latency, peak memory/temp-disk use and cleanup against actual worker/proxy timeouts and disk headroom; document an acceptable operating envelope or mitigation before activation. Count/manifest-metadata limits are not a request-wide artifact-byte budget. Execute this activation gate during [Release Band 1's ordered production rollout](#ordered-production-rollout), using an isolated environment matching intended production resources. See T-PUB-10 and [M4A capacity findings](m4a-verification.md#capacity-evidence-required-before-m4b-activation).
+- [x] Have Claude approve migration/security matrix before server enforcement is enabled. **Design/local-evidence approval granted**, as supplied by the user on 2026-11-18. This approval is separate from [Release Band 1 step 7](#ordered-production-rollout), which remains pending production history findings and the measured capacity envelope. The stored-versus-artifact guard finding has been addressed by six passing regression cases, each also failing when the guard is disabled; The user subsequently confirmed full Claude review complete with no new findings on 2026-11-18. Production activation approval is still separate and pending.
+
+**Builder handoff (2026-11-18):** [M4B implementation, compatibility matrix and verification](m4b-verification.md) records the no-grace finalize-time policy, concrete 0.1.36 publisher guidance, explicit artifact-derived history audit/backfill command and local regression evidence. Full Registry suite: **1,071 passed, 7 unrelated opt-in skips, 347 subtests passed**. No production changes or activation occurred. Claude's migration/security design approval is granted, and the user confirmed full Claude review complete with no new findings on 2026-11-18. Hosted CI, real production inventory/inspection, the measured capacity envelope and the later activation approval remain outstanding. M4B is **not yet complete**.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -512,6 +514,34 @@ This gives AgentPM one pinned APDS v1.0.0 definition derived from its current sc
 - [ ] Confirm all eight newly authored kinds lint, default init is Agent, explicit Tool scaffold remains valid.
 - [ ] Run custom-client server bypass attempts and in-flight/legacy/new-version migration matrix.
 - [ ] Obtain Claude review of APDS rule coverage, schema/version immutability, security and rollout order.
+
+### Ordered production rollout
+
+These are **Release Band 1 operator gates**. Complete code review and hosted CI
+before deploying. Production history inspection requires the new Registry audit
+command to be deployed in Render; it is required **before enforcement activation**,
+not before that initial deployment. Keep enforcement off through inspection and
+capacity verification. The band remains open until the rollout and smoke checks
+below are evidenced. The M4B checklist references these same operational gates;
+local test results do not satisfy them.
+
+Follow this order; the isolated capacity work may run in parallel after the
+reviewed build and intended production configuration are available:
+
+1. [ ] Confirm independent review and all required hosted CLI/Registry CI pass for the exact release revisions, including the migration/security matrix and both publication protocols.
+2. [ ] Complete the immutable APDS tag/raw-schema verification above, then release the matching authoring CLI and confirm it is installable through the supported distribution channels. Keep **0.1.36** documented as the already-shipped declaration-tolerance floor; recommend the current release for authoring checks.
+3. [ ] Deploy the reviewed Registry code and matching feature-local MDX with **`APDS_PUBLISH_ENFORCED=false`**. Verify the deployed revision and setting, normal historical lookup/install behavior, and availability of `registry audit-apds-history` in the production Render shell from the directory containing `run.py`. This deploy makes inspection possible; it does not activate enforcement. APDS-facing web presentation remains with M9B/M10A.
+4. [ ] From that production shell, run `python -m flask --app run registry audit-apds-history --out history-before.json`, then `python -m flask --app run registry audit-apds-history --inspect-artifacts --out history-inspected.json` (or reviewed `--version-id` batches). Retain the production version/digest/signature references and pending-session inventory. Inspect actual archives before deciding declared versus inferred provenance; do not treat null metadata as proof of legacy. Keep the private reports out of Git.
+5. [ ] Review production discrepancies and proposed metadata changes. If backfill is needed, deliberately run the reviewed `--inspect-artifacts --apply` command with a fresh report filename, then inspect again to confirm no missing backfill remains in the selected batch. Compare immutable version/artifact/signature/attestation fingerprints before/after; no archives or signatures may be rewritten. Resolve blockers before activation; a no-change result is valid when no backfill is required.
+6. [ ] Satisfy **T-PUB-10** on an isolated deployment matching intended production compute, workers, timeouts and disk: both protocols, gate off/on, the realistic Agent Package/Template graphs, representative large artifacts, repeated publications and planned concurrency. Record GET counts/bytes, cumulative extraction work, latency, peak worker RSS/temp-disk use and cleanup; review an acceptable operating envelope or verify mitigation. Maximum-load experiments are not required on the live Registry.
+7. [ ] Obtain Claude's activation approval against the production history findings, migration/security matrix and measured capacity envelope. Confirm publisher upgrade guidance and the no-grace pending-session policy are ready. Record the release revisions and retain the evidence before changing the flag.
+8. [ ] Pause publishing, drain running finalize requests, and redeploy/restart **all** Registry workers with **`APDS_PUBLISH_ENFORCED=true`**. Verify old workers are gone before resuming publishing; record server UTC activation time, deployment ID and configuration evidence. Pending sessions receive finalize-time validation regardless of age; compliant unexpired sessions can finish, while invalid sessions need correction, rebuild and a fresh reservation.
+9. [ ] Run controlled production smoke checks on both protocols: historical exact-version lookup/download/install retains the captured integrity/signature references; completed retries return the committed release; undeclared/custom-client publication is rejected without a discoverable version; compliant new versions and compliant pending uploads succeed. Capture the concrete minimum-CLI error and normal success URL. Retain cleanup/rollback evidence and monitor rejection/storage/timeout failures. Ordinary rollback keeps enforcement enabled; any emergency disabling requires a paused/drained, recorded exception and a fresh inventory before reactivation.
+
+Detailed operator commands, inspection semantics and measurement requirements are
+in `agentpm-api/app/apds/ROLLOUT.md`; implementation/test evidence is in
+[M4B verification](m4b-verification.md). Do not close this band solely because the
+code is merged, deployed with enforcement off, or locally verified.
 
 ---
 
@@ -898,6 +928,7 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 - [ ] Represent transitions and outcomes including branch/cycle/terminal targets correctly.
 - [ ] Show global and phase bindings and relevant inherited Tools, without inventing permissions.
 - [ ] Make Install primary available action with selected version.
+- [ ] Add minimum CLI version/update guidance from M4B's documented compatibility floor (0.1.36 tolerance floor) beside the existing package actions, using a shared presentation also consumed by M10A. Distinguish new-publication requirements from selected-release installation/Runner requirements; preserve honest historical-version compatibility. M4B owns the MDX/error wording; this milestone owns the Agent detail-page presentation.
 - [ ] Show Run with Harness only when supported, or visible explanation when unavailable.
 - [ ] Show Load via Node/Python SDK with actual current supported package/version syntax.
 - [ ] Link to raw selected-version `agent.json` and exact versioned APDS specification.
@@ -939,6 +970,7 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 - [ ] Preserve Template use case, variables, stack, dependencies, entrypoints, bootstrap.
 - [ ] Add category-correct breadcrumbs/labels without changing stable route IDs.
 - [ ] Add standard manifest/spec links to every applicable kind.
+- [ ] Apply the shared minimum CLI version/update guidance from M9B to Component and Template detail actions, consistent with M4B's Registry errors and MDX migration guidance. Verify all eight kinds and legacy/new selected versions without implying older releases became uninstallable or that the tolerance floor establishes Runner readiness.
 - [ ] Keep author READMEs verbatim and technically relevant tab names accessible.
 - [ ] Verify each kind on legacy, new and empty-content examples.
 - [ ] Check shared shell behavior on responsive layouts and version switching.
