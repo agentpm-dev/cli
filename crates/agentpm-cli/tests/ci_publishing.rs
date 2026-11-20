@@ -299,6 +299,65 @@ fn python_package_binds_discovered_readme_and_declared_license_even_outside_file
 }
 
 #[test]
+fn python_declared_display_errors_fail_package_and_publish_dry_run() {
+    for (field, filename, pointer, limit) in [
+        ("readme", "README.md", "/readme", 512 * 1024),
+        ("license", "LICENSE", "/license/file", 128 * 1024),
+    ] {
+        for failure in ["missing", "oversized", "invalid-utf8"] {
+            let fixture = Fixture::new("tool");
+            let path = fixture.0.join("agent.json");
+            let mut manifest: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            manifest[field] = if field == "license" {
+                json!({"spdx":"MIT", "file":filename})
+            } else {
+                json!(filename)
+            };
+            fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            fs::write(fixture.0.join(filename), "Valid declared content\n").unwrap();
+            let built = fixture.package();
+            let archive = fixture
+                .0
+                .join("target/agentpm/build")
+                .join(built["build"]["artifact_path"].as_str().unwrap());
+            let before = fs::read(&archive).unwrap();
+            let descriptor = fixture.0.join("target/agentpm/build/package-build.json");
+            let descriptor_before = fs::read(&descriptor).unwrap();
+            match failure {
+                "missing" => fs::remove_file(fixture.0.join(filename)).unwrap(),
+                "oversized" => fs::write(fixture.0.join(filename), vec![b'x'; limit + 1]).unwrap(),
+                "invalid-utf8" => fs::write(fixture.0.join(filename), [0xff, 0xfe]).unwrap(),
+                _ => unreachable!(),
+            }
+            for verb in ["package", "publish"] {
+                let mut command = fixture.command(verb);
+                if verb == "package" {
+                    command.arg("--machine");
+                } else {
+                    command.args(["--dry-run", "--token", "fixture-only"]);
+                }
+                let output = command.output().unwrap();
+                let details = text(&output);
+                assert!(!output.status.success(), "{verb} {failure}: {details}");
+                assert!(
+                    details.contains("APDS-ID-004") && details.contains(pointer),
+                    "{verb} {failure}: {details}"
+                );
+                if failure == "oversized" {
+                    assert!(details.contains(&format!("{limit} bytes")), "{details}");
+                }
+                if verb == "package" {
+                    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+                    assert_eq!(result["status"], "error");
+                }
+                assert_eq!(fs::read(&archive).unwrap(), before);
+                assert_eq!(fs::read(&descriptor).unwrap(), descriptor_before);
+            }
+        }
+    }
+}
+
+#[test]
 fn native_packaging_records_platform_permission_behavior_without_relabeling() {
     let fixture = Fixture::new("tool");
     let manifest_path = fixture.0.join("agent.json");

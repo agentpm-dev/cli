@@ -3,6 +3,8 @@
 Use the local reviewed CLI checkout unless a guide explicitly requires a released
 binary. Each runbook states its prerequisites, generated workspace and evidence
 location. Run one block at a time and inspect the results before continuing.
+The capacity harness below is the exception: one command automates its complete
+isolated workload and retains a report.
 
 - [Agent Package-first scaffolding (M3A)](CLI_M3A_MANUAL_TESTS.md): default Agent,
   all eight explicit kinds, both Knowledge modes, escaped descriptions, invalid
@@ -26,3 +28,14 @@ location. Run one block at a time and inspect the results before continuing.
   dependency archives and multi-target atomicity. Review and all hosted CI are
   operator-confirmed passed; the operator confirmed all 36 manual cases passed on
   2026-11-18, completing M4A. Production activation/capacity gates remain M4B.
+- [Automated local Registry capacity measurement](REGISTRY_CAPACITY.md): a single
+  command runs the isolated Docker stack, both enforcement settings, actual
+  example graphs, larger payloads, concurrency and controlled failures. Evidence
+  stays in gitignored `release-band1-evidence/capacity/`; activation still needs
+  separate review of measurements and production limitations.
+
+- [Production smoke checks using maintained examples](RELEASE_BAND1_SMOKE.md):
+  historical signed installs, new declared summarize-text/devwork-copilot
+  versions through both protocols, and clean-consumer verification. Real
+  production publications; the guide separately lists the remaining direct API
+  and historical-reference checks needed before release closure.

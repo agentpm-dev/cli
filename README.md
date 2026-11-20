@@ -23,6 +23,12 @@ AgentPM currently supports eight package kinds:
 
 Agent packages are not runnable app bundles. They install as portable composition metadata plus resolved tool, skill, knowledge, memory, profile, and loop dependencies.
 
+Declared `readme` and `license.file` paths must be included in the package
+archive as well as any Registry page metadata. CLI 0.1.46 includes these files
+for Agent Packages, Templates and Tools without requiring duplicate source-file
+declarations. Python Tool declarations require UTF-8 files within the CLI's
+512 KiB README / 128 KiB license limits; invalid declarations fail packaging.
+
 [![CI](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/agentpm-dev/cli/actions/workflows/ci.yml)
 [![Homebrew tap](https://img.shields.io/badge/homebrew-agentpm--dev%2Ftap-blue)](https://github.com/agentpm-dev/homebrew-tap)
 [![Scoop bucket](https://img.shields.io/badge/scoop-agentpm--dev%2Fscoop--bucket-blue)](https://github.com/agentpm-dev/scoop-bucket)

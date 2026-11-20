@@ -36,6 +36,8 @@ use tracing::info;
 use walkdir::WalkDir;
 
 mod collection;
+#[cfg(test)]
+mod metadata_tests;
 pub(super) mod payload;
 pub(super) mod release_artifact;
 
@@ -298,12 +300,10 @@ impl PublishArgs {
                 artifact_descriptor = descriptor;
                 path
             }
-            PublishManifest::Agent(mf) => {
-                package_agent(mf, &manifest_path).context("packaging agent into tar.gz")?
-            }
-            PublishManifest::Template(mf) => {
-                package_template(mf, &manifest_path).context("packaging template into tar.gz")?
-            }
+            PublishManifest::Agent(mf) => package_agent(mf, &manifest_path, &manifest_value)
+                .context("packaging agent into tar.gz")?,
+            PublishManifest::Template(mf) => package_template(mf, &manifest_path, &manifest_value)
+                .context("packaging template into tar.gz")?,
             PublishManifest::Skill(mf) => package_skill(mf, &manifest_path, &manifest_value)
                 .context("packaging skill into tar.gz")?,
             PublishManifest::Knowledge(mf) => {
@@ -637,25 +637,43 @@ fn package_tool_build(
     } else {
         non_python_tar_name(Path::new(&ep_tar_name))
     };
+    let authored: JsonValue = serde_json::from_slice(&fs::read(manifest_path)?)?;
     let (collected_files, collection_diagnostics) = if manifest.runtime["type"] == "python" {
-        // New-format display fields come from verified archive bytes. Preserve
-        // the existing README/license discovery behavior by shipping those
-        // bounded text files as well, even when files lists source only.
-        let authored: JsonValue = serde_json::from_slice(&fs::read(manifest_path)?)?;
+        // Explicit declarations are required packaged files. Only an undeclared
+        // README may use optional discovery and degrade to omission.
         let mut requested = manifest.files.clone();
-        if let Some((path, name)) = discover_readme(root, authored["readme"].as_str())
-            && read_utf8_with_cap(&path, MAX_README_BYTES).is_ok()
-        {
-            requested.push(name);
+        for (pointer, limit) in [
+            ("/readme", MAX_README_BYTES),
+            ("/license/file", MAX_LICENSE_BYTES),
+        ] {
+            if let Some(relative) = authored.pointer(pointer).and_then(JsonValue::as_str) {
+                let absolute = resolve_existing_file(root, relative).with_context(|| {
+                    format!("APDS-ID-004 {pointer}: required packaged file {relative}")
+                })?;
+                read_utf8_with_cap(&absolute, limit).with_context(|| {
+                    format!("APDS-ID-004 {pointer}: declared Python Tool file {relative} must be UTF-8 and at most {limit} bytes ({} KiB)", limit / 1024)
+                })?;
+                requested.push(normalize_archive_entry_path(relative)?);
+            }
         }
-        if let Some(path) = pick_license_paths(&authored).1
-            && let Ok((absolute, name)) = validate_declared_manifest_file_path(root, path)
-            && read_utf8_with_cap(&absolute, MAX_LICENSE_BYTES).is_ok()
+        if authored.get("readme").is_none()
+            && let Some((path, name)) = discover_readme(root, None)
+            && read_utf8_with_cap(&path, MAX_README_BYTES).is_ok()
         {
             requested.push(name);
         }
         let collected =
             collection::collect(root, &requested, &ep_tar_name, python_metadata.is_some())?;
+        for pointer in ["/readme", "/license/file"] {
+            if let Some(relative) = authored.pointer(pointer).and_then(JsonValue::as_str) {
+                let name = normalize_archive_entry_path(relative)?;
+                if name != "agent.json" && !collected.files.contains_key(&name) {
+                    bail!(
+                        "APDS-ID-004 {pointer}: required packaged file {relative} was excluded by Python Tool payload collection"
+                    );
+                }
+            }
+        }
         (Some(collected.files), collected.diagnostics)
     } else {
         (None, Vec::new())
@@ -764,6 +782,13 @@ fn package_tool_build(
                         }
                     }
                 }
+                append_declared_package_metadata(
+                    tar,
+                    root,
+                    &authored,
+                    &mut member_count,
+                    &mut seen,
+                )?;
             }
 
             Ok(())
@@ -803,7 +828,11 @@ fn package_tool_with_resolution(
     package_tool_build(manifest, manifest_path, python_metadata).map(|(path, _)| path)
 }
 
-fn package_agent(manifest: &AgentManifest, manifest_path: &Path) -> Result<PathBuf> {
+fn package_agent(
+    manifest: &AgentManifest,
+    manifest_path: &Path,
+    manifest_value: &JsonValue,
+) -> Result<PathBuf> {
     let root = manifest_path.parent().unwrap_or(Path::new("."));
     let out_dir = root.join("target").join("agentpm");
     fs::create_dir_all(&out_dir).ok();
@@ -818,12 +847,19 @@ fn package_agent(manifest: &AgentManifest, manifest_path: &Path) -> Result<PathB
 
         ensure_safe_tar_name("agent.json")?;
         tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+        let mut member_count = 1;
+        let mut seen = HashSet::from(["agent.json".to_owned()]);
+        append_declared_package_metadata(tar, root, manifest_value, &mut member_count, &mut seen)?;
         Ok(())
     })?;
     Ok(out_path)
 }
 
-fn package_template(manifest: &TemplateManifest, manifest_path: &Path) -> Result<PathBuf> {
+fn package_template(
+    manifest: &TemplateManifest,
+    manifest_path: &Path,
+    manifest_value: &JsonValue,
+) -> Result<PathBuf> {
     let root = manifest_path.parent().unwrap_or(Path::new("."));
     let out_dir = root.join("target").join("agentpm");
     fs::create_dir_all(&out_dir).ok();
@@ -840,6 +876,7 @@ fn package_template(manifest: &TemplateManifest, manifest_path: &Path) -> Result
         ensure_safe_tar_name("agent.json")?;
         member_count += 1;
         tar.append_data(&mut header, "agent.json", manifest_bytes.as_slice())?;
+        let mut seen = HashSet::from(["agent.json".to_owned()]);
 
         let files_root = Path::new(&manifest.template.files_root);
         let files_root_abs = root.join(files_root);
@@ -871,9 +908,12 @@ fn package_template(manifest: &TemplateManifest, manifest_path: &Path) -> Result
                 continue;
             }
 
-            append_checked(tar, path_abs, &tar_name, &mut member_count)?;
+            if seen.insert(tar_name.clone()) {
+                append_checked(tar, path_abs, &tar_name, &mut member_count)?;
+            }
         }
 
+        append_declared_package_metadata(tar, root, manifest_value, &mut member_count, &mut seen)?;
         Ok(())
     })?;
     Ok(out_path)
@@ -1911,6 +1951,29 @@ fn append_declared_skill_file<W: Write>(
     let (abs, tar_name) = validate_declared_manifest_file_path(root, rel)?;
     if seen.insert(tar_name.clone()) {
         append_checked(tar, &abs, &tar_name, member_count)?;
+    }
+    Ok(())
+}
+
+fn append_declared_package_metadata<W: Write>(
+    tar: &mut TarBuilder<W>,
+    root: &Path,
+    manifest: &JsonValue,
+    member_count: &mut usize,
+    seen: &mut HashSet<String>,
+) -> Result<()> {
+    // Page metadata is separate from the archive: an explicit file declaration
+    // must also be satisfied by the artifact the Registry independently reads.
+    for pointer in ["/readme", "/license/file"] {
+        if let Some(relative) = manifest.pointer(pointer).and_then(JsonValue::as_str) {
+            let absolute = resolve_existing_file(root, relative).with_context(|| {
+                format!("APDS-ID-004 {pointer}: required packaged file {relative}")
+            })?;
+            let tar_name = normalize_archive_entry_path(relative)?;
+            if seen.insert(tar_name.clone()) {
+                append_checked(tar, &absolute, &tar_name, member_count)?;
+            }
+        }
     }
     Ok(())
 }
