@@ -2,7 +2,8 @@
 
 Date: 2026-11-20. Status: implementation and local verification complete; user
 confirmed Claude review passed with no remaining findings and supplied a passing
-38-result operator-run manual audit. Hosted CI and production release remain pending.
+38-result operator-run manual audit. User confirmed all hosted CI passed on
+2026-11-20; M5A is complete. Production release remains pending.
 
 Starting revisions: CLI `9f9fdff`, Registry `112420c`, Node SDK `a67ddc1`, Python
 SDK `b4f3d6e`. Evidence describes the working-tree changes on those baselines.
@@ -218,11 +219,11 @@ immutable; no examples or published packages were edited/regenerated.
 Both published entrypoints exist and are imported by the probe; the CJS probe
 and nonexistent-entry rejection were independently rerun successfully.
 
-**Remaining:** hosted Registry/CLI/SDK CI including other native target runners,
-then the later reader-before-shared-emission release verification. The operator
-ran manual testing before hosted CI as explicitly requested; its passing audit
-is recorded below. M5B/M6 acceptance is outside this deliverable. M5A remains
-open until its remaining verification/exit gates are met.
+**Completion:** user confirmed all hosted CI passed on 2026-11-20 after the
+passing operator-run manual audit. With independent review, local verification,
+manual acceptance and hosted CI complete, **M5A is complete**. Reader-before-
+shared-emission release verification and restoring both SDK CI refs to `main`
+remain Release Band 2 gates. M5B/M6 acceptance is outside this deliverable.
 
 ## Manual runbook preparation
 
@@ -230,10 +231,10 @@ The [M5A guide](manual-tests/CLI_M5A_MANUAL_TESTS.md) prepares five uniquely nam
 
 Builder verification: `PYTHONPATH="$PWD/../agentpm-api" REGISTRY_PRIVATE_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= AWS_EC2_METADATA_DISABLED=true ../agentpm-api/.venv/bin/python -B -m pytest -q specs/2026-10-09-category-hardening/manual-tests/fixtures/m5a/test_fixture.py` passes **4 tests**. They verify source lint, author signatures and independent publisher semantics, nine exact negative install failures with unchanged state, cache/selector repair and lock guards, plus signed normal/direct-Agent installs, two exact Tool outputs, regeneration, supported frozen byte preservation and local-root edits using actual resolve logic with isolated records/storage. These checks do not contact the operator's real API/DB/S3 or claim operator acceptance.
 
-The user explicitly requested manual acceptance first, then pushing changes together and hosted CI before M5A closure. The runbook preserves that order; the operator-run audit has now passed and hosted CI remains pending. Native release/target verification and production-root trust are not weakened to make local tests pass.
+The user explicitly requested manual acceptance first, then pushing changes together and hosted CI before M5A closure. The runbook preserves that order; the operator-run audit passed, followed by user confirmation that all hosted CI passed on 2026-11-20. Native release/target verification and production-root trust are not weakened to make local tests pass.
 
 ## Operator-run manual audit — 2026-11-20
 
 The user supplied `cli-m5a-test/20261120T170444Z-21931/evidence/summary.json` with `status: "pass"` and **38 checked command results**, covering the real local API publication/resolve/install flow and separate controlled download faults. The saved summary and all 38 expected/actual exit records were read independently and agree. This is operator-run evidence, distinct from the four isolated builder helper tests.
 
-The helper deliberately leaves `operator_signoff: false` and `hosted_ci_complete: false`: it cannot self-grant human approval or claim CI execution. The result JSON is retained unchanged. Hosted CI remains the next milestone closure gate; no production release or reader-first rollout completion is claimed.
+The helper deliberately leaves `operator_signoff: false` and `hosted_ci_complete: false`: it cannot self-grant human approval or claim CI execution. The result JSON is retained unchanged. The user subsequently confirmed all hosted CI passed on 2026-11-20, completing M5A. No production release or reader-first rollout completion is claimed.

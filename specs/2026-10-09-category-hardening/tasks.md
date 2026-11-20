@@ -588,7 +588,7 @@ code is merged, deployed with enforcement off, or locally verified.
 - [x] Check legacy inferred status is not promoted to declared/verified by serialization.
 - [x] Prepare and builder-replay the [M5A manual runbook](manual-tests/CLI_M5A_MANUAL_TESTS.md), with visible sources, exact commands, expectations and captured results under gitignored `cli-m5a-test/`. Real local API/DB/dev-S3 publications and installs are distinct from controlled loopback download faults. Four isolated builder checks pass; those checks are separate from operator acceptance below.
 - [x] Complete operator manual testing after Claude review and **before hosted CI**, as the user explicitly requested. User supplied the passing real-local audit on 2026-11-20: **38 command results**, all expected/actual exits matching, in `cli-m5a-test/20261120T170444Z-21931/evidence/summary.json`. The helper's fixed `operator_signoff: false` and `hosted_ci_complete: false` fields do not self-grant approval. Declared/legacy installs, v4 metadata, regeneration, supported frozen replay and exact rejection/unchanged-state checks passed the operator-run audit.
-- [ ] After manual acceptance, push the reviewed changes together and confirm hosted Registry/CLI/SDK CI, including native target jobs, before marking M5A complete.
+- [x] After manual acceptance, push the reviewed changes together and confirm hosted Registry/CLI/SDK CI, including native target jobs, before marking M5A complete. **Operator confirmed all hosted CI passed on 2026-11-20.**
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -600,7 +600,7 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
-**Implementation evidence — 2026-11-20:** [M5A verification](m5a-verification.md) records the Registry/CLI/lock propagation, embedded-manifest reconciliation, ordinary regeneration and frozen metadata regressions, Stage 1 integrity/target safeguards, actual published SDK 0.1.17 probes and unchanged-lock rejection by released CLI 0.1.46. CLI 0.1.47 is prepared but unreleased. User confirmed Claude review passed with no remaining findings on 2026-11-20. User supplied a passing 38-result operator-run manual audit on 2026-11-20. **Hosted CI/native target checks and the later reader-before-shared-emission rollout gate remain pending. M5A is not marked complete.** M5B graph/semver/empty-Agent fixes are not claimed.
+**Implementation evidence — 2026-11-20:** [M5A verification](m5a-verification.md) records the Registry/CLI/lock propagation, embedded-manifest reconciliation, ordinary regeneration and frozen metadata regressions, Stage 1 integrity/target safeguards, actual published SDK 0.1.17 probes and unchanged-lock rejection by released CLI 0.1.46. CLI 0.1.47 is prepared but unreleased. User confirmed Claude review passed with no remaining findings on 2026-11-20. User supplied a passing 38-result operator-run manual audit on 2026-11-20. **User confirmed all hosted CI passed on 2026-11-20; M5A is complete.** Reader-before-shared-emission release verification and restoring SDK CI selection to CLI `main` remain Release Band 2 gates. M5B graph/semver/empty-Agent fixes are not claimed.
 
 ## Milestone 5B: Fix Frozen Installs, Dependency Closure and Empty-Dependency Agents
 > **Scope note:** Make a clean workspace reproducibly install a locked Agent/Skill/Component graph and gracefully handle empty dependency sets. Outside this milestone: broad resolver rearchitecture or redo of Stage 1 Python target-aware install.
@@ -714,6 +714,7 @@ Covered milestones: 5A–6B.
 
 This gives users exact APDS metadata through resolve/install/lock v4, reproducible direct/transitive frozen installs, no-dependency Agent install behavior, and Harness capability/preflight reporting that differentiates a conformant Agent Package from a supported Runner and a ready local environment. It retains the existing Harness engine rather than introducing a new framework.
 
+- [ ] After the matching CLI changes merge into `main`, remove the temporary `AGENTPM_CLI_REF` repository variable in both `agentpm-dev/sdk-node` and `agentpm-dev/sdk-python`, or reset it to `main`. Run both SDK CI workflows against CLI `main` and confirm they pass; for manual dispatch, use `cli_ref=main` rather than the temporary commit pin.
 - [ ] Reproduce frozen multi-kind dependency closure from clean workspace; test wrong digest/range/kind and legacy versions.
 - [ ] Verify minimal Agent is conformant but not Harness runnable without Loop.
 - [ ] Verify supported versions through TUI/headless/machine/SDK and missing-model headless failure.

@@ -3,8 +3,9 @@
 Claude review has passed. At the operator's request, **manual testing comes
 before hosted CI for this milestone**. After these checks, push the reviewed
 changes together and run hosted CLI/Registry/SDK CI before closing M5A. The
-operator supplied a passing **38-result** audit on **2026-11-20**; hosted CI
-remains pending. These instructions remain available for repeat verification.
+operator supplied a passing **38-result** audit on **2026-11-20**, then
+confirmed all hosted CI passed, completing M5A. Release Band 2 rollout gates
+remain separate. These instructions remain available for repeat verification.
 
 Start in the **CLI repository root** and run one block at a time. Open the
 printed workspace in your editor. All generated sources, archives, installed

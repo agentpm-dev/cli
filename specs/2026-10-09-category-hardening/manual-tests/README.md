@@ -36,7 +36,8 @@ isolated workload and retains a report.
   Everything stays in ignored `agentpm/cli-m5a-test/`. Claude review passed; the
   operator requested manual acceptance before pushing/running hosted CI. The
   guide/helper are builder-replayed; the user supplied a passing 38-result
-  operator-run audit on 2026-11-20. Hosted CI remains open.
+  operator-run audit on 2026-11-20, then confirmed all hosted CI passed the same
+  day, completing M5A. Release Band 2 rollout gates remain separate.
 - [Automated local Registry capacity measurement](REGISTRY_CAPACITY.md): a single
   command runs the isolated Docker stack, both enforcement settings, actual
   example graphs, larger payloads, concurrency and controlled failures. Evidence
