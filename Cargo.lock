@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "agentpm-cli"
-version = "0.1.45"
+version = "0.1.46"
 dependencies = [
  "agentpm-sdk",
  "anyhow",

@@ -5,8 +5,9 @@ design approval is granted on the local evidence, as supplied by the user on
 2026-11-18. The user subsequently confirmed full Claude review complete with no
 new findings on 2026-11-18, including closure of the guard coverage correction.
 The user confirmed all PR CI passed on 2026-11-18; the CLI runs were also
-independently inspected as recorded below. Production history inspection,
-measured capacity, post-merge push-only checks and the separate activation
+independently inspected as recorded below. Production history inspection, 138
+inferred metadata backfills and unchanged-reference verification were
+operator-confirmed on 2026-11-19. Measured capacity and the separate activation
 approval remain outstanding. This record does not enable production enforcement
 or close the release band.
 
@@ -258,7 +259,7 @@ activation approval.
 | Migration/backfill                                           | Actual PostgreSQL constraints, every-target inspection including non-first corruption, real signed multi-target author/attestation preservation, malformed declarations, stale metadata, late conflict rollback, idempotence, verified-evidence retention and actual Flask operator command |
 | T-PUB-01–03/06–08 regressions                                | Existing M4A archive, authorization, integrity, private graph, signature and atomicity tests retained in full Registry suite                                                                                                                                                                |
 | T-PUB-10: capacity before activation                         | **Not yet measured on a deployment matching production**; detailed workload/measurement/mitigation procedure prepared; existing functional results are not capacity evidence                                                                                                                |
-| S2-AC-05 / D05 / D19                                         | Implementation and local verification recorded here; full Claude review and PR CI passed; production inventory, measured envelope, post-merge push-only CI and separate activation approval/controlled rollout still required                                                               |
+| S2-AC-05 / D05 / D19                                         | Implementation and local verification recorded here; full Claude review and PR CI passed; production inventory/backfill verified for 138 inferred versions; measured envelope and separate activation approval/controlled rollout still required                                            |
 
 Before activation, capture the most dependency-heavy real Agent Package and
 Template, representative large artifacts, repeat publications and planned
@@ -271,4 +272,20 @@ budget, larger compute tier or timeout is assumed. Claude has approved the
 migration/security design on local evidence; the separate activation approval
 still requires production findings and capacity measurements.
 
-**M4B is complete** as the implementation/review/PR-CI milestone. Per the user-agreed sequencing, production inspection/backfill, measured capacity, post-merge push-only checks and activation approval/execution remain Release Band 1 gates. They have not been completed or waived, and Release Band 1 remains open.
+**M4B is complete** as the implementation/review/PR-CI milestone. Per the user-agreed sequencing, production inspection/backfill and unchanged-reference verification were operator-confirmed on 2026-11-19; measured capacity and activation approval/execution remain Release Band 1 gates. The user confirmed all three preparation PRs and CLI main/post-merge CI passed on 2026-11-18. They have not been completed or waived, and Release Band 1 remains open.
+
+## Release Band 1 interruption follow-up — 2026-11-19
+
+Claude independently approved the original measured envelope and production-history evidence, but withheld activation approval pending configuration confirmation and orphan reclamation. The follow-up uses locked, private, own-UID extraction directories and Gunicorn startup/fork/reap hooks. It includes the legacy named verified snapshot in the managed lifetime. Older/untracked paths, audit reports, symlinks and live locks are not deleted.
+
+Real local tests now kill a worker with SIGKILL during root and dependency extraction, with archive bytes already written and Python cleanup unavailable. The production master reclaimed two/four managed directories (including the snapshot) and both requests returned to a zero-byte temp baseline. The post-mitigation representative run recorded 102 expected outcomes and 333.90 MiB peak cgroup memory under 512 MiB. A separate normal-config phase confirmed live Redis-backed rate-limit counters via loopback health; no production API was called.
+
+Full Registry regression: **1,083 passed, 7 unrelated opt-in skips, 347 subtests passed**. Focused publication/rollout/cleanup/probe regression: **81 passed**. Python format/static/security/type checks pass. Evidence and provenance are detailed in [release readiness](release-band-1-readiness.md#independent-capacity-review-and-interruption-follow-up--2026-11-19) and the [single-command runbook](manual-tests/REGISTRY_CAPACITY.md).
+
+This follow-up still requires independent review and hosted CI, then deployment with enforcement off. The operator must retain the production settings/filesystem/live-Redis probe output and obtain separate activation approval. The confirmed HTTP `/health` and no-extra-proxy configuration are recorded with official Render policy references; sustained single-worker health starvation remains an explicit review risk. No production setting, artifact, DB record or S3 object was changed by the builder.
+
+### Independent cleanup review and guard coverage
+
+The operator supplied Claude's acceptance of the cleanup implementation and revised measured envelope on 2026-11-19. Two nonblocking guard-coverage gaps were closed with test-only changes: private 0700 legacy names across all three prefixes, and unlink after open before the post-flock link-count check. Both pass normally and fail with their corresponding guard disabled in memory (three name cases and one inode case). The native Linux unlink/zero-link behavior was verified in a network-disabled local container. The focused cleanup/probe suite now passes 16 cases; no runtime code or production setting changed in this follow-up. Final CI/deploy/probe/activation gates remain open.
+
+Final guard-coverage verification: **1,087 passed, 7 unrelated opt-in skips, 347 subtests passed** (`/tmp/agentpm-band1-guard-coverage-final.log`). Focused cleanup/probe: **16 passed**. Test-file formatting, imports, lint, Pylint (10/10), Bandit, mypy and pyupgrade passed. No capacity workload or production operation was rerun for this test/documentation-only follow-up.

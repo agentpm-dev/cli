@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.1.45 — Unreleased
+## 0.1.46 — Unreleased
+
+- Include declared README and license files in Agent Package, Template and
+  Tool archives, even when those files are not selected as source.
+  Registry page metadata alone does not satisfy APDS packaged-content checks.
+- Fail those packaging flows on missing or unsafe declared display files while
+  preserving a previously built archive. Avoid duplicate archive members when
+  a README/license is already part of a Template scaffold or Tool file list.
+- Reject declared Python Tool README/license files that are missing, unsafe,
+  invalid UTF-8, or exceed the existing 512 KiB README / 128 KiB license limits.
+  Optional README discovery remains available when no path is declared.
+
+## 0.1.45 — 2026-11-18
 
 - Bundle AgentPM APDS 1.0.0 with offline structural and semantic validation,
   stable rule IDs and versioned editor-schema links.
