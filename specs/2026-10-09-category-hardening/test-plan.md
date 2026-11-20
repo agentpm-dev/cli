@@ -197,6 +197,8 @@ The `agentpm init` invocation and `agentpm lint` without flags are based on exis
 - **T-LOCK-07:** Unsupported APDS standard, bad release/provenance conflict and legacy inferred selected release produce honest results and preserve old installability.
 - **T-LOCK-08:** Stage 1 portable Tool target selection and release/artifact identity remain correct on supported architectures (run target-specific test suites only where runners exist).
 
+**M5A local verification (2026-11-20):** [Evidence and commands](m5a-verification.md) map T-LOCK-01/05/07/08 to extended-v4 roundtrips, real install/regeneration and clean frozen metadata replay, embedded identity/selector conflicts, cache tamper/recovery, existing release/provenance/target tests, and actual published SDK 0.1.17 plus released CLI 0.1.46 compatibility probes. User confirmed Claude review passed with no remaining findings on 2026-11-20. The [manual runbook](manual-tests/CLI_M5A_MANUAL_TESTS.md) and four isolated helper/CLI replays are prepared. User requested manual testing **before** pushing and running hosted CI, and supplied its passing **38-result** real-local audit on 2026-11-20. Hosted CI/native-target execution remains pending. Broader closure/range/empty-Agent acceptance remains M5B.
+
 ### E. Harness and SDK compatibility/preflight (M6A–M6B; S2-AC-08,09)
 
 - **T-RUN-01:** Standard compatibility advertised consistently by CLI, TUI, headless/machine preflight and Node/Python SDK wrappers; Harness protocol and APDS version dimensions separate.

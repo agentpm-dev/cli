@@ -1,3 +1,4 @@
+pub mod apds;
 pub mod artifact;
 pub mod canonical;
 pub mod client;

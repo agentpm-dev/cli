@@ -289,7 +289,7 @@ That:
 - installs memory under `.agentpm/memory/<namespace>/<name>/<version>/`
 - installs profiles under `.agentpm/profiles/<namespace>/<name>/<version>/`
 - installs loops under `.agentpm/loops/<namespace>/<name>/<version>/`
-- writes `agent.lock` (Skill-containing graphs use `lockfile_version: 3`)
+- writes `agent.lock` (APDS identity/origin metadata requires `lockfile_version: 4`)
 - keeps the local `agent.json` as the source of truth
 
 ### Direct package install
@@ -449,6 +449,21 @@ stores logical release integrity and Python resolution; selected artifacts and
 interpreter fingerprints stay under `.agentpm/`. Keep that directory out of Git.
 Supported v2/v3 locks remain readable; v4 carries newer capabilities and future
 unsupported versions fail rather than being rewritten.
+
+CLI **0.1.47 or newer** reads and writes the additive v4 `standard` and
+`standard_origin` fields. `declared` means the artifact contains that declaration;
+`legacy_inferred` means a historical package is interpreted as AgentPM APDS 1.0.0.
+Neither is a conformance certificate or a claim of Runner readiness. Historical
+packages still use ordinary `agentpm install`; no legacy install flag is needed.
+The CLI checks metadata against the downloaded manifest before installation.
+
+Upgrade the CLI on every machine and CI image before sharing regenerated locks.
+Older CLIs may fail with `unknown field 'standard'` or `standard_origin`; upgrade
+instead of deleting those fields. Ordinary installation of a historical package
+can also produce these fields. Untouched locks are not rewritten just to add them.
+SDK 0.1.17 readers accept the added v4 fields; their Tool calls must use the
+compatible CLI. Publish and confirm the compatible CLI is installable before
+automation starts distributing these extended locks.
 
 Supported native CLI targets are Apple Silicon/Intel macOS, Linux x86-64 glibc
 and Windows x64. The released Linux CLI 0.1.43 needs glibc 2.39+; Linux arm64

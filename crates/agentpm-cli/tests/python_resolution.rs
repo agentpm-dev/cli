@@ -475,6 +475,8 @@ fn publish_prepares_committed_resolution_and_reuses_it_with_a_cold_cache() {
     root.as_object_mut()
         .unwrap()
         .remove("python_input_fingerprint");
+    root.as_object_mut().unwrap().remove("standard");
+    root.as_object_mut().unwrap().remove("standard_origin");
     legacy["roots"]["local:agent"] = root;
     legacy["lockfile_version"] = json!(2);
     fs::write(&lock_path, serde_json::to_vec(&legacy).unwrap()).unwrap();

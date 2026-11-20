@@ -121,6 +121,7 @@ pub async fn download_and_extract_with_client(
             && valid_cache
             && dir_has_files(&install_dir).await?
             && local_selection_matches(&install_dir, art)?
+            && cached_manifest_matches(&cache_path, &install_dir)?
         {
             continue;
         }
@@ -422,7 +423,7 @@ fn selection_bytes(artifact: &sdkm::PackageArtifact) -> Result<Vec<u8>> {
 
 fn local_selection_matches(directory: &Path, artifact: &sdkm::PackageArtifact) -> Result<bool> {
     if artifact.selected_artifact.is_none() {
-        return Ok(true);
+        return Ok(validate_extracted(directory, artifact).is_ok());
     }
     Ok(std::fs::read(selection_path(directory)?).ok().as_deref()
         == Some(selection_bytes(artifact)?.as_slice())
@@ -430,13 +431,25 @@ fn local_selection_matches(directory: &Path, artifact: &sdkm::PackageArtifact) -
 }
 
 fn validate_extracted(directory: &Path, artifact: &sdkm::PackageArtifact) -> Result<()> {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("agent.json"))?)
+            .context("Invalid embedded agent.json; contact the publisher for a rebuilt package")?;
+    anyhow::ensure!(
+        manifest["kind"] == artifact.kind.as_str()
+            && manifest["name"] == artifact.name.split('/').next_back().unwrap_or("")
+            && manifest["version"] == artifact.version,
+        "Embedded package kind/name/version differs from the install plan; retry resolution or contact the publisher"
+    );
+    agentpm_sdk::apds::reconcile(
+        &manifest,
+        artifact.standard.as_ref(),
+        artifact.standard_origin,
+    )?;
     if let Some(selected) = &artifact.selected_artifact {
         let proof = artifact
             .verification
             .as_ref()
             .context("missing verified manifest")?;
-        let manifest: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(directory.join("agent.json"))?)?;
         anyhow::ensure!(
             manifest == proof.manifest,
             "extracted manifest differs from verified release"
@@ -450,6 +463,31 @@ fn validate_extracted(directory: &Path, artifact: &sdkm::PackageArtifact) -> Res
         );
     }
     Ok(())
+}
+
+// The cached archive was hash-checked above. Even an older Registry that omits
+// APDS metadata cannot let a modified installed declaration become lock truth.
+fn cached_manifest_matches(archive_path: &Path, directory: &Path) -> Result<bool> {
+    use std::io::Read;
+    let file = std::fs::File::open(archive_path)?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        if sanitize_entry_path(&entry.path()?)? == Path::new("agent.json") {
+            anyhow::ensure!(
+                entry.size() <= 16 * 1024 * 1024,
+                "Package manifest exceeds inspection limit"
+            );
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes)?;
+            let cached: serde_json::Value = serde_json::from_slice(&bytes)?;
+            let installed = std::fs::read(directory.join("agent.json"))?;
+            return Ok(
+                serde_json::from_slice::<serde_json::Value>(&installed).is_ok_and(|v| v == cached)
+            );
+        }
+    }
+    Ok(false)
 }
 
 pub(crate) fn validate_local_selection(directory: &Path) -> Result<()> {
@@ -729,7 +767,7 @@ fn resolved_agent_dir(base: &Path, package: &str, version: &str) -> Result<PathB
 }
 
 #[allow(clippy::too_many_arguments)]
-fn resolved_package_dir(
+pub(crate) fn resolved_package_dir(
     kind: sdkm::PackageKind,
     tools_base: &Path,
     agents_base: &Path,
@@ -954,6 +992,8 @@ mod tests {
     #[test]
     fn cache_filename_binds_kind_identity_and_digest() {
         let art = PackageArtifact {
+            standard: None,
+            standard_origin: None,
             python_resolution: None,
             kind: PackageKind::Agent,
             name: "@zack/support-agent".to_string(),

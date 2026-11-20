@@ -595,9 +595,12 @@ fn save_author_resolution(
     {
         value.roots.remove("local:agent");
     }
+    let (standard, origin) = agentpm_sdk::apds::from_manifest(manifest)?;
     value.roots.insert(
         "local:tool".into(),
         LockedRoot {
+            standard: Some(standard),
+            standard_origin: Some(origin),
             name: Some(name.into()),
             version: Some(version.into()),
             python_resolution: Some(resolution.clone()),

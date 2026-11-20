@@ -71,7 +71,7 @@ fn future_versions_and_unknown_fields_are_rejected_before_shape_conversion() {
 
 #[test]
 fn legacy_versions_roundtrip_without_new_fields_or_format_changes() {
-    for version in [2, 3] {
+    for version in [2, 3, 4] {
         let lock = Lock::V2(LockV2 {
             lockfile_version: version,
             generated: Utc::now(),
@@ -207,6 +207,8 @@ fn local_tool_state_survives_regeneration_but_absent_packages_do_not() {
         value.packages.insert(
             "tool:@old/tool@1.0.0".into(),
             LockedPackage {
+                standard: None,
+                standard_origin: None,
                 kind: PackageKind::Tool,
                 name: "@old/tool".into(),
                 version: "1.0.0".into(),
@@ -311,6 +313,8 @@ fn realistic_twenty_tool_lock_fits_metadata_limits_and_roundtrips_through_resolv
     let plan = ResolvePlan {
         items: (0..20)
             .map(|i| ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 kind: PackageKind::Tool,
                 name: format!("@fixture/tool-{i}"),
                 version: "1.0.0".into(),

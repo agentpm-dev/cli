@@ -28,6 +28,72 @@ fn archive(entries: &[(&str, &[u8], tar::EntryType)]) -> Vec<u8> {
 }
 
 #[tokio::test]
+async fn apds_embedded_identity_and_origin_fail_before_replacing_an_install() {
+    let root = root();
+    let source = root.join("artifact.tgz");
+    let dest = root.join("1.0.0");
+    std::fs::create_dir(&dest).unwrap();
+    std::fs::write(dest.join("original"), "preserved").unwrap();
+    let mut artifact: sdkm::PackageArtifact = serde_json::from_value(serde_json::json!({"kind":"tool","name":"@fixture/example","version":"1.0.0","integrity":"a".repeat(64),"presigned_url":"http://127.0.0.1/unused","standard":{"id":"agentpm","version":"1.0.0"},"standard_origin":"declared"})).unwrap();
+    let good = serde_json::json!({"kind":"tool","name":"example","version":"1.0.0","standard":{"id":"agentpm","version":"1.0.0"}});
+    for (field, invalid) in [
+        ("kind", serde_json::json!("agent")),
+        ("name", serde_json::json!("different")),
+        ("version", serde_json::json!("2.0.0")),
+        (
+            "standard",
+            serde_json::json!({"id":"agentpm","version":"9.0.0"}),
+        ),
+        ("standard", serde_json::json!(null)),
+    ] {
+        let mut manifest = good.clone();
+        manifest[field] = invalid;
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        std::fs::write(
+            &source,
+            archive(&[("agent.json", &bytes, tar::EntryType::Regular)]),
+        )
+        .unwrap();
+        assert!(
+            extract_verified(&source, &dest, Some(&artifact), 10000, 10)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(dest.join("original")).unwrap(),
+            "preserved"
+        );
+    }
+    artifact.standard_origin = Some(agentpm_sdk::apds::StandardOrigin::LegacyInferred);
+    let bytes = serde_json::to_vec(&good).unwrap();
+    std::fs::write(
+        &source,
+        archive(&[("agent.json", &bytes, tar::EntryType::Regular)]),
+    )
+    .unwrap();
+    assert!(
+        extract_verified(&source, &dest, Some(&artifact), 10000, 10)
+            .await
+            .is_err()
+    );
+    let mut legacy = good;
+    legacy.as_object_mut().unwrap().remove("standard");
+    let bytes = serde_json::to_vec(&legacy).unwrap();
+    std::fs::write(
+        &source,
+        archive(&[("agent.json", &bytes, tar::EntryType::Regular)]),
+    )
+    .unwrap();
+    extract_verified(&source, &dest, Some(&artifact), 10000, 10)
+        .await
+        .unwrap();
+    assert!(local_selection_matches(&dest, &artifact).unwrap());
+    std::fs::write(dest.join("agent.json"), b"{}").unwrap();
+    assert!(!local_selection_matches(&dest, &artifact).unwrap());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn bad_archive_never_replaces_previous_install_and_new_failure_leaves_no_directory() {
     let root = root();
     let source = root.join("artifact.tgz");
@@ -169,13 +235,22 @@ async fn selected_artifact_is_local_and_cache_changes_with_target_and_digest() {
 #[tokio::test]
 async fn expired_url_renews_only_same_inventory_and_cache_is_reverified() {
     let root = root();
-    let bytes = archive(&[("agent.json", b"{}", tar::EntryType::Regular)]);
+    let bytes = archive(&[(
+        "agent.json",
+        br#"{"kind":"tool","name":"example","version":"1.0.0"}"#,
+        tar::EntryType::Regular,
+    )]);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let init = sdkm::InstallInitResponse {
         session_id: "fixture".into(),
         expires_at: "2030-01-01T00:00:00Z".into(),
         artifacts: vec![sdkm::PackageArtifact {
+            standard: Some(agentpm_sdk::apds::Standard {
+                id: "agentpm".into(),
+                version: "1.0.0".into(),
+            }),
+            standard_origin: Some(agentpm_sdk::apds::StandardOrigin::LegacyInferred),
             kind: sdkm::PackageKind::Tool,
             name: "@fixture/example".into(),
             version: "1.0.0".into(),
@@ -192,6 +267,15 @@ async fn expired_url_renews_only_same_inventory_and_cache_is_reverified() {
     };
     let mut renewed: serde_json::Value = serde_json::to_value(&init).unwrap();
     renewed["artifacts"][0]["presigned_url"] = serde_json::json!(format!("{base}/valid"));
+    // A pre-metadata Registry renews the same pinned artifact without the pair.
+    renewed["artifacts"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("standard");
+    renewed["artifacts"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("standard_origin");
     let server_bytes = bytes.clone();
     let server = std::thread::spawn(move || {
         for index in 0..3 {

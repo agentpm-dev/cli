@@ -1754,6 +1754,8 @@ mod tests {
     #[test]
     fn resolve_matching_plan_item_uses_semver_ordering_for_wildcards_and_ranges() {
         let older = crate::semver::types::ResolvedPackage {
+            standard: None,
+            standard_origin: None,
             python_resolution: None,
             kind: PackageKind::Tool,
             name: "@zack/echo".to_string(),
@@ -1761,6 +1763,8 @@ mod tests {
             integrity: "sha256-older".to_string(),
         };
         let newer = crate::semver::types::ResolvedPackage {
+            standard: None,
+            standard_origin: None,
             python_resolution: None,
             kind: PackageKind::Tool,
             name: "@zack/echo".to_string(),
@@ -3339,7 +3343,7 @@ mod tests {
                     "kind":"tool",
                     "name":name,
                     "version":"0.1.0",
-                    "integrity":state.tool_sha
+                    "integrity":if name == "@zack/summarize" { sha_hex(&summarize_tar()) } else { state.tool_sha.clone() }
                 })),
                 "knowledge" => items.push(json!({
                     "kind":"knowledge",
@@ -3369,7 +3373,7 @@ mod tests {
                     "kind":"profile",
                     "name":name,
                     "version":"0.1.0",
-                    "integrity":state.profile_sha
+                    "integrity":if name == "@zack/escalation-style" { sha_hex(&escalation_tar(&state)) } else {state.profile_sha.clone()}
                 })),
                 "loop" if name == "@zack/reviewer-loop" => items.push(json!({
                     "kind":"loop",
@@ -3429,10 +3433,16 @@ mod tests {
             let kind = item["kind"].as_str().unwrap();
             let url = match kind {
                 "template" => format!("{}/artifact/template", state.base_url),
+                "tool" if item["name"] == "@zack/summarize" => {
+                    format!("{}/artifact/tool?name=summarize", state.base_url)
+                }
                 "tool" => format!("{}/artifact/tool", state.base_url),
                 "agent" => format!("{}/artifact/agent", state.base_url),
                 "knowledge" => format!("{}/artifact/knowledge", state.base_url),
                 "memory" => format!("{}/artifact/memory", state.base_url),
+                "profile" if item["name"] == "@zack/escalation-style" => {
+                    format!("{}/artifact/profile?name=escalation-style", state.base_url)
+                }
                 "profile" => format!("{}/artifact/profile", state.base_url),
                 "loop" if item["name"].as_str() == Some("@zack/reviewer-loop") => {
                     format!("{}/artifact/reviewer-loop", state.base_url)
@@ -3440,12 +3450,16 @@ mod tests {
                 "loop" => format!("{}/artifact/loop", state.base_url),
                 _ => return Err(StatusCode::BAD_REQUEST),
             };
+            let summarize_digest = sha_hex(&summarize_tar());
+            let escalation_digest = sha_hex(&escalation_tar(&state));
             let integrity = match kind {
+                "tool" if item["name"] == "@zack/summarize" => summarize_digest.as_str(),
                 "template" => state.template_sha.as_str(),
                 "tool" => state.tool_sha.as_str(),
                 "agent" => state.agent_sha.as_str(),
                 "knowledge" => state.knowledge_sha.as_str(),
                 "memory" => state.memory_sha.as_str(),
+                "profile" if item["name"] == "@zack/escalation-style" => escalation_digest.as_str(),
                 "profile" => state.profile_sha.as_str(),
                 "loop" if item["name"].as_str() == Some("@zack/reviewer-loop") => {
                     state.reviewer_loop_sha.as_str()
@@ -3461,10 +3475,12 @@ mod tests {
                 "presigned_url":url,
                 "size":match kind {
                     "template" => state.template_tar.len(),
+                    "tool" if item["name"] == "@zack/summarize" => summarize_tar().len(),
                     "tool" => state.tool_tar.len(),
                     "agent" => state.agent_tar.len(),
                     "knowledge" => state.knowledge_tar.len(),
                     "memory" => state.memory_tar.len(),
+                    "profile" if item["name"] == "@zack/escalation-style" => escalation_tar(&state).len(),
                     "profile" => state.profile_tar.len(),
                     "loop" if item["name"].as_str() == Some("@zack/reviewer-loop") => state.reviewer_loop_tar.len(),
                     "loop" => state.loop_tar.len(),
@@ -3495,10 +3511,25 @@ mod tests {
             .body(Body::from(state.template_tar.clone()))
             .unwrap()
     }
-    async fn get_tool(State(state): State<Arc<TestState>>) -> Response<Body> {
+    fn summarize_tar() -> Vec<u8> {
+        build_tarball(&[(
+            "agent.json",
+            json!({"kind":"tool","name":"summarize","version":"0.1.0"}).to_string(),
+        )])
+    }
+    async fn get_tool(
+        State(state): State<Arc<TestState>>,
+        axum::extract::Query(query): axum::extract::Query<BTreeMap<String, String>>,
+    ) -> Response<Body> {
         Response::builder()
             .status(StatusCode::OK)
-            .body(Body::from(state.tool_tar.clone()))
+            .body(Body::from(
+                if query.get("name").is_some_and(|n| n == "summarize") {
+                    summarize_tar()
+                } else {
+                    state.tool_tar.clone()
+                },
+            ))
             .unwrap()
     }
     async fn get_agent(State(state): State<Arc<TestState>>) -> Response<Body> {
@@ -3521,10 +3552,49 @@ mod tests {
             .unwrap()
     }
 
-    async fn get_profile(State(state): State<Arc<TestState>>) -> Response<Body> {
+    fn escalation_tar(state: &TestState) -> Vec<u8> {
+        use std::io::Read;
+        if state.profile_tar.is_empty() {
+            return Vec::new();
+        }
+        let mut archive =
+            tar::Archive::new(flate2::read::GzDecoder::new(state.profile_tar.as_slice()));
+        let files = archive
+            .entries()
+            .unwrap()
+            .map(|entry| {
+                let mut entry = entry.unwrap();
+                let path = entry.path().unwrap().to_string_lossy().to_string();
+                let mut text = String::new();
+                entry.read_to_string(&mut text).unwrap();
+                if path == "agent.json" {
+                    let mut value: Value = serde_json::from_str(&text).unwrap();
+                    value["name"] = json!("escalation-style");
+                    text = value.to_string();
+                }
+                (path, text)
+            })
+            .collect::<Vec<_>>();
+        build_tarball(
+            &files
+                .iter()
+                .map(|(p, t)| (p.as_str(), t.clone()))
+                .collect::<Vec<_>>(),
+        )
+    }
+    async fn get_profile(
+        State(state): State<Arc<TestState>>,
+        axum::extract::Query(query): axum::extract::Query<BTreeMap<String, String>>,
+    ) -> Response<Body> {
         Response::builder()
             .status(StatusCode::OK)
-            .body(Body::from(state.profile_tar.clone()))
+            .body(Body::from(
+                if query.get("name").is_some_and(|n| n == "escalation-style") {
+                    escalation_tar(&state)
+                } else {
+                    state.profile_tar.clone()
+                },
+            ))
             .unwrap()
     }
 

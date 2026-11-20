@@ -25,6 +25,7 @@ def prepare(root: Path, cli: str, uv: str, python: str) -> dict:
         json.dumps(resolution, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     ).hexdigest()
     manifest = {
+        "standard": {"id": "agentpm", "version": "1.0.0"},
         "kind": "tool",
         "name": "tool",
         "version": "1.0.0",
@@ -180,7 +181,12 @@ print(json.dumps({'total':value.quantity*value.unit_price,'prefix':sys.prefix,'e
         worker.join()
     assert calls.count("/v1/tools/install/finalize") == 1, calls
     assert json.loads((root / "agent.lock").read_text())["lockfile_version"] == 4
-    return {"root": str(root), "spec": "@fixture/tool@1.0.0", "python": python, "calls": calls}
+    return {
+        "root": str(root),
+        "spec": "@fixture/tool@1.0.0",
+        "python": python,
+        "calls": calls,
+    }
 
 
 if __name__ == "__main__":
