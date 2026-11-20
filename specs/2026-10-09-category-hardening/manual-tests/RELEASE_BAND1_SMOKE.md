@@ -38,10 +38,10 @@ path before proceeding.
 
 The prepared example releases are:
 
-| Source directory                | Historical version            | New version                   | Protocol                                    |
-| ------------------------------- | ----------------------------- | ----------------------------- | ------------------------------------------- |
-| `tools-python/summarize-text`   | `@zack/summarize-text@0.1.10` | `@zack/summarize-text@0.1.11` | Release upload; one portable `any` artifact |
-| `agent-packages/devwork-python` | `@zack/devwork-copilot@0.1.8` | `@zack/devwork-copilot@0.1.9` | Single archive                              |
+| Source directory                | Historical version            | New version                    | Protocol                                    |
+| ------------------------------- | ----------------------------- | ------------------------------ | ------------------------------------------- |
+| `tools-python/summarize-text`   | `@zack/summarize-text@0.1.10` | `@zack/summarize-text@0.1.11`  | Release upload; one portable `any` artifact |
+| `agent-packages/devwork-python` | `@zack/devwork-copilot@0.1.8` | `@zack/devwork-copilot@0.1.10` | Single archive                              |
 
 Both new manifests declare `standard: {id: "agentpm", version: "1.0.0"}` and
 use the tagged schema URL. The Agent deliberately retains its existing Tool
@@ -108,10 +108,15 @@ The first attempt exposed a CLI 0.1.45 defect: Agent packaging omitted the
 explicitly declared README, and the Registry correctly rejected it with
 `APDS-ID-004 /readme`. The same omission affects Templates and non-Python Tools
 when their file selection does not already include declared display files.
-CLI **0.1.46** is prepared with this correction; hold this step until review,
-required CI and the patch release/install confirmation pass. Upgrade the installed
-CLI, then retain its binary hash. CLI 0.1.45 does not contain the correction.
-The source version stays **0.1.9**; do not remove its README declaration.
+CLI **0.1.46** includes this correction and the Python declared-file follow-up.
+The operator confirmed full review, all CI and the patch/matching deployments
+released and verified. This step is ready to resume. If already upgraded, skip
+the two Homebrew commands below; confirm the installed version and retain its
+binary hash. CLI 0.1.45 does not contain the correction.
+The failed **0.1.9** upload remains reserved for up to 24 hours. The unpublished
+Agent source is now **0.1.10**, using a fresh reservation; keep its README
+declaration. The Tool/Skill dependency publications below already succeeded
+(IDs 140 and 141): skip those completed blocks and resume at **Retry the Agent**.
 
 ```bash
 brew update
@@ -119,6 +124,13 @@ brew upgrade agentpm
 agentpm --version  # Must report 0.1.46 or newer before continuing.
 export BAND1_PUBLISH_CLI="$(command -v agentpm)"
 shasum -a 256 "$BAND1_PUBLISH_CLI" | tee "$BAND1_SMOKE/publishing-cli.sha256"
+```
+
+### Node dependency — completed
+
+Already published as ID 140. Commands retained for reference; do not rerun.
+
+```bash
 # Publish the corrected Node dependency first.
 cd "$BAND1_EXAMPLES/tools-node/github-issues"
 pnpm build
@@ -129,6 +141,13 @@ pnpm test
   --namespace zack --sign --key-id "$BAND1_KEY_ID" \
   2>&1 | tee "$BAND1_SMOKE/publish-github-issues.log"
 
+```
+
+### Skill dependency — completed
+
+Already published as ID 141. Commands retained for reference; do not rerun.
+
+```bash
 # Publish the Skill that selects that corrected Tool.
 cd "$BAND1_EXAMPLES/skill-packages/issue-triage-playbook"
 "$BAND1_PUBLISH_CLI" lint --strict
@@ -137,14 +156,21 @@ cd "$BAND1_EXAMPLES/skill-packages/issue-triage-playbook"
   --namespace zack --sign --key-id "$BAND1_KEY_ID" \
   2>&1 | tee "$BAND1_SMOKE/publish-issue-triage-playbook.log"
 
-# Finally publish the Agent selecting the new Skill.
+```
+
+### Retry the Agent
+
+Only this publication remains in step 4.
+
+```bash
+# Publish the Agent selecting the corrected Skill.
 cd "$BAND1_EXAMPLES/agent-packages/devwork-python"
 git diff -- agent.json README.md
 "$BAND1_PUBLISH_CLI" lint --strict
 "$BAND1_PUBLISH_CLI" publish --dry-run
 python3 - <<'PYCODE'
 import tarfile
-with tarfile.open('target/agentpm/devwork-copilot-0.1.9.tar.gz') as archive:
+with tarfile.open('target/agentpm/devwork-copilot-0.1.10.tar.gz') as archive:
     names = archive.getnames()
     print(names)
     assert names.count('agent.json') == names.count('README.md') == 1
@@ -156,17 +182,18 @@ PYCODE
 
 Expected order: **`@zack/github-issues@0.1.2`**, then
 **`@zack/issue-triage-playbook@0.1.1`**, then
-**`@zack/devwork-copilot@0.1.9`**. These publish successfully through
+**`@zack/devwork-copilot@0.1.10`**. These publish successfully through
 `/v1/tools/publish/init` and `/finalize`, with a normal package URL. The Registry
 validates the selected composition. The Agent publish itself does not republish
 its dependencies: the preceding two commands deliberately publish their new
 versions. Other dependencies, including summarize-text 0.1.10, remain unchanged.
 
-The corrected archive has a different digest from the rejected upload. It
-needs a fresh reservation; if init returns `409 publish in progress` while the
-old reservation is still unexpired, wait for normal expiry before retrying. Do
-not replace bytes in a reservation bound to the old digest or manually edit
-production rows/storage.
+The single-archive reservation lifetime is **24 hours**, independently of the
+15-minute presigned PUT URL. The corrected archive differs from the failed
+0.1.9 reservation, so init correctly returned 409. Using 0.1.10 creates a
+separate reservation without waiting or editing production rows/storage. The
+old unpublished reservation remains subject to normal expiry; do not replace
+its bound bytes. Only the Agent version changed in this recovery.
 
 If either publish fails, retain the error and stop that case. A later verify
 failure does not undo a successful immutable publication.
@@ -183,10 +210,10 @@ agentpm --base-url https://api.agentpackagemanager.com install \
 mkdir "$BAND1_SMOKE/new-agent"
 cd "$BAND1_SMOKE/new-agent"
 agentpm --base-url https://api.agentpackagemanager.com install \
-  @zack/devwork-copilot@0.1.9 --require-signature --require-attestation --machine \
+  @zack/devwork-copilot@0.1.10 --require-signature --require-attestation --machine \
   2>&1 | tee "$BAND1_SMOKE/new-agent-install.log"
 python3 "$BAND1_EXAMPLES/scripts/release_examples.py" verify \
-  devwork-copilot @zack/devwork-copilot@0.1.9 "$PWD" \
+  devwork-copilot @zack/devwork-copilot@0.1.10 "$PWD" \
   2>&1 | tee "$BAND1_SMOKE/new-agent-composition.log"
 python3 - <<'PYCODE' | tee "$BAND1_SMOKE/new-agent-dependencies.log"
 import json
@@ -223,7 +250,7 @@ ID from Render's deploy record rather than treating this as the original flip
 time. Retain that record and inspect logs around the four installs/four publications
 for unexpected 5xx, worker timeouts and storage/cleanup failures.
 
-## Checks still required after this first pass
+## Additional cases retained as local/CI evidence
 
 - Compare historical integrity/signature references against the retained audit.
 - For each protocol, finalize a directly uploaded artifact without `standard`:
@@ -238,9 +265,11 @@ for unexpected 5xx, worker timeouts and storage/cleanup failures.
   spanning activation was reported; do not disable enforcement to manufacture
   one. The reviewed local cutoff tests remain the evidence for that transition.
 
-The production API sequence is separate from this first-pass runbook. The M4A
-fixture helper is local-only and must not be pointed at production. Keep step 9
-open until the outstanding API checks and historical comparison are evidenced.
+The operator subsequently chose a quick production API check plus the completed
+publish/install/operational checks as the final production smoke scope. The
+larger retry/release-negative/cutover cases above retain local/CI coverage; they
+are not claimed as additional production runs. The M4A fixture helper remains
+local-only. See the final closure record below.
 
 ## Recorded step 2 result
 
@@ -267,3 +296,50 @@ reports `summarize-text@0.1.11`, version ID 139, 17 Python distributions and
 portable `any` payload, with the normal published URL. The original version was
 retried without another source/version bump. Continue with step 4; new-version
 verified installs and the remaining direct API/reference checks are still open.
+
+## Patch rollout prerequisites completed
+
+The operator confirmed all CI passed and everything was released and verified,
+then began retrying step 4. CLI 0.1.46 and matching Registry documentation/Web
+rollouts are recorded as operator-confirmed complete. The three package publish
+results and step 5 installs have not yet been supplied; keep those checks open.
+
+## Recorded step 4 and step 5 results
+
+The operator completed the corrected dependency publications and Agent retry:
+GitHub Tool **0.1.2 / ID 140**, Skill **0.1.1 / ID 141**, Agent **0.1.10 / ID
+142**. Their normal publish URLs are retained in the saved logs. Both fresh
+consumer installs report machine `status: success`; the composition/dependency
+logs confirm exact Agent 0.1.10, Skill 0.1.1, GitHub Tool 0.1.2 and the retained
+direct summarizer 0.1.10.
+
+The builder independently inspected local output: all nine lock entries match
+their actual cached archives, including recomputed canonical Python release
+integrity. New archive bytes match the prepared source artifacts; unchanged
+historical archives match the retained pre-activation audit. Installed manifests
+and declared README bytes match those caches. In particular, the new Agent and
+GitHub Tool archives now contain their declared README files. Managed Python
+venvs import OpenAI/native Pydantic successfully: OpenAI 1.109.1 in both,
+pydantic-core 2.50.5 in the new Tool consumer and 2.50.1 in the Agent's retained
+historical summarizer environment. No Tool/Agent/model request was executed.
+
+The scoped private report is `new-release-verification.json` in the existing
+smoke evidence directory. Steps 4 and 5 pass. Continue step 6 operational
+observation, then the remaining direct API/reference checks; these local
+inspections do not independently re-verify signatures or compare live
+signature/attestation rows against the old audit. The builder made no
+production request or mutation.
+
+## Final quick API PASS and closure
+
+The operator ran the quick raw-API script and supplied its saved results for
+`0.0.0-smoke-676fe4773c39`. The builder verified that report: published Tool
+resolution passes, the missing-standard finalize returns HTTP 422 with
+`APDS-ID-001 /standard` and CLI >= 0.1.36 guidance, and the rejected version is
+not resolvable or listed as published. Evidence: `quick-api-results.json` in the
+existing private smoke run directory.
+
+**Production smoke and Release Band 1 are complete under the operator-accepted
+quick scope.** No additional command is required. Larger retry/release-negative/
+cutover cases retain reviewed local/CI coverage. Enforcement remains enabled;
+the tiny rejected upload expires normally.
