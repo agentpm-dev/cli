@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.46 — Unreleased
+## 0.1.46 — 2026-11-19
 
 - Include declared README and license files in Agent Package, Template and
   Tool archives, even when those files are not selected as source.
@@ -11,6 +11,24 @@
 - Reject declared Python Tool README/license files that are missing, unsafe,
   invalid UTF-8, or exceed the existing 512 KiB README / 128 KiB license limits.
   Optional README discovery remains available when no path is declared.
+
+### Updating affected packages
+
+Rebuild with CLI 0.1.46 before publishing. An older package page can display a
+README supplied separately while its downloadable archive omits the declared
+file. The updated CLI fixes future archives; already-published immutable
+archives are unchanged. Publish a corrected package version and update any
+Component references needed by a newly published Agent Package. Historical
+releases remain installable.
+
+Explicit Python Tool README/license files must fit the existing CLI text limits
+and be readable UTF-8. Packaging now reports an error instead of silently
+omitting those required files. A failed build preserves the previous archive
+and saved package-build descriptor. Optional README discovery stays optional.
+
+If a failed publication still reserves a version for different archive bytes,
+wait for that reservation to expire or publish the corrected source under a
+fresh version. Do not replace the bytes bound to an existing reservation.
 
 ## 0.1.45 — 2026-11-18
 

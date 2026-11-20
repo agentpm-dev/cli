@@ -4,8 +4,9 @@ Prepared **2026-11-18**. This completes the builder's release-preparation step;
 the user confirmed on 2026-11-18 that all three preparation PRs passed CI and CLI main/post-merge CI passed. Publication and production inspection/backfill subsequently completed as recorded below.
 The measured capacity envelope and activation are approved. The operator confirmed
 corrected hosted CI passed and the Registry was redeployed with enforcement enabled.
-Production smoke checks remain open in
-[tasks.md](tasks.md#ordered-production-rollout).
+Production smoke checks passed under the operator-accepted quick scope, and
+**Release Band 1 is complete** in [tasks.md](tasks.md#ordered-production-rollout).
+The final closure record below preserves the production/local-CI evidence boundary.
 
 ## Prepared versions and files
 
@@ -797,8 +798,7 @@ Validation completed on the 0.1.46 tree:
   Four new Rust tests exercise all three affected packagers, actual archive
   extraction and packaged APDS evaluation, missing-file atomicity, normalized
   duplicate selection and outside-root symlinks.
-- `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all
---check`, and the immutable schema/bundle check pass.
+- `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`, and the immutable schema/bundle check pass.
 - The rebuilt binary reports **agentpm 0.1.46**. All three actual example
   sources lint and dry-run package; GitHub Tool build and four mocked tests pass.
 - Registry `validate_snapshot` and its actual dependency-content evaluator accept
@@ -816,8 +816,9 @@ CLI test/clippy logs and source hashes are retained privately under
 `release-band1-evidence/smoke/20261120T034804Z/agent-packaging-fix/`.
 The [runbook](manual-tests/RELEASE_BAND1_SMOKE.md#4-publish-the-compliant-agent-package)
 now gives the CLI upgrade, dependency publication order, archive-member check
-and exact installed dependency assertions. Review, hosted CI, CLI patch release
-and those production publications are still pending; smoke gate 9 remains open.
+and exact installed dependency assertions. Full independent review was subsequently
+operator-confirmed passed, including the Python correction below. Hosted CI, CLI
+patch release and those production publications remain pending; smoke gate 9 stays open.
 No production request or mutation was performed by the builder.
 
 ## Python declared display-file review correction
@@ -854,5 +855,139 @@ Private logs/source hashes are retained at
 `release-band1-evidence/smoke/20261120T034804Z/agent-packaging-fix/python-declared-display/`.
 CLI **0.1.46** is still an unpublished candidate; no further version bump,
 SDK/Web change or production operation was performed for this correction.
-Independent review, hosted CI, patch release and the remaining smoke steps stay
-open.
+The operator subsequently confirmed full independent review passed with no
+remaining findings. Hosted CI, patch release/install confirmation and the
+remaining smoke steps stay open.
+
+## CLI 0.1.46 independent review complete
+
+The operator confirmed full review passed, covering the archive-inclusion fix,
+corrected dependency publication chain and Python declared-file error/cap cases.
+No review finding remains open. Existing local verification remains **1,297
+passed, 0 failed, 6 ignored**, with clippy/format and recorded Web/example checks.
+
+Next: pass required hosted CI, including CLI main native jobs before the patch
+release; publish/install-confirm CLI **0.1.46**; then resume the runbook with
+**github-issues 0.1.2 → issue-triage-playbook 0.1.1 → devwork-copilot 0.1.9**.
+Deploy the prepared Web status marker only once that CLI is available. Registry
+MDX can accompany the release; keep enforcement enabled. Step 5 verified installs
+and the remaining raw API/reference smoke checks are still required. This review
+sign-off does not claim CI, CLI publication or additional production results.
+
+## CLI 0.1.46 released; production smoke step 4 resumed
+
+The operator confirmed all CI passed and everything was released and verified,
+then stated they were beginning the step 4 commands again. Record the CLI
+0.1.46 release/install confirmation and matching Registry documentation/Web
+rollouts as operator-confirmed complete. Independent review had already passed.
+This update does not claim a new independent CI/production connection.
+
+The remaining sequence is **github-issues 0.1.2 → issue-triage-playbook 0.1.1 →
+devwork-copilot 0.1.9**, then fresh verified installs and the remaining direct
+API/reference smoke checks. Those three publication results are not yet
+confirmed by this message. Enforcement remains required; release gate 9 stays
+open until the smoke evidence is complete.
+
+## Step 4 dependencies published; Agent reservation conflict
+
+The operator confirmed both dependency publishes succeeded. Saved local logs
+independently show **github-issues 0.1.2**, version ID **140**, and
+**issue-triage-playbook 0.1.1**, version ID **141**, with normal success URLs.
+The corrected Agent 0.1.9 init returned HTTP 409 `publish in progress`.
+
+The existing single-archive model/schema reserves uploads for **one day**;
+renewable 900-second PUT URLs do not shorten that reservation. The init handler
+resumes only the same owner/payload hash and size, and rejects changed bytes
+while a pending reservation is unexpired. This is consistent with the failed
+0.1.9 upload still reserving that version; no live DB query or exact expiry
+inspection was performed by the builder.
+
+To avoid a possible 24-hour wait or a production DB mutation, advance only the
+unpublished Agent source to **0.1.10**. Its dependencies remain the successful
+Tool/Skill versions and summarize-text 0.1.10. Public source READMEs/tag examples
+and the remaining smoke install/verify commands are updated. The 0.1.9 conflict
+log is retained privately before the next attempt overwrites the normal log.
+The original reservation expires normally. No CLI/Registry change or consumer
+app/lock edit is needed. Agent 0.1.10 publication and step 5 verification remain
+open; the two successful dependency publications must not be repeated.
+
+## Corrected Agent publication and clean installs passed
+
+The operator confirmed **devwork-copilot 0.1.10** published successfully and ran
+the next clean-consumer install/verification steps. The builder inspected the
+saved local evidence: Agent publication ID **142** with a normal success URL,
+both install logs `status: success`, and exact composition/dependency verification
+logs. Earlier dependency publication IDs **140/141** and summarizer **139** are
+already recorded. Both publication protocols and the first-pass successful
+publication/install cases are now evidenced.
+
+All nine locked package entries across the two fresh consumers have matching
+cached archives and installed manifests. Python release integrity was recomputed
+from canonical release inventories. New bytes match the prepared source archives;
+retained historical bytes match the pre-activation audit. Every declared README
+is present and matches installed bytes, including the corrected Agent and GitHub
+Tool. Both managed Python environments successfully import OpenAI and the native
+Pydantic extension, without Tool/Agent execution or model/network calls.
+Private results: `release-band1-evidence/smoke/20261120T034804Z/new-release-verification.json`.
+
+Smoke runbook steps **4 and 5 pass**. Release gate 9 remains open for operational
+observation, exact completed-finalize retries, missing-standard rejection through
+the raw API, explicit staged-session proof and remaining live signature/
+attestation reference comparison. The builder inspected local evidence only;
+no new production request, database mutation or independent cryptographic
+re-verification is claimed.
+
+## Post-activation Render probe passed; final quick API check prepared
+
+The operator supplied deployed Registry commit
+**80f860a0465dae15eae4e8e57d56033b87b499c7** and the Render probe output:
+enforcement true, one sync worker/thread, preload false, 30-second watchdog and
+graceful timeout, ext4 `/tmp`, **59.93 GiB free**, 512 MiB memory limit, zero
+inspection names, health HTTP 200 and two fresh Redis counters. Selected fields
+are retained privately in `render-post-activation-probe.json` in the smoke run.
+The script always emits `activation_approved: false`; approval is an operator/
+review decision, not a probe output. This validates the operational configuration
+and live loopback health/limiter check, not peak capacity or live process argv.
+The exact deployment ID/activation UTC and separate log review were not supplied.
+
+The operator asked to finish with quick direct API tests. The prepared stdlib
+script resolves the already published GitHub Tool, reserves/uploads a tiny Agent
+prerelease without `standard`, expects APDS 422 with rule/path and upgrade floor,
+and confirms that rejected version cannot resolve. It uses the existing Agent
+identity and a unique prerelease version; no new discoverable release is
+expected. Only a pending upload/staged object remains under normal expiry.
+The script prompts for an existing PAT without printing it and retains only
+sanitized results, never token/presigned upload instructions.
+
+This narrows the remaining production execution: completed-finalize retries,
+release-protocol negative publication and explicit cutoff/staged-session cases
+retain reviewed local/PostgreSQL/hosted-CI coverage. They were not newly observed
+in production. Live signature/attestation row fingerprints were not re-audited
+after activation; historical artifact integrity and required verification were
+exercised by the completed installs. The builder has performed no production
+request. Gate 9 remains open only until the final quick-check PASS evidence is
+supplied under this operator-requested scope.
+
+## Release Band 1 closed: final quick production API PASS
+
+The operator supplied the final results for test version
+`0.0.0-smoke-676fe4773c39`; the builder verified the locally retained
+`release-band1-evidence/smoke/20261120T034804Z/quick-api-results.json`:
+
+- The published GitHub Tool resolves successfully.
+- The actual direct reserve/upload/finalize flow rejects the archive without
+  `standard`: HTTP **422**, `apds_nonconformant`, **APDS-ID-001 /standard**, and
+  concrete **CLI >= 0.1.36** upgrade guidance.
+- Resolving the rejected version returns `no_satisfying_version`; it is absent
+  from the available published versions. The failed test did not publish a new
+  version. Its small pending upload/staged object remains under normal expiry.
+
+Review, hosted CI, CLI 0.1.46 and matching deployments, preserved historical
+versions, both publication protocols, verified fresh installs and the
+post-activation operational probe are complete. **Step 9 and Release Band 1 are
+closed under the operator-requested quick production scope.** Completed-finalize
+retries, release-protocol negative cases and cutoff/staged-session policy keep
+reviewed local/PostgreSQL/CI evidence; they were not rerun in production. The
+previously noted deployment-ID/activation-time/log-review and live row-fingerprint
+limitations remain disclosed, not fabricated. Enforcement stays enabled. No
+additional smoke execution is required under this accepted scope.
