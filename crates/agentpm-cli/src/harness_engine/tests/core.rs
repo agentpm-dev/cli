@@ -2860,3 +2860,88 @@ fn non_tool_action_failures_emit_specific_failed_event_types() {
     };
     assert_eq!(fields["reason"], "vector index is stale");
 }
+
+#[test]
+fn m6b_global_and_phase_skill_inheritance_stays_additive_and_scoped() {
+    let mut runtime = runtime_with_tool_and_skill();
+    let mut phase_tool = runtime.tools[0].clone();
+    phase_tool.name = "@zack/phase-tool".into();
+    runtime.tools.push(phase_tool);
+    runtime.capability_candidates = vec![
+        RuntimeCapabilitySnapshot {
+            kind: "skill".into(),
+            identity: "@zack/skill".into(),
+            scope: "global".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+        },
+        RuntimeCapabilitySnapshot {
+            kind: "tool".into(),
+            identity: "@zack/search".into(),
+            scope: "global".into(),
+            source: "skill:@zack/skill".into(),
+            state: "available".into(),
+        },
+        RuntimeCapabilitySnapshot {
+            kind: "tool".into(),
+            identity: "@zack/phase-tool".into(),
+            scope: "phase:assess".into(),
+            source: "agent_binding".into(),
+            state: "available".into(),
+        },
+    ];
+    let workflow = base_loop();
+    let first = EffectivePhase::from_phase(&workflow.r#loop.phases[0], &runtime);
+    let second = EffectivePhase::from_phase(&workflow.r#loop.phases[1], &runtime);
+    assert_eq!(first.active_tools.len(), 2);
+    assert_eq!(
+        second
+            .active_tools
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["@zack/search"]
+    );
+    runtime.capability_candidates[0].scope = "phase:assess".into();
+    runtime.capability_candidates[1].scope = "phase:assess".into();
+    let other = EffectivePhase::from_phase(&workflow.r#loop.phases[1], &runtime);
+    assert!(other.active_tools.is_empty());
+    assert!(other.active_skills.is_empty());
+    runtime.profiles = vec![
+        profile_snapshot("@fixture/global", "1.0.0", "Global"),
+        profile_snapshot("@fixture/phase", "1.0.0", "Phase"),
+    ];
+    runtime.profiles[0].profile.compatibility =
+        Some(serde_json::from_value(json!({"requires":{"tool_use":true}})).unwrap());
+    runtime.profile_bindings.global = vec!["@fixture/global".into()];
+    runtime
+        .profile_bindings
+        .phases
+        .insert("assess".into(), vec!["@fixture/phase".into()]);
+    let combined = EffectivePhase::from_phase(&workflow.r#loop.phases[0], &runtime);
+    assert_eq!(
+        combined
+            .active_profiles
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["@fixture/global", "@fixture/phase"])
+    );
+    let next = EffectivePhase::from_phase(&workflow.r#loop.phases[1], &runtime);
+    assert_eq!(
+        next.active_profiles
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["@fixture/global"]
+    );
+    let mut denied = workflow.r#loop.phases[0].clone();
+    denied.access = Some(LoopPhaseAccess {
+        tools: Some(false),
+        knowledge: None,
+        memory: None,
+    });
+    let denied = EffectivePhase::from_phase(&denied, &runtime);
+    assert_eq!(denied.active_profiles.len(), 2);
+    assert!(denied.active_tools.is_empty()); // Profile hints do not grant capability.
+}

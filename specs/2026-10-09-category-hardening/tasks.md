@@ -691,21 +691,21 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Implementation checklist**
 
-- [ ] Trace current Harness Component lookup that only uses a name.
-- [ ] Use selected Agent's resolved graph/lock to determine exact Component version and kind.
-- [ ] Test workspace with two Agents binding the same named Tool at different versions.
-- [ ] Verify Skill-inherited Tools are exposed only in valid global/phase scope and Loop policy.
-- [ ] Verify Memory operation target semantics remain as in Phase 7A, including operation access to declared spaces not directly phase-bound and scope/trigger eligibility remaining distinct from actual invocation.
-- [ ] Verify the reviewed M1C/Phase 7B Memory authority boundary: Loop read/write flags restrict direct Agent access, not separately bound lifecycle operations. Check that eligible authorized operations can use declared unbound targets while those spaces remain unavailable for direct Agent access; unbound/out-of-phase/ineligible operations remain restricted. Preserve edge-trigger/rearm and interval baseline/reset meanings without prescribing a scheduler. See [M1C-R06](m1c-reconciliation.md#reconciliation-outcomes).
-- [ ] Test supported Runner interpretation separately from schema validation: global/phase additive Profiles without prescribed prompt ordering; no automatic Skill script execution; Loop implicit `complete` transition and authored access/checkpoint/error-policy meaning, within features Harness actually supports.
-- [ ] Confirm Knowledge backend compatibility and local readiness failures are not reported as APDS invalidity.
-- [ ] Expose standard support list through Node SDK bridge/host APIs.
-- [ ] Expose equivalent support list through Python SDK bridge/host APIs.
-- [ ] Confirm TUI, headless and machine preflight outputs agree semantically.
-- [ ] Set up A/B test fixture for optional Agent description in prompt context.
-- [ ] Compare outputs, duplication, token footprint and traceability; record D13 decision.
-- [ ] Keep existing prompt behavior if experiment doesn't show material benefit.
-- [ ] Record D20 interface choice and Claude signoff on exact-version resolution.
+- [x] Trace current Harness Component lookup that only uses a name.
+- [x] Use selected Agent's resolved graph/lock to determine exact Component version and kind.
+- [x] Test workspace with two Agents binding the same named Tool at different versions.
+- [x] Verify Skill-inherited Tools are exposed only in valid global/phase scope and Loop policy.
+- [x] Verify Memory operation target semantics remain as in Phase 7A, including operation access to declared spaces not directly phase-bound and scope/trigger eligibility remaining distinct from actual invocation.
+- [x] Verify the reviewed M1C/Phase 7B Memory authority boundary: Loop read/write flags restrict direct Agent access, not separately bound lifecycle operations. Check that eligible authorized operations can use declared unbound targets while those spaces remain unavailable for direct Agent access; unbound/out-of-phase/ineligible operations remain restricted. Preserve edge-trigger/rearm and interval baseline/reset meanings without prescribing a scheduler. See [M1C-R06](m1c-reconciliation.md#reconciliation-outcomes).
+- [x] Test supported Runner interpretation separately from schema validation: global/phase additive Profiles without prescribed prompt ordering; no automatic Skill script execution; Loop implicit `complete` transition and authored access/checkpoint/error-policy meaning, within features Harness actually supports.
+- [x] Confirm Knowledge backend compatibility and local readiness failures are not reported as APDS invalidity.
+- [x] Expose standard support list through Node SDK bridge/host APIs.
+- [x] Expose equivalent support list through Python SDK bridge/host APIs.
+- [x] Confirm TUI, headless and machine preflight outputs agree semantically.
+- [x] Set up A/B test fixture for optional Agent description in prompt context.
+- [x] Compare outputs, duplication, token footprint and traceability; record D13 decision.
+- [x] Keep existing prompt behavior if experiment doesn't show material benefit.
+- [x] Record D20 interface choice and Claude signoff on exact-version resolution. User confirmed full Claude review passed with no remaining findings on 2026-11-21, after the candidate-suppression assertion correction.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -718,6 +718,10 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
+**Builder evidence — 2026-11-21:** [M6B verification](m6b-verification.md) records exact selected-graph runtime construction, all-six-kind multi-version snapshot tests, actual Node/Python-hosted Tool execution, global/phase/Skill/Memory/Profile/Loop interpretation, and real CLI/SDK report parity. Existing protocol version 1 and response envelopes are preserved. [D13 comparison](m6b-description-decision.md) selects **defer injection and retain current prompts**: reproducible one-/three-phase runs expose added prompt duplication without claiming a real-model quality benefit. Final local Rust workspace: **1,359 passed, 0 failed, 6 opt-in ignores**; native environment regressions: **10 passed**. Node: **119 passed, 2 optional skips**; Python: **120 passed, 2 optional skips**, with all twelve new real-CLI/transport cases passing in each SDK. Formatting, Clippy, SDK type/lint/build checks, feature-local docs and APDS/shared-fixture guards pass. CLI 0.1.47 remains prepared/unreleased; SDK APIs are recorded as Unreleased, without publication. **User confirmed independent Claude review passed with no remaining findings on 2026-11-21, including D13/D20 and the guard assertions. Hosted CI on matching revisions and operator manual acceptance remain pending; M6B is not yet complete.** The selected graph's simultaneous active-name multi-version limitation is explicit and does not label the artifact APDS-invalid.
+
+**Review correction — 2026-11-21:** directly assert that ambiguous Tool and Memory candidates remain suppressed, independently of the fatal ambiguity diagnostic. Reverting lookup to arbitrary first-match fails the new assertion; restoring the uniqueness check passes both focused exact-version tests. Production behavior is unchanged. See the [verification record](m6b-verification.md); user subsequently confirmed independent review passed with no remaining findings on 2026-11-21. The user reports a future ambiguity solution is being planned in Stage 3; M6B retains the documented limitation and explicit safeguard.
+
 ## Release Band 2: Pinned Install and Harness Runner Compatibility
 Covered milestones: 5A–6B.
 
@@ -726,6 +730,7 @@ Covered milestones: 5A–6B.
 This gives users exact APDS metadata through resolve/install/lock v4, reproducible direct/transitive frozen installs, no-dependency Agent install behavior, and Harness capability/preflight reporting that differentiates a conformant Agent Package from a supported Runner and a ready local environment. It retains the existing Harness engine rather than introducing a new framework.
 
 - [ ] After the matching CLI changes merge into `main`, remove the temporary `AGENTPM_CLI_REF` repository variable in both `agentpm-dev/sdk-node` and `agentpm-dev/sdk-python`, or reset it to `main`. Run both SDK CI workflows against CLI `main` and confirm they pass; for manual dispatch, use `cli_ref=main` rather than the temporary commit pin.
+- [ ] Prepare and publish new Node/Python SDK versions for the added support-list API/types after the compatible CLI is released. Preserve existing raw payload access; SDK 0.1.17 remains compatible for extended-v4 lock reading. Run SDK CI against the matching CLI-owned fixture revision before publication.
 - [ ] Reproduce frozen multi-kind dependency closure from clean workspace; test wrong digest/range/kind and legacy versions.
 - [ ] Verify minimal Agent is conformant but not Harness runnable without Loop.
 - [ ] Verify supported versions through TUI/headless/machine/SDK and missing-model headless failure.

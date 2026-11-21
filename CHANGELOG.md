@@ -2,6 +2,11 @@
 
 ## 0.1.47 — Unreleased
 
+- Build Harness runtime capabilities only from the selected Agent's checked,
+  exact locked graph, including Skill-inherited Tools and Memory operations.
+  Other workspace Agents' Component versions cannot enter runtime snapshots.
+  Report ambiguous active identities as a Runner limitation before execution.
+
 - Advertise Harness support for APDS `agentpm / 1.0.0` through CLI/TUI and
   machine initialization/preflight. Check selected Agent/Component definitions,
   locked relationships and standard provenance before execution. Keep APDS

@@ -407,6 +407,15 @@ pub fn resolve_harness_plan_with_progress(
             &mut diagnostics,
         )?;
         if definition.permits_runtime_checks() {
+            // Runtime lookup must never see another Agent's installed versions.
+            // The APDS adapter has already followed and reconciled the selected
+            // authored/locked edges, including Skill-inherited Tools.
+            let selected_keys = definition
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.key.as_str())
+                .collect::<BTreeSet<_>>();
+            package_graph.retain(|key, _| selected_keys.contains(key.as_str()));
             selected_manifest = candidates
                 .into_iter()
                 .find(|candidate| candidate.root.root_key == agent.root_key)
@@ -443,6 +452,7 @@ pub fn resolve_harness_plan_with_progress(
             &mut capabilities,
             &mut diagnostics,
         )?;
+        validate_runtime_binding_versions(&package_graph, &capabilities, &mut diagnostics);
     }
 
     progress(HarnessPlanProgress::new(
@@ -498,6 +508,7 @@ fn build_plan(parts: PlanParts) -> ResolvedHarnessPlan {
         matches!(
             d.code.as_str(),
             "unrealizable_memory_space"
+                | "ambiguous_locked_component"
                 | "host_implementation_unavailable"
                 | "knowledge_backend_unavailable"
         )
@@ -1702,6 +1713,21 @@ fn validate_memory_bindings(
             continue;
         }
         let Some(package) = package_by_name(package_graph, PackageKind::Memory, &name) else {
+            capabilities.push(StaticCapabilityCandidate {
+                kind: "memory".into(),
+                identity: name.clone(),
+                scope: scope_label.into(),
+                source: "agent_binding".into(),
+                state: CapabilityState::Suppressed,
+            });
+            if package_graph
+                .values()
+                .any(|package| package.kind == PackageKind::Memory && package.name == name)
+            {
+                // The shared version guard reports ambiguity. These packages
+                // are present; do not also misreport them as missing.
+                continue;
+            }
             push_diag(
                 diagnostics,
                 PreflightDiagnosticSeverity::Suppressed,
@@ -2911,9 +2937,45 @@ fn package_by_name<'a>(
     kind: PackageKind,
     name: &str,
 ) -> Option<&'a ResolvedPackageInfo> {
-    package_graph
+    let mut matches = package_graph
         .values()
-        .find(|package| package.kind == kind && package.name == name)
+        .filter(|package| package.kind == kind && package.name == name);
+    let package = matches.next()?;
+    // A versionless runtime action cannot distinguish simultaneous versions.
+    // Do not use BTreeMap order as an implicit dependency-selection policy.
+    matches.next().is_none().then_some(package)
+}
+
+fn validate_runtime_binding_versions(
+    packages: &BTreeMap<String, ResolvedPackageInfo>,
+    capabilities: &[StaticCapabilityCandidate],
+    diagnostics: &mut Vec<PreflightDiagnostic>,
+) {
+    let active = capabilities
+        .iter()
+        .map(|candidate| (candidate.kind.as_str(), candidate.identity.as_str()))
+        .collect::<BTreeSet<_>>();
+    let mut versions: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
+    for package in packages.values() {
+        let identity = (package.kind.as_str(), package.name.as_str());
+        if active.contains(&identity) {
+            versions.entry(identity).or_default().push(&package.version);
+        }
+    }
+    for ((kind, name), versions) in versions {
+        if versions.len() > 1 {
+            push_diag(
+                diagnostics,
+                PreflightDiagnosticSeverity::Fatal,
+                "ambiguous_locked_component",
+                format!(
+                    "The selected Agent graph binds {kind} `{name}` at multiple locked versions ({}). This Harness's versionless action interface cannot select between them; use an unambiguous binding graph. Other workspace Agents may use different versions. This is a Runner limitation, not APDS invalidity.",
+                    versions.join(", ")
+                ),
+                Some("agent.lock"),
+            );
+        }
+    }
 }
 
 fn package_ref_parts(reference: &PackageReference) -> (String, String) {

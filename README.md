@@ -377,6 +377,13 @@ Machine `initialize` and `preflight` expose the same report, including failed
 preflight; `start_run` remains blocked until preflight is ready. Harness machine
 protocol version `1` is independent of the advertised APDS version.
 
+Runtime capabilities use the selected Agent's exact checked lock graph, including
+Skill-inherited Tools. Another workspace Agent's Component version cannot be
+selected by name. Ambiguous active identities within the selected graph report
+a Runner limitation before execution. Node `supportedStandards()` and Python
+`supported_standards()` expose the CLI-advertised APDS identities through the
+existing SDK bridge, preserving absent advertisements and response envelopes.
+
 Harness runtime records are written under `.agentpm-state/` by default, while `.agentpm/` remains installed dependency state. See the public [Harness guide](https://www.agentpackagemanager.com/docs/v0.1/cli/harness) for CLI, configuration, protocol, provider and SDK usage.
 
 ### Publishing
