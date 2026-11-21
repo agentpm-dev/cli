@@ -548,11 +548,17 @@ fn frozen_consumer_rejects_old_lock_when_registry_reports_python_dependencies() 
         include_bytes!("fixtures/locks/pre11b-v2.json").as_slice(),
         include_bytes!("fixtures/locks/pre11b-v3.json").as_slice(),
     ] {
+        let lock: Value = serde_json::from_slice(snapshot).unwrap();
+        let (kind, root) = if let Some(root) = lock["roots"].get("local:agent") {
+            ("agent", root)
+        } else {
+            ("skill", &lock["roots"]["local:skill"])
+        };
         let fixture = Fixture::new();
         assert!(
             fixture
                 .command("init")
-                .args(["--kind", "agent", "--name", "frozen-consumer"])
+                .args(["--kind", kind, "--name", root["name"].as_str().unwrap()])
                 .output()
                 .unwrap()
                 .status
@@ -566,7 +572,6 @@ fn frozen_consumer_rejects_old_lock_when_registry_reports_python_dependencies() 
         let lint = fixture.command("lint").args(["--strict"]).output().unwrap();
         assert!(lint.status.success(), "{}", text(&lint));
         fs::write(fixture.0.join("agent.lock"), snapshot).unwrap();
-        let lock: Value = serde_json::from_slice(snapshot).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());

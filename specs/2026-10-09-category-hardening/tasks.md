@@ -611,20 +611,23 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Implementation checklist**
 
-- [ ] Reproduce frozen direct Agent root, not just frozen Tool root.
-- [ ] Reproduce frozen direct Skill root and its Tool dependencies.
-- [ ] Reconstruct full transitive closure in an initially empty `.agentpm` workspace.
-- [ ] Validate every locked dependency satisfies authored version range.
-- [ ] Validate exact kind identity and selected version for every edge.
-- [ ] Fail on missing lock entry rather than filling it from latest Registry version.
-- [ ] Fail on Registry returned digest mismatch before modifying installed state.
-- [ ] Install valid Agent with no deps without sending erroneous empty resolve request.
-- [ ] Test normal install lock regeneration preserves every APDS origin/metadata field.
-- [ ] Test duplicate same-named package references and multi-Agent/multi-version coexistence.
-- [ ] Test legacy artifact install/read still succeeds with accurate inferred metadata.
-- [ ] Test offline/frozen behavior separately from normal online resolve.
-- [ ] Add integration tests for repeated clean installs producing same pinned closure.
-- [ ] Document failures with actionable command/error output (not fabricated package version).
+- [x] Reproduce frozen direct Agent root, not just frozen Tool root.
+- [x] Reproduce frozen direct Skill root and its Tool dependencies.
+- [x] Reconstruct full transitive closure in an initially empty `.agentpm` workspace.
+- [x] Validate every locked dependency satisfies authored version range.
+- [x] Validate exact kind identity and selected version for every edge.
+- [x] Fail on missing lock entry rather than filling it from latest Registry version.
+- [x] Fail on Registry returned digest mismatch before modifying installed state.
+- [x] Install valid Agent with no deps without sending erroneous empty resolve request.
+- [x] Test normal install lock regeneration preserves every APDS origin/metadata field.
+- [x] Test duplicate same-named package references and multi-Agent/multi-version coexistence.
+- [x] Test legacy artifact install/read still succeeds with accurate inferred metadata.
+- [x] Test offline/frozen behavior separately from normal online resolve.
+- [x] Add integration tests for repeated clean installs producing same pinned closure.
+- [x] Document failures with actionable command/error output (not fabricated package version).
+- [x] Address the user-reported Node invocation smoke flake with an explicit test-only startup timeout; full-suite and 24 concurrent repeated runs pass. Production timeout defaults remain unchanged.
+- [x] Complete independent Claude review. User confirmed review passed with no findings on 2026-11-20.
+- [ ] Confirm hosted CLI/native-target CI before closing M5B. Operator manual acceptance is not claimed by the local builder smoke.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -637,6 +640,8 @@ code is merged, deployed with enforcement off, or locally verified.
 **Verification:** the standard four evidence requirements apply — see [Per-milestone evidence requirements](#per-milestone-evidence-requirements). Map the AC and decision IDs listed in this milestone's header.
 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
+
+**Implementation evidence — 2026-11-20:** [M5B verification](m5b-verification.md) maps S2-AC-07 / T-LOCK-02–06 and D06 to complete frozen replay, authored constraint and integrity failures, multi-Agent/version coexistence, older-lock compatibility, empty Agents/workspaces, and unchanged-state checks. The additional user-reported Node invocation flake is addressed with a test-only startup allowance and concurrent repeated runs. CLI 0.1.47 remains prepared and unreleased; there is no new lock format, APDS change, SDK runtime change or production action. Local automated and focused CLI smoke evidence is recorded; User confirmed Claude review passed with no findings on 2026-11-20. **Hosted/native-target CI remains pending, so M5B is not marked complete.** Reader-first publication and SDK CI variable cleanup remain Release Band 2.
 
 ## Milestone 6A: Validate Harness Standard Support and Real Preflight Readiness
 > **Scope note:** Teach Harness which APDS versions it understands and distinguish conformant definition, compatible Runner, and configured runtime. Outside this milestone: new Runner implementation or change to phase/approval engine design.

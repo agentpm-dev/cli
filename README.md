@@ -185,6 +185,12 @@ The generated manifest declares APDS `agentpm / 1.0.0` and pins its editor schem
 Component dependencies are optional. To execute the Agent with `agentpm harness`,
 add a Loop dependency and configure a model first.
 
+Commit `agent.lock` after installation. In a clean checkout,
+`agentpm install --frozen` restores its complete pinned package set, including transitive
+Components, while checking dependency constraints and integrity. It leaves the
+manifest and lock unchanged and still needs a Registry connection; cached
+artifacts can avoid downloads. Dependency-free Agent Packages install normally.
+
 To create a Component or Template instead, select its kind explicitly. Scripts
 that previously relied on the default Tool scaffold must now pass `--kind tool`.
 Each command below writes to its own directory:

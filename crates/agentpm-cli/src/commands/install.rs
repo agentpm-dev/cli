@@ -17,7 +17,7 @@ use crate::workspace::{
     read_workspace_metadata,
 };
 use crate::{
-    io::download::{InstallRoots, download_and_extract_with_client},
+    io::download::{InstallRoots, download_and_extract_prepared_with_client},
     io::fs,
     ui::Step,
 };
@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 mod provenance_tests;
 
 mod compatibility;
+mod frozen;
 use compatibility::compatibility_recovery;
 
 #[derive(clap::Parser, Debug, Clone)]
@@ -189,6 +190,11 @@ impl InstallArgs {
         };
 
         // 3) If --frozen and lock exists, use it directly; else resolve
+        if self.frozen && !project_root.join("agent.lock").is_file() {
+            return Err(anyhow!(
+                "--frozen requires agent.lock; run agentpm install without --frozen first"
+            ));
+        }
         let lock = read_lock_or_default(&project_root)?;
         let steps_label = if self.frozen {
             "Validating lockfile"
@@ -210,10 +216,37 @@ impl InstallArgs {
             }
         }
 
-        let mut plan = if desired.items.is_empty() {
+        let local_manifests: Vec<(String, &Value)> = if let Some(manifests) = &workspace_manifests {
+            manifests
+                .iter()
+                .map(|m| {
+                    (
+                        crate::workspace::local_agent_root_key(&m.rel_path),
+                        &m.manifest_value,
+                    )
+                })
+                .collect()
+        } else {
+            manifest_value
+                .as_ref()
+                .filter(|_| self.spec.is_none())
+                .map(|m| {
+                    (
+                        format!("local:{}", m["kind"].as_str().unwrap_or("agent")),
+                        m,
+                    )
+                })
+                .into_iter()
+                .collect()
+        };
+        let local_refs = local_manifests
+            .iter()
+            .map(|(key, m)| (key.as_str(), *m))
+            .collect::<Vec<_>>();
+        let mut plan = if self.frozen {
+            frozen::plan(&desired, &lock, self.spec.is_some(), &local_refs)?
+        } else if desired.items.is_empty() {
             ResolvePlan { items: Vec::new() }
-        } else if self.frozen {
-            ResolvePlan::from_lock(&desired, &lock)?
         } else {
             let sdk_req = to_sdk_request(&desired);
             let sdk_resp = client.resolve_install(&sdk_req).await?; // network call → concrete versions + integrity
@@ -221,6 +254,22 @@ impl InstallArgs {
             let plan: ResolvePlan = sdk_resp.into();
             plan
         };
+        if self.frozen {
+            let selected = DesiredSet {
+                items: plan
+                    .items
+                    .iter()
+                    .map(|item| {
+                        crate::semver::types::PackageRequirement::new(
+                            item.kind,
+                            &item.name,
+                            &item.version,
+                        )
+                    })
+                    .collect(),
+            };
+            validate_frozen_lock_compatibility(&lock, manifest_value.as_ref(), &selected)?;
+        }
         for item in &plan.items {
             agentpm_sdk::apds::validate(item.standard.as_ref(), item.standard_origin)?;
         }
@@ -241,13 +290,22 @@ impl InstallArgs {
         // 4) Init download session → presigned URLs
         if plan.items.is_empty() {
             if !self.frozen {
-                let next = build_updated_lock(
-                    &lock,
-                    manifest_value.as_ref(),
-                    self.spec.as_deref(),
-                    &plan,
-                    &project_root.join(".agentpm"),
-                )?;
+                let next = if let Some(metadata) = &workspace_metadata {
+                    build_workspace_lock(
+                        workspace_manifests.as_ref().unwrap(),
+                        &metadata.package_roots,
+                        &plan,
+                        &project_root,
+                    )?
+                } else {
+                    build_updated_lock(
+                        &lock,
+                        manifest_value.as_ref(),
+                        self.spec.as_deref(),
+                        &plan,
+                        &project_root.join(".agentpm"),
+                    )?
+                };
                 write_lock(&project_root, &next)?;
             }
             Step::final_msg("Installed ✓", quiet);
@@ -346,6 +404,22 @@ impl InstallArgs {
         let memory_dir = project_root.join(".agentpm/memory");
         let profiles_dir = project_root.join(".agentpm/profiles");
         let loops_dir = project_root.join(".agentpm/loops");
+        let graph_preflight = self.frozen
+            || plan
+                .items
+                .iter()
+                .any(|item| matches!(item.kind, PackageKind::Agent | PackageKind::Skill));
+        if graph_preflight {
+            frozen::verify_graph(
+                &init,
+                &plan,
+                self.frozen.then_some(&lock),
+                &dl_dir,
+                self.refresh,
+                &client,
+            )
+            .await?;
+        }
         fs::ensure_dirs(&[
             &dl_dir,
             &tools_dir,
@@ -356,7 +430,7 @@ impl InstallArgs {
             &profiles_dir,
             &loops_dir,
         ])?;
-        download_and_extract_with_client(
+        download_and_extract_prepared_with_client(
             &init,
             &dl_dir,
             InstallRoots {
@@ -369,6 +443,7 @@ impl InstallArgs {
                 loops_dir: &loops_dir,
             },
             self.refresh,
+            graph_preflight,
             quiet,
             Some(&client),
         )
@@ -451,7 +526,8 @@ impl InstallArgs {
         // Direct agent package installs intentionally do not mutate the local
         // manifest; they are represented as registry roots in the lockfile.
         let mut should_write_manifest = false;
-        if let Some(spec) = &self.spec
+        if !self.frozen
+            && let Some(spec) = &self.spec
             && let Some(manifest_value) = manifest_value.as_mut()
             && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
             && let Some(kind) = direct_declared_dependency_kind(spec, &plan)?

@@ -2,6 +2,14 @@
 
 ## 0.1.47 — Unreleased
 
+- Restore the complete locked package set with `install --frozen`, including
+  direct Agent Packages, Skills and transitive Components. Check authored
+  version constraints, exact kinds and integrity before replacing installations;
+  missing pins never fall back to newer Registry versions. Frozen installs
+  preserve manifest and lock bytes and still require a Registry session.
+- Handle dependency-free local Agent Packages and workspaces without an empty
+  resolve request; directly requested dependency-free Agent Packages still
+  install their own artifact.
 - Preserve effective APDS `standard` and `standard_origin` through Registry
   resolution, installation and portable v4 locks, including represented local
   roots and ordinary regeneration. Historical inference remains

@@ -389,27 +389,95 @@ fn parse_tool_str(s: &str) -> Result<(String, String)> {
 impl ResolvePlan {
     /// Build a ResolvePlan from the lock file, checking that all desired packages exist.
     pub fn from_lock(desired: &DesiredSet, lock: &Lock) -> Result<ResolvePlan> {
-        let mut resolved = Vec::new();
-
+        let mut resolved = BTreeMap::new();
         for d in &desired.items {
-            let pkg = lock
-                .find_unique_locked_package(&d.name, d.kind)?
-                .ok_or_else(|| anyhow!("name {} not found in lockfile", d.name))?;
-
-            // NOTE: we don't re-check the semver range here — frozen mode assumes lock is truth.
-            resolved.push(ResolvedPackage {
-                standard: pkg.standard.clone(),
-                standard_origin: pkg.standard_origin,
-                kind: pkg.kind,
-                name: pkg.name.clone(),
-                version: pkg.version.clone(),
-                integrity: pkg.integrity.clone(),
-                python_resolution: pkg.python_resolution.clone(),
-            });
+            let candidates = match lock {
+                Lock::V1(value) => value
+                    .dependencies
+                    .get(&d.name)
+                    .map(|dep| LockedPackage {
+                        standard: None,
+                        standard_origin: None,
+                        python_resolution: None,
+                        kind: PackageKind::Tool,
+                        name: d.name.clone(),
+                        version: dep.version.clone(),
+                        integrity: dep.integrity.clone(),
+                    })
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                Lock::V2(value) => value
+                    .packages
+                    .values()
+                    .filter(|p| p.kind == d.kind && p.name == d.name)
+                    .cloned()
+                    .collect(),
+            };
+            let mut matches = Vec::new();
+            for pkg in candidates {
+                if pkg.kind == d.kind && locked_version_matches(&pkg.version, &d.range)? {
+                    matches.push(pkg);
+                }
+            }
+            let pkg = match matches.as_slice() {
+                [] => bail!(
+                    "No locked {} {} satisfies {}; run agentpm install without --frozen to update the lock",
+                    d.kind.as_str(),
+                    d.name,
+                    d.range
+                ),
+                [pkg] => pkg,
+                _ => bail!(
+                    "multiple locked versions found for {}; use an explicit version selector",
+                    d.name
+                ),
+            };
+            resolved.insert(
+                package_key(pkg.kind, &pkg.name, &pkg.version),
+                ResolvedPackage {
+                    standard: pkg.standard.clone(),
+                    standard_origin: pkg.standard_origin,
+                    kind: pkg.kind,
+                    name: pkg.name.clone(),
+                    version: pkg.version.clone(),
+                    integrity: pkg.integrity.clone(),
+                    python_resolution: pkg.python_resolution.clone(),
+                },
+            );
         }
-
+        let resolved = resolved.into_values().collect();
         Ok(ResolvePlan { items: resolved })
     }
+}
+
+/// Exact selectors include build identity; ranges follow the existing SemVer matcher.
+pub(crate) fn locked_version_matches(version: &str, range: &str) -> Result<bool> {
+    let version = semver::Version::parse(version).context("invalid locked package version")?;
+    let range = range.trim();
+    if let Ok(exact) = semver::Version::parse(range) {
+        return Ok(version == exact);
+    }
+    // The Registry interprets a two-part numeric selector as an exact patch-zero
+    // version, not Rust semver's implicit caret requirement.
+    if range.chars().all(|c| c.is_ascii_digit() || c == '.') && range.matches('.').count() == 1 {
+        let exact = semver::Version::parse(&format!("{range}.0"))?;
+        return Ok(version == exact);
+    }
+    let normalized = if range.is_empty() || range.eq_ignore_ascii_case("latest") {
+        "*".to_owned()
+    } else {
+        // Match Registry comparator whitespace and ignore build metadata for
+        // range precedence (exact selectors above retain the complete identity).
+        range
+            .replace(',', " ")
+            .split_whitespace()
+            .map(|part| part.split('+').next().unwrap_or(part))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    Ok(semver::VersionReq::parse(&normalized)
+        .with_context(|| format!("invalid dependency version selector {range}"))?
+        .matches(&version))
 }
 
 pub fn parse_package_spec(spec: &str) -> Result<PackageRequirement> {
@@ -876,20 +944,6 @@ pub fn resolve_declared_package_from_packages(
     range: &str,
     kind: PackageKind,
 ) -> Result<Option<LockedPackage>> {
-    let exact = if range == "*" {
-        None
-    } else {
-        semver::Version::parse(range).ok()
-    };
-    let req =
-        if exact.is_none() && range != "*" {
-            Some(semver::VersionReq::parse(range).with_context(|| {
-                format!("declared package range for {} is not valid semver", name)
-            })?)
-        } else {
-            None
-        };
-
     let mut matches: Vec<(semver::Version, LockedPackage)> = Vec::new();
     for pkg in packages
         .values()
@@ -899,14 +953,7 @@ pub fn resolve_declared_package_from_packages(
             Ok(version) => version,
             Err(_) => continue,
         };
-        let is_match = if let Some(exact) = &exact {
-            &version == exact
-        } else if let Some(req) = &req {
-            req.matches(&version)
-        } else {
-            true
-        };
-        if is_match {
+        if locked_version_matches(&pkg.version, range)? {
             matches.push((version, pkg.clone()));
         }
     }

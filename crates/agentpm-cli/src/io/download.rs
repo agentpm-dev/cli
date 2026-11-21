@@ -57,6 +57,29 @@ pub async fn download_and_extract_with_client(
     quiet: bool,
     registry: Option<&agentpm_sdk::AgentPmClient>,
 ) -> Result<()> {
+    download_and_extract_prepared_with_client(
+        init,
+        cache_dir,
+        install_roots,
+        refresh,
+        false,
+        quiet,
+        registry,
+    )
+    .await
+}
+
+/// A successful graph preflight has already refreshed the cache. Still honor
+/// forced extraction so --refresh repairs installed files, not just archives.
+pub async fn download_and_extract_prepared_with_client(
+    init: &sdkm::InstallInitResponse,
+    cache_dir: &Path,
+    install_roots: InstallRoots<'_>,
+    refresh: bool,
+    prepared: bool,
+    quiet: bool,
+    registry: Option<&agentpm_sdk::AgentPmClient>,
+) -> Result<()> {
     fs::create_dir_all(cache_dir).await?;
     fs::create_dir_all(install_roots.tools_dir).await?;
     fs::create_dir_all(install_roots.agents_dir).await?;
@@ -129,7 +152,7 @@ pub async fn download_and_extract_with_client(
         let client_cl = client.clone();
         futs.push(async move {
             // (Re)download if missing or refresh requested
-            if refresh || !valid_cache {
+            if (refresh && !prepared) || !valid_cache {
                 let transfer = download_checked(&client_cl, &url, &cache_path, art.size, Some(&integrity)).await;
                 if let Err(error) = transfer {
                     if error.downcast_ref::<ExpiredDownload>().is_some() {
@@ -156,10 +179,18 @@ pub async fn download_and_extract_with_client(
         });
     }
 
+    // Drain blocking extraction work even after a sibling fails. Dropping its
+    // future cannot stop spawn_blocking; callers may remove an inspection tree.
+    let mut failure = None;
     while let Some(res) = futs.next().await {
-        res?;
+        if let Err(error) = res {
+            failure.get_or_insert(error);
+        }
     }
-    Ok(())
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 /// Stream download to a file (atomic via .part then rename).
