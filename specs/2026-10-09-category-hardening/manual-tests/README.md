@@ -67,7 +67,10 @@ isolated workload and retains a report.
   parity and the existing description experiment. No Registry or paid model.
   Four builder checks pass, including actual shell/PTY replay and final audit;
   all 13 shell blocks parse. Claude review is operator-confirmed passed.
-  Matching-revision hosted CI and operator manual acceptance remain pending.
+  All hosted CI is operator-confirmed passed on 2026-11-21 after the Windows
+  corrections and macOS rerun. The user supplied the passing 30-result audit and
+  both TUI observations the same day; saved evidence/hashes were independently
+  rechecked, completing M6B. Release Band 2 remains separate.
 - [Automated local Registry capacity measurement](REGISTRY_CAPACITY.md): a single
   command runs the isolated Docker stack, both enforcement settings, actual
   example graphs, larger payloads, concurrency and controlled failures. Evidence

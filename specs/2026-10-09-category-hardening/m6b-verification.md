@@ -3,8 +3,12 @@
 Builder verification: **2026-11-21**. Scope: **M6B only**, D13 / D20,
 S2-AC-08 / S2-AC-09, T-RUN-01,05–09. Implementation and local verification are
 complete. User confirmed independent Claude review passed with no remaining
-findings on **2026-11-21**, including the guard assertion follow-up. Hosted CI
-and operator manual acceptance remain pending. No production Registry requests, publication or deployment occurred.
+findings on **2026-11-21**, including the guard assertion follow-up. User confirmed
+all hosted CI passed on **2026-11-21**, following the Windows corrections and
+macOS dependency-download rerun. User supplied the passing 30-result manual
+audit with both TUI observations on **2026-11-21**; saved evidence was independently
+rechecked. **M6B is complete**; Release Band 2 remains separate.
+No production Registry requests, publication or deployment occurred.
 
 ## Changes and decision D20
 
@@ -81,7 +85,7 @@ pass, as do Rust formatting and whitespace checks. Logs:
 `/tmp/m6b-uniqueness-mutation.log` and `/tmp/m6b-uniqueness-final.log`.
 This follow-up changes test assertions only; the full-workspace results below
 are the preceding implementation run and were not repeated for this test-only
-correction. User subsequently confirmed independent review passed with no remaining findings; hosted CI remains open.
+correction. User subsequently confirmed independent review passed with no remaining findings; hosted CI was subsequently confirmed passed on 2026-11-21.
 
 Definition checks remain read-only. Standard identity/provenance, lock v4,
 private-package authorization, target selection, signature/integrity and native
@@ -185,10 +189,10 @@ code change is needed. Hosted CI remains unconfirmed. The user subsequently
 requested resuming manual runbook preparation; that work is recorded below.
 
 - Independent Claude review of implementation, D13 evidence/decision and D20
-  exact-version selection is user-confirmed passed on 2026-11-21. Hosted
-  CLI/native-target and both SDK CI on matching revisions remain pending.
+  exact-version selection is user-confirmed passed on 2026-11-21. User confirmed
+  all hosted CLI/SDK CI passed after the corrections below on 2026-11-21.
 - The manual runbook is prepared and builder-replayed as described below.
-  Operator acceptance and hosted CI confirmation remain pending.
+  Operator acceptance and hosted CI are confirmed passed; see completion below.
 - CLI **0.1.47 remains prepared and unreleased**. SDK package versions remain
   **0.1.17**, with new API changes recorded under Unreleased. Prepare/publish new
   SDK versions as part of Release Band 2; existing 0.1.17 clients retain raw
@@ -272,3 +276,41 @@ does not contain this fix, even though its fixture snapshot matches. Push the
 SDK test corrections and rerun Windows plus the remaining required CI jobs.
 No fixture resynchronization, guard bypass or package publication is needed.
 M6B stays open pending matching-revision hosted CI and operator acceptance.
+
+## Hosted CI confirmation — 2026-11-21
+
+User confirmed **all hosted CI passed**, following the Windows corrections in
+CLI `b7a762be2f6129a9b98ef8fc3751577a1a1659cb`. The remaining macOS Python 3.11
+failure was a connection timeout fetching `pydantic-core` from PyPI; the rerun
+passed without another code change. This is operator-reported hosted evidence,
+separate from the local check counts above. The earlier CI-triage and rerun
+instructions are historical and are superseded by this confirmation.
+
+Operator subsequently supplied the passing 30-command/two-TUI manual audit,
+independently rechecked below. This closes M6B. The helper's
+`hosted_ci_complete: false` remains deliberate: generated evidence does not
+automatically grant or record external CI approval. Release Band 2 publication,
+deployment and temporary CLI-ref cleanup remain separate rollout gates.
+
+## Operator manual acceptance and completion — 2026-11-21
+
+User supplied `status: pass`, `checked_command_results: 30` and
+`tui_observations_recorded: true` from operator run
+`cli-m6b-test/20261121T204948Z-11496`. All 30 saved command results and both
+confirmed fresh TUI Run observations were independently rechecked read-only:
+expected diagnostics and exits, selected APDS graphs, exact six-kind runtime
+versions, direct/inherited Tool markers, scope/policy restrictions, SDK raw
+envelopes and blocked Runs, the D13 experiment, ended phase reports and unchanged
+source/CLI/SDK/helper hashes. The CLI SHA-256 matches the supplied summary:
+`5db89f2870604489de3122050d83c748eb3dcf8b9d8560d708f83dd2dd978f72`.
+
+The two initially missing `json-1`/`json-2` captures are now present and pass. No
+new test Runs, API/Registry calls or changes to operator evidence were needed.
+`operator_signoff: false` and `hosted_ci_complete: false` remain the helper's
+intentional non-self-certifying output; the operator's manual acceptance and
+prior hosted CI confirmation are recorded in this document and tasks.
+
+Independent review, required local checks, hosted CI and operator manual
+acceptance are passed. **M6B is complete.** Release Band 2 publication, deployment,
+CLI-ref cleanup and integration smoke checks remain separate; no release or
+full APDS execution certification is claimed.

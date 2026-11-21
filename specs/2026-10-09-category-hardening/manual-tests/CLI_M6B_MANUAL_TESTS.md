@@ -1,7 +1,10 @@
 # M6B: Exact Component Versions and SDK Reports
 
-Claude review passed. Hosted CI on matching CLI/SDK revisions and your manual
-acceptance remain pending. These instructions use the reviewed local checkouts;
+Claude review passed. The user confirmed all hosted CI passed on **2026-11-21**
+after the Windows corrections and macOS rerun. The user supplied the passing
+30-result audit and both TUI observations the same day; saved evidence was
+independently rechecked. **M6B is complete.**
+These instructions use the reviewed local checkouts;
 they do not require publishing a new CLI or SDK first.
 
 Use **one macOS/zsh terminal**, starting in the CLI repo. All generated inputs,
@@ -342,8 +345,10 @@ Expected: **`status: pass`, `checked_command_results: 30`,
 `tui_observations_recorded: true`**. The helper rechecks saved results, raw
 requests, diagnostics, outputs and source hashes. `operator_signoff: false` and
 `hosted_ci_complete: false` are intentional: it does not grant those approvals
-for you. Send the summary and your observations back; hosted CI confirmation on
-matching revisions is still required before marking M6B complete.
+for you. Hosted CI is already user-confirmed passed and is recorded separately.
+The user supplied the passing summary and both observations on 2026-11-21;
+manual acceptance is recorded separately in verification and tasks, completing
+M6B. The helper does not change these fields to grant external approvals.
 
 Keep this run directory until acceptance is recorded. There is no server to
 stop, production state to restore or cleanup command to run.
