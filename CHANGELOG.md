@@ -6,6 +6,9 @@
   exact locked graph, including Skill-inherited Tools and Memory operations.
   Other workspace Agents' Component versions cannot enter runtime snapshots.
   Report ambiguous active identities as a Runner limitation before execution.
+- Recognize extensionless Windows interpreter commands such as `node` when
+  `node.exe` is installed on PATH, so Harness preflight does not hide an
+  otherwise available Tool.
 
 - Advertise Harness support for APDS `agentpm / 1.0.0` through CLI/TUI and
   machine initialization/preflight. Check selected Agent/Component definitions,

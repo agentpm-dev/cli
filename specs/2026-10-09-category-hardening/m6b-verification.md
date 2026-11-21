@@ -168,11 +168,27 @@ tests/test_docs_content.py`: **5 passed, 166 subtests passed**.
 
 ## Remaining gates and release order
 
+**Hosted SDK CI triage — 2026-11-21:** inspected both failed Linux job logs
+(Node run `44945563236`, job `136971990813`; Python run `44945577806`, job
+`136972035332`). Both check out CLI
+`25bd743a86099cee318d4e7d39490c9ea66ac23b`, which predates the new shared
+`harness_fixture.py`. The reviewed M6B CLI commit is
+`1134b3c0aa0de5c978356ff6b271d9aad257d4fe`; the fixture is Git-tracked there
+and remotely accessible. Both committed SDK snapshots match the CLI source
+locally, including inventory and bytes. The file is not yet available on CLI
+`main`. Update `AGENTPM_CLI_REF` to the reviewed M6B CLI commit in both SDK
+repositories and rerun CI; a manual dispatch's `cli_ref` input takes precedence
+over that variable and must also use the matching commit. Verify the checkout
+log before claiming recovery. Restore/remove the temporary pin after the CLI
+merges, as already required by Release Band 2. No guard bypass or workflow
+code change is needed. Hosted CI remains unconfirmed. The user subsequently
+requested resuming manual runbook preparation; that work is recorded below.
+
 - Independent Claude review of implementation, D13 evidence/decision and D20
   exact-version selection is user-confirmed passed on 2026-11-21. Hosted
   CLI/native-target and both SDK CI on matching revisions remain pending.
-- Operator manual acceptance follows review/CI; no manual runbook or acceptance
-  has been claimed for this milestone yet.
+- The manual runbook is prepared and builder-replayed as described below.
+  Operator acceptance and hosted CI confirmation remain pending.
 - CLI **0.1.47 remains prepared and unreleased**. SDK package versions remain
   **0.1.17**, with new API changes recorded under Unreleased. Prepare/publish new
   SDK versions as part of Release Band 2; existing 0.1.17 clients retain raw
@@ -183,3 +199,76 @@ tests/test_docs_content.py`: **5 passed, 166 subtests passed**.
 - Ship the compatible CLI before relying on its behavior in distributed locks
   and new SDK guidance. No new lock format, protocol version, Registry deployment
   or automatic example republication is part of M6B.
+
+## Manual runbook preparation — 2026-11-21
+
+[Operator guide](manual-tests/CLI_M6B_MANUAL_TESTS.md) and
+[helper documentation](manual-tests/fixtures/m6b/README.md) provide ten visible
+cases under ignored `agentpm/cli-m6b-test/<run>/`, 30 captured command expectations
+and two TUI Run observations. No Registry/API/DB, publication, signing key or paid
+model is required. Synthetic installed state reuses the reviewed shared SDK
+fixture; actual CLI scaffold/build/lint outputs are retained. The CLI, built Node
+SDK entrypoint, Python SDK source, helper and prepared input bytes are pinned.
+
+The guide covers two Agents selecting different versions of all six Component
+kinds, direct/Skill-inherited Tool dispatch, Loop Tool prohibition, phase-only
+inheritance and Memory operation participation, explicit ambiguity rejection and
+the Skill-only workaround. Both SDKs host actual Runs and expose the existing
+initialization/preflight envelopes and typed supported-standard list. Five
+report-only cases compare standalone/Node/Python results exactly. The existing
+D13 experiment writes into this run's ignored evidence directory. Each TUI
+confirmation requires a fresh ended Run, three model requests with the expected
+versions and one matching Tool execution; opening the TUI alone cannot pass.
+
+Builder checks: **4 passed**, including replay of the actual operator shell
+blocks, both real PTY Runs and the final 30-result audit. All **13 shell blocks**
+parse; Black, Ruff, Node syntax, Markdown/JavaScript formatting and diff checks
+pass. Raw shell replay is in ignored `target/m6b-manual-builder.log`; PTY streams
+are `target/m6b-manual-builder-tui-consumer-{1,2}.ansi`. The initial PTY assertion
+checked before the complete screen arrived; waiting for all required rows fixed
+the test, and the final full helper suite passed. No product change was needed.
+The guard tests reject wrong saved runtime versions, absent ambiguity diagnostics,
+changed inputs/expectations, stale TUI proof and reuse of an existing run.
+
+Builder runs use unique `builder-<UUID>` directories and remove only their exact
+owned paths; no operator timestamp run is created, modified or cleaned. The
+summary deliberately leaves `operator_signoff` and `hosted_ci_complete` false.
+This prepares manual acceptance; it does not complete M6B or claim a release.
+
+## Windows SDK CI correction — 2026-11-21
+
+The subsequent Windows jobs passed shared-fixture inventory, but Python's real
+execution callback observed an empty expected capability and Node's six real-CLI
+cases failed during directory cleanup with `EBUSY`.
+
+Inspection found a CLI readiness bug: `command_available` looked for literal
+`node` on PATH, while Windows normally provides `node.exe`. Actual process
+launch supports the extensionless command, but preflight suppressed its Tool.
+Readiness now recognizes `.exe` for extensionless Windows commands both through
+PATH and for explicit paths. Unix executable-bit behavior is unchanged; this
+does not add shell/PATHEXT dispatch. A platform-aware filesystem regression
+covers both search paths, explicit extensions, absent commands and absent PATH,
+without changing the process-wide PATH in parallel tests.
+
+Node tests now await asynchronous recursive removal with bounded native retries
+after stopping the subprocess, allowing Windows to release its working-directory
+handle. Errors are not swallowed. Both SDK execution tests assert readiness
+before the Run, exposing full preflight diagnostics instead of only a wrapped
+callback failure. No SDK runtime/public API or shared fixture bytes changed.
+The CLI correction is recorded under the existing unreleased 0.1.47 changelog.
+
+Latest local validation: **27 Harness-plan tests and two exact-version tests
+pass**; Clippy and Rust formatting pass. Node's complete suite has **119 passed,
+two existing optional skips**; Python's complete suite has **120 passed, two
+existing optional skips**. SDK type/lint/format checks and shared-fixture guards
+also pass. Logs: `/tmp/m6b-windows-{rust-plan,rust-versions,clippy,node-tests,python-tests}.log`.
+These local runs are macOS evidence, not a Windows CI pass; the earlier full
+workspace count predates this correction.
+
+**Rerun gate:** push the CLI correction, then point both SDK repositories'
+temporary `AGENTPM_CLI_REF` (or overriding dispatch `cli_ref`) at the new CLI
+commit containing it. The earlier `1134b3c0aa0de5c978356ff6b271d9aad257d4fe`
+does not contain this fix, even though its fixture snapshot matches. Push the
+SDK test corrections and rerun Windows plus the remaining required CI jobs.
+No fixture resynchronization, guard bypass or package publication is needed.
+M6B stays open pending matching-revision hosted CI and operator acceptance.

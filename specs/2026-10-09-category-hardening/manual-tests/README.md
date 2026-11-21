@@ -59,6 +59,15 @@ isolated workload and retains a report.
   operator-confirmed passed on 2026-11-21. The user supplied the passing 26-result
   audit and four TUI observations the same day, completing M6A. Saved evidence was
   independently rechecked; the earlier builder recovery is disclosed in verification.
+- [Exact Component versions and SDK reports (M6B)](CLI_M6B_MANUAL_TESTS.md):
+  ten visible local cases, 30 captured command expectations and two TUI Runs
+  under ignored `agentpm/cli-m6b-test/`. Checks six-kind exact selection,
+  direct/Skill-inherited Tool execution, phase scope, Memory participation,
+  ambiguity rejection and the Skill-only workaround, CLI/Node/Python report
+  parity and the existing description experiment. No Registry or paid model.
+  Four builder checks pass, including actual shell/PTY replay and final audit;
+  all 13 shell blocks parse. Claude review is operator-confirmed passed.
+  Matching-revision hosted CI and operator manual acceptance remain pending.
 - [Automated local Registry capacity measurement](REGISTRY_CAPACITY.md): a single
   command runs the isolated Docker stack, both enforcement settings, actual
   example graphs, larger payloads, concurrency and controlled failures. Evidence

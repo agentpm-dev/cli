@@ -2236,15 +2236,28 @@ fn canonical_interpreter(command: &str) -> String {
 }
 
 fn command_available(command: &str) -> bool {
+    command_available_with_path(command, std::env::var_os("PATH").as_deref())
+}
+
+fn command_available_with_path(command: &str, search_path: Option<&OsStr>) -> bool {
     let path = Path::new(command);
     if path.is_absolute() || command.contains(std::path::MAIN_SEPARATOR) {
-        return executable_file(path);
+        return executable_command(path);
     }
 
-    std::env::var_os("PATH")
+    search_path
         .into_iter()
         .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
-        .any(|dir| executable_file(&dir.join(command)))
+        .any(|dir| executable_command(&dir.join(command)))
+}
+
+fn executable_command(path: &Path) -> bool {
+    // Match Command's Windows executable lookup: an extensionless command can
+    // name node.exe/python.exe. Do not assume shell/PATHEXT script dispatch.
+    executable_file(path)
+        || (cfg!(windows)
+            && path.extension().is_none()
+            && executable_file(&path.with_extension("exe")))
 }
 
 #[cfg(unix)]
@@ -4055,6 +4068,38 @@ mod tests {
             "expected @zack/search to be unavailable, got: {:#?}",
             plan.capabilities
         );
+    }
+
+    #[test]
+    fn command_lookup_accepts_extensionless_windows_executables_only_on_windows() {
+        let root = temp_dir("executable-extension");
+        let command = root.join("node");
+        fs::write(command.with_extension("exe"), b"fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                command.with_extension("exe"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+        assert_eq!(executable_command(&command), cfg!(windows));
+        assert_eq!(command_available(command.to_str().unwrap()), cfg!(windows));
+        assert!(command_available(
+            command.with_extension("exe").to_str().unwrap()
+        ));
+        assert!(!executable_command(&root.join("missing")));
+        // An explicit extension must not be replaced by .exe.
+        assert!(!executable_command(&command.with_extension("cmd")));
+        let search_path = std::env::join_paths([&root]).unwrap();
+        assert_eq!(
+            command_available_with_path("node", Some(&search_path)),
+            cfg!(windows)
+        );
+        assert!(command_available_with_path("node.exe", Some(&search_path)));
+        assert!(!command_available_with_path("missing", Some(&search_path)));
+        assert!(!command_available_with_path("node", None));
     }
 
     #[cfg(unix)]
