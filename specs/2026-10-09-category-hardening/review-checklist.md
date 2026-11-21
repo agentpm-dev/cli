@@ -90,6 +90,10 @@ The implementation is split into **M1A–M17C**, including **M1A.1**, **M8B.1** 
 
 ### 4. Resolve/install/lock/Runner contract (M5A–M6B)
 
+**M6A review handoff:** [Builder verification and D20 decision](m6a-verification.md). Review the additive report serialization, qualified legacy lane, selected-graph checks, failed-machine inspection/start guard, no-Loop classification and noninteractive provider configuration. Backend limitations preserve existing optional suppression. Runtime exact-version binding and SDK wrapper parity remain M6B; the global items below are not pre-approved by builder evidence.
+
+**M6A review status — 2026-11-21:** User confirmed Claude review passed with no remaining findings after the legacy-warning and relative-path corrections. The scoped D20 interface choice is approved. Hosted CI and operator manual acceptance remain pending; cross-milestone items below still cover M6B and are not marked complete by this approval.
+
 - [ ] Standard declaration/effective interpretation **and provenance** consistent from manifest → Registry → resolved graph → CLI install → lockfile → Harness. Actual version-specific embedded manifest is authoritative; API cannot silently override it.
 - [ ] Existing Stage 1 `agent.lock` v4 retained if feasible; forward-unknown-version/field protection honored. A v5 bump needs convincing migration and reviewer evidence, not simply convenience.
 - [ ] `--frozen` correctly handles direct **Agent and Skill roots**, complete transitive closure, version/semver satisfaction, dependency kind, selected artifact targets, exact SHA/release identity and clean-workspace reconstruction. No checksum/constraint bypass.

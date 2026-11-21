@@ -203,6 +203,8 @@ The `agentpm init` invocation and `agentpm lint` without flags are based on exis
 
 ### E. Harness and SDK compatibility/preflight (M6A–M6B; S2-AC-08,09)
 
+**M6A builder evidence (2026-11-21):** [Verification and D20 interface decision](m6a-verification.md) covers T-RUN-01–04,07: 17 actual CLI integration tests, interactive/bootstrap and older-report tests, TUI rendering, full execution regressions, 1,353 passing workspace tests and all 10 native environment regressions. APDS/SDK drift guards, Clippy, formatting and docs checks pass. A real CLI-generated minimal Agent smoke confirms `conformant / not_runnable / not_evaluated` without source/lock mutation or Registry/model requests. User confirmed independent Claude review passed with no remaining findings on 2026-11-21, following both diagnostic corrections. Hosted CI and operator manual acceptance remain pending. M6B still owns exact runtime binding and cross-SDK parity; no full S2-AC-08 or Release Band 2 completion is claimed.
+
 - **T-RUN-01:** Standard compatibility advertised consistently by CLI, TUI, headless/machine preflight and Node/Python SDK wrappers; Harness protocol and APDS version dimensions separate.
 - **T-RUN-02:** Valid minimal Agent lacking Loop reported **APDS valid but not Harness-runnable**; not falsely classified as APDS-invalid.
 - **T-RUN-03:** Unsupported APDS declared version fails supported-Runner preflight with precise diagnostic, not a lower-level unknown shape error.

@@ -103,7 +103,7 @@ jobs:
           cargo test -p agentpm-sdk target::tests
           cargo test -p agentpm-cli --bin agentpm commands::package::tests
           cargo test -p agentpm-cli --bin agentpm io::download::
-          cargo test -p agentpm-cli --test payload_compatibility --test ci_publishing --test target_install --test apds_install --test frozen_install
+          cargo test -p agentpm-cli --test payload_compatibility --test ci_publishing --test target_install --test apds_install --test frozen_install --test harness_standard
       - name: Acquire and verify the pinned native resolver
         shell: bash
         env:

@@ -2,6 +2,20 @@
 
 ## 0.1.47 — Unreleased
 
+- Advertise Harness support for APDS `agentpm / 1.0.0` through CLI/TUI and
+  machine initialization/preflight. Check selected Agent/Component definitions,
+  locked relationships and standard provenance before execution. Keep APDS
+  definition status, Harness support and local runtime readiness distinct;
+  historical interpretation remains explicitly inferred and unverified.
+- Surface structural and resolved APDS findings on legacy definitions as
+  warnings, exempting only the missing standard declaration. Keep historical
+  interpretation unverified without hiding other defects or rewriting sources.
+- Report a valid Agent Package without a Loop as not runnable by Harness.
+  Noninteractive preflight now rejects missing model/provider configuration or
+  required provider credentials; interactive TUI model selection remains
+  available. Failed machine preflight stays inspectable through the existing
+  protocol while blocking `start_run`. Optional backend limitations retain
+  capability suppression rather than becoming APDS violations.
 - Restore the complete locked package set with `install --frozen`, including
   direct Agent Packages, Skills and transitive Components. Check authored
   version constraints, exact kinds and integrity before replacing installations;

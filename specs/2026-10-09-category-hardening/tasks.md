@@ -654,18 +654,18 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Implementation checklist**
 
-- [ ] Define supported standards capability list with exact version IDs.
-- [ ] Check selected Agent and relevant resolved Component standards before run.
-- [ ] Preserve legacy interpretation as qualified status.
-- [ ] Return unsupported-standard result for unknown version, without fallback.
-- [ ] Return valid-but-not-runnable reason for absent Loop.
-- [ ] Keep readiness errors separate from conformance violations.
-- [ ] Test missing model/provider in headless preflight returns not-ready.
-- [ ] Retain interactive bootstrap prompt where a TTY is actually available.
-- [ ] Expose same supported standards through existing machine initialization/preflight.
-- [ ] Add clear CLI/TUI status text without claiming one Runner is mandatory for APDS.
-- [ ] Test unsupported Memory/Knowledge backend as Runner limitation, not APDS invalidity.
-- [ ] Prove no accidental change in loop stop/transition/approval behavior.
+- [x] Define supported standards capability list with exact version IDs.
+- [x] Check selected Agent and relevant resolved Component standards before run.
+- [x] Preserve legacy interpretation as qualified status.
+- [x] Return unsupported-standard result for unknown version, without fallback.
+- [x] Return valid-but-not-runnable reason for absent Loop.
+- [x] Keep readiness errors separate from conformance violations.
+- [x] Test missing model/provider in headless preflight returns not-ready.
+- [x] Retain interactive bootstrap prompt where a TTY is actually available.
+- [x] Expose same supported standards through existing machine initialization/preflight.
+- [x] Add clear CLI/TUI status text without claiming one Runner is mandatory for APDS.
+- [x] Test unsupported Memory/Knowledge backend as Runner limitation, not APDS invalidity.
+- [x] Prove no accidental change in loop stop/transition/approval behavior.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -677,6 +677,10 @@ code is merged, deployed with enforcement off, or locally verified.
 **Verification:** the standard four evidence requirements apply — see [Per-milestone evidence requirements](#per-milestone-evidence-requirements). Map the AC and decision IDs listed in this milestone's header.
 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
+
+**Builder evidence — 2026-11-21:** [M6A verification and D20 interface choice](m6a-verification.md) maps S2-AC-08 / T-RUN-01–04,07 to selected-graph definition/provenance checks, exact supported-standard reporting, qualified legacy interpretation, no-Loop compatibility, noninteractive model/provider failures, optional backend limitations and unchanged execution regressions. Final workspace: **1,353 passed, 0 failed, 6 opt-in ignores**; all **10 native environment tests** also pass, as do Clippy, formatting, docs and APDS/SDK drift guards. The actual init/lint/empty-install/preflight smoke passes with unchanged source/lock bytes. Existing protocol version 1 is retained; new fields are additive. **User confirmed independent Claude review passed with no remaining findings on 2026-11-21, including the scoped D20 interface choice. Hosted CI and operator manual acceptance remain pending; M6A is not yet complete.** M6B exact runtime binding fixes, SDK wrapper parity and D13 remain untouched.
+
+**Review correction:** legacy APDS diagnostics now exempt only the missing declaration; other structural/resolved findings are visible warnings with rule IDs and source paths. Legacy status and source bytes stay unchanged. Root/Component description and resolved-phase regression cases pass; the full workspace and checks above were rerun. Selector diagnostic messages also share the same relative source path as their structured field, with passing root/Component assertions. User confirmed independent re-review passed with no further findings on 2026-11-21.
 
 ## Milestone 6B: Fix Exact-version Harness Bindings and SDK Visibility
 > **Scope note:** Resolve actual pinned Components in Harness and make standard support visible consistently to headless, TUI and SDK clients. Outside this milestone: rewrite of Node/Python SDK package models or new machine protocol.

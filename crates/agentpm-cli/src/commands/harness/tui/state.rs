@@ -140,6 +140,7 @@ pub(super) struct TuiWorkspaceReadiness {
 pub(super) struct TuiReadinessCategory {
     pub(super) label: String,
     pub(super) state: CapabilityState,
+    pub(super) status_label: Option<&'static str>,
     pub(super) summary: String,
     pub(super) source: Option<String>,
 }
@@ -661,6 +662,7 @@ pub(super) fn spawn_bootstrap_worker(
                         .map(|_| HarnessConfigSource::interactive_override()),
                     runtime_scopes: args.scopes.iter().cloned().collect(),
                     surface: HarnessExecutionSurface::Tui,
+                    interactive: true,
                 },
                 |progress| {
                     let _ = sender.send(BootstrapMessage::Progress(
@@ -927,7 +929,7 @@ impl TuiSessionController {
             ManagedMcpExports::default()
         };
         refresh_mcp_exports_for_session(&plan, &mut session, &mut mcp_exports, None)?;
-        let engine = if plan.loop_package.is_some() {
+        let engine = if plan.loop_package.is_some() && plan.report.apds.permits_runtime_checks() {
             let loop_manifest = load_plan_loop(&plan)?;
             Some(HarnessEngine::new(
                 loop_manifest,
@@ -1022,6 +1024,10 @@ impl TuiSessionController {
             profiles: BTreeMap::new(),
             capabilities: Vec::new(),
             report: crate::harness_plan::PreflightReport {
+                supported_standards: Vec::new(),
+                apds: Default::default(),
+                harness_support: Default::default(),
+                local_readiness: Default::default(),
                 status: crate::harness_plan::PreflightStatus::Failed,
                 diagnostics: vec![crate::harness_plan::PreflightDiagnostic {
                     severity: PreflightDiagnosticSeverity::Fatal,
@@ -2033,6 +2039,10 @@ mod tests {
             profiles: BTreeMap::new(),
             capabilities: Vec::new(),
             report: crate::harness_plan::PreflightReport {
+                supported_standards: Vec::new(),
+                apds: Default::default(),
+                harness_support: Default::default(),
+                local_readiness: Default::default(),
                 status: PreflightStatus::Ready,
                 diagnostics: Vec::new(),
                 mcp_exports: crate::harness_plan::PreflightMcpExports {
@@ -2108,12 +2118,119 @@ fn service_snapshot_from_session(session: &HarnessSession) -> TuiServiceSnapshot
     }
 }
 
+fn contract_readiness_categories(plan: &ResolvedHarnessPlan) -> Vec<TuiReadinessCategory> {
+    use crate::harness_plan::{DefinitionStatus, HarnessSupport, LocalReadiness};
+    let (definition_state, definition_label, definition_summary) = match plan.report.apds.status {
+        DefinitionStatus::Conformant => (
+            CapabilityState::Available,
+            "Conformant",
+            "Definition checks only; no execution proof.",
+        ),
+        DefinitionStatus::LegacyInferred => (
+            CapabilityState::Pending,
+            "Legacy",
+            "Inferred; not APDS-verified.",
+        ),
+        DefinitionStatus::Nonconformant => (
+            CapabilityState::Unavailable,
+            "Invalid",
+            "See definition errors in diagnostics.",
+        ),
+        DefinitionStatus::Incomplete => (
+            CapabilityState::Pending,
+            "Incomplete",
+            "Required inspection context is missing.",
+        ),
+        DefinitionStatus::Unsupported => (
+            CapabilityState::Unavailable,
+            "Unsupported",
+            "Declared standard is not supported.",
+        ),
+        DefinitionStatus::NotEvaluated => (
+            CapabilityState::NotConfigured,
+            "Not checked",
+            "No definition result available.",
+        ),
+    };
+    let (support_state, support_label) = match plan.report.harness_support {
+        HarnessSupport::Supported => (CapabilityState::Available, "Supported"),
+        HarnessSupport::Limited => (CapabilityState::Suppressed, "Limited"),
+        HarnessSupport::NotRunnable => (CapabilityState::Unavailable, "Not runnable"),
+        HarnessSupport::Unsupported => (CapabilityState::Unavailable, "Unsupported"),
+        HarnessSupport::NotEvaluated => (CapabilityState::NotConfigured, "Not checked"),
+    };
+    let (runtime_state, runtime_label, runtime_summary) = match plan.report.local_readiness {
+        LocalReadiness::Ready => (
+            CapabilityState::Available,
+            "Ready",
+            "Local configuration checked.",
+        ),
+        LocalReadiness::Limited => (
+            CapabilityState::Suppressed,
+            "Limited",
+            "Optional capabilities unavailable.",
+        ),
+        LocalReadiness::NotReady => (
+            CapabilityState::Unavailable,
+            "Not ready",
+            "See blocking diagnostics.",
+        ),
+        LocalReadiness::BootstrapRequired => (
+            CapabilityState::Pending,
+            "Needs model",
+            "Select a model to continue.",
+        ),
+        LocalReadiness::NotEvaluated => (
+            CapabilityState::NotConfigured,
+            "Not checked",
+            "Runtime checks not performed.",
+        ),
+    };
+    let standards = plan
+        .report
+        .supported_standards
+        .iter()
+        .map(|s| format!("{} / {}", s.id, s.version))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let support_summary = if standards.is_empty() {
+        "No advertised standard support.".into()
+    } else {
+        format!("Supports {standards}.")
+    };
+    vec![
+        TuiReadinessCategory {
+            label: "APDS definition".into(),
+            state: definition_state,
+            status_label: Some(definition_label),
+            summary: definition_summary.into(),
+            source: None,
+        },
+        TuiReadinessCategory {
+            label: "Harness support".into(),
+            state: support_state,
+            status_label: Some(support_label),
+            summary: support_summary,
+            source: None,
+        },
+        TuiReadinessCategory {
+            label: "Local runtime".into(),
+            state: runtime_state,
+            status_label: Some(runtime_label),
+            summary: runtime_summary.into(),
+            source: None,
+        },
+    ]
+}
+
 pub(super) fn workspace_readiness_from_plan(
     plan: &ResolvedHarnessPlan,
     session: &HarnessSession,
 ) -> TuiWorkspaceReadiness {
-    let mut categories = vec![
+    let mut categories = contract_readiness_categories(plan);
+    categories.extend([
         TuiReadinessCategory {
+            status_label: None,
             label: "Agent".into(),
             state: if plan.selected_agent.is_some() {
                 CapabilityState::Available
@@ -2132,6 +2249,7 @@ pub(super) fn workspace_readiness_from_plan(
                 .or_else(|| Some("workspace".into())),
         },
         TuiReadinessCategory {
+            status_label: None,
             label: "Loop".into(),
             state: if plan.loop_package.is_some() {
                 CapabilityState::Available
@@ -2146,6 +2264,7 @@ pub(super) fn workspace_readiness_from_plan(
             source: Some("agent_dependency".into()),
         },
         TuiReadinessCategory {
+            status_label: None,
             label: "Consumer Context".into(),
             state: plan.consumer_context.state,
             summary: format!(
@@ -2156,6 +2275,7 @@ pub(super) fn workspace_readiness_from_plan(
             source: Some("agent_binding".into()),
         },
         TuiReadinessCategory {
+            status_label: None,
             label: "Model".into(),
             state: model_state(plan),
             summary: model_summary(plan),
@@ -2166,7 +2286,7 @@ pub(super) fn workspace_readiness_from_plan(
                 .as_ref()
                 .map(|_| config_source_label(plan.config.model_source.kind).into()),
         },
-    ];
+    ]);
     categories.extend([
         capability_readiness_category(plan, "Tools", "tool", "tool"),
         capability_readiness_category(plan, "Skills", "skill", "skill"),
@@ -2176,6 +2296,7 @@ pub(super) fn workspace_readiness_from_plan(
         capability_readiness_category(plan, "Hooks", "hook", "bound"),
         mcp_exports_readiness_category(plan, session),
         TuiReadinessCategory {
+            status_label: None,
             label: "MCP Imports".into(),
             state: bool_readiness_state(plan.report.mcp_imports.enabled),
             summary: format!("{} servers", plan.report.mcp_imports.servers.len()),
@@ -2225,6 +2346,7 @@ fn mcp_exports_readiness_category(
         format!("{} surfaces · {} ready", snapshots.len(), ready)
     };
     TuiReadinessCategory {
+        status_label: None,
         label: "MCP Exports".into(),
         state,
         summary,
@@ -2240,6 +2362,7 @@ fn capability_readiness_category(
 ) -> TuiReadinessCategory {
     let source = capability_source_summary(plan, kind);
     TuiReadinessCategory {
+        status_label: None,
         label: label.into(),
         state: grouped_capability_state(plan, kind),
         summary: capability_summary(plan, kind, noun),
@@ -2292,6 +2415,7 @@ fn memory_readiness_category(plan: &ResolvedHarnessPlan) -> TuiReadinessCategory
         capability_summary(plan, "memory", "space")
     };
     TuiReadinessCategory {
+        status_label: None,
         label: "Memory".into(),
         state,
         summary,

@@ -366,6 +366,17 @@ agentpm harness @zack/support-agent --config agentpm.harness.json --state-dir .a
 
 The command requires `agent.lock`, defaults to the interactive TUI surface, selects the only runnable Agent automatically, and asks for an explicit Agent selector when multiple runnable Agents are present. Use `--json` without `--headless`/`--machine` when you only need the preflight readiness report.
 
+Preflight advertises support for APDS `agentpm / 1.0.0` and separates definition
+checks, Harness compatibility and local runtime readiness. A conformant Agent
+Package without a Loop is not runnable by Harness; other compatible Runners may
+use it. Unknown standards never fall back to the current contract, and legacy
+inference is labeled rather than certified. JSON preflight and headless/machine
+mode require a configured model/provider; only the interactive TUI offers model
+selection. Provider credentials must be present in the Harness environment.
+Machine `initialize` and `preflight` expose the same report, including failed
+preflight; `start_run` remains blocked until preflight is ready. Harness machine
+protocol version `1` is independent of the advertised APDS version.
+
 Harness runtime records are written under `.agentpm-state/` by default, while `.agentpm/` remains installed dependency state. See the public [Harness guide](https://www.agentpackagemanager.com/docs/v0.1/cli/harness) for CLI, configuration, protocol, provider and SDK usage.
 
 ### Publishing
