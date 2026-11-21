@@ -28,6 +28,26 @@ isolated workload and retains a report.
   dependency archives and multi-target atomicity. Review and all hosted CI are
   operator-confirmed passed; the operator confirmed all 36 manual cases passed on
   2026-11-18, completing M4A. Production activation/capacity gates remain M4B.
+- [APDS resolve/install/lock identity (M5A)](CLI_M5A_MANUAL_TESTS.md): five real
+  signed dev publications through the usual IntelliJ API/local Docker DB/dev S3,
+  visible v4 locks and installed bytes, origin preservation, simple frozen replay,
+  exact-version execution and local-root refresh. Separate loopback cases test
+  bad downloaded identity/origin/checksums, cache repair and strict lock readers.
+  Everything stays in ignored `agentpm/cli-m5a-test/`. Claude review passed; the
+  operator requested manual acceptance before pushing/running hosted CI. The
+  guide/helper are builder-replayed; the user supplied a passing 38-result
+  operator-run audit on 2026-11-20, then confirmed all hosted CI passed the same
+  day, completing M5A. Release Band 2 rollout gates remain separate.
+- [Frozen graph replay and empty Agents (M5B)](CLI_M5B_MANUAL_TESTS.md): reuse
+  four immutable M5A fixtures, publish six declared fixtures through the real
+  local API, and replay complete direct/local/multi-root graphs. Separate
+  controlled cases expose wrong kinds, missing transitive pins, stale edges,
+  digest/origin faults, cache/refresh repair and v2/v3 lock compatibility. Sources
+  and 51 captured command expectations stay in ignored `agentpm/cli-m5b-test/`.
+  Five builder tests pass, including actual runbook shell replay on an isolated
+  fixture; all 28 shell blocks parse. Claude review and hosted CI passed as
+  operator-confirmed on 2026-11-20. The operator subsequently supplied the passing
+  51-result real-local manual audit, completing M5B. Release Band 2 remains open.
 - [Automated local Registry capacity measurement](REGISTRY_CAPACITY.md): a single
   command runs the isolated Docker stack, both enforcement settings, actual
   example graphs, larger payloads, concurrency and controlled failures. Evidence

@@ -268,7 +268,15 @@ pub fn build_workspace_lock(
             install_root,
         )?);
     }
-    Ok(lock_from_plan(plan, &roots))
+    let mut lock = lock_from_plan(plan, &roots);
+    for manifest in manifests {
+        crate::semver::types::record_root_standard(
+            &mut lock,
+            &local_agent_root_key(&manifest.rel_path),
+            &manifest.manifest_value,
+        )?;
+    }
+    Ok(lock)
 }
 
 pub fn validate_workspace_metadata(root: &Path, metadata: &WorkspaceMetadata) -> Result<()> {
@@ -381,6 +389,8 @@ fn plan_to_locked_packages(
         packages.insert(
             package_key(item.kind, &item.name, &item.version),
             crate::semver::types::LockedPackage {
+                standard: item.standard.clone(),
+                standard_origin: item.standard_origin,
                 python_resolution: item.python_resolution.clone(),
                 kind: item.kind,
                 name: item.name.clone(),
@@ -643,6 +653,8 @@ mod tests {
             &ResolvePlan {
                 items: vec![
                     crate::semver::types::ResolvedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
@@ -650,6 +662,8 @@ mod tests {
                         integrity: "sha256-echo".to_string(),
                     },
                     crate::semver::types::ResolvedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/summarize".to_string(),
@@ -690,6 +704,8 @@ mod tests {
             &WorkspacePackageRoots::default(),
             &ResolvePlan {
                 items: vec![crate::semver::types::ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/echo".to_string(),
@@ -804,6 +820,8 @@ mod tests {
             &ResolvePlan {
                 items: vec![
                     crate::semver::types::ResolvedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
@@ -811,6 +829,8 @@ mod tests {
                         integrity: "sha256-echo".to_string(),
                     },
                     crate::semver::types::ResolvedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Skill,
                         name: "@zack/triage-skill".to_string(),
@@ -826,7 +846,7 @@ mod tests {
         let Lock::V2(lock) = lock else {
             panic!("expected modern lock");
         };
-        assert_eq!(lock.lockfile_version, 3);
+        assert_eq!(lock.lockfile_version, 4);
         assert!(lock.roots.contains_key("skill:@zack/triage-skill@0.2.0"));
     }
 
@@ -859,6 +879,8 @@ mod tests {
             &ResolvePlan {
                 items: vec![
                     crate::semver::types::ResolvedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
@@ -866,6 +888,8 @@ mod tests {
                         integrity: "sha256-echo".to_string(),
                     },
                     crate::semver::types::ResolvedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Knowledge,
                         name: "@zack/python-docs".to_string(),
@@ -881,7 +905,7 @@ mod tests {
         let Lock::V2(lock) = lock else {
             panic!("expected v2 lock");
         };
-        assert_eq!(lock.lockfile_version, 3);
+        assert_eq!(lock.lockfile_version, 4);
         assert!(!lock.roots.contains_key("knowledge:@zack/python-docs@0.1.0"));
         assert_eq!(
             lock.roots["local:agent"].knowledge,

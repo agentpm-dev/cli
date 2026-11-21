@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.47 — Unreleased
+
+- Restore the complete locked package set with `install --frozen`, including
+  direct Agent Packages, Skills and transitive Components. Check authored
+  version constraints, exact kinds and integrity before replacing installations;
+  missing pins never fall back to newer Registry versions. Frozen installs
+  preserve manifest and lock bytes and still require a Registry session.
+- Handle dependency-free local Agent Packages and workspaces without an empty
+  resolve request; directly requested dependency-free Agent Packages still
+  install their own artifact.
+- Preserve effective APDS `standard` and `standard_origin` through Registry
+  resolution, installation and portable v4 locks, including represented local
+  roots and ordinary regeneration. Historical inference remains
+  `legacy_inferred`; authored declarations remain `declared`. Neither certifies
+  conformance or Runner readiness.
+- Reconcile embedded kind/name/version and standard against the selected
+  release/plan before replacing installed packages. Reject unsupported or
+  conflicting declarations with remediation, and recheck cached manifests.
+  Logical release digests and local artifact/target selection retain their
+  existing meaning.
+- Existing v2/v3/v4 locks remain readable; APDS metadata requires v4. Upgrade
+  all CLI installations to 0.1.47 before sharing regenerated locks, including
+  locks for legacy packages. Older strict readers may report `unknown field`;
+  do not remove provenance to bypass that error. SDK 0.1.17 accepts the added
+  fields and does not require a new release for lock loading. Normal legacy
+  installs use the same command without an extra flag.
+
 ## 0.1.46 — 2026-11-19
 
 - Include declared README and license files in Agent Package, Template and

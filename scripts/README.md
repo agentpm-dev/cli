@@ -90,3 +90,25 @@ Without the requested graph or packaged-file context, dependent checks remain in
 | Runner interpretation | Not evaluated by this validator: capability exposure, model execution, environment layering, Memory persistence/trigger execution, approval behavior or generation-time substitution                                                                | Implementation-specific runtime harness                         |
 
 Unknown vector/index representations and composed/ref-mediated non-persistability compatibility that this engine cannot establish return `unsupported` with unevaluated rules; APDS does not mandate AgentPM's float32 representation. The engine does not execute Tools, lifecycle operations, Template entrypoints or provider calls. The manifest schema remains the versioned source of structural requirements.
+
+## Frozen install regression checks
+
+From the CLI repository root:
+
+```bash
+cargo test -p agentpm-cli --test frozen_install
+cargo test -p agentpm-cli --bin agentpm commands::install::frozen::tests
+```
+
+The integration suite runs the shipping CLI against a disposable loopback
+Registry. Positive manifests come from the scaffold snapshots and pass
+`agentpm lint` (or its explicit legacy preview). It checks complete clean replay,
+exact multi-kind identities and digests, multiple versions, transitive failures,
+older locks, source/lock preservation, empty Agents and workspaces, and cached
+versus unavailable-Registry behavior. It uses no production service, publisher
+credentials or external model. The tests inspect actual machine results,
+installed bytes and HTTP requests; a pass does not claim Runner readiness.
+
+The native CI matrix runs this suite alongside the existing payload, provenance
+and target-install tests. Keep the separate opt-in native Python environment
+checks when changing target selection or provisioning.

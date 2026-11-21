@@ -300,6 +300,8 @@ async fn resolve_remote_tool(
 
     let plan = ResolvePlan {
         items: vec![ResolvedPackage {
+            standard: item.standard.clone(),
+            standard_origin: item.standard_origin,
             python_resolution: item.python_resolution.clone(),
             kind: PackageKind::Tool,
             name: item.name.clone(),
@@ -1590,6 +1592,8 @@ json.dump({"upper": payload.get("message", "").upper()}, sys.stdout)
             StatusCode::OK,
             axum::Json(sdkm::ResolveResponse {
                 items: vec![sdkm::ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: sdkm::PackageKind::Tool,
                     name: "@zack/echo-json".to_string(),
@@ -1613,6 +1617,8 @@ json.dump({"upper": payload.get("message", "").upper()}, sys.stdout)
                 session_id: "sess_export".to_string(),
                 expires_at: "2026-06-21T18:00:00Z".to_string(),
                 artifacts: vec![sdkm::PackageArtifact {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: sdkm::PackageKind::Tool,
                     name: "@zack/echo-json".to_string(),

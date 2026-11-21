@@ -350,6 +350,11 @@ pub fn verify_artifact(
                 == artifact.kind.as_str(),
         "install manifest identity mismatch"
     );
+    crate::apds::reconcile(
+        &proof.manifest,
+        artifact.standard.as_ref(),
+        artifact.standard_origin,
+    )?;
     if let Some(release) = &proof.release {
         ensure!(
             release.name == artifact.name

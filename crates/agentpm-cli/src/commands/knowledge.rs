@@ -798,6 +798,8 @@ fn resolve_installed_knowledge_version(
         packages.insert(
             key,
             LockedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Knowledge,
                 name: format!("@{owner}/{name}"),
@@ -3440,6 +3442,8 @@ mod tests {
                 packages: BTreeMap::from([(
                     "knowledge:@zack/python-docs@0.1.0".to_string(),
                     crate::semver::types::LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Knowledge,
                         name: "@zack/python-docs".to_string(),
@@ -3480,6 +3484,8 @@ mod tests {
                 packages: BTreeMap::from([(
                     "knowledge:@zack/engineering-playbook@0.1.0".to_string(),
                     crate::semver::types::LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Knowledge,
                         name: "@zack/engineering-playbook".to_string(),

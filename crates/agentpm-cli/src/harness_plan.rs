@@ -2968,6 +2968,8 @@ mod tests {
         packages.insert(
             package_key(kind, name, version),
             LockedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind,
                 name: name.to_string(),
@@ -2979,6 +2981,8 @@ mod tests {
 
     fn base_root() -> LockedRoot {
         LockedRoot {
+            standard: None,
+            standard_origin: None,
             python_input_fingerprint: None,
             python_resolution: None,
             name: Some("@zack/local-agent".to_string()),
@@ -3921,6 +3925,8 @@ mod tests {
                     (
                         "local:agent:agents/other.agent.json".to_string(),
                         LockedRoot {
+                            standard: None,
+                            standard_origin: None,
                             name: Some("@zack/other-agent".to_string()),
                             version: Some("0.1.0".to_string()),
                             r#loop: Some("loop:@zack/review-loop@0.1.0".to_string()),

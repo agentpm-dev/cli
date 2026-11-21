@@ -17,7 +17,7 @@ use crate::workspace::{
     read_workspace_metadata,
 };
 use crate::{
-    io::download::{InstallRoots, download_and_extract_with_client},
+    io::download::{InstallRoots, download_and_extract_prepared_with_client},
     io::fs,
     ui::Step,
 };
@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 mod provenance_tests;
 
 mod compatibility;
+mod frozen;
 use compatibility::compatibility_recovery;
 
 #[derive(clap::Parser, Debug, Clone)]
@@ -156,6 +157,15 @@ impl InstallArgs {
             None
         };
 
+        if let Some(value) = &manifest_value {
+            agentpm_sdk::apds::from_manifest(value)?;
+        }
+        if let Some(manifests) = &workspace_manifests {
+            for manifest in manifests {
+                agentpm_sdk::apds::from_manifest(&manifest.manifest_value)?;
+            }
+        }
+
         // 2) Determine desired set
         let desired = if let Some(spec) = self.spec.as_deref() {
             DesiredSet::from_cli_or_agent_json(&Value::Null, Some(spec), self.update_range)?
@@ -180,6 +190,11 @@ impl InstallArgs {
         };
 
         // 3) If --frozen and lock exists, use it directly; else resolve
+        if self.frozen && !project_root.join("agent.lock").is_file() {
+            return Err(anyhow!(
+                "--frozen requires agent.lock; run agentpm install without --frozen first"
+            ));
+        }
         let lock = read_lock_or_default(&project_root)?;
         let steps_label = if self.frozen {
             "Validating lockfile"
@@ -190,12 +205,48 @@ impl InstallArgs {
 
         if self.frozen {
             validate_frozen_lock_compatibility(&lock, manifest_value.as_ref(), &desired)?;
+            if let (Lock::V2(value), Some(manifests)) = (&lock, &workspace_manifests) {
+                for manifest in manifests {
+                    let key = crate::workspace::local_agent_root_key(&manifest.rel_path);
+                    if let Some(root) = value.roots.get(&key) {
+                        agentpm_sdk::apds::reconcile(&manifest.manifest_value, root.standard.as_ref(), root.standard_origin)
+                            .with_context(|| format!("Local APDS declaration changed in {}; run agentpm install without --frozen", manifest.rel_path))?;
+                    }
+                }
+            }
         }
 
-        let mut plan = if desired.items.is_empty() {
+        let local_manifests: Vec<(String, &Value)> = if let Some(manifests) = &workspace_manifests {
+            manifests
+                .iter()
+                .map(|m| {
+                    (
+                        crate::workspace::local_agent_root_key(&m.rel_path),
+                        &m.manifest_value,
+                    )
+                })
+                .collect()
+        } else {
+            manifest_value
+                .as_ref()
+                .filter(|_| self.spec.is_none())
+                .map(|m| {
+                    (
+                        format!("local:{}", m["kind"].as_str().unwrap_or("agent")),
+                        m,
+                    )
+                })
+                .into_iter()
+                .collect()
+        };
+        let local_refs = local_manifests
+            .iter()
+            .map(|(key, m)| (key.as_str(), *m))
+            .collect::<Vec<_>>();
+        let mut plan = if self.frozen {
+            frozen::plan(&desired, &lock, self.spec.is_some(), &local_refs)?
+        } else if desired.items.is_empty() {
             ResolvePlan { items: Vec::new() }
-        } else if self.frozen {
-            ResolvePlan::from_lock(&desired, &lock)?
         } else {
             let sdk_req = to_sdk_request(&desired);
             let sdk_resp = client.resolve_install(&sdk_req).await?; // network call → concrete versions + integrity
@@ -203,31 +254,58 @@ impl InstallArgs {
             let plan: ResolvePlan = sdk_resp.into();
             plan
         };
+        if self.frozen {
+            let selected = DesiredSet {
+                items: plan
+                    .items
+                    .iter()
+                    .map(|item| {
+                        crate::semver::types::PackageRequirement::new(
+                            item.kind,
+                            &item.name,
+                            &item.version,
+                        )
+                    })
+                    .collect(),
+            };
+            validate_frozen_lock_compatibility(&lock, manifest_value.as_ref(), &selected)?;
+        }
+        for item in &plan.items {
+            agentpm_sdk::apds::validate(item.standard.as_ref(), item.standard_origin)?;
+        }
         s.ok("");
 
-        let mut precomputed_next_lock =
-            if !self.frozen && self.spec.is_none() && workspace_metadata.is_none() {
-                Some(build_updated_lock(
-                    &lock,
-                    manifest_value.as_ref(),
-                    self.spec.as_deref(),
-                    &plan,
-                    project_root.join(".agentpm").as_path(),
-                )?)
-            } else {
-                None
-            };
+        if !self.frozen && self.spec.is_none() && workspace_metadata.is_none() {
+            // Check local relationships before any download; build the final
+            // lock again only after artifact-derived metadata is available.
+            build_updated_lock(
+                &lock,
+                manifest_value.as_ref(),
+                self.spec.as_deref(),
+                &plan,
+                project_root.join(".agentpm").as_path(),
+            )?;
+        }
 
         // 4) Init download session → presigned URLs
         if plan.items.is_empty() {
             if !self.frozen {
-                let next = build_updated_lock(
-                    &lock,
-                    manifest_value.as_ref(),
-                    self.spec.as_deref(),
-                    &plan,
-                    &project_root.join(".agentpm"),
-                )?;
+                let next = if let Some(metadata) = &workspace_metadata {
+                    build_workspace_lock(
+                        workspace_manifests.as_ref().unwrap(),
+                        &metadata.package_roots,
+                        &plan,
+                        &project_root,
+                    )?
+                } else {
+                    build_updated_lock(
+                        &lock,
+                        manifest_value.as_ref(),
+                        self.spec.as_deref(),
+                        &plan,
+                        &project_root.join(".agentpm"),
+                    )?
+                };
                 write_lock(&project_root, &next)?;
             }
             Step::final_msg("Installed ✓", quiet);
@@ -241,7 +319,7 @@ impl InstallArgs {
         let key_cache = cfg.config_dir.join("registry-keysets");
         let sdk_plan = plan_to_sdk_resolve(&plan);
         let consumer = crate::python_environment::install_context(&sdk_plan)?;
-        let init = match client
+        let mut init = match client
             .install_init_for_consumer(&sdk_plan, consumer, policy, Some(&key_cache))
             .await
         {
@@ -260,7 +338,6 @@ impl InstallArgs {
                 ensure_supported_install_kinds(&response)?;
                 let context = crate::python_environment::install_context(&response)?;
                 plan = response.into();
-                precomputed_next_lock = None;
                 client
                     .install_init_for_consumer(
                         &plan_to_sdk_resolve(&plan),
@@ -271,13 +348,19 @@ impl InstallArgs {
                     .await?
             }
         };
-        for artifact in &init.artifacts {
+        for artifact in &mut init.artifacts {
             let locked = plan.items.iter().find(|item| {
                 item.kind == artifact.kind
                     && item.name == artifact.name
                     && item.version == artifact.version
             });
             let item = locked.ok_or_else(|| anyhow!("Registry returned an unrequested package"))?;
+            // An older Registry may omit metadata. A pinned lock still constrains
+            // the embedded bytes; omission cannot erase its expected provenance.
+            if artifact.standard.is_none() && artifact.standard_origin.is_none() {
+                artifact.standard = item.standard.clone();
+                artifact.standard_origin = item.standard_origin;
+            }
             if item.integrity != artifact.integrity {
                 return Err(anyhow!(
                     "Install integrity differs from the lock/resolve plan"
@@ -321,6 +404,22 @@ impl InstallArgs {
         let memory_dir = project_root.join(".agentpm/memory");
         let profiles_dir = project_root.join(".agentpm/profiles");
         let loops_dir = project_root.join(".agentpm/loops");
+        let graph_preflight = self.frozen
+            || plan
+                .items
+                .iter()
+                .any(|item| matches!(item.kind, PackageKind::Agent | PackageKind::Skill));
+        if graph_preflight {
+            frozen::verify_graph(
+                &init,
+                &plan,
+                self.frozen.then_some(&lock),
+                &dl_dir,
+                self.refresh,
+                &client,
+            )
+            .await?;
+        }
         fs::ensure_dirs(&[
             &dl_dir,
             &tools_dir,
@@ -331,7 +430,7 @@ impl InstallArgs {
             &profiles_dir,
             &loops_dir,
         ])?;
-        download_and_extract_with_client(
+        download_and_extract_prepared_with_client(
             &init,
             &dl_dir,
             InstallRoots {
@@ -344,10 +443,40 @@ impl InstallArgs {
                 loops_dir: &loops_dir,
             },
             self.refresh,
+            graph_preflight,
             quiet,
             Some(&client),
         )
         .await?;
+        // Derive from the verified extracted manifests even for an older Registry
+        // response. Do not write a lock built before artifact reconciliation.
+        for item in &mut plan.items {
+            let artifact = init
+                .artifacts
+                .iter()
+                .find(|a| a.kind == item.kind && a.name == item.name && a.version == item.version)
+                .unwrap();
+            let path = crate::io::download::resolved_package_dir(
+                item.kind,
+                &tools_dir,
+                &agents_dir,
+                &skills_dir,
+                &knowledge_dir,
+                &memory_dir,
+                &profiles_dir,
+                &loops_dir,
+                &item.name,
+                &item.version,
+            )?;
+            let manifest: Value = serde_json::from_slice(&std::fs::read(path.join("agent.json"))?)?;
+            let (standard, origin) = agentpm_sdk::apds::reconcile(
+                &manifest,
+                artifact.standard.as_ref(),
+                artifact.standard_origin,
+            )?;
+            item.standard = Some(standard);
+            item.standard_origin = Some(origin);
+        }
         s.ok("");
 
         // Provision before finalize/lock writes: a partial or unverified Python
@@ -397,7 +526,8 @@ impl InstallArgs {
         // Direct agent package installs intentionally do not mutate the local
         // manifest; they are represented as registry roots in the lockfile.
         let mut should_write_manifest = false;
-        if let Some(spec) = &self.spec
+        if !self.frozen
+            && let Some(spec) = &self.spec
             && let Some(manifest_value) = manifest_value.as_mut()
             && manifest_value.get("kind").and_then(Value::as_str) == Some("agent")
             && let Some(kind) = direct_declared_dependency_kind(spec, &plan)?
@@ -448,9 +578,7 @@ impl InstallArgs {
 
         // 8) Update lockfile (unless --frozen)
         if !self.frozen {
-            let mut next_lock = if let Some(next_lock) = precomputed_next_lock {
-                next_lock
-            } else if let Some(metadata) = workspace_metadata.as_ref() {
+            let mut next_lock = if let Some(metadata) = workspace_metadata.as_ref() {
                 let manifests = workspace_manifests
                     .as_ref()
                     .ok_or_else(|| anyhow!("workspace manifests failed to load"))?;
@@ -518,6 +646,16 @@ fn validate_frozen_lock_compatibility(
     manifest_value: Option<&Value>,
     desired: &DesiredSet,
 ) -> Result<()> {
+    if let (Lock::V2(value), Some(manifest)) = (lock, manifest_value) {
+        let kind = manifest
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("agent");
+        if let Some(root) = value.roots.get(&format!("local:{kind}")) {
+            agentpm_sdk::apds::reconcile(manifest, root.standard.as_ref(), root.standard_origin)
+                .context("Local APDS declaration changed; run agentpm install without --frozen to refresh the lock")?;
+        }
+    }
     if lock.lockfile_version() < 4
         && manifest_value.is_some_and(crate::semver::types::declares_python_dependencies)
     {
@@ -616,6 +754,7 @@ fn build_updated_lock(
             &mut next,
             manifest_value.is_some_and(crate::semver::types::declares_python_dependencies),
         );
+        record_local_standard(&mut next, manifest_value)?;
         return Ok(next);
     }
 
@@ -639,6 +778,8 @@ fn build_updated_lock(
         packages.insert(
             package_key(item.kind, &item.name, &item.version),
             crate::semver::types::LockedPackage {
+                standard: item.standard.clone(),
+                standard_origin: item.standard_origin,
                 python_resolution: item.python_resolution.clone(),
                 kind: item.kind,
                 name: item.name.clone(),
@@ -685,7 +826,19 @@ fn build_updated_lock(
         &mut next,
         manifest_value.is_some_and(crate::semver::types::declares_python_dependencies),
     );
+    record_local_standard(&mut next, manifest_value)?;
     Ok(next)
+}
+
+fn record_local_standard(lock: &mut Lock, manifest: Option<&Value>) -> Result<()> {
+    if let Some(manifest) = manifest {
+        let kind = manifest
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("agent");
+        crate::semver::types::record_root_standard(lock, &format!("local:{kind}"), manifest)?;
+    }
+    Ok(())
 }
 
 fn removed_root_dependency_keys(previous: &LockedRoot, next: &LockedRoot) -> BTreeSet<String> {
@@ -1196,6 +1349,8 @@ fn build_local_root_from_manifest(
             items: packages
                 .values()
                 .map(|pkg| crate::semver::types::ResolvedPackage {
+                    standard: pkg.standard.clone(),
+                    standard_origin: pkg.standard_origin,
                     python_resolution: pkg.python_resolution.clone(),
                     kind: pkg.kind,
                     name: pkg.name.clone(),
@@ -1219,6 +1374,8 @@ fn build_local_root_from_manifest(
 fn build_local_lock_root(manifest_value: &Value, plan: &ResolvePlan) -> Result<LockedRoot> {
     let packages = plan_to_packages(plan);
     Ok(LockedRoot {
+        standard: None,
+        standard_origin: None,
         python_input_fingerprint: None,
         python_resolution: None,
         name: manifest_value
@@ -1356,6 +1513,8 @@ fn plan_to_packages(plan: &ResolvePlan) -> BTreeMap<String, crate::semver::types
         packages.insert(
             package_key(item.kind, &item.name, &item.version),
             crate::semver::types::LockedPackage {
+                standard: item.standard.clone(),
+                standard_origin: item.standard_origin,
                 python_resolution: item.python_resolution.clone(),
                 kind: item.kind,
                 name: item.name.clone(),
@@ -1391,6 +1550,8 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
         } => (
             key,
             LockedRoot {
+                standard: None,
+                standard_origin: None,
                 python_input_fingerprint: None,
                 python_resolution: None,
                 name: Some(name),
@@ -1416,6 +1577,8 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
         } => (
             package_key,
             LockedRoot {
+                standard: None,
+                standard_origin: None,
                 python_input_fingerprint: None,
                 python_resolution: None,
                 name: None,
@@ -1437,6 +1600,8 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
         } => (
             key,
             LockedRoot {
+                standard: None,
+                standard_origin: None,
                 python_input_fingerprint: None,
                 python_resolution: None,
                 name: Some(name),
@@ -1453,6 +1618,8 @@ fn locked_root_from_root(root: LockRoot) -> Result<(String, LockedRoot)> {
         LockRoot::RegistrySkill { package_key, tools } => (
             package_key,
             LockedRoot {
+                standard: None,
+                standard_origin: None,
                 python_input_fingerprint: None,
                 python_resolution: None,
                 name: None,
@@ -1519,6 +1686,8 @@ mod tests {
     fn direct_install_rejects_template_packages_until_new_exists() {
         let err = ensure_supported_install_kinds(&sdkm::ResolveResponse {
             items: vec![sdkm::ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: sdkm::PackageKind::Template,
                 name: "@zack/research-template".to_string(),
@@ -1538,6 +1707,8 @@ mod tests {
     fn direct_install_allows_skill_packages() {
         ensure_supported_install_kinds(&sdkm::ResolveResponse {
             items: vec![sdkm::ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: sdkm::PackageKind::Skill,
                 name: "@zack/triage-skill".to_string(),
@@ -1552,6 +1723,8 @@ mod tests {
     fn direct_install_allows_knowledge_packages() {
         ensure_supported_install_kinds(&sdkm::ResolveResponse {
             items: vec![sdkm::ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: sdkm::PackageKind::Knowledge,
                 name: "@zack/python-docs".to_string(),
@@ -1566,6 +1739,8 @@ mod tests {
     fn direct_install_allows_profile_packages() {
         ensure_supported_install_kinds(&sdkm::ResolveResponse {
             items: vec![sdkm::ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: sdkm::PackageKind::Profile,
                 name: "@zack/support-persona".to_string(),
@@ -1580,6 +1755,8 @@ mod tests {
     fn direct_install_allows_loop_packages() {
         ensure_supported_install_kinds(&sdkm::ResolveResponse {
             items: vec![sdkm::ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: sdkm::PackageKind::Loop,
                 name: "@zack/incident-response-loop".to_string(),
@@ -1742,6 +1919,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/slack-post-message".to_string(),
@@ -1749,6 +1928,8 @@ mod tests {
                     integrity: "sha256-tool".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Skill,
                     name: "@zack/triage-skill".to_string(),
@@ -1756,6 +1937,8 @@ mod tests {
                     integrity: "sha256-skill".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Knowledge,
                     name: "@zack/python-docs".to_string(),
@@ -1763,6 +1946,8 @@ mod tests {
                     integrity: "sha256-knowledge".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Memory,
                     name: "@zack/session-memory".to_string(),
@@ -1770,6 +1955,8 @@ mod tests {
                     integrity: "sha256-memory".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Profile,
                     name: "@zack/support-persona".to_string(),
@@ -1777,6 +1964,8 @@ mod tests {
                     integrity: "sha256-profile".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Loop,
                     name: "@zack/incident-response-loop".to_string(),
@@ -1844,6 +2033,8 @@ mod tests {
         });
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Tool,
                 name: "@zack/slack-post-message".to_string(),
@@ -1885,6 +2076,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Memory,
                     name: "@zack/session-memory".to_string(),
@@ -1892,6 +2085,8 @@ mod tests {
                     integrity: "sha256-memory-1".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Memory,
                     name: "@zack/session-memory".to_string(),
@@ -1923,6 +2118,8 @@ mod tests {
         });
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Knowledge,
                 name: "@zack/session-memory".to_string(),
@@ -1974,6 +2171,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Profile,
                     name: "@zack/support-persona".to_string(),
@@ -1981,6 +2180,8 @@ mod tests {
                     integrity: "sha256-profile-1".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Profile,
                     name: "@zack/support-persona".to_string(),
@@ -2013,6 +2214,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Loop,
                     name: "@zack/incident-response-loop".to_string(),
@@ -2020,6 +2223,8 @@ mod tests {
                     integrity: "sha256-loop-1".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Loop,
                     name: "@zack/incident-response-loop".to_string(),
@@ -2051,6 +2256,8 @@ mod tests {
         });
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Profile,
                 name: "@zack/incident-response-loop".to_string(),
@@ -2101,6 +2308,8 @@ mod tests {
         });
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Knowledge,
                 name: "@zack/support-persona".to_string(),
@@ -2167,6 +2376,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Agent,
                     name: "@zack/support-agent".to_string(),
@@ -2174,6 +2385,8 @@ mod tests {
                     integrity: "sha256-agent".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/slack-post-message".to_string(),
@@ -2181,6 +2394,8 @@ mod tests {
                     integrity: "sha256-tool".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Skill,
                     name: "@zack/triage-skill".to_string(),
@@ -2188,6 +2403,8 @@ mod tests {
                     integrity: "sha256-skill".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Knowledge,
                     name: "@zack/python-docs".to_string(),
@@ -2195,6 +2412,8 @@ mod tests {
                     integrity: "sha256-knowledge".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Memory,
                     name: "@zack/session-memory".to_string(),
@@ -2202,6 +2421,8 @@ mod tests {
                     integrity: "sha256-memory".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Profile,
                     name: "@zack/support-persona".to_string(),
@@ -2209,6 +2430,8 @@ mod tests {
                     integrity: "sha256-profile".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Loop,
                     name: "@zack/incident-response-loop".to_string(),
@@ -2267,6 +2490,8 @@ mod tests {
         let root = temp_root("missing-registry-manifest");
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Agent,
                 name: "@zack/support-agent".to_string(),
@@ -2306,6 +2531,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Skill,
                     name: "@zack/triage-skill".to_string(),
@@ -2313,6 +2540,8 @@ mod tests {
                     integrity: "sha256-skill".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/slack-post-message".to_string(),
@@ -2359,6 +2588,8 @@ mod tests {
 
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Knowledge,
                 name: "@zack/python-docs".to_string(),
@@ -2413,6 +2644,8 @@ mod tests {
 
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Memory,
                 name: "@zack/session-memory".to_string(),
@@ -2437,6 +2670,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Agent,
                         name: "@zack/support-agent".to_string(),
@@ -2447,6 +2682,8 @@ mod tests {
                 (
                     "tool:@zack/old-tool@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/old-tool".to_string(),
@@ -2457,6 +2694,8 @@ mod tests {
                 (
                     "agent:@zack/escalation-agent@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Agent,
                         name: "@zack/escalation-agent".to_string(),
@@ -2467,6 +2706,8 @@ mod tests {
                 (
                     "tool:@zack/capitalize@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/capitalize".to_string(),
@@ -2479,6 +2720,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: None,
@@ -2495,6 +2738,8 @@ mod tests {
                 (
                     "agent:@zack/escalation-agent@0.1.0".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: None,
@@ -2561,6 +2806,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Agent,
                     name: "@zack/support-agent".to_string(),
@@ -2568,6 +2815,8 @@ mod tests {
                     integrity: "sha256-new-agent".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/capitalize".to_string(),
@@ -2575,6 +2824,8 @@ mod tests {
                     integrity: "sha256-tool".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Skill,
                     name: "@zack/triage-skill".to_string(),
@@ -2582,6 +2833,8 @@ mod tests {
                     integrity: "sha256-skill".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Knowledge,
                     name: "@zack/python-docs".to_string(),
@@ -2589,6 +2842,8 @@ mod tests {
                     integrity: "sha256-knowledge".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/summarize".to_string(),
@@ -2665,6 +2920,8 @@ mod tests {
                 (
                     "tool:@zack/capitalize@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/capitalize".to_string(),
@@ -2675,6 +2932,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Agent,
                         name: "@zack/support-agent".to_string(),
@@ -2687,6 +2946,8 @@ mod tests {
                 (
                     "local:agent".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: Some("local-support-agent".to_string()),
@@ -2703,6 +2964,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: None,
@@ -2737,6 +3000,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Agent,
                     name: "@zack/support-agent".to_string(),
@@ -2744,6 +3009,8 @@ mod tests {
                     integrity: "sha256-support-new".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/capitalize".to_string(),
@@ -2793,6 +3060,8 @@ mod tests {
                 (
                     "profile:@zack/support-persona@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Profile,
                         name: "@zack/support-persona".to_string(),
@@ -2803,6 +3072,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Agent,
                         name: "@zack/support-agent".to_string(),
@@ -2815,6 +3086,8 @@ mod tests {
                 (
                     "local:agent".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: Some("local-support-agent".to_string()),
@@ -2831,6 +3104,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: None,
@@ -2865,6 +3140,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Agent,
                     name: "@zack/support-agent".to_string(),
@@ -2872,6 +3149,8 @@ mod tests {
                     integrity: "sha256-support-new".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Profile,
                     name: "@zack/support-persona".to_string(),
@@ -2927,6 +3206,8 @@ mod tests {
                 (
                     "profile:@zack/support-persona@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Profile,
                         name: "@zack/support-persona".to_string(),
@@ -2937,6 +3218,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Agent,
                         name: "@zack/support-agent".to_string(),
@@ -2948,6 +3231,8 @@ mod tests {
             roots: BTreeMap::from([(
                 "agent:@zack/support-agent@0.1.0".to_string(),
                 LockedRoot {
+                    standard: None,
+                    standard_origin: None,
                     python_input_fingerprint: None,
                     python_resolution: None,
                     name: None,
@@ -2981,6 +3266,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Agent,
                     name: "@zack/support-agent".to_string(),
@@ -2988,6 +3275,8 @@ mod tests {
                     integrity: "sha256-support-new".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Profile,
                     name: "@zack/support-persona".to_string(),
@@ -3038,6 +3327,8 @@ mod tests {
                 (
                     "loop:@zack/incident-response-loop@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Loop,
                         name: "@zack/incident-response-loop".to_string(),
@@ -3048,6 +3339,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Agent,
                         name: "@zack/support-agent".to_string(),
@@ -3060,6 +3353,8 @@ mod tests {
                 (
                     "local:agent".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: Some("local-support-agent".to_string()),
@@ -3076,6 +3371,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: None,
@@ -3110,6 +3407,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Agent,
                     name: "@zack/support-agent".to_string(),
@@ -3117,6 +3416,8 @@ mod tests {
                     integrity: "sha256-support-new".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Loop,
                     name: "@zack/incident-response-loop".to_string(),
@@ -3172,6 +3473,8 @@ mod tests {
                 (
                     "loop:@zack/incident-response-loop@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Loop,
                         name: "@zack/incident-response-loop".to_string(),
@@ -3182,6 +3485,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Agent,
                         name: "@zack/support-agent".to_string(),
@@ -3193,6 +3498,8 @@ mod tests {
             roots: BTreeMap::from([(
                 "agent:@zack/support-agent@0.1.0".to_string(),
                 LockedRoot {
+                    standard: None,
+                    standard_origin: None,
                     python_input_fingerprint: None,
                     python_resolution: None,
                     name: None,
@@ -3226,6 +3533,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Agent,
                     name: "@zack/support-agent".to_string(),
@@ -3233,6 +3542,8 @@ mod tests {
                     integrity: "sha256-support-new".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Loop,
                     name: "@zack/incident-response-loop".to_string(),
@@ -3283,6 +3594,8 @@ mod tests {
                 (
                     "skill:@zack/triage-skill@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Skill,
                         name: "@zack/triage-skill".to_string(),
@@ -3293,6 +3606,8 @@ mod tests {
                 (
                     "tool:@zack/slack-post-message@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/slack-post-message".to_string(),
@@ -3303,6 +3618,8 @@ mod tests {
                 (
                     "skill:@zack/escalation-skill@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Skill,
                         name: "@zack/escalation-skill".to_string(),
@@ -3313,6 +3630,8 @@ mod tests {
                 (
                     "tool:@zack/capitalize@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/capitalize".to_string(),
@@ -3325,6 +3644,8 @@ mod tests {
                 (
                     "skill:@zack/triage-skill@0.1.0".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: None,
@@ -3341,6 +3662,8 @@ mod tests {
                 (
                     "skill:@zack/escalation-skill@0.1.0".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: None,
@@ -3390,6 +3713,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Skill,
                     name: "@zack/triage-skill".to_string(),
@@ -3397,6 +3722,8 @@ mod tests {
                     integrity: "sha256-new-skill".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/slack-post-message".to_string(),
@@ -3404,6 +3731,8 @@ mod tests {
                     integrity: "sha256-tool".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/summarize".to_string(),
@@ -3470,6 +3799,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Agent,
                         name: "@zack/support-agent".to_string(),
@@ -3480,6 +3811,8 @@ mod tests {
                 (
                     "agent:@zack/escalation-agent@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Agent,
                         name: "@zack/escalation-agent".to_string(),
@@ -3492,6 +3825,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: None,
@@ -3508,6 +3843,8 @@ mod tests {
                 (
                     "agent:@zack/escalation-agent@0.1.0".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: None,
@@ -3540,6 +3877,8 @@ mod tests {
 
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Agent,
                 name: "@zack/support-agent".to_string(),
@@ -3569,6 +3908,8 @@ mod tests {
             packages: BTreeMap::from([(
                 "agent:@zack/support-agent@0.1.0".to_string(),
                 LockedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Agent,
                     name: "@zack/support-agent".to_string(),
@@ -3579,6 +3920,8 @@ mod tests {
             roots: BTreeMap::from([(
                 "agent:@zack/support-agent@0.1.0".to_string(),
                 LockedRoot {
+                    standard: None,
+                    standard_origin: None,
                     python_input_fingerprint: None,
                     python_resolution: None,
                     name: None,
@@ -3603,6 +3946,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/capitalize".to_string(),
@@ -3610,6 +3955,8 @@ mod tests {
                     integrity: "sha256-tool".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Skill,
                     name: "@zack/triage-skill".to_string(),
@@ -3653,6 +4000,8 @@ mod tests {
             packages: BTreeMap::from([(
                 "tool:@zack/capitalize@0.1.0".to_string(),
                 LockedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/capitalize".to_string(),
@@ -3663,6 +4012,8 @@ mod tests {
             roots: BTreeMap::from([(
                 "local:agent".to_string(),
                 LockedRoot {
+                    standard: None,
+                    standard_origin: None,
                     python_input_fingerprint: None,
                     python_resolution: None,
                     name: Some("local-support-agent".to_string()),
@@ -3698,6 +4049,8 @@ mod tests {
         });
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Agent,
                 name: "@zack/support-agent".to_string(),
@@ -3731,6 +4084,8 @@ mod tests {
                 (
                     "tool:@zack/capitalize@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/capitalize".to_string(),
@@ -3741,6 +4096,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Agent,
                         name: "@zack/support-agent".to_string(),
@@ -3753,6 +4110,8 @@ mod tests {
                 (
                     "local:agent".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: Some("local-support-agent".to_string()),
@@ -3769,6 +4128,8 @@ mod tests {
                 (
                     "agent:@zack/support-agent@0.1.0".to_string(),
                     LockedRoot {
+                        standard: None,
+                        standard_origin: None,
                         python_input_fingerprint: None,
                         python_resolution: None,
                         name: None,
@@ -3792,6 +4153,8 @@ mod tests {
         });
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Tool,
                 name: "@zack/summarize".to_string(),
@@ -3835,6 +4198,8 @@ mod tests {
             packages: BTreeMap::from([(
                 "tool:@zack/capitalize@0.1.0".to_string(),
                 LockedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/capitalize".to_string(),
@@ -3845,6 +4210,8 @@ mod tests {
             roots: BTreeMap::from([(
                 "local:agent".to_string(),
                 LockedRoot {
+                    standard: None,
+                    standard_origin: None,
                     python_input_fingerprint: None,
                     python_resolution: None,
                     name: Some("local-support-agent".to_string()),
@@ -3885,6 +4252,8 @@ mod tests {
         let plan = ResolvePlan {
             items: vec![
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Skill,
                     name: "@zack/triage-skill".to_string(),
@@ -3892,6 +4261,8 @@ mod tests {
                     integrity: "sha256-skill".to_string(),
                 },
                 ResolvedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/slack-post-message".to_string(),
@@ -3958,6 +4329,8 @@ mod tests {
         .unwrap();
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Knowledge,
                 name: "@zack/python-docs".to_string(),
@@ -4032,6 +4405,8 @@ mod tests {
         .unwrap();
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Memory,
                 name: "@zack/session-memory".to_string(),
@@ -4093,6 +4468,8 @@ mod tests {
         .unwrap();
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Profile,
                 name: "@zack/support-persona".to_string(),
@@ -4190,6 +4567,8 @@ mod tests {
         .unwrap();
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Loop,
                 name: "@zack/incident-response-loop".to_string(),
@@ -4227,6 +4606,8 @@ mod tests {
             packages: BTreeMap::from([(
                 "tool:@zack/capitalize@0.1.0".to_string(),
                 LockedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Tool,
                     name: "@zack/capitalize".to_string(),
@@ -4237,6 +4618,8 @@ mod tests {
             roots: BTreeMap::from([(
                 "local:agent".to_string(),
                 LockedRoot {
+                    standard: None,
+                    standard_origin: None,
                     python_input_fingerprint: None,
                     python_resolution: None,
                     name: Some("local-support-agent".to_string()),
@@ -4261,6 +4644,8 @@ mod tests {
 
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Profile,
                 name: "@zack/support-persona".to_string(),
@@ -4297,6 +4682,8 @@ mod tests {
             packages: BTreeMap::from([(
                 "knowledge:@zack/python-docs@0.1.0".to_string(),
                 LockedPackage {
+                    standard: None,
+                    standard_origin: None,
                     python_resolution: None,
                     kind: PackageKind::Knowledge,
                     name: "@zack/python-docs".to_string(),
@@ -4307,6 +4694,8 @@ mod tests {
             roots: BTreeMap::from([(
                 "knowledge:@zack/python-docs@0.1.0".to_string(),
                 LockedRoot {
+                    standard: None,
+                    standard_origin: None,
                     python_input_fingerprint: None,
                     python_resolution: None,
                     name: None,
@@ -4342,6 +4731,8 @@ mod tests {
         .unwrap();
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Knowledge,
                 name: "@zack/python-docs".to_string(),
@@ -4382,6 +4773,8 @@ mod tests {
                 (
                     "tool:@zack/capitalize@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/capitalize".to_string(),
@@ -4392,6 +4785,8 @@ mod tests {
                 (
                     "tool:@zack/translate@0.3.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/translate".to_string(),
@@ -4414,6 +4809,8 @@ mod tests {
         });
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Tool,
                 name: "@zack/summarize".to_string(),
@@ -4758,7 +5155,7 @@ mod tests {
         let authored = br#"{
   "version": "0.1.0",
   "tools": [{"name":"@zack/echo","version":"0.1.0"}],
-  "standard": {"name":"future-standard","version":7},
+  "standard": {"id":"agentpm","version":"1.0.0"},
   "skills": [],
   "name": "support-agent",
   "kind": "agent",
@@ -4777,6 +5174,8 @@ mod tests {
                 packages: BTreeMap::from([(
                     "tool:@zack/echo@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
@@ -4855,7 +5254,7 @@ mod tests {
         );
         assert_eq!(
             manifest_after["standard"],
-            json!({"name": "future-standard", "version": 7})
+            json!({"id": "agentpm", "version": "1.0.0"})
         );
         assert_eq!(
             manifest_after["future_extension"],
@@ -4912,6 +5311,8 @@ mod tests {
                 packages: BTreeMap::from([(
                     "tool:@zack/echo@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
@@ -4990,7 +5391,7 @@ mod tests {
         let Lock::V2(lock_after) = lock_after else {
             panic!("expected v2 lock");
         };
-        assert_eq!(lock_after.lockfile_version, 3);
+        assert_eq!(lock_after.lockfile_version, 4);
         assert!(
             lock_after
                 .packages
@@ -5042,6 +5443,8 @@ mod tests {
                 packages: BTreeMap::from([(
                     "tool:@zack/echo@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
@@ -5182,7 +5585,7 @@ mod tests {
         let Lock::V2(lock_after) = lock_after else {
             panic!("expected v2 lock");
         };
-        assert_eq!(lock_after.lockfile_version, 3);
+        assert_eq!(lock_after.lockfile_version, 4);
         assert!(
             lock_after
                 .packages
@@ -5246,6 +5649,8 @@ mod tests {
                 packages: BTreeMap::from([(
                     "tool:@zack/echo@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
@@ -5317,7 +5722,7 @@ mod tests {
         let Lock::V2(lock_after) = lock_after else {
             panic!("expected v2 lock");
         };
-        assert_eq!(lock_after.lockfile_version, 3);
+        assert_eq!(lock_after.lockfile_version, 4);
         assert!(
             lock_after
                 .packages
@@ -5373,6 +5778,8 @@ mod tests {
                 packages: BTreeMap::from([(
                     "tool:@zack/echo@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
@@ -5484,7 +5891,7 @@ mod tests {
         let Lock::V2(lock_after) = lock_after else {
             panic!("expected v2 lock");
         };
-        assert_eq!(lock_after.lockfile_version, 3);
+        assert_eq!(lock_after.lockfile_version, 4);
         assert!(
             lock_after
                 .packages
@@ -5532,6 +5939,8 @@ mod tests {
                 (
                     "loop:@zack/incident-response-loop@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Loop,
                         name: "@zack/incident-response-loop".to_string(),
@@ -5542,6 +5951,8 @@ mod tests {
                 (
                     "loop:@zack/escalation-loop@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Loop,
                         name: "@zack/escalation-loop".to_string(),
@@ -5553,6 +5964,8 @@ mod tests {
             roots: BTreeMap::from([(
                 "local:agent".to_string(),
                 LockedRoot {
+                    standard: None,
+                    standard_origin: None,
                     python_input_fingerprint: None,
                     python_resolution: None,
                     name: Some("support-agent".to_string()),
@@ -5576,6 +5989,8 @@ mod tests {
         });
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Loop,
                 name: "@zack/escalation-loop".to_string(),
@@ -5623,6 +6038,8 @@ mod tests {
                 (
                     "tool:@zack/echo@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/echo".to_string(),
@@ -5633,6 +6050,8 @@ mod tests {
                 (
                     "tool:@zack/summarize@0.1.0".to_string(),
                     LockedPackage {
+                        standard: None,
+                        standard_origin: None,
                         python_resolution: None,
                         kind: PackageKind::Tool,
                         name: "@zack/summarize".to_string(),
@@ -5644,6 +6063,8 @@ mod tests {
             roots: BTreeMap::from([(
                 "local:agent".to_string(),
                 LockedRoot {
+                    standard: None,
+                    standard_origin: None,
                     python_input_fingerprint: None,
                     python_resolution: None,
                     name: Some("support-agent".to_string()),
@@ -5667,6 +6088,8 @@ mod tests {
         });
         let plan = ResolvePlan {
             items: vec![ResolvedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Tool,
                 name: "@zack/summarize".to_string(),
