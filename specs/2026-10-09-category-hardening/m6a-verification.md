@@ -84,6 +84,17 @@ prefix. All **17 CLI integration tests** pass on this message-only follow-up
 The full-workspace count below is the preceding semantic-correction run; it was
 not repeated for this cosmetic change.
 
+**Hosted CI correction — unused diagnostics argument:** hosted Clippy reported
+`clippy::ptr_arg` on `load_agent_candidates`' unused `&mut Vec` parameter.
+Remove the parameter and its caller argument entirely; the helper no longer
+emits diagnostics before Agent selection. Local
+`cargo clippy --workspace --all-targets -- -D warnings` passes
+(`/tmp/m6a-ci-clippy-fix.log`), as do all **26** Harness planning tests
+(`/tmp/m6a-ci-plan-fix.log`) and Rust formatting. No behavior or report contract
+changed. Hosted CI still needs a successful rerun. The requested manual runbook
+is on hold at the user's request while this CI correction is handled; no
+runbook fixtures have been generated.
+
 Harness support is `not_evaluated`, `supported`, `limited`, `unsupported` or
 `not_runnable`. Local readiness is `not_evaluated`, `ready`, `limited`,
 `not_ready` or `bootstrap_required`. Existing optional capability suppression

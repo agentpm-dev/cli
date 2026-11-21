@@ -391,7 +391,7 @@ pub fn resolve_harness_plan_with_progress(
         HarnessPlanProgressStage::AgentSelection,
         "Loading runnable Agent candidates.",
     ));
-    let mut candidates = load_agent_candidates(&workspace_root, &lock_v2, &mut diagnostics)?;
+    let mut candidates = load_agent_candidates(&workspace_root, &lock_v2)?;
     let selected_agent = select_agent_candidate(
         &mut candidates,
         options.agent_selector.as_deref(),
@@ -749,11 +749,7 @@ fn package_graph_from_lock(
     Ok(graph)
 }
 
-fn load_agent_candidates(
-    workspace_root: &Path,
-    lock: &LockV2,
-    _diagnostics: &mut Vec<PreflightDiagnostic>,
-) -> Result<Vec<AgentCandidate>> {
+fn load_agent_candidates(workspace_root: &Path, lock: &LockV2) -> Result<Vec<AgentCandidate>> {
     let mut candidates = Vec::new();
     for (root_key, root) in &lock.roots {
         let Some(agent_root) =
