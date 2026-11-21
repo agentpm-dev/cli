@@ -48,6 +48,17 @@ isolated workload and retains a report.
   fixture; all 28 shell blocks parse. Claude review and hosted CI passed as
   operator-confirmed on 2026-11-20. The operator subsequently supplied the passing
   51-result real-local manual audit, completing M5B. Release Band 2 remains open.
+- [Harness definition, support and local readiness (M6A)](CLI_M6A_MANUAL_TESTS.md):
+  21 visible local cases, 26 captured command expectations and four TUI checks
+  under ignored `agentpm/cli-m6a-test/`. Inspect strict and legacy definition
+  diagnostics, missing context/model/credentials, optional backend limitations,
+  actual local completion/handoff/abort/approval and machine protocol results.
+  Uses a deterministic process model; no API, database, publication or paid
+  service is required. Four builder checks pass, including real shell-block and
+  PTY replay; all 23 shell blocks parse. Claude review and hosted CI are
+  operator-confirmed passed on 2026-11-21. The user supplied the passing 26-result
+  audit and four TUI observations the same day, completing M6A. Saved evidence was
+  independently rechecked; the earlier builder recovery is disclosed in verification.
 - [Automated local Registry capacity measurement](REGISTRY_CAPACITY.md): a single
   command runs the isolated Docker stack, both enforcement settings, actual
   example graphs, larger payloads, concurrency and controlled failures. Evidence

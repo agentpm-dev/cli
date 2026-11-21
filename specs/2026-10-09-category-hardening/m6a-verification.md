@@ -3,7 +3,8 @@
 Builder verification: **2026-11-21**. Scope: M6A only; **D20 / S2-AC-08**.
 User confirmed independent Claude review passed with no remaining findings on
 **2026-11-21**, after the legacy-diagnostic and relative-path corrections.
-Hosted CI and operator manual acceptance remain pending.
+User confirmed all hosted CI passed on **2026-11-21** and supplied the passing
+26-result manual audit with four TUI observations the same day. **M6A is complete.**
 CLI **0.1.47 remains unreleased**. No production requests or deployment occurred.
 
 ## Implementation and source contracts
@@ -91,9 +92,9 @@ emits diagnostics before Agent selection. Local
 `cargo clippy --workspace --all-targets -- -D warnings` passes
 (`/tmp/m6a-ci-clippy-fix.log`), as do all **26** Harness planning tests
 (`/tmp/m6a-ci-plan-fix.log`) and Rust formatting. No behavior or report contract
-changed. Hosted CI still needs a successful rerun. The requested manual runbook
-is on hold at the user's request while this CI correction is handled; no
-runbook fixtures have been generated.
+changed. The user subsequently confirmed all hosted CI passed on 2026-11-21
+and resumed manual runbook preparation. The [operator runbook](manual-tests/CLI_M6A_MANUAL_TESTS.md)
+and visible local fixtures were subsequently accepted through the passing manual audit.
 
 Harness support is `not_evaluated`, `supported`, `limited`, `unsupported` or
 `not_runnable`. Local readiness is `not_evaluated`, `ready`, `limited`,
@@ -121,7 +122,76 @@ returns the report dictionaries unchanged. M6A therefore makes the data availabl
 through their existing machine bridge. Typed/convenience exposure and independent
 cross-SDK parity remain **M6B**; no SDK source or shared fixture was changed.
 
+## Operator runbook preparation
+
+The [M6A manual runbook](manual-tests/CLI_M6A_MANUAL_TESTS.md) starts at the CLI
+repository root and keeps visible inputs and evidence in ignored
+`cli-m6a-test/<run>/`. It requires the debug CLI and Python 3.11+, with no local
+API, Docker DB, S3, publication, real credentials or paid model. The model fixture
+uses the actual process service protocol and returns deterministic phase
+completion. This checks local Engine control flow, not model quality.
+
+Preparation uses real `init`, `lint`, Knowledge build and Memory build commands.
+The resulting installed layout and lockfiles are explicitly synthetic test
+state, with placeholder integrity values; they do not claim release verification.
+There are **21 visible cases**, **26 captured command expectations** and **four
+TUI observations**. Each case explains its deliberate defect and expected result.
+The helper rechecks exact diagnostics/statuses, source hashes, real Run reports
+and captured model requests, rather than treating any nonzero exit as success.
+An audit requires fresh TUI Run reports for both ready and interactive model
+selection, preventing earlier headless/machine Runs from satisfying those steps.
+
+Builder verification passes: **4 tests, 0 failures**, including actual replay of
+the runbook command blocks and four real PTY flows. All **23 Bash blocks** pass
+zsh syntax checks. The machine client waits for each response before submitting
+the next request, including shutdown after completion. TUI instructions account
+for initial composer focus, paginated model input and the full output viewer.
+The automated tests remove only their own `builder-*` directories.
+
+**Operator-run recovery — 2026-11-21:** during subsequent manual cleanup, the
+builder incorrectly treated timestamp directories as scratch and deleted the
+active operator run `cli-m6a-test/20261121T181218Z-78630`. Its original saved
+evidence was lost. After the operator reported the missing directory at section
+6, the builder freshly prepared the same path and replayed all **13 actual
+command checks from sections 2–5**, which passed. These are builder reruns,
+not recovered operator results. `evidence/recovery.json` and
+`evidence/recovery-replay.log` disclose the recovery and exact labels. Operator
+sections 6–12 were subsequently completed and the user supplied the passing final audit. Preserve all operator timestamp
+directories; they are not builder cleanup targets.
+
+```bash
+../agentpm-api/.venv/bin/python -B -m pytest -q \
+  specs/2026-10-09-category-hardening/manual-tests/fixtures/m6a/test_fixture.py
+../agentpm-sdk-python/.venv/bin/black --check --line-length 100 \
+  specs/2026-10-09-category-hardening/manual-tests/fixtures/m6a/*.py
+../agentpm-sdk-python/.venv/bin/ruff check \
+  specs/2026-10-09-category-hardening/manual-tests/fixtures/m6a
+zsh -n specs/2026-10-09-category-hardening/manual-tests/fixtures/m6a/shell.sh
+git diff --check
+```
+
+The passing builder test output is `/tmp/m6a-runbook-tests.log`. Markdown
+formatting and the ignore rule also pass. The helper intentionally leaves
+`operator_signoff` and `hosted_ci_complete` false: it cannot grant acceptance or
+certify external CI. Hosted CI is separately recorded as user-confirmed passed;
+the user subsequently supplied the passing audit, completing manual acceptance. No product code was changed
+while preparing this runbook.
+
 ## Behavior and acceptance mapping
+
+**Manual acceptance — 2026-11-21:** the user supplied
+`cli-m6a-test/20261121T181218Z-78630/evidence/summary.json`, reporting `pass`,
+**26 checked command results** and **four recorded TUI observations**. Its CLI
+SHA-256 is `cb2c5aa4753dd5c81d525a6d06af4eb59af0a0b515f6be5c21d62d9092f5be1b`.
+The builder independently rechecked every saved command result against its exact
+diagnostic/status/exit, model request slice, actual Run report and pinned input
+hashes, plus all four TUI receipts and their fresh-report/view-only proofs.
+This recheck was read-only: no CLI/provider/API invocation and no evidence edits.
+The audit includes the **13 disclosed builder recovery reruns** above and the
+remaining operator checks; it does not turn those reruns into original operator
+evidence. Helper `operator_signoff: false` and `hosted_ci_complete: false` remain
+unchanged by design; acceptance and hosted CI are recorded here from the user's
+confirmation. Review, hosted CI and scoped manual acceptance are complete.
 
 | Requirement         | Builder evidence                                                                                                                                                                                                                                                       |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -223,6 +293,6 @@ the unrestricted rerun passed. These failures are not omitted from the record.
   S2-AC-08's complete cross-version/cross-SDK acceptance and Release Band 2 are
   not claimed complete by M6A.
 - Claude's independent M6A review and scoped D20 interface approval are recorded
-  as passed on 2026-11-21. Hosted CI on the final revision and operator manual
-  acceptance remain pending. M6B decisions and Release Band 2 are separate;
+  as passed on 2026-11-21. User confirmed all hosted CI passed the same day;
+  operator manual acceptance is complete through the passing audit. M6B decisions and Release Band 2 are separate;
   nothing has been published.
