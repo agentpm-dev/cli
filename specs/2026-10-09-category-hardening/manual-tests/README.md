@@ -38,6 +38,16 @@ isolated workload and retains a report.
   guide/helper are builder-replayed; the user supplied a passing 38-result
   operator-run audit on 2026-11-20, then confirmed all hosted CI passed the same
   day, completing M5A. Release Band 2 rollout gates remain separate.
+- [Frozen graph replay and empty Agents (M5B)](CLI_M5B_MANUAL_TESTS.md): reuse
+  four immutable M5A fixtures, publish six declared fixtures through the real
+  local API, and replay complete direct/local/multi-root graphs. Separate
+  controlled cases expose wrong kinds, missing transitive pins, stale edges,
+  digest/origin faults, cache/refresh repair and v2/v3 lock compatibility. Sources
+  and 51 captured command expectations stay in ignored `agentpm/cli-m5b-test/`.
+  Five builder tests pass, including actual runbook shell replay on an isolated
+  fixture; all 28 shell blocks parse. Claude review and hosted CI passed as
+  operator-confirmed on 2026-11-20. The operator subsequently supplied the passing
+  51-result real-local manual audit, completing M5B. Release Band 2 remains open.
 - [Automated local Registry capacity measurement](REGISTRY_CAPACITY.md): a single
   command runs the isolated Docker stack, both enforcement settings, actual
   example graphs, larger payloads, concurrency and controlled failures. Evidence

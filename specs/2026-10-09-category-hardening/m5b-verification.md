@@ -2,8 +2,10 @@
 
 Date: 2026-11-20. Status: implementation and local verification complete; user
 confirmed independent Claude review passed with no findings on 2026-11-20.
-Hosted CI remains pending. This does not close Release Band 2.
-No production requests, package publication or deployment occurred. Source
+User confirmed all hosted CI passed on 2026-11-20, then supplied the passing
+51-result operator-run manual audit. **M5B is complete.** Release Band 2 remains
+open. Builder verification used isolated fixtures without package publication
+or deployment; later operator-run local publications are recorded below. Source
 baselines: CLI `9d7abd509172ef256cebb200d5fd2f5090a713c4`; API
 `c5e36c0571255a9525817faec624be02eab67929` (documentation only).
 
@@ -157,6 +159,81 @@ against controlled loopback Registry responses, not production/local-user data.
   install graph checks. These tests do not claim publication/build readiness,
   full packaged APDS certification, live backend readiness or Harness behavior.
 - **Review:** user confirmed Claude review passed with no findings on 2026-11-20.
-- **Unmet acceptance gates:** hosted CLI/native-target CI. Operator manual
-  acceptance may follow review using the local fixture workflow; this record
-  does not claim it occurred. M5B remains open pending hosted verification.
+- **Hosted CI:** user confirmed all hosted CI passed on 2026-11-20.
+- **Manual acceptance:** user supplied the passing 51-result real-local audit,
+  independently checked from saved files as recorded below. M5B has no remaining
+  milestone acceptance gate; Release Band 2 rollout and M6 work remain separate.
+
+## Manual runbook preparation — 2026-11-20
+
+The [M5B runbook](manual-tests/CLI_M5B_MANUAL_TESTS.md) and
+[fixture documentation](manual-tests/fixtures/m5b/README.md) provide visible
+sources, exact commands, expected errors, current-directory instructions and
+captured evidence under ignored `cli-m5b-test/`. The operator reuses four retained
+M5A Tool/Skill/legacy identities and publishes six new declared local packages,
+including actual CLI-built Knowledge and Memory. Local enforcement stays enabled.
+The helper reuses the proven M4A publication/dev-S3/signature/read-only-DB guards.
+The operator's normal IntelliJ API configuration remains in use. No published
+examples or existing seed versions are edited.
+
+A separate loopback server reads visible init-response JSON and same-size corrupt
+archive files for controlled failures. Real CLI commands test clean graph replay,
+exact roots and two Tool versions, empty consumers, range/identity/kind/edge/digest/
+origin faults, availability, cache/refresh repair and metadata-free older locks.
+The checker compares exact root edges and every installed file with the original
+hash-verified archives and source copies. Request offsets tie GET counts and
+no-resolve/no-finalize claims to actual log slices. The final audit requires all
+**51** command outcomes and real local publication evidence; it cannot self-grant
+operator approval or fabricate CI results.
+
+Builder verification from the CLI root (exit 0):
+
+```bash
+PYTHONPATH="$PWD/../agentpm-api" \
+REGISTRY_PRIVATE_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+AWS_EC2_METADATA_DISABLED=true \
+  ../agentpm-api/.venv/bin/python -B -m pytest -q \
+  specs/2026-10-09-category-hardening/manual-tests/fixtures/m5b/test_fixture.py
+```
+
+**5 passed**. Checks cover CLI build/lint, actual author signatures, independent
+Registry publisher validation for all six new archives, positive/negative installs,
+byte preservation and exact root edges, stale environment protection, semantic
+error matching and refusal of incomplete audit evidence. The fifth check replays
+the guide's actual shell blocks for sections 3–11 using only the isolated HTTP
+fixture. It deliberately does not claim actual namespace authorization or run the
+real operator publication/DB phases. All **28** runbook shell blocks and the
+committed shell functions parse with zsh. Black (line length 100), Ruff, Prettier,
+ignore-path and whitespace checks pass. Builder workspaces are cleaned afterward.
+
+Product code was not changed after the reviewed/hosted-CI-passed implementation.
+These are runbook/helper/evidence additions. The operator subsequently completed
+the runbook, as recorded below. Its summary keeps `operator_signoff: false` and
+`hosted_ci_complete: false`; human approval and hosted CI are recorded separately.
+
+## Operator manual acceptance — complete
+
+The operator supplied the passing audit from
+`cli-m5b-test/20261121T014721Z-49256/evidence/summary.json`: **51 command results**,
+covering real local Registry graph replay and isolated controlled failures.
+The saved files were independently inspected without new HTTP/DB calls:
+
+- All **51** expected/actual exit records match, including **12** specific
+  negative machine messages.
+- All **30** source/lock/installed-byte proof records match their saved snapshots;
+  all **18** request proofs match the corresponding raw request-log slices.
+- All **11** final project locks match their expected exact package sets, roots,
+  metadata, immutable archive digests and installed payload files. The two Tool
+  results show the expected `1.0.0` and `2.0.0` versions.
+- All six new local publication receipts are present, and the reviewed CLI
+  binary still matches its recorded setup hash. The operator-run full audit
+  already performed the real local DB publication checks; those SQL queries
+  were not rerun during this file-only confirmation.
+
+The raw summary retains `operator_signoff: false` and
+`hosted_ci_complete: false`, because the fixture never grants those approvals.
+It was not edited. The user's passing final audit report supplies operator
+acceptance, alongside the previously confirmed Claude review and hosted CI.
+**M5B is complete.** CLI publication/installability, reader-before-shared-lock
+emission, SDK CI ref cleanup and the remaining M6/Release Band 2 gates remain
+separate; no production release is claimed.
