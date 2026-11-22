@@ -8,6 +8,9 @@ pub(crate) struct ResolvedGraph {
     pub complete: bool,
     artifacts: Vec<Artifact>,
     edges: Vec<Edge>,
+    /// Caller-owned, read-only interpretation views (never persisted to artifacts).
+    #[serde(skip)]
+    documents: BTreeMap<PathBuf, Value>,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +30,10 @@ struct Edge {
 }
 
 impl ResolvedGraph {
+    pub(crate) fn with_documents(mut self, documents: BTreeMap<PathBuf, Value>) -> Self {
+        self.documents = documents;
+        self
+    }
     pub(crate) fn read(path: &Path) -> Result<Self> {
         let mut graph: Self = serde_json::from_slice(&fs::read(path)?)?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
@@ -147,7 +154,9 @@ pub(super) fn check(
         if node.id == "root" || nodes.insert(node.id.as_str(), node).is_some() {
             bail!("Resolved graph artifact IDs must be unique and cannot be root");
         }
-        if let Ok(bytes) = fs::read(&node.manifest)
+        if let Some(data) = graph.documents.get(&node.manifest) {
+            loaded.insert(node.id.as_str(), data.clone());
+        } else if let Ok(bytes) = fs::read(&node.manifest)
             && let Ok(data) = serde_json::from_slice::<Value>(&bytes)
         {
             loaded.insert(node.id.as_str(), data);

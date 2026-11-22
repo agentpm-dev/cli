@@ -9754,3 +9754,70 @@ for line in sys.stdin:
     };
     assert_eq!(fields["result"]["record_id"], json!("process-review-1"));
 }
+
+#[test]
+fn m6b_external_binding_does_not_schedule_operation_without_invocation() {
+    let temp = temp_workspace_dir("m6b-external-not-invoked");
+    let package_root = temp.join("memory-package");
+    let runtime = runtime_with_m15_external_delete_operation(&temp, &package_root);
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    let events = InMemoryEventSink::default();
+    let handle = events.clone();
+    session.emitter.add_sink(Box::new(events));
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let mut model = ScriptedModelRuntime::new(vec![completion("remember", "done")]);
+    let result = engine
+        .execute_run(
+            &mut session,
+            "No operation invocation.",
+            &mut model,
+            &mut ScriptedActionDispatcher::default(),
+            &mut ScriptedApprovalController::default(),
+        )
+        .unwrap();
+    let HarnessRunResult::Terminal(result) = result else {
+        panic!("expected completed Run")
+    };
+    assert_eq!(result.status, HarnessTerminalStatus::Ended);
+    assert!(
+        !handle
+            .events()
+            .iter()
+            .any(|e| e.event_type == HarnessEventType::MemoryOperationStarted)
+    );
+    assert_eq!(model.requests.len(), 1);
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn m6b_eligible_operation_does_not_participate_outside_its_bound_phase() {
+    let temp = temp_workspace_dir("m6b-phase-limited-operation");
+    let package_root = temp.join("memory-package");
+    let mut runtime = runtime_with_m15_external_delete_operation(&temp, &package_root);
+    runtime.memory_operations[0].binding_scope = "phase:review".into();
+    let mut session = HarnessSession::with_runtime_snapshot(runtime);
+    session.start_run("phase-scoped control".into()).unwrap();
+    session.active_run.as_mut().unwrap().current_phase_id = Some("remember".into());
+    let mut engine = HarnessEngine::new(
+        one_phase_memory_loop(None),
+        HarnessEngineOptions::new(limits()),
+    );
+    let error = engine
+        .invoke_memory_operation(
+            &mut session,
+            "m15-lifecycle-memory-test",
+            "external_delete_notes",
+            BTreeMap::from([("user".into(), "user-123".into())]),
+            &mut ScriptedModelRuntime::new(Vec::new()),
+            &mut NoopHookRuntime,
+        )
+        .unwrap_err();
+    assert_eq!(
+        memory_operation_control_error_code(&error),
+        Some("memory_operation_not_participating")
+    );
+    std::fs::remove_dir_all(temp).unwrap();
+}

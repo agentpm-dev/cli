@@ -261,6 +261,20 @@ impl AgentPmClient {
             if requested.python_resolution != artifact.python_resolution {
                 return Err(SdkError::Other("Python resolution differs from the lock/resolve plan; run `agentpm install` without `--frozen` to regenerate agent.lock v4".into()));
             }
+            for (standard, origin) in [
+                (requested.standard.as_ref(), requested.standard_origin),
+                (artifact.standard.as_ref(), artifact.standard_origin),
+            ] {
+                crate::apds::validate(standard, origin)
+                    .map_err(|e| SdkError::Other(e.to_string()))?;
+            }
+            if requested.standard.is_some()
+                && artifact.standard.is_some()
+                && (requested.standard != artifact.standard
+                    || requested.standard_origin != artifact.standard_origin)
+            {
+                return Err(SdkError::Other("APDS standard/origin differs from the lock/resolve plan; retry agentpm install or contact the publisher".into()));
+            }
         }
         if seen.len() != plan.items.len() {
             return Err(SdkError::Other(
@@ -298,7 +312,7 @@ impl AgentPmClient {
             .json(&serde_json::json!({"session_id": original.session_id}))
             .send()
             .await?;
-        let renewed: InstallInitResponse = self.ensure_success(response).await?.json().await?;
+        let mut renewed: InstallInitResponse = self.ensure_success(response).await?.json().await?;
         if renewed.session_id != original.session_id
             || renewed.artifacts.len() != original.artifacts.len()
         {
@@ -307,7 +321,7 @@ impl AgentPmClient {
             ));
         }
         let mut seen = std::collections::BTreeSet::new();
-        for artifact in &renewed.artifacts {
+        for artifact in &mut renewed.artifacts {
             if !seen.insert((artifact.kind.as_str(), &artifact.name, &artifact.version)) {
                 return Err(SdkError::Other(
                     "renewal returned duplicate packages".into(),
@@ -320,8 +334,15 @@ impl AgentPmClient {
             }) else {
                 return Err(SdkError::Other("renewal substituted a package".into()));
             };
+            // Older Registries omit APDS metadata. Retain the expected pair
+            // supplied by a pinned lock; payload verification still reconciles
+            // it with immutable bytes before replacement.
+            if artifact.standard.is_none() && artifact.standard_origin.is_none() {
+                artifact.standard = old.standard.clone();
+                artifact.standard_origin = old.standard_origin;
+            }
             let mut left = serde_json::to_value(old)?;
-            let mut right = serde_json::to_value(artifact)?;
+            let mut right = serde_json::to_value(&*artifact)?;
             left.as_object_mut().unwrap().remove("presigned_url");
             right.as_object_mut().unwrap().remove("presigned_url");
             if left != right {

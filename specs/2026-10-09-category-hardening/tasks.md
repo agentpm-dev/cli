@@ -569,23 +569,26 @@ code is merged, deployed with enforcement off, or locally verified.
 > **Implementation notes:**
 > - The authoritative bytes are the installed artifact manifest; versioned Registry records, resolve DTOs and lock metadata are cached/derived views that must be reconciled rather than blindly trusted.
 > - **Dependencies:** M4B; Stage 1 M11B lock v4, **Stage 1 M14A** release-digest contract (M14A defines release-level SHA-256 over canonical release-manifest bytes and keeps `LockedPackage.integrity` a bare 64-char lowercase hex; M14B covers release-level signature statements and stored-byte integrity, which this milestone does not depend on).
-> - **Pre-freeze decision settled 2026-11-15:** [D06 record](d06-lockfile-compatibility.md) selects extended v4 and a minimum-CLI rollout. Implement known metadata for installed packages and represented local roots, including justified `legacy_inferred`; prove regeneration and SDK 0.1.17 compatibility. The concrete field shape, release floor and all implementation checklist items below remain M5A.
+> - **Pre-freeze decision settled 2026-11-15:** [D06 record](d06-lockfile-compatibility.md) selects extended v4 and a minimum-CLI rollout. Implement known metadata for installed packages and represented local roots, including justified `legacy_inferred`; prove regeneration and SDK 0.1.17 compatibility. Implemented as optional `standard` plus `standard_origin` (`declared` / `legacy_inferred`), requiring v4 and CLI 0.1.47+. See [verification](m5a-verification.md); publication and rollout verification remain pending.
 > - **Decisions:** D06, D19. **Acceptance:** S2-AC-06.
 
 **Implementation checklist**
 
-- [ ] Read Stage 1's final `LockedPackage`, resolve plan and forward-version checks as implemented.
-- [ ] Choose standard/origin lock shape while preferring lockfile version 4.
-- [ ] Add explicit versus legacy inferred origin to Registry resolve responses.
-- [ ] Map APDS metadata through CLI resolve DTO, in-memory plan and lock serialization.
-- [ ] Retain new metadata through ordinary install lock regeneration.
-- [ ] Reconcile the locked version/kind/name with the actual downloaded embedded manifest.
-- [ ] Verify integrity using Stage 1's logical release digest rules, not new ad hoc checksum logic.
-- [ ] Do not write chosen platform target or local Python interpreter into portable lock entries.
-- [ ] Test v2/v3 reads, new v4 writes, future lock version rejection and unknown-field safety.
-- [ ] Test multiple root kinds and exact version identity collisions.
-- [ ] Document any justified v5 proposal before coding it and require Claude compatibility review.
-- [ ] Check legacy inferred status is not promoted to declared/verified by serialization.
+- [x] Read Stage 1's final `LockedPackage`, resolve plan and forward-version checks as implemented.
+- [x] Choose standard/origin lock shape while preferring lockfile version 4.
+- [x] Add explicit versus legacy inferred origin to Registry resolve responses.
+- [x] Map APDS metadata through CLI resolve DTO, in-memory plan and lock serialization.
+- [x] Retain new metadata through ordinary install lock regeneration.
+- [x] Reconcile the locked version/kind/name with the actual downloaded embedded manifest.
+- [x] Verify integrity using Stage 1's logical release digest rules, not new ad hoc checksum logic.
+- [x] Do not write chosen platform target or local Python interpreter into portable lock entries.
+- [x] Test v2/v3 reads, new v4 writes, future lock version rejection and unknown-field safety.
+- [x] Test multiple root kinds and exact version identity collisions.
+- [x] Document any justified v5 proposal before coding it and require Claude compatibility review. **Not applicable:** D06 retains v4; no v5 proposal or implementation. User confirmed Claude review of the selected extension passed with no remaining findings on 2026-11-20.
+- [x] Check legacy inferred status is not promoted to declared/verified by serialization.
+- [x] Prepare and builder-replay the [M5A manual runbook](manual-tests/CLI_M5A_MANUAL_TESTS.md), with visible sources, exact commands, expectations and captured results under gitignored `cli-m5a-test/`. Real local API/DB/dev-S3 publications and installs are distinct from controlled loopback download faults. Four isolated builder checks pass; those checks are separate from operator acceptance below.
+- [x] Complete operator manual testing after Claude review and **before hosted CI**, as the user explicitly requested. User supplied the passing real-local audit on 2026-11-20: **38 command results**, all expected/actual exits matching, in `cli-m5a-test/20261120T170444Z-21931/evidence/summary.json`. The helper's fixed `operator_signoff: false` and `hosted_ci_complete: false` fields do not self-grant approval. Declared/legacy installs, v4 metadata, regeneration, supported frozen replay and exact rejection/unchanged-state checks passed the operator-run audit.
+- [x] After manual acceptance, push the reviewed changes together and confirm hosted Registry/CLI/SDK CI, including native target jobs, before marking M5A complete. **Operator confirmed all hosted CI passed on 2026-11-20.**
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -597,6 +600,8 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
+**Implementation evidence — 2026-11-20:** [M5A verification](m5a-verification.md) records the Registry/CLI/lock propagation, embedded-manifest reconciliation, ordinary regeneration and frozen metadata regressions, Stage 1 integrity/target safeguards, actual published SDK 0.1.17 probes and unchanged-lock rejection by released CLI 0.1.46. CLI 0.1.47 is prepared but unreleased. User confirmed Claude review passed with no remaining findings on 2026-11-20. User supplied a passing 38-result operator-run manual audit on 2026-11-20. **User confirmed all hosted CI passed on 2026-11-20; M5A is complete.** Reader-before-shared-emission release verification and restoring SDK CI selection to CLI `main` remain Release Band 2 gates. M5B graph/semver/empty-Agent fixes are not claimed.
+
 ## Milestone 5B: Fix Frozen Installs, Dependency Closure and Empty-Dependency Agents
 > **Scope note:** Make a clean workspace reproducibly install a locked Agent/Skill/Component graph and gracefully handle empty dependency sets. Outside this milestone: broad resolver rearchitecture or redo of Stage 1 Python target-aware install.
 > **Implementation notes:**
@@ -606,20 +611,25 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Implementation checklist**
 
-- [ ] Reproduce frozen direct Agent root, not just frozen Tool root.
-- [ ] Reproduce frozen direct Skill root and its Tool dependencies.
-- [ ] Reconstruct full transitive closure in an initially empty `.agentpm` workspace.
-- [ ] Validate every locked dependency satisfies authored version range.
-- [ ] Validate exact kind identity and selected version for every edge.
-- [ ] Fail on missing lock entry rather than filling it from latest Registry version.
-- [ ] Fail on Registry returned digest mismatch before modifying installed state.
-- [ ] Install valid Agent with no deps without sending erroneous empty resolve request.
-- [ ] Test normal install lock regeneration preserves every APDS origin/metadata field.
-- [ ] Test duplicate same-named package references and multi-Agent/multi-version coexistence.
-- [ ] Test legacy artifact install/read still succeeds with accurate inferred metadata.
-- [ ] Test offline/frozen behavior separately from normal online resolve.
-- [ ] Add integration tests for repeated clean installs producing same pinned closure.
-- [ ] Document failures with actionable command/error output (not fabricated package version).
+- [x] Reproduce frozen direct Agent root, not just frozen Tool root.
+- [x] Reproduce frozen direct Skill root and its Tool dependencies.
+- [x] Reconstruct full transitive closure in an initially empty `.agentpm` workspace.
+- [x] Validate every locked dependency satisfies authored version range.
+- [x] Validate exact kind identity and selected version for every edge.
+- [x] Fail on missing lock entry rather than filling it from latest Registry version.
+- [x] Fail on Registry returned digest mismatch before modifying installed state.
+- [x] Install valid Agent with no deps without sending erroneous empty resolve request.
+- [x] Test normal install lock regeneration preserves every APDS origin/metadata field.
+- [x] Test duplicate same-named package references and multi-Agent/multi-version coexistence.
+- [x] Test legacy artifact install/read still succeeds with accurate inferred metadata.
+- [x] Test offline/frozen behavior separately from normal online resolve.
+- [x] Add integration tests for repeated clean installs producing same pinned closure.
+- [x] Document failures with actionable command/error output (not fabricated package version).
+- [x] Address the user-reported Node invocation smoke flake with an explicit test-only startup timeout; full-suite and 24 concurrent repeated runs pass. Production timeout defaults remain unchanged.
+- [x] Complete independent Claude review. User confirmed review passed with no findings on 2026-11-20.
+- [x] Confirm hosted CLI/native-target CI. User confirmed all hosted CI passed on 2026-11-20.
+- [x] Prepare and builder-replay the [M5B manual runbook](manual-tests/CLI_M5B_MANUAL_TESTS.md): visible sources and 51 command expectations under ignored `cli-m5b-test/`, six new declared local publications reusing four immutable M5A fixtures, complete graph replay and isolated faults. Five builder tests pass; all 28 shell blocks parse. Builder verification makes no real API/DB/S3 writes.
+- [x] Complete operator manual acceptance using the M5B runbook. User supplied the passing **51-result** audit from `cli-m5b-test/20261121T014721Z-49256/evidence/summary.json`; all 51 expected/actual exits, 12 intended negative messages, 30 byte-comparison proofs, 18 request proofs and 11 current project locks/payloads were independently checked from saved files. No new API/DB calls were made for that inspection. The helper approval flags remain false by design.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -633,6 +643,8 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
+**Implementation evidence — 2026-11-20:** [M5B verification](m5b-verification.md) maps S2-AC-07 / T-LOCK-02–06 and D06 to complete frozen replay, authored constraint and integrity failures, multi-Agent/version coexistence, older-lock compatibility, empty Agents/workspaces, and unchanged-state checks. The additional user-reported Node invocation flake is addressed with a test-only startup allowance and concurrent repeated runs. CLI 0.1.47 remains prepared and unreleased; there is no new lock format, APDS change, SDK runtime change or production action. Local automated and focused CLI smoke evidence is recorded; User confirmed Claude review passed with no findings on 2026-11-20. User confirmed all hosted CI passed on 2026-11-20. **The operator supplied the passing 51-result manual audit; M5B is complete.** Reader-first publication and SDK CI variable cleanup remain Release Band 2.
+
 ## Milestone 6A: Validate Harness Standard Support and Real Preflight Readiness
 > **Scope note:** Teach Harness which APDS versions it understands and distinguish conformant definition, compatible Runner, and configured runtime. Outside this milestone: new Runner implementation or change to phase/approval engine design.
 > **Implementation notes:**
@@ -642,18 +654,18 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Implementation checklist**
 
-- [ ] Define supported standards capability list with exact version IDs.
-- [ ] Check selected Agent and relevant resolved Component standards before run.
-- [ ] Preserve legacy interpretation as qualified status.
-- [ ] Return unsupported-standard result for unknown version, without fallback.
-- [ ] Return valid-but-not-runnable reason for absent Loop.
-- [ ] Keep readiness errors separate from conformance violations.
-- [ ] Test missing model/provider in headless preflight returns not-ready.
-- [ ] Retain interactive bootstrap prompt where a TTY is actually available.
-- [ ] Expose same supported standards through existing machine initialization/preflight.
-- [ ] Add clear CLI/TUI status text without claiming one Runner is mandatory for APDS.
-- [ ] Test unsupported Memory/Knowledge backend as Runner limitation, not APDS invalidity.
-- [ ] Prove no accidental change in loop stop/transition/approval behavior.
+- [x] Define supported standards capability list with exact version IDs.
+- [x] Check selected Agent and relevant resolved Component standards before run.
+- [x] Preserve legacy interpretation as qualified status.
+- [x] Return unsupported-standard result for unknown version, without fallback.
+- [x] Return valid-but-not-runnable reason for absent Loop.
+- [x] Keep readiness errors separate from conformance violations.
+- [x] Test missing model/provider in headless preflight returns not-ready.
+- [x] Retain interactive bootstrap prompt where a TTY is actually available.
+- [x] Expose same supported standards through existing machine initialization/preflight.
+- [x] Add clear CLI/TUI status text without claiming one Runner is mandatory for APDS.
+- [x] Test unsupported Memory/Knowledge backend as Runner limitation, not APDS invalidity.
+- [x] Prove no accidental change in loop stop/transition/approval behavior.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -666,6 +678,10 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
+**Builder evidence — 2026-11-21:** [M6A verification and D20 interface choice](m6a-verification.md) maps S2-AC-08 / T-RUN-01–04,07 to selected-graph definition/provenance checks, exact supported-standard reporting, qualified legacy interpretation, no-Loop compatibility, noninteractive model/provider failures, optional backend limitations and unchanged execution regressions. Final workspace: **1,353 passed, 0 failed, 6 opt-in ignores**; all **10 native environment tests** also pass, as do Clippy, formatting, docs and APDS/SDK drift guards. The actual init/lint/empty-install/preflight smoke passes with unchanged source/lock bytes. Existing protocol version 1 is retained; new fields are additive. **User confirmed independent Claude review passed with no remaining findings on 2026-11-21, including the scoped D20 interface choice. User confirmed all hosted CI passed on 2026-11-21. The [manual runbook](manual-tests/CLI_M6A_MANUAL_TESTS.md) is prepared with 21 visible local cases, 26 command expectations and four TUI checks under ignored `cli-m6a-test/`. Four builder checks pass, including actual shell-block and PTY replay; all 23 runbook shell blocks parse. User supplied the passing 26-result audit with all four TUI observations on 2026-11-21. Saved diagnostics, reports, model traffic and source hashes were independently rechecked; the disclosed 13-result builder recovery remains recorded in verification. M6A is complete.** M6B exact runtime binding fixes, SDK wrapper parity and D13 remain untouched.
+
+**Review correction:** legacy APDS diagnostics now exempt only the missing declaration; other structural/resolved findings are visible warnings with rule IDs and source paths. Legacy status and source bytes stay unchanged. Root/Component description and resolved-phase regression cases pass; the full workspace and checks above were rerun. Selector diagnostic messages also share the same relative source path as their structured field, with passing root/Component assertions. User confirmed independent re-review passed with no further findings on 2026-11-21.
+
 ## Milestone 6B: Fix Exact-version Harness Bindings and SDK Visibility
 > **Scope note:** Resolve actual pinned Components in Harness and make standard support visible consistently to headless, TUI and SDK clients. Outside this milestone: rewrite of Node/Python SDK package models or new machine protocol.
 > **Implementation notes:**
@@ -675,21 +691,21 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Implementation checklist**
 
-- [ ] Trace current Harness Component lookup that only uses a name.
-- [ ] Use selected Agent's resolved graph/lock to determine exact Component version and kind.
-- [ ] Test workspace with two Agents binding the same named Tool at different versions.
-- [ ] Verify Skill-inherited Tools are exposed only in valid global/phase scope and Loop policy.
-- [ ] Verify Memory operation target semantics remain as in Phase 7A, including operation access to declared spaces not directly phase-bound and scope/trigger eligibility remaining distinct from actual invocation.
-- [ ] Verify the reviewed M1C/Phase 7B Memory authority boundary: Loop read/write flags restrict direct Agent access, not separately bound lifecycle operations. Check that eligible authorized operations can use declared unbound targets while those spaces remain unavailable for direct Agent access; unbound/out-of-phase/ineligible operations remain restricted. Preserve edge-trigger/rearm and interval baseline/reset meanings without prescribing a scheduler. See [M1C-R06](m1c-reconciliation.md#reconciliation-outcomes).
-- [ ] Test supported Runner interpretation separately from schema validation: global/phase additive Profiles without prescribed prompt ordering; no automatic Skill script execution; Loop implicit `complete` transition and authored access/checkpoint/error-policy meaning, within features Harness actually supports.
-- [ ] Confirm Knowledge backend compatibility and local readiness failures are not reported as APDS invalidity.
-- [ ] Expose standard support list through Node SDK bridge/host APIs.
-- [ ] Expose equivalent support list through Python SDK bridge/host APIs.
-- [ ] Confirm TUI, headless and machine preflight outputs agree semantically.
-- [ ] Set up A/B test fixture for optional Agent description in prompt context.
-- [ ] Compare outputs, duplication, token footprint and traceability; record D13 decision.
-- [ ] Keep existing prompt behavior if experiment doesn't show material benefit.
-- [ ] Record D20 interface choice and Claude signoff on exact-version resolution.
+- [x] Trace current Harness Component lookup that only uses a name.
+- [x] Use selected Agent's resolved graph/lock to determine exact Component version and kind.
+- [x] Test workspace with two Agents binding the same named Tool at different versions.
+- [x] Verify Skill-inherited Tools are exposed only in valid global/phase scope and Loop policy.
+- [x] Verify Memory operation target semantics remain as in Phase 7A, including operation access to declared spaces not directly phase-bound and scope/trigger eligibility remaining distinct from actual invocation.
+- [x] Verify the reviewed M1C/Phase 7B Memory authority boundary: Loop read/write flags restrict direct Agent access, not separately bound lifecycle operations. Check that eligible authorized operations can use declared unbound targets while those spaces remain unavailable for direct Agent access; unbound/out-of-phase/ineligible operations remain restricted. Preserve edge-trigger/rearm and interval baseline/reset meanings without prescribing a scheduler. See [M1C-R06](m1c-reconciliation.md#reconciliation-outcomes).
+- [x] Test supported Runner interpretation separately from schema validation: global/phase additive Profiles without prescribed prompt ordering; no automatic Skill script execution; Loop implicit `complete` transition and authored access/checkpoint/error-policy meaning, within features Harness actually supports.
+- [x] Confirm Knowledge backend compatibility and local readiness failures are not reported as APDS invalidity.
+- [x] Expose standard support list through Node SDK bridge/host APIs.
+- [x] Expose equivalent support list through Python SDK bridge/host APIs.
+- [x] Confirm TUI, headless and machine preflight outputs agree semantically.
+- [x] Set up A/B test fixture for optional Agent description in prompt context.
+- [x] Compare outputs, duplication, token footprint and traceability; record D13 decision.
+- [x] Keep existing prompt behavior if experiment doesn't show material benefit.
+- [x] Record D20 interface choice and Claude signoff on exact-version resolution. User confirmed full Claude review passed with no remaining findings on 2026-11-21, after the candidate-suppression assertion correction.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -702,11 +718,31 @@ code is merged, deployed with enforcement off, or locally verified.
 
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
+**Builder evidence — 2026-11-21:** [M6B verification](m6b-verification.md) records exact selected-graph runtime construction, all-six-kind multi-version snapshot tests, actual Node/Python-hosted Tool execution, global/phase/Skill/Memory/Profile/Loop interpretation, and real CLI/SDK report parity. Existing protocol version 1 and response envelopes are preserved. [D13 comparison](m6b-description-decision.md) selects **defer injection and retain current prompts**: reproducible one-/three-phase runs expose added prompt duplication without claiming a real-model quality benefit. Final local Rust workspace: **1,359 passed, 0 failed, 6 opt-in ignores**; native environment regressions: **10 passed**. Node: **119 passed, 2 optional skips**; Python: **120 passed, 2 optional skips**, with all twelve new real-CLI/transport cases passing in each SDK. Formatting, Clippy, SDK type/lint/build checks, feature-local docs and APDS/shared-fixture guards pass. CLI 0.1.47 remains prepared/unreleased; SDK APIs are recorded as Unreleased, without publication. **User confirmed independent Claude review passed with no remaining findings on 2026-11-21, including D13/D20 and the guard assertions. User confirmed all hosted CI passed on 2026-11-21 after the Windows corrections and macOS dependency-download rerun. User supplied the passing 30-result audit with both TUI observations on 2026-11-21; saved evidence and pinned hashes were independently rechecked. M6B is complete.** The selected graph's simultaneous active-name multi-version limitation is explicit and does not label the artifact APDS-invalid.
+
+**Review correction — 2026-11-21:** directly assert that ambiguous Tool and Memory candidates remain suppressed, independently of the fatal ambiguity diagnostic. Reverting lookup to arbitrary first-match fails the new assertion; restoring the uniqueness check passes both focused exact-version tests. Production behavior is unchanged. See the [verification record](m6b-verification.md); user subsequently confirmed independent review passed with no remaining findings on 2026-11-21. The user reports a future ambiguity solution is being planned in Stage 3; M6B retains the documented limitation and explicit safeguard.
+
+**SDK CI triage — 2026-11-21:** both failed SDK jobs use old CLI pin `25bd743a86099cee318d4e7d39490c9ea66ac23b`; M6B adds the shared fixture at reviewed CLI commit `1134b3c0aa0de5c978356ff6b271d9aad257d4fe`, and both committed SDK snapshots match it. Update both SDK repositories’ temporary `AGENTPM_CLI_REF` variables (or explicit dispatch `cli_ref`) to that reviewed commit, rerun and verify the checkout before recording CI success. CLI `main` does not yet contain the fixture. [Evidence](m6b-verification.md#remaining-gates-and-release-order). User subsequently requested resuming manual runbook preparation; no CI pass is claimed.
+
+**Manual runbook prepared — 2026-11-21:** [M6B operator guide](manual-tests/CLI_M6B_MANUAL_TESTS.md) provides ten visible local cases, 30 captured expectations and two actual TUI Run observations under ignored `cli-m6b-test/`. Four builder checks pass, including actual guide shell replay, both real PTY Runs and the complete audit; all 13 shell blocks parse. Covers exact six-kind versions through headless/SDK execution, phase/Skill scope, qualified ambiguity and the Skill-only workaround, five CLI/SDK report comparisons and the reproducible D13 experiment. No Registry or paid service is used. Existing operator runs are untouched; builder cleanup is limited to its own UUID directory. [Verification](m6b-verification.md#manual-runbook-preparation--2026-11-21) records evidence and limits. Hosted CI and operator manual acceptance are now confirmed passed; M6B is complete.
+
+**Windows SDK CI correction — 2026-11-21:** shared-fixture drift is resolved, but subsequent Windows jobs exposed literal `node` lookup versus `node.exe` in CLI preflight and Node test cleanup racing subprocess working-directory release. CLI readiness now recognizes extensionless Windows executable paths, with a platform-aware PATH/absolute-path regression; Node cleanup awaits bounded asynchronous native retries. Both SDK execution tests expose preflight diagnostics before running. Latest local validation: 27 Harness-plan tests, two exact-version tests, Node 119 passed / two optional skips, Python 120 passed / two optional skips; formatting, Clippy, SDK checks and fixture guards pass. [Verification](m6b-verification.md#windows-sdk-ci-correction--2026-11-21). Push the CLI correction and update both temporary SDK CLI refs to that new commit before rerunning; the earlier `1134b3c` pin lacks this fix. Windows hosted CI and operator acceptance remain pending; no release is claimed.
+
+**Hosted CI confirmation — 2026-11-21:** user confirmed all CI passed after the Windows corrections in CLI `b7a762be2f6129a9b98ef8fc3751577a1a1659cb`. The macOS Python 3.11 native-test failure was a PyPI connection timeout; its rerun passed without another code change. This closes the hosted CI gate. User subsequently supplied the passing [30-result/two-TUI manual audit](manual-tests/CLI_M6B_MANUAL_TESTS.md); all saved checks, both fresh ended TUI Runs and pinned hashes were independently rechecked without changing operator files. **M6B is complete.** Release Band 2 rollout remains separate.
+
+**Manual acceptance — 2026-11-21:** operator run `cli-m6b-test/20261121T204948Z-11496` passes all 30 command checks and both TUI observations, with CLI SHA-256 `5db89f2870604489de3122050d83c748eb3dcf8b9d8560d708f83dd2dd978f72`. Rechecked expected diagnostics/statuses, six-kind runtime versions, Tool markers, SDK envelopes, description experiment, ended Run reports and source/CLI/SDK hashes from saved evidence. No new Runs, Registry requests or evidence edits were made. Summary approval fields intentionally remain false; operator/CI acceptance is recorded here. Independent review, hosted CI and manual acceptance are passed; **M6B is complete**. Release Band 2 remains the next separate rollout gate.
+
 ## Release Band 2: Pinned Install and Harness Runner Compatibility
 Covered milestones: 5A–6B.
 
+**D06 ordering:** publish CLI 0.1.47 (or a later release containing its APDS-aware v4 reader/writer), confirm installability through supported distribution channels, and upgrade every developer/CI/container CLI before examples or automation distribute extended locks. SDK 0.1.17 already tolerates these additive fields; no SDK release is required solely for lock reading. Registry response additions can deploy before the CLI: older DTO readers ignore them, while the new CLI also reconciles older responses against artifact bytes.
+
 This gives users exact APDS metadata through resolve/install/lock v4, reproducible direct/transitive frozen installs, no-dependency Agent install behavior, and Harness capability/preflight reporting that differentiates a conformant Agent Package from a supported Runner and a ready local environment. It retains the existing Harness engine rather than introducing a new framework.
 
+**Version preparation — 2026-11-21:** CLI Cargo metadata and lock already agree on **0.1.47**. Both public SDKs are now prepared as **0.1.18**, with matching versioned Unreleased changelog sections; Python `uv.lock` carries the same project version without changing the dependency snapshot. Version consistency, Cargo locked metadata, Python locked-state check, shared fixture guards, Node build/package-content checks and both SDK test suites pass locally (Node 119 / Python 120, each with two existing optional skips). No publication, tag, merge, deployment or CI-ref change was made. User will push these changes and rerun hosted CI, then merge CLI to `main` before restoring both SDK workflows to CLI `main`. This preparation does not close the publication or release-band gates below.
+
+- [ ] After the matching CLI changes merge into `main`, remove the temporary `AGENTPM_CLI_REF` repository variable in both `agentpm-dev/sdk-node` and `agentpm-dev/sdk-python`, or reset it to `main`. Run both SDK CI workflows against CLI `main` and confirm they pass; for manual dispatch, use `cli_ref=main` rather than the temporary commit pin.
+- [ ] Prepare and publish new Node/Python SDK versions for the added support-list API/types after the compatible CLI is released. Preserve existing raw payload access; SDK 0.1.17 remains compatible for extended-v4 lock reading. Run SDK CI against the matching CLI-owned fixture revision before publication.
 - [ ] Reproduce frozen multi-kind dependency closure from clean workspace; test wrong digest/range/kind and legacy versions.
 - [ ] Verify minimal Agent is conformant but not Harness runnable without Loop.
 - [ ] Verify supported versions through TUI/headless/machine/SDK and missing-model headless failure.

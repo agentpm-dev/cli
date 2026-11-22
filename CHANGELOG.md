@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.1.47 — Unreleased
+
+- Build Harness runtime capabilities only from the selected Agent's checked,
+  exact locked graph, including Skill-inherited Tools and Memory operations.
+  Other workspace Agents' Component versions cannot enter runtime snapshots.
+  Report ambiguous active identities as a Runner limitation before execution.
+- Recognize extensionless Windows interpreter commands such as `node` when
+  `node.exe` is installed on PATH, so Harness preflight does not hide an
+  otherwise available Tool.
+
+- Advertise Harness support for APDS `agentpm / 1.0.0` through CLI/TUI and
+  machine initialization/preflight. Check selected Agent/Component definitions,
+  locked relationships and standard provenance before execution. Keep APDS
+  definition status, Harness support and local runtime readiness distinct;
+  historical interpretation remains explicitly inferred and unverified.
+- Surface structural and resolved APDS findings on legacy definitions as
+  warnings, exempting only the missing standard declaration. Keep historical
+  interpretation unverified without hiding other defects or rewriting sources.
+- Report a valid Agent Package without a Loop as not runnable by Harness.
+  Noninteractive preflight now rejects missing model/provider configuration or
+  required provider credentials; interactive TUI model selection remains
+  available. Failed machine preflight stays inspectable through the existing
+  protocol while blocking `start_run`. Optional backend limitations retain
+  capability suppression rather than becoming APDS violations.
+- Restore the complete locked package set with `install --frozen`, including
+  direct Agent Packages, Skills and transitive Components. Check authored
+  version constraints, exact kinds and integrity before replacing installations;
+  missing pins never fall back to newer Registry versions. Frozen installs
+  preserve manifest and lock bytes and still require a Registry session.
+- Handle dependency-free local Agent Packages and workspaces without an empty
+  resolve request; directly requested dependency-free Agent Packages still
+  install their own artifact.
+- Preserve effective APDS `standard` and `standard_origin` through Registry
+  resolution, installation and portable v4 locks, including represented local
+  roots and ordinary regeneration. Historical inference remains
+  `legacy_inferred`; authored declarations remain `declared`. Neither certifies
+  conformance or Runner readiness.
+- Reconcile embedded kind/name/version and standard against the selected
+  release/plan before replacing installed packages. Reject unsupported or
+  conflicting declarations with remediation, and recheck cached manifests.
+  Logical release digests and local artifact/target selection retain their
+  existing meaning.
+- Existing v2/v3/v4 locks remain readable; APDS metadata requires v4. Upgrade
+  all CLI installations to 0.1.47 before sharing regenerated locks, including
+  locks for legacy packages. Older strict readers may report `unknown field`;
+  do not remove provenance to bypass that error. SDK 0.1.17 accepts the added
+  fields and does not require a new release for lock loading. Normal legacy
+  installs use the same command without an extra flag.
+
 ## 0.1.46 — 2026-11-19
 
 - Include declared README and license files in Agent Package, Template and

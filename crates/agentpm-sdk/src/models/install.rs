@@ -39,6 +39,10 @@ pub struct PackageRequirement {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedPackage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard: Option<crate::apds::Standard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard_origin: Option<crate::apds::StandardOrigin>,
     #[serde(default)]
     pub kind: PackageKind,
     pub name: String,
@@ -69,6 +73,10 @@ pub struct InstallInitResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageArtifact {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard: Option<crate::apds::Standard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard_origin: Option<crate::apds::StandardOrigin>,
     #[serde(default)]
     pub kind: PackageKind,
     /// "@owner/name"

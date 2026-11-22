@@ -137,6 +137,7 @@ impl HarnessArgs {
                 model_override_source: None,
                 runtime_scopes: self.scopes.iter().cloned().collect(),
                 surface,
+                interactive: false,
             },
         )?;
 
@@ -154,6 +155,9 @@ impl HarnessArgs {
             )?;
         }
 
+        if surface == HarnessExecutionSurface::Machine {
+            return run_surface(surface, plan, self);
+        }
         match plan.report.status {
             PreflightStatus::Ready | PreflightStatus::ReadyWithWarnings => {}
             PreflightStatus::SelectionRequired => {
@@ -2999,6 +3003,9 @@ fn print_harness_preflight(
     verbose: bool,
 ) -> Result<()> {
     stream.line("AgentPM Harness preflight")?;
+    for line in crate::harness_plan::status_lines(&plan.report) {
+        stream.line(line)?;
+    }
     stream.line(format!("Workspace: {}", plan.workspace_root.display()))?;
     stream.line(format!("Lockfile: {}", plan.lock_path.display()))?;
     stream.line(format!("State dir: {}", plan.state_dir.display()))?;

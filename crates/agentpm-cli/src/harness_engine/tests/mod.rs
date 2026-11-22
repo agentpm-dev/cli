@@ -1124,6 +1124,7 @@ impl KnowledgeRuntime for RecordingKnowledgeRuntime {
 }
 
 mod core;
+mod description_ab;
 mod hooks;
 mod memory;
 mod telemetry;

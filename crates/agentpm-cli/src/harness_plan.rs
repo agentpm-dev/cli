@@ -32,6 +32,12 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
+pub(crate) mod backend;
+mod standard;
+pub use standard::{
+    DefinitionReport, DefinitionStatus, HarnessSupport, LocalReadiness, status_lines,
+};
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HarnessExecutionSurface {
@@ -67,6 +73,14 @@ pub struct PreflightReport {
     pub diagnostics: Vec<PreflightDiagnostic>,
     pub mcp_exports: PreflightMcpExports,
     pub mcp_imports: PreflightMcpImports,
+    #[serde(default)]
+    pub supported_standards: Vec<agentpm_sdk::apds::Standard>,
+    #[serde(default)]
+    pub apds: DefinitionReport,
+    #[serde(default)]
+    pub harness_support: HarnessSupport,
+    #[serde(default)]
+    pub local_readiness: LocalReadiness,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,6 +204,8 @@ pub struct HarnessBootstrapOptions {
     pub model_override_source: Option<HarnessConfigSource>,
     pub runtime_scopes: BTreeMap<String, String>,
     pub surface: HarnessExecutionSurface,
+    /// True only after the interactive terminal gate succeeds. JSON preflight is not interactive.
+    pub interactive: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,7 +238,7 @@ impl HarnessPlanProgress {
 #[derive(Debug)]
 struct AgentCandidate {
     root: ResolvedAgentRoot,
-    manifest: Option<AgentManifest>,
+    manifest: Option<Value>,
 }
 
 struct PlanParts {
@@ -240,6 +256,8 @@ struct PlanParts {
     mcp_exports: PreflightMcpExports,
     mcp_imports: PreflightMcpImports,
     diagnostics: Vec<PreflightDiagnostic>,
+    definition: DefinitionReport,
+    interactive: bool,
 }
 
 pub fn resolve_harness_plan(
@@ -254,6 +272,7 @@ pub fn resolve_harness_plan_with_progress(
     options: &HarnessBootstrapOptions,
     mut progress: impl FnMut(HarnessPlanProgress),
 ) -> Result<ResolvedHarnessPlan> {
+    let interactive = options.interactive && options.surface == HarnessExecutionSurface::Tui;
     progress(HarnessPlanProgress::new(
         HarnessPlanProgressStage::Workspace,
         format!("Resolving workspace root {}.", workspace_root.display()),
@@ -284,6 +303,7 @@ pub fn resolve_harness_plan_with_progress(
     let mut profiles = BTreeMap::new();
     let mut selected_manifest = None;
     let mut loop_package = None;
+    let mut definition = DefinitionReport::default();
     let mut consumer_context = ConsumerContextReadiness {
         state: CapabilityState::NotConfigured,
         file: None,
@@ -298,6 +318,9 @@ pub fn resolve_harness_plan_with_progress(
         format!("Reading lockfile {}.", lock_path.display()),
     ));
     let Some(lock) = read_required_lock(&lock_path, &mut diagnostics)? else {
+        if diagnostics.iter().any(|d| d.code == "unsupported_standard") {
+            definition.status = DefinitionStatus::Unsupported;
+        }
         progress(HarnessPlanProgress::new(
             HarnessPlanProgressStage::RuntimeSummary,
             "Summarizing configured runtime surfaces.",
@@ -323,6 +346,8 @@ pub fn resolve_harness_plan_with_progress(
             mcp_exports,
             mcp_imports,
             diagnostics,
+            definition,
+            interactive,
         }));
     };
 
@@ -352,6 +377,8 @@ pub fn resolve_harness_plan_with_progress(
             mcp_exports,
             mcp_imports,
             diagnostics,
+            definition,
+            interactive,
         }));
     };
 
@@ -364,7 +391,7 @@ pub fn resolve_harness_plan_with_progress(
         HarnessPlanProgressStage::AgentSelection,
         "Loading runnable Agent candidates.",
     ));
-    let mut candidates = load_agent_candidates(&workspace_root, &lock_v2, &mut diagnostics)?;
+    let mut candidates = load_agent_candidates(&workspace_root, &lock_v2)?;
     let selected_agent = select_agent_candidate(
         &mut candidates,
         options.agent_selector.as_deref(),
@@ -372,11 +399,32 @@ pub fn resolve_harness_plan_with_progress(
     );
 
     if let Some(agent) = &selected_agent {
-        selected_manifest = candidates
-            .into_iter()
-            .find(|candidate| candidate.root.root_key == agent.root_key)
-            .and_then(|candidate| candidate.manifest);
-        loop_package = resolve_loop_package(agent, &package_graph, &mut diagnostics);
+        definition = standard::check_definition(
+            &workspace_root,
+            agent,
+            &lock_v2,
+            &package_graph,
+            &mut diagnostics,
+        )?;
+        if definition.permits_runtime_checks() {
+            // Runtime lookup must never see another Agent's installed versions.
+            // The APDS adapter has already followed and reconciled the selected
+            // authored/locked edges, including Skill-inherited Tools.
+            let selected_keys = definition
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.key.as_str())
+                .collect::<BTreeSet<_>>();
+            package_graph.retain(|key, _| selected_keys.contains(key.as_str()));
+            selected_manifest = candidates
+                .into_iter()
+                .find(|candidate| candidate.root.root_key == agent.root_key)
+                .and_then(|candidate| candidate.manifest)
+                .map(serde_json::from_value::<AgentManifest>)
+                .transpose()
+                .context("parsing selected Agent after APDS checks")?;
+            loop_package = resolve_loop_package(agent, &package_graph, &mut diagnostics);
+        }
     }
 
     if let (Some(agent), Some(agent_manifest), Some(loop_info)) = (
@@ -397,12 +445,14 @@ pub fn resolve_harness_plan_with_progress(
             &config,
             &runtime_scopes,
             options.surface,
+            interactive,
             &mut consumer_context,
             &mut profile_bindings,
             &mut profiles,
             &mut capabilities,
             &mut diagnostics,
         )?;
+        validate_runtime_binding_versions(&package_graph, &capabilities, &mut diagnostics);
     }
 
     progress(HarnessPlanProgress::new(
@@ -430,6 +480,8 @@ pub fn resolve_harness_plan_with_progress(
         mcp_exports,
         mcp_imports,
         diagnostics,
+        definition,
+        interactive,
     }))
 }
 
@@ -446,13 +498,54 @@ fn merged_runtime_scopes(
 }
 
 fn build_plan(parts: PlanParts) -> ResolvedHarnessPlan {
+    let harness_support = if parts.definition.status == DefinitionStatus::Unsupported {
+        HarnessSupport::Unsupported
+    } else if !parts.definition.permits_runtime_checks() {
+        HarnessSupport::NotEvaluated
+    } else if parts.loop_package.is_none() {
+        HarnessSupport::NotRunnable
+    } else if parts.diagnostics.iter().any(|d| {
+        matches!(
+            d.code.as_str(),
+            "unrealizable_memory_space"
+                | "ambiguous_locked_component"
+                | "host_implementation_unavailable"
+                | "knowledge_backend_unavailable"
+        )
+    }) {
+        HarnessSupport::Limited
+    } else {
+        HarnessSupport::Supported
+    };
+    let local_readiness = if !matches!(
+        harness_support,
+        HarnessSupport::Supported | HarnessSupport::Limited
+    ) {
+        LocalReadiness::NotEvaluated
+    } else if parts
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == PreflightDiagnosticSeverity::Fatal)
+    {
+        LocalReadiness::NotReady
+    } else if parts.interactive && parts.config.config.model.is_none() {
+        LocalReadiness::BootstrapRequired
+    } else if harness_support == HarnessSupport::Limited {
+        LocalReadiness::Limited
+    } else {
+        LocalReadiness::Ready
+    };
     let report = PreflightReport {
         status: preflight_status(&parts.diagnostics),
         diagnostics: parts.diagnostics,
         mcp_exports: parts.mcp_exports,
         mcp_imports: parts.mcp_imports,
+        supported_standards: standard::supported_standards(),
+        apds: parts.definition,
+        harness_support,
+        local_readiness,
     };
-    ResolvedHarnessPlan {
+    let mut plan = ResolvedHarnessPlan {
         workspace_root: parts.workspace_root,
         lock_path: parts.lock_path,
         state_dir: parts.config.state_dir.clone(),
@@ -466,7 +559,9 @@ fn build_plan(parts: PlanParts) -> ResolvedHarnessPlan {
         profiles: parts.profiles,
         capabilities: parts.capabilities,
         report,
-    }
+    };
+    backend::check_knowledge_backends(&mut plan);
+    plan
 }
 
 fn preflight_mcp_exports(
@@ -591,7 +686,11 @@ fn read_required_lock(
             push_diag(
                 diagnostics,
                 PreflightDiagnosticSeverity::Fatal,
-                "invalid_lock",
+                if err.to_string().starts_with("Unsupported APDS standard ") {
+                    "unsupported_standard"
+                } else {
+                    "invalid_lock"
+                },
                 format!("agent.lock could not be parsed: {err}"),
                 Some("agent.lock"),
             );
@@ -661,11 +760,7 @@ fn package_graph_from_lock(
     Ok(graph)
 }
 
-fn load_agent_candidates(
-    workspace_root: &Path,
-    lock: &LockV2,
-    diagnostics: &mut Vec<PreflightDiagnostic>,
-) -> Result<Vec<AgentCandidate>> {
+fn load_agent_candidates(workspace_root: &Path, lock: &LockV2) -> Result<Vec<AgentCandidate>> {
     let mut candidates = Vec::new();
     for (root_key, root) in &lock.roots {
         let Some(agent_root) =
@@ -674,22 +769,9 @@ fn load_agent_candidates(
             continue;
         };
 
-        let manifest = match load_agent_manifest(&agent_root.manifest_path) {
-            Ok(manifest) => Some(manifest),
-            Err(err) => {
-                push_diag(
-                    diagnostics,
-                    PreflightDiagnosticSeverity::Fatal,
-                    "missing_agent_manifest",
-                    format!(
-                        "resolved Agent manifest {} could not be loaded: {err}",
-                        agent_root.manifest_path.display()
-                    ),
-                    Some(path_for_report(workspace_root, &agent_root.manifest_path)),
-                );
-                None
-            }
-        };
+        // Selection precedes inspection; an unrelated workspace Agent cannot
+        // determine the selected graph's conformance or readiness.
+        let manifest = load_agent_manifest(&agent_root.manifest_path).ok();
 
         candidates.push(AgentCandidate {
             root: agent_root,
@@ -755,17 +837,15 @@ fn agent_root_from_locked_root(
     }))
 }
 
-fn load_agent_manifest(path: &Path) -> Result<AgentManifest> {
+fn load_agent_manifest(path: &Path) -> Result<Value> {
     let (value, _) = load_manifest_value(path)?;
-    let manifest: AgentManifest =
-        serde_json::from_value(value.clone()).context("parsing manifest into AgentManifest")?;
-    if manifest.kind != "agent" {
+    if value["kind"] != "agent" {
         bail!(
             "expected kind=\"agent\" manifest (got kind=\"{}\")",
-            manifest.kind
+            value["kind"]
         );
     }
-    Ok(manifest)
+    Ok(value)
 }
 
 fn select_agent_candidate(
@@ -781,8 +861,8 @@ fn select_agent_candidate(
 
     if let Some(selector) = selector {
         let parsed = parse_agent_selector(selector);
-        let matches: Vec<&AgentCandidate> = runnable
-            .into_iter()
+        let matches: Vec<&AgentCandidate> = candidates
+            .iter()
             .filter(|candidate| selector_matches(candidate, &parsed))
             .collect();
         return match matches.len() {
@@ -814,6 +894,9 @@ fn select_agent_candidate(
         return Some(runnable[0].root.clone());
     }
 
+    if candidates.len() == 1 {
+        return Some(candidates[0].root.clone());
+    }
     if runnable.is_empty() {
         let loaded_agents = candidates
             .iter()
@@ -886,6 +969,16 @@ fn resolve_loop_package(
     package_graph: &BTreeMap<String, ResolvedPackageInfo>,
     diagnostics: &mut Vec<PreflightDiagnostic>,
 ) -> Option<ResolvedPackageInfo> {
+    if agent.loop_key.is_empty() {
+        push_diag(
+            diagnostics,
+            PreflightDiagnosticSeverity::Fatal,
+            "agent_missing_loop",
+            "This Agent Package has no resolved Loop. A Loop is required by Harness, not by APDS; use another compatible Runner or add a Loop and run agentpm install.",
+            Some("agent.lock"),
+        );
+        return None;
+    }
     if let Some(package) = package_graph.get(&agent.loop_key)
         && package.kind == PackageKind::Loop
     {
@@ -914,6 +1007,7 @@ fn validate_selected_agent(
     config: &ResolvedHarnessConfig,
     runtime_scopes: &BTreeMap<String, String>,
     surface: HarnessExecutionSurface,
+    interactive: bool,
     consumer_context: &mut ConsumerContextReadiness,
     profile_bindings: &mut ProfileBindingSnapshot,
     profiles: &mut BTreeMap<String, ProfileSnapshot>,
@@ -929,7 +1023,7 @@ fn validate_selected_agent(
 
     let Some(bindings) = manifest.bindings.as_ref() else {
         validate_config_mappings(config, agent, package_graph, diagnostics);
-        validate_provider_readiness(config, surface, capabilities, diagnostics);
+        validate_provider_readiness(config, surface, interactive, capabilities, diagnostics);
         return Ok(());
     };
 
@@ -959,7 +1053,7 @@ fn validate_selected_agent(
     validate_mcp_exports(agent, bindings, package_graph, diagnostics);
     validate_config_mappings(config, agent, package_graph, diagnostics);
     validate_mcp_import_scopes(config, &loop_phase_ids, capabilities, diagnostics);
-    validate_provider_readiness(config, surface, capabilities, diagnostics);
+    validate_provider_readiness(config, surface, interactive, capabilities, diagnostics);
     validate_runtime_scopes(
         workspace_root,
         bindings,
@@ -1619,6 +1713,21 @@ fn validate_memory_bindings(
             continue;
         }
         let Some(package) = package_by_name(package_graph, PackageKind::Memory, &name) else {
+            capabilities.push(StaticCapabilityCandidate {
+                kind: "memory".into(),
+                identity: name.clone(),
+                scope: scope_label.into(),
+                source: "agent_binding".into(),
+                state: CapabilityState::Suppressed,
+            });
+            if package_graph
+                .values()
+                .any(|package| package.kind == PackageKind::Memory && package.name == name)
+            {
+                // The shared version guard reports ambiguity. These packages
+                // are present; do not also misreport them as missing.
+                continue;
+            }
             push_diag(
                 diagnostics,
                 PreflightDiagnosticSeverity::Suppressed,
@@ -2127,15 +2236,28 @@ fn canonical_interpreter(command: &str) -> String {
 }
 
 fn command_available(command: &str) -> bool {
+    command_available_with_path(command, std::env::var_os("PATH").as_deref())
+}
+
+fn command_available_with_path(command: &str, search_path: Option<&OsStr>) -> bool {
     let path = Path::new(command);
     if path.is_absolute() || command.contains(std::path::MAIN_SEPARATOR) {
-        return executable_file(path);
+        return executable_command(path);
     }
 
-    std::env::var_os("PATH")
+    search_path
         .into_iter()
         .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
-        .any(|dir| executable_file(&dir.join(command)))
+        .any(|dir| executable_command(&dir.join(command)))
+}
+
+fn executable_command(path: &Path) -> bool {
+    // Match Command's Windows executable lookup: an extensionless command can
+    // name node.exe/python.exe. Do not assume shell/PATHEXT script dispatch.
+    executable_file(path)
+        || (cfg!(windows)
+            && path.extension().is_none()
+            && executable_file(&path.with_extension("exe")))
 }
 
 #[cfg(unix)]
@@ -2249,10 +2371,55 @@ fn validate_mcp_import_scopes(
 fn validate_provider_readiness(
     config: &ResolvedHarnessConfig,
     surface: HarnessExecutionSurface,
+    interactive: bool,
     capabilities: &mut Vec<StaticCapabilityCandidate>,
     diagnostics: &mut Vec<PreflightDiagnostic>,
 ) {
+    if config.config.model.is_none() {
+        push_diag(
+            diagnostics,
+            if interactive {
+                PreflightDiagnosticSeverity::Pending
+            } else {
+                PreflightDiagnosticSeverity::Fatal
+            },
+            "model_not_configured",
+            if interactive {
+                "Choose a model provider/model in the TUI before starting a run."
+            } else {
+                "Local runtime not ready: configure model.provider and model.model in agentpm.harness.json; noninteractive preflight cannot prompt. Use an interactive terminal for TUI model selection."
+            },
+            Some("agentpm.harness.json#/model"),
+        );
+    }
     if let Some(model) = &config.config.model {
+        if let Some(message) =
+            provider_environment_error(&model.provider, |key| std::env::var(key).ok())
+        {
+            push_diag(
+                diagnostics,
+                PreflightDiagnosticSeverity::Fatal,
+                "model_provider_not_ready",
+                message,
+                Some("agentpm.harness.json#/model/provider"),
+            );
+        }
+        if config
+            .config
+            .providers
+            .models
+            .get(&model.provider)
+            .is_some_and(|entry| matches!(entry.implementation, HarnessImplementation::Host { .. }))
+            && surface != HarnessExecutionSurface::Machine
+        {
+            push_diag(
+                diagnostics,
+                PreflightDiagnosticSeverity::Fatal,
+                "model_provider_not_ready",
+                "Selected model provider requires a machine/SDK host. Use --machine with the host registered, or configure a built-in/process provider.",
+                Some("agentpm.harness.json#/model/provider"),
+            );
+        }
         capabilities.push(StaticCapabilityCandidate {
             kind: "model_provider".to_string(),
             identity: format!("{}/{}", model.provider, model.model),
@@ -2320,6 +2487,24 @@ fn validate_provider_readiness(
             capabilities,
             diagnostics,
         );
+    }
+}
+
+fn provider_environment_error(
+    provider: &str,
+    environment: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let key = match provider {
+        "openai" => "OPENAI_API_KEY",
+        "anthropic" => "ANTHROPIC_API_KEY",
+        _ => return None,
+    };
+    if environment(key).is_none_or(|value| value.trim().is_empty()) {
+        Some(format!(
+            "Local runtime not ready: {key} is required for model provider `{provider}`. Set it in the Harness process environment before running; this is not an APDS conformance failure."
+        ))
+    } else {
+        None
     }
 }
 
@@ -2765,9 +2950,45 @@ fn package_by_name<'a>(
     kind: PackageKind,
     name: &str,
 ) -> Option<&'a ResolvedPackageInfo> {
-    package_graph
+    let mut matches = package_graph
         .values()
-        .find(|package| package.kind == kind && package.name == name)
+        .filter(|package| package.kind == kind && package.name == name);
+    let package = matches.next()?;
+    // A versionless runtime action cannot distinguish simultaneous versions.
+    // Do not use BTreeMap order as an implicit dependency-selection policy.
+    matches.next().is_none().then_some(package)
+}
+
+fn validate_runtime_binding_versions(
+    packages: &BTreeMap<String, ResolvedPackageInfo>,
+    capabilities: &[StaticCapabilityCandidate],
+    diagnostics: &mut Vec<PreflightDiagnostic>,
+) {
+    let active = capabilities
+        .iter()
+        .map(|candidate| (candidate.kind.as_str(), candidate.identity.as_str()))
+        .collect::<BTreeSet<_>>();
+    let mut versions: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
+    for package in packages.values() {
+        let identity = (package.kind.as_str(), package.name.as_str());
+        if active.contains(&identity) {
+            versions.entry(identity).or_default().push(&package.version);
+        }
+    }
+    for ((kind, name), versions) in versions {
+        if versions.len() > 1 {
+            push_diag(
+                diagnostics,
+                PreflightDiagnosticSeverity::Fatal,
+                "ambiguous_locked_component",
+                format!(
+                    "The selected Agent graph binds {kind} `{name}` at multiple locked versions ({}). This Harness's versionless action interface cannot select between them; use an unambiguous binding graph. Other workspace Agents may use different versions. This is a Runner limitation, not APDS invalidity.",
+                    versions.join(", ")
+                ),
+                Some("agent.lock"),
+            );
+        }
+    }
 }
 
 fn package_ref_parts(reference: &PackageReference) -> (String, String) {
@@ -2968,6 +3189,8 @@ mod tests {
         packages.insert(
             package_key(kind, name, version),
             LockedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind,
                 name: name.to_string(),
@@ -2979,6 +3202,8 @@ mod tests {
 
     fn base_root() -> LockedRoot {
         LockedRoot {
+            standard: None,
+            standard_origin: None,
             python_input_fingerprint: None,
             python_resolution: None,
             name: Some("@zack/local-agent".to_string()),
@@ -3259,7 +3484,10 @@ mod tests {
     }
 
     fn options() -> HarnessBootstrapOptions {
-        HarnessBootstrapOptions::default()
+        HarnessBootstrapOptions {
+            interactive: true,
+            ..Default::default()
+        }
     }
 
     fn codes(plan: &ResolvedHarnessPlan) -> BTreeSet<String> {
@@ -3279,6 +3507,59 @@ mod tests {
     }
 
     #[test]
+    fn model_bootstrap_is_only_available_to_the_interactive_tui() {
+        let root = temp_dir("model-bootstrap-surfaces");
+        write_base_workspace(&root);
+        lock_with_root(&root, base_root(), base_packages());
+        for surface in [
+            HarnessExecutionSurface::Tui,
+            HarnessExecutionSurface::Headless,
+            HarnessExecutionSurface::Machine,
+        ] {
+            let plan = resolve_harness_plan(
+                &root,
+                &HarnessBootstrapOptions {
+                    surface,
+                    ..options()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                plan.report.local_readiness,
+                if surface == HarnessExecutionSurface::Tui {
+                    LocalReadiness::BootstrapRequired
+                } else {
+                    LocalReadiness::NotReady
+                }
+            );
+            assert_eq!(
+                plan.report.status == PreflightStatus::Failed,
+                surface != HarnessExecutionSurface::Tui
+            );
+        }
+    }
+
+    #[test]
+    fn older_preflight_payloads_do_not_fabricate_standard_support() {
+        let root = temp_dir("old-preflight-report");
+        let plan = resolve_harness_plan(&root, &options()).unwrap();
+        let mut value = serde_json::to_value(&plan.report).unwrap();
+        for key in [
+            "supported_standards",
+            "apds",
+            "harness_support",
+            "local_readiness",
+        ] {
+            value.as_object_mut().unwrap().remove(key);
+        }
+        let report: PreflightReport = serde_json::from_value(value).unwrap();
+        assert!(report.supported_standards.is_empty());
+        assert_eq!(report.apds.status, DefinitionStatus::NotEvaluated);
+        assert_eq!(report.harness_support, HarnessSupport::NotEvaluated);
+        assert_eq!(report.local_readiness, LocalReadiness::NotEvaluated);
+    }
+
+    #[test]
     fn preflight_progress_reports_real_resolver_milestones() {
         let root = temp_dir("preflight-progress");
         write_base_workspace(&root);
@@ -3294,7 +3575,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan.report.status, PreflightStatus::Ready);
+        assert_eq!(plan.report.status, PreflightStatus::ReadyWithWarnings);
+        assert!(codes(&plan).contains("legacy_apds_issue"));
         for stage in [
             HarnessPlanProgressStage::Workspace,
             HarnessPlanProgressStage::Config,
@@ -3370,7 +3652,8 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(plan.report.status, PreflightStatus::Ready);
+        assert_eq!(plan.report.status, PreflightStatus::ReadyWithWarnings);
+        assert!(codes(&plan).contains("legacy_apds_issue"));
         assert_eq!(
             plan.selected_agent.as_ref().unwrap().name,
             "@zack/local-agent"
@@ -3404,7 +3687,8 @@ mod tests {
 
         let plan = resolve_harness_plan(&root, &options()).unwrap();
 
-        assert_eq!(plan.report.status, PreflightStatus::Ready);
+        assert_eq!(plan.report.status, PreflightStatus::ReadyWithWarnings);
+        assert!(codes(&plan).contains("legacy_apds_issue"));
         assert_eq!(
             plan.runtime_scopes.get("user").map(String::as_str),
             Some("config-user")
@@ -3494,7 +3778,8 @@ mod tests {
         .unwrap();
 
         let plan = resolve_harness_plan(&root, &options()).unwrap();
-        assert_eq!(plan.report.status, PreflightStatus::Ready);
+        assert_eq!(plan.report.status, PreflightStatus::ReadyWithWarnings);
+        assert!(codes(&plan).contains("legacy_apds_issue"));
         assert_eq!(
             plan.selected_agent.as_ref().unwrap().name,
             "@zack/installed-agent"
@@ -3507,6 +3792,9 @@ mod tests {
         write_base_workspace(&root);
         let mut root_lock = base_root();
         root_lock.r#loop = None;
+        let (mut value, _) = load_manifest_value(&root.join("agent.json")).unwrap();
+        value.as_object_mut().unwrap().remove("loop");
+        write_json(&root.join("agent.json"), value);
         lock_with_root(&root, root_lock, base_packages());
         let plan = resolve_harness_plan(&root, &options()).unwrap();
         assert_eq!(plan.report.status, PreflightStatus::Failed);
@@ -3782,6 +4070,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn command_lookup_accepts_extensionless_windows_executables_only_on_windows() {
+        let root = temp_dir("executable-extension");
+        let command = root.join("node");
+        fs::write(command.with_extension("exe"), b"fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                command.with_extension("exe"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+        assert_eq!(executable_command(&command), cfg!(windows));
+        assert_eq!(command_available(command.to_str().unwrap()), cfg!(windows));
+        assert!(command_available(
+            command.with_extension("exe").to_str().unwrap()
+        ));
+        assert!(!executable_command(&root.join("missing")));
+        // An explicit extension must not be replaced by .exe.
+        assert!(!executable_command(&command.with_extension("cmd")));
+        let search_path = std::env::join_paths([&root]).unwrap();
+        assert_eq!(
+            command_available_with_path("node", Some(&search_path)),
+            cfg!(windows)
+        );
+        assert!(command_available_with_path("node.exe", Some(&search_path)));
+        assert!(!command_available_with_path("missing", Some(&search_path)));
+        assert!(!command_available_with_path("node", None));
+    }
+
     #[cfg(unix)]
     #[test]
     fn preflight_suppresses_tool_below_declared_runtime_minimum_version() {
@@ -3921,6 +4241,8 @@ mod tests {
                     (
                         "local:agent:agents/other.agent.json".to_string(),
                         LockedRoot {
+                            standard: None,
+                            standard_origin: None,
                             name: Some("@zack/other-agent".to_string()),
                             version: Some("0.1.0".to_string()),
                             r#loop: Some("loop:@zack/review-loop@0.1.0".to_string()),

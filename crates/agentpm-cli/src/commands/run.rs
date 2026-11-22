@@ -620,7 +620,9 @@ mod tests {
             spec: "@zack/echo-node".to_string(),
             input: Some(r#"{"message":"node"}"#.to_string()),
             input_file: None,
-            timeout_ms: None,
+            // This tests invocation, not timeout enforcement. Allow Node startup
+            // headroom while the full workspace suite runs subprocesses in parallel.
+            timeout_ms: Some(30_000),
             machine: false,
             sdk_request: false,
         };

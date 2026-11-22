@@ -1478,7 +1478,7 @@ fn workspace_ready_page(
     )]);
     for category in &snapshot.workspace.categories {
         let mut group = vec![
-            state_line(&category.label, category.state),
+            state_line_with_label(&category.label, category.state, category.status_label),
             info_line("  ", category.summary.clone()),
         ];
         if let Some(source) = &category.source {
@@ -3550,6 +3550,14 @@ fn warning_lines(app: &TuiApp, snapshot: &TuiSessionSnapshot) -> Vec<Line<'stati
 }
 
 fn state_line(label: &str, state: CapabilityState) -> Line<'static> {
+    state_line_with_label(label, state, None)
+}
+
+fn state_line_with_label(
+    label: &str,
+    state: CapabilityState,
+    status_label: Option<&str>,
+) -> Line<'static> {
     let (mark, color, text) = match state {
         CapabilityState::Available => ("✓", STATUS_READY, "Ready"),
         CapabilityState::Pending => ("•", STATUS_WARNING, "Pending"),
@@ -3557,6 +3565,7 @@ fn state_line(label: &str, state: CapabilityState) -> Line<'static> {
         CapabilityState::Suppressed => ("!", STATUS_WARNING, "Suppressed"),
         CapabilityState::NotConfigured => ("-", Color::DarkGray, "Not configured"),
     };
+    let text = status_label.unwrap_or(text);
     let prefix_width = 2 + label.chars().count();
     let gap = PREFLIGHT_LINE_WIDTH
         .saturating_sub(prefix_width + text.chars().count())
@@ -3564,7 +3573,7 @@ fn state_line(label: &str, state: CapabilityState) -> Line<'static> {
     Line::from(vec![
         styled(mark, color),
         Span::raw(format!(" {label}{}", " ".repeat(gap))),
-        styled(text, color),
+        styled(text.to_owned(), color),
     ])
 }
 
@@ -4282,6 +4291,75 @@ mod tests {
     }
 
     #[test]
+    fn workspace_renders_apds_support_separately_from_harness_and_runtime() {
+        let mut controller = test_controller();
+        controller.plan.report.supported_standards = vec![agentpm_sdk::apds::Standard {
+            id: "agentpm".into(),
+            version: "1.0.0".into(),
+        }];
+        controller.plan.report.apds.status = crate::harness_plan::DefinitionStatus::Conformant;
+        controller.plan.report.apds.checked_levels = vec!["standalone".into(), "resolved".into()];
+        controller.plan.report.harness_support = crate::harness_plan::HarnessSupport::NotRunnable;
+        controller.plan.report.local_readiness = crate::harness_plan::LocalReadiness::NotEvaluated;
+        controller.refresh_snapshot();
+        let mut app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+        app.workspace_detail_expanded = true;
+        let text = workspace_page(&app, 1000, 200)
+            .lines
+            .iter()
+            .map(Line::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        for expected in [
+            "agentpm / 1.0.0",
+            "APDS definition",
+            "Conformant",
+            "Harness support",
+            "Not runnable",
+            "Local runtime",
+            "Not checked",
+            "no execution proof",
+        ] {
+            assert!(text.contains(expected), "missing {expected}: {text}");
+        }
+    }
+
+    #[test]
+    fn legacy_limited_and_not_ready_rows_are_separate_and_never_green_ready() {
+        let mut controller = test_controller();
+        controller.plan.report.apds.status = crate::harness_plan::DefinitionStatus::LegacyInferred;
+        controller.plan.report.harness_support = crate::harness_plan::HarnessSupport::Limited;
+        controller.plan.report.local_readiness = crate::harness_plan::LocalReadiness::NotReady;
+        controller.plan.report.status = PreflightStatus::Failed;
+        controller.refresh_snapshot();
+        for (label, expected, color) in [
+            ("APDS definition", "Legacy", STATUS_WARNING),
+            ("Harness support", "Limited", STATUS_WARNING),
+            ("Local runtime", "Not ready", Color::Red),
+        ] {
+            let category = controller
+                .snapshot
+                .workspace
+                .categories
+                .iter()
+                .find(|c| c.label == label)
+                .unwrap();
+            assert_ne!(category.state, CapabilityState::Available);
+            let line =
+                state_line_with_label(&category.label, category.state, category.status_label);
+            assert_eq!(line.spans.last().unwrap().content, expected);
+            assert_eq!(line.spans.last().unwrap().style.fg, Some(color));
+            assert!(!category.summary.contains('\n'));
+            assert!(category.source.is_none());
+        }
+        let app = TuiApp::ready_with_runtime_inputs(controller, HarnessArgs::default(), None);
+        let lines = workspace_page(&app, 1000, 34).lines;
+        for label in ["APDS definition", "Harness support", "Local runtime"] {
+            assert!(lines.iter().any(|line| line.to_string().contains(label)));
+        }
+    }
+
+    #[test]
     fn workspace_readiness_summary_uses_stable_categories_and_counts() {
         let mut plan = test_plan();
         plan.config.config.model = Some(crate::harness_config::HarnessModelConfig {
@@ -4509,7 +4587,7 @@ mod tests {
 
         let mut first_warning_page = None;
         let mut second_warning_page = None;
-        for page_index in 0..10 {
+        for page_index in 0..100 {
             app.workspace_page = page_index.into();
             let page = workspace_page(&app, 10, 24);
             if page
@@ -4525,6 +4603,9 @@ mod tests {
                 .any(|line| line.to_string().contains("second_warning"))
             {
                 second_warning_page = Some(page_index);
+            }
+            if first_warning_page.is_some() && second_warning_page.is_some() {
+                break;
             }
         }
         let first_warning_page = first_warning_page.expect("first warning page");

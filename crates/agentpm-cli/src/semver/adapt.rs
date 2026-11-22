@@ -22,6 +22,8 @@ pub fn plan_to_sdk_resolve(plan: &ResolvePlan) -> sdkm::ResolveResponse {
             .items
             .iter()
             .map(|it| sdkm::ResolvedPackage {
+                standard: it.standard.clone(),
+                standard_origin: it.standard_origin,
                 kind: to_sdk_kind(it.kind),
                 name: it.name.clone(),
                 version: it.version.clone(),
@@ -40,6 +42,8 @@ impl From<sdkm::ResolveResponse> for ResolvePlan {
                 .items
                 .into_iter()
                 .map(|it| ResolvedPackage {
+                    standard: it.standard,
+                    standard_origin: it.standard_origin,
                     kind: from_sdk_kind(it.kind),
                     name: it.name,
                     version: it.version,

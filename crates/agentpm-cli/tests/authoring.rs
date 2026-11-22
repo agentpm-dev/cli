@@ -327,7 +327,11 @@ fn fresh_agent_is_valid_but_harness_reports_missing_loop() {
         "stdout: {text}, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(text.contains("valid artifacts but are not runnable by Harness"));
+    assert!(text.contains("A Loop is required by Harness, not by APDS"));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["apds"]["status"], "conformant");
+    assert_eq!(report["harness_support"], "not_runnable");
+    assert_eq!(report["local_readiness"], "not_evaluated");
 }
 
 #[test]

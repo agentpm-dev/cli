@@ -539,6 +539,8 @@ fn resolve_installed_memory_version(
         packages.insert(
             key,
             LockedPackage {
+                standard: None,
+                standard_origin: None,
                 python_resolution: None,
                 kind: PackageKind::Memory,
                 name: format!("@{owner}/{name}"),
@@ -2214,6 +2216,8 @@ mod tests {
                                 version,
                             ),
                             crate::semver::types::LockedPackage {
+                                standard: None,
+                                standard_origin: None,
                                 python_resolution: None,
                                 kind: PackageKind::Memory,
                                 name: package.to_string(),

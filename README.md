@@ -185,6 +185,12 @@ The generated manifest declares APDS `agentpm / 1.0.0` and pins its editor schem
 Component dependencies are optional. To execute the Agent with `agentpm harness`,
 add a Loop dependency and configure a model first.
 
+Commit `agent.lock` after installation. In a clean checkout,
+`agentpm install --frozen` restores its complete pinned package set, including transitive
+Components, while checking dependency constraints and integrity. It leaves the
+manifest and lock unchanged and still needs a Registry connection; cached
+artifacts can avoid downloads. Dependency-free Agent Packages install normally.
+
 To create a Component or Template instead, select its kind explicitly. Scripts
 that previously relied on the default Tool scaffold must now pass `--kind tool`.
 Each command below writes to its own directory:
@@ -289,7 +295,7 @@ That:
 - installs memory under `.agentpm/memory/<namespace>/<name>/<version>/`
 - installs profiles under `.agentpm/profiles/<namespace>/<name>/<version>/`
 - installs loops under `.agentpm/loops/<namespace>/<name>/<version>/`
-- writes `agent.lock` (Skill-containing graphs use `lockfile_version: 3`)
+- writes `agent.lock` (APDS identity/origin metadata requires `lockfile_version: 4`)
 - keeps the local `agent.json` as the source of truth
 
 ### Direct package install
@@ -359,6 +365,24 @@ agentpm harness @zack/support-agent --config agentpm.harness.json --state-dir .a
 ```
 
 The command requires `agent.lock`, defaults to the interactive TUI surface, selects the only runnable Agent automatically, and asks for an explicit Agent selector when multiple runnable Agents are present. Use `--json` without `--headless`/`--machine` when you only need the preflight readiness report.
+
+Preflight advertises support for APDS `agentpm / 1.0.0` and separates definition
+checks, Harness compatibility and local runtime readiness. A conformant Agent
+Package without a Loop is not runnable by Harness; other compatible Runners may
+use it. Unknown standards never fall back to the current contract, and legacy
+inference is labeled rather than certified. JSON preflight and headless/machine
+mode require a configured model/provider; only the interactive TUI offers model
+selection. Provider credentials must be present in the Harness environment.
+Machine `initialize` and `preflight` expose the same report, including failed
+preflight; `start_run` remains blocked until preflight is ready. Harness machine
+protocol version `1` is independent of the advertised APDS version.
+
+Runtime capabilities use the selected Agent's exact checked lock graph, including
+Skill-inherited Tools. Another workspace Agent's Component version cannot be
+selected by name. Ambiguous active identities within the selected graph report
+a Runner limitation before execution. Node `supportedStandards()` and Python
+`supported_standards()` expose the CLI-advertised APDS identities through the
+existing SDK bridge, preserving absent advertisements and response envelopes.
 
 Harness runtime records are written under `.agentpm-state/` by default, while `.agentpm/` remains installed dependency state. See the public [Harness guide](https://www.agentpackagemanager.com/docs/v0.1/cli/harness) for CLI, configuration, protocol, provider and SDK usage.
 
@@ -449,6 +473,21 @@ stores logical release integrity and Python resolution; selected artifacts and
 interpreter fingerprints stay under `.agentpm/`. Keep that directory out of Git.
 Supported v2/v3 locks remain readable; v4 carries newer capabilities and future
 unsupported versions fail rather than being rewritten.
+
+CLI **0.1.47 or newer** reads and writes the additive v4 `standard` and
+`standard_origin` fields. `declared` means the artifact contains that declaration;
+`legacy_inferred` means a historical package is interpreted as AgentPM APDS 1.0.0.
+Neither is a conformance certificate or a claim of Runner readiness. Historical
+packages still use ordinary `agentpm install`; no legacy install flag is needed.
+The CLI checks metadata against the downloaded manifest before installation.
+
+Upgrade the CLI on every machine and CI image before sharing regenerated locks.
+Older CLIs may fail with `unknown field 'standard'` or `standard_origin`; upgrade
+instead of deleting those fields. Ordinary installation of a historical package
+can also produce these fields. Untouched locks are not rewritten just to add them.
+SDK 0.1.17 readers accept the added v4 fields; their Tool calls must use the
+compatible CLI. Publish and confirm the compatible CLI is installable before
+automation starts distributing these extended locks.
 
 Supported native CLI targets are Apple Silicon/Intel macOS, Linux x86-64 glibc
 and Windows x64. The released Linux CLI 0.1.43 needs glibc 2.39+; Linux arm64

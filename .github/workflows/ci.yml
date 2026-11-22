@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       # Pin the toolchain (recommended to specify an exact version)
       - uses: dtolnay/rust-toolchain@v1
@@ -91,7 +91,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: 1.89.0
@@ -103,7 +103,7 @@ jobs:
           cargo test -p agentpm-sdk target::tests
           cargo test -p agentpm-cli --bin agentpm commands::package::tests
           cargo test -p agentpm-cli --bin agentpm io::download::
-          cargo test -p agentpm-cli --test payload_compatibility --test ci_publishing --test target_install
+          cargo test -p agentpm-cli --test payload_compatibility --test ci_publishing --test target_install --test apds_install --test frozen_install --test harness_standard
       - name: Acquire and verify the pinned native resolver
         shell: bash
         env:

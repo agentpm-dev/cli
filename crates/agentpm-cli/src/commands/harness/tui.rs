@@ -1534,6 +1534,10 @@ pub(super) mod test_support {
                 },
             ],
             report: crate::harness_plan::PreflightReport {
+                supported_standards: Vec::new(),
+                apds: Default::default(),
+                harness_support: Default::default(),
+                local_readiness: Default::default(),
                 status: PreflightStatus::Ready,
                 diagnostics: Vec::new(),
                 mcp_exports: crate::harness_plan::PreflightMcpExports {

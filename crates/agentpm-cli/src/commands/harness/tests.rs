@@ -3779,6 +3779,10 @@ fn minimal_plan(root: &Path) -> ResolvedHarnessPlan {
         profiles: BTreeMap::new(),
         capabilities: Vec::new(),
         report: crate::harness_plan::PreflightReport {
+            supported_standards: Vec::new(),
+            apds: Default::default(),
+            harness_support: Default::default(),
+            local_readiness: Default::default(),
             status: PreflightStatus::Ready,
             diagnostics: Vec::new(),
             mcp_exports: crate::harness_plan::PreflightMcpExports {
@@ -4495,3 +4499,5 @@ impl ModelRuntime for UnsupportedModelRuntime {
         unreachable!("capability validation should fail before generation")
     }
 }
+
+mod exact_versions;
