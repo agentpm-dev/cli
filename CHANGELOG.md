@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.47 — Unreleased
+## 0.1.47 — 2026-11-21
 
 - Build Harness runtime capabilities only from the selected Agent's checked,
   exact locked graph, including Skill-inherited Tools and Memory operations.
