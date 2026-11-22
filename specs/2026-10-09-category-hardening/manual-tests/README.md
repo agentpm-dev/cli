@@ -71,6 +71,12 @@ isolated workload and retains a report.
   corrections and macOS rerun. The user supplied the passing 30-result audit and
   both TUI observations the same day; saved evidence/hashes were independently
   rechecked, completing M6B. Release Band 2 remains separate.
+- [Release Band 2 verification](../release-band2-verification.md): published CLI
+  0.1.47 and SDK 0.1.18 artifact/hash checks, live Registry/web responses, actual
+  signed multi-kind installation and clean frozen replay, wrong kind/digest/range
+  rejection, and isolated published-SDK exact-version/report checks. Combined with
+  the operator-confirmed CI, ref cleanup and M5A–M6B acceptance, Release Band 2 is
+  complete. Raw evidence stays under ignored `release-band2-evidence/`.
 - [Automated local Registry capacity measurement](REGISTRY_CAPACITY.md): a single
   command runs the isolated Docker stack, both enforcement settings, actual
   example graphs, larger payloads, concurrency and controlled failures. Evidence

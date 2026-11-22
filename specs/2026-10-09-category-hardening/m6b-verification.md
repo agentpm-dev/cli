@@ -193,10 +193,9 @@ requested resuming manual runbook preparation; that work is recorded below.
   all hosted CLI/SDK CI passed after the corrections below on 2026-11-21.
 - The manual runbook is prepared and builder-replayed as described below.
   Operator acceptance and hosted CI are confirmed passed; see completion below.
-- CLI **0.1.47 remains prepared and unreleased**. SDK package versions were
-  **0.1.17** at M6B handoff; Release Band 2 version preparation now sets both to
-  **0.1.18**, with matching versioned Unreleased changelogs. Publication remains
-  a Release Band 2 gate; existing 0.1.17 clients retain raw
+- CLI **0.1.47** and both SDKs **0.1.18** are now published, independently checked
+  in [Release Band 2 verification](release-band2-verification.md). SDK package
+  versions were **0.1.17** at M6B handoff; existing 0.1.17 clients retain raw
   payload access and do not need an upgrade merely to read extended v4 locks.
 - Match the CLI-owned fixture revision when running SDK CI. After the matching
   CLI merges, restore/remove temporary `AGENTPM_CLI_REF` selections and verify
