@@ -4,7 +4,8 @@ Builder verification: **2026-11-22**. Scope: M7A only, D12/D19,
 T-HEALTH-01/03 and the evidence-design portion of S2-AC-10. Implementation and
 local checks are complete. The user confirmed **independent Claude review passed
 with no open findings on 2026-11-22**, including the trust-label challenge.
-**Hosted CI remains pending.** No production requests, database writes,
+The user confirmed **hosted CI passed on 2026-11-22; M7A is complete**.
+No production requests, database writes,
 package publication or deployment occurred.
 
 ## Deliverables and decisions
@@ -149,5 +150,6 @@ boundaries rather than new behavior silently added in M7A.
 D12/D19 builder decisions are delivered. S2-AC-10 is only partially evidenced:
 its public response/rendering requirements belong to M7B/M10B. T-HEALTH-02/04/05
 remain implementation gates there. Claude's independent trust-label review is
-complete with no open findings, as confirmed by the user on 2026-11-22. Hosted CI
-for these new changes is not yet run; that remains the milestone's open gate.
+complete with no open findings, as confirmed by the user on 2026-11-22. The user
+also confirmed hosted CI passed on 2026-11-22, closing M7A. M7B implementation and
+the dated operator key-set renewal remain separate pending tasks.

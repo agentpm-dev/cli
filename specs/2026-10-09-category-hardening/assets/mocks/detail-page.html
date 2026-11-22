@@ -1,0 +1,639 @@
+<meta charset="utf-8">
+<title>AgentPM Package Detail</title>
+<meta name="description" content="Dark-shell layout mock for the AgentPM package detail route, built on production tokens with real @zack/devwork-copilot data.">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+
+<style>
+  /* ── Production ground. The site is dark-committed; paint it explicitly. ── */
+  :root { color-scheme: dark; }
+  body {
+    background: #020617;                 /* slate-950 */
+    color: #f1f5f9;                      /* slate-100 */
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ── Hero-band texture. Scoped to the hero only (tasks.md M8B.1).
+        On a dark ground this is how layering reads without drop shadows. ── */
+  .hero-band {
+    background:
+      radial-gradient(1100px 420px at 12% -18%, rgba(56,189,248,.10), transparent 62%),
+      radial-gradient(820px 380px at 88% -12%, rgba(168,85,247,.09), transparent 58%),
+      linear-gradient(180deg, rgba(30,41,59,.55) 0%, rgba(2,6,23,0) 78%);
+  }
+  .hero-band::after {                    /* faint grid, keeps the band from reading flat */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(148,163,184,.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(148,163,184,.045) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
+  }
+
+  .surface { background: rgba(15,23,42,.6); }        /* slate-900/60 */
+  .surface-sunken { background: rgba(2,6,23,.5); }   /* slate-950/50 */
+
+  /* Dashed connector for transitive edges */
+  .edge, .edge-dashed { background: #334155; }
+  .edge-dashed {
+    background: repeating-linear-gradient(to bottom, #334155 0 4px, transparent 4px 8px);
+  }
+
+  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     HEADER — shipped treatment, NOT the mockup's floating inset bar.
+     sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800
+     The blur is the elevation cue on a dark ground. Full-bleed is required
+     for the blur edge to read. (tasks.md M8B.1)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<header class="sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800">
+  <!-- Three zones: brand left, search fills the middle, nav + account right.
+       Brand and nav size to their content; the search column is the only
+       flexible one, so it absorbs whatever space is left at any width. -->
+  <div class="mx-auto grid max-w-[1400px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 sm:px-6">
+
+    <!-- Left: brand -->
+    <a href="#" class="flex items-center gap-2 justify-self-start">
+      <span class="h-8 w-8 rounded-xl bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+      <span class="font-semibold tracking-tight">AgentPM™</span>
+    </a>
+
+    <!-- Center: global search (M8B.1 moves it into the header on every route) -->
+    <div class="hidden md:block">
+      <label class="relative block">
+        <span class="sr-only">Search packages, components and docs</span>
+        <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+        <input type="search" placeholder="Search packages, components, docs…"
+               class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-16 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none">
+        <kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 text-[11px] text-slate-400">⌘K</kbd>
+      </label>
+    </div>
+    <div class="md:hidden" aria-hidden="true"></div>
+
+    <!-- Right: nav + account -->
+    <nav class="flex items-center gap-3 justify-self-end text-sm text-slate-300">
+      <a class="hidden hover:text-white lg:inline" href="#">Docs</a>
+      <a class="hidden hover:text-white lg:inline" href="#">Pricing</a>
+      <a class="hidden hover:text-white lg:inline" href="#">Blog</a>
+      <button class="relative rounded-lg p-2 text-slate-400 hover:bg-slate-800/60 hover:text-slate-200" aria-label="Notifications">
+        <svg class="h-5 w-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 8a4 4 0 0 1 8 0c0 3 1 4 1 4H5s1-1 1-4Z"></path><path d="M8.5 15a1.5 1.5 0 0 0 3 0"></path></svg>
+        <span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-slate-950"></span>
+      </button>
+      <a href="#" class="grid h-8 w-8 place-items-center rounded-full bg-indigo-500/20 text-sm font-semibold text-indigo-300 ring-1 ring-indigo-700/50" aria-label="Your profile">Z</a>
+    </nav>
+  </div>
+
+  <!-- Mobile: search drops to its own full-width row below the nav, matching
+       the shipped MobileGlobalSearchClient rather than hiding behind an icon. -->
+  <div class="border-t border-slate-800/70 px-4 py-2.5 md:hidden">
+    <label class="relative block">
+      <span class="sr-only">Search packages, components and docs</span>
+      <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+      <input type="search" placeholder="Search packages, components, docs…"
+             class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none">
+    </label>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     HERO BAND — identity + get-started, asymmetric two-column (M8B.1)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="relative hero-band border-b border-slate-800/70">
+  <div class="relative z-10 mx-auto max-w-[1400px] px-6 pt-6 pb-10">
+
+    <nav class="mb-6 flex items-center gap-2 text-sm text-slate-400" aria-label="Breadcrumb">
+      <a href="#" class="hover:text-slate-200">Packages</a>
+      <span class="text-slate-600">/</span>
+      <a href="#" class="hover:text-slate-200">@zack</a>
+      <span class="text-slate-600">/</span>
+      <span class="text-slate-200">devwork-copilot</span>
+    </nav>
+
+    <div class="grid gap-6 lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,1fr)]">
+
+      <!-- ── Identity ───────────────────────────────────────────────────── -->
+      <section class="rounded-2xl border border-slate-800 surface p-6">
+        <div class="flex items-start gap-4 sm:gap-5">
+          <!-- Generated per-package identity gradient (ToolBox.tsx algorithm,
+               seeded by package identity). NOT a per-kind glyph: this slot
+               answers "which package", the badge answers "what kind". -->
+          <div id="identity-avatar"
+               class="h-14 w-14 sm:h-20 sm:w-20 shrink-0 rounded-xl sm:rounded-2xl ring-1 ring-slate-700/60"
+               role="img" aria-label="Generated identity mark for @zack/devwork-copilot"></div>
+
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h1 class="text-xl sm:text-2xl lg:text-3xl font-semibold tracking-tight text-white break-all sm:break-words">@zack/devwork-copilot</h1>
+              <button class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/70 px-2.5 py-1 text-sm text-slate-200">
+                v0.1.10
+                <svg class="h-3.5 w-3.5 text-slate-400" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+              </button>
+            </div>
+
+            <p class="mt-2.5 max-w-[65ch] text-[15px] leading-relaxed text-slate-300">
+              Interactive GitHub maintainer copilot with explicit approval gates for write actions,
+              packaged maintainer-review orchestration, workflow continuity, and a durable maintainer
+              behavior profile.
+            </p>
+
+            <!-- Kind + cross-cutting badges. Shipped token pattern:
+                 bg-{c}-500/15 text-{c}-300 border-{c}-700/50 — Agent = amber. -->
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+              <span class="inline-flex items-center gap-1.5 rounded-full border border-amber-700/50 bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-300">
+                <span class="h-1.5 w-1.5 rounded-full bg-amber-400"></span> Agent Package
+              </span>
+              <!-- sky is reserved for the cross-cutting Signed badge -->
+              <span class="inline-flex items-center gap-1.5 rounded-full border border-sky-700/50 bg-sky-500/15 px-3 py-1 text-xs font-medium text-sky-300">
+                Signed
+              </span>
+              <span class="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">
+                <span class="text-slate-500">Standard</span> <span class="mono">agentpm / 1.0.0</span>
+                <span class="rounded bg-slate-700/70 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">declared</span>
+              </span>
+              <span class="inline-flex items-center rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">MIT</span>
+            </div>
+
+            <dl class="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
+              <div class="flex items-center gap-2">
+                <dt class="sr-only">Publisher</dt>
+                <dd class="flex items-center gap-2">
+                  <span class="grid h-6 w-6 place-items-center rounded-full bg-indigo-500/20 text-[11px] font-semibold text-indigo-300 ring-1 ring-indigo-700/50">Z</span>
+                  <a href="#" class="text-slate-200 hover:underline">zack</a>
+                </dd>
+              </div>
+              <div><dt class="inline text-slate-500">Published</dt> <dd class="inline tabular-nums">Nov 20, 2026</dd></div>
+
+              <!-- Popularity is identity-scoped, never Health evidence (M7A).
+                   It sits with the publisher and date, not with conformance. -->
+              <div class="flex items-center gap-1.5">
+                <dt class="sr-only">Downloads</dt>
+                <svg class="h-4 w-4 text-slate-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 2v7"></path><path d="m5 6.5 3 3 3-3"></path><path d="M3 12.5h10"></path></svg>
+                <dd class="tabular-nums text-slate-300">128</dd>
+                <span class="text-slate-500">downloads</span>
+              </div>
+
+              <div class="flex items-center gap-1.5">
+                <dt class="sr-only">Stars</dt>
+                <dd>
+                  <button class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-white">
+                    <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m8 2 1.8 3.9 4.2.5-3.1 2.9.8 4.2L8 11.4 4.3 13.5l.8-4.2L2 6.4l4.2-.5L8 2Z"></path></svg>
+                    Star
+                    <span class="tabular-nums text-slate-400">6</span>
+                  </button>
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Get started: three real paths ──────────────────────────────── -->
+      <section class="rounded-2xl border border-slate-800 surface p-6">
+        <div class="flex items-start gap-3">
+          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-sky-700/50 bg-sky-500/15 text-sky-300">
+            <svg class="h-4.5 w-4.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 2.5 17 6v8l-7 3.5L3 14V6l7-3.5Z"></path></svg>
+          </span>
+          <div>
+            <h2 class="text-base font-semibold text-white">Get started</h2>
+            <p class="text-sm text-slate-400">Install, run, or load this Agent Package.</p>
+          </div>
+        </div>
+
+        <div class="mt-5 space-y-3">
+          <div class="rounded-xl border border-slate-800 surface-sunken p-3">
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-sm font-medium text-slate-200">Install</span>
+              <span class="text-xs text-slate-500">AgentPM CLI</span>
+            </div>
+            <div class="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+              <code class="mono flex-1 overflow-x-auto whitespace-nowrap text-[13px] text-slate-300">agentpm install @zack/devwork-copilot@0.1.10</code>
+              <button class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-300" aria-label="Copy install command">
+                <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-slate-800 surface-sunken p-3">
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-sm font-medium text-slate-200">Run with Harness</span>
+              <span class="text-xs text-slate-500">Requires a Loop + model</span>
+            </div>
+            <div class="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+              <code class="mono flex-1 overflow-x-auto whitespace-nowrap text-[13px] text-slate-300">agentpm harness @zack/devwork-copilot@0.1.10</code>
+              <button class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-300" aria-label="Copy harness command">
+                <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-slate-800 surface-sunken p-3">
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-sm font-medium text-slate-200">Load via SDK</span>
+              <span class="text-xs text-slate-500">Node · Python</span>
+            </div>
+            <div class="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+              <code class="mono flex-1 overflow-x-auto whitespace-nowrap text-[13px] text-slate-300">loadAgent("@zack/devwork-copilot@0.1.10")</code>
+              <button class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-300" aria-label="Copy SDK snippet">
+                <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ── Tabs ───────────────────────────────────────────────────────────────── -->
+<div class="border-b border-slate-800 bg-slate-950/40">
+  <div class="mx-auto max-w-[1400px] px-6">
+    <nav class="flex gap-7 overflow-x-auto text-sm" aria-label="Package sections">
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-sky-400 px-0.5 py-3.5 font-medium text-white">Overview</a>
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200">Examples</a>
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200">Readme</a>
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200">Health &amp; Security</a>
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200">Bindings</a>
+    </nav>
+  </div>
+</div>
+
+<main class="mx-auto max-w-[1400px] px-6 py-8">
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       THE THESIS ROW. Composition answers "what is this made of",
+       Execution answers "how does it actually run". Together they are the
+       "complete agent system, not merely its code" clarification rendered as
+       structure. These two are PRIMARY-weight section cards; everything
+       below them is lighter. (M8B.1 density tiers)
+       ════════════════════════════════════════════════════════════════════════ -->
+  <div class="grid gap-6 xl:grid-cols-2">
+
+    <!-- ── Composition ─────────────────────────────────────────────────── -->
+    <section class="rounded-2xl border border-slate-800 surface p-6">
+      <header class="mb-6 flex items-start justify-between gap-4">
+        <div class="flex items-start gap-3">
+          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-amber-700/50 bg-amber-500/15 text-amber-300">
+            <svg class="h-4.5 w-4.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 3 3 6.5 10 10l7-3.5L10 3Z"></path><path d="m3 13.5 7 3.5 7-3.5"></path><path d="m3 10 7 3.5L17 10"></path></svg>
+          </span>
+          <div>
+            <h2 class="text-base font-semibold text-white">Composition</h2>
+            <p class="text-sm text-slate-400">Existing registry packages this Agent is built from.</p>
+          </div>
+        </div>
+        <a href="#" class="shrink-0 text-sm text-sky-400 hover:text-sky-300">Browse components →</a>
+      </header>
+
+      <!-- Root -->
+      <div class="flex justify-center">
+        <div class="inline-flex items-center gap-3 rounded-xl border border-amber-700/50 bg-amber-500/10 px-4 py-3">
+          <div id="identity-avatar-sm" class="h-9 w-9 shrink-0 rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Identity mark"></div>
+          <div class="min-w-0">
+            <div class="mono truncate text-sm text-white">@zack/devwork-copilot</div>
+            <div class="text-xs text-amber-300/90">Agent Package</div>
+          </div>
+          <span class="mono shrink-0 rounded border border-slate-700 bg-slate-900/70 px-1.5 py-0.5 text-xs text-slate-300">0.1.10</span>
+        </div>
+      </div>
+
+      <div class="mx-auto h-5 w-px edge" aria-hidden="true"></div>
+
+      <!-- One node per KIND, not per package. The fan shows the Agent's shape;
+           expanding a node reveals its contents. Shape stays constant at any
+           density, so the composition story survives a 30-Tool package. -->
+      <ul class="grid grid-cols-2 items-start gap-3 sm:grid-cols-3" role="list">
+
+        <li class="rounded-xl border border-rose-700/50 bg-rose-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-rose-300">Skill</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">issue-triage-playbook</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.1</div>
+        </li>
+
+        <li class="rounded-xl border border-indigo-700/50 bg-indigo-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-indigo-300">Tool</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">summarize-text</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.10</div>
+        </li>
+
+        <li class="rounded-xl border border-fuchsia-700/50 bg-fuchsia-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-fuchsia-300">Knowledge</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">devwork-maintainer-guide</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+
+        <li class="rounded-xl border border-teal-700/50 bg-teal-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-teal-300">Memory</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">devwork-maintainer-state</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+
+        <li class="rounded-xl border border-cyan-700/50 bg-cyan-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-cyan-300">Profile</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">devwork-maintainer-style</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+
+        <!-- Loop sits in the fan because it is part of the shape, but carries no
+             count: the manifest stores it as one binding, not an array. -->
+        <li class="rounded-xl border border-lime-700/50 bg-lime-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-lime-300">Loop</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">devwork-triage-loop</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+      </ul>
+
+      <!-- Transitive edge — the detail nothing else in the ecosystem shows -->
+      <div class="mt-5 border-t border-slate-800 pt-5">
+        <div class="flex items-start gap-3">
+          <div class="mt-1.5 h-10 w-px edge-dashed shrink-0" aria-hidden="true"></div>
+          <div class="min-w-0 flex-1">
+            <div class="mb-2 text-xs text-slate-400">
+              Inherited through <span class="mono text-rose-300">issue-triage-playbook</span>
+            </div>
+            <div class="inline-flex items-center gap-3 rounded-xl border border-indigo-700/50 border-dashed bg-indigo-500/5 px-3 py-2">
+              <span class="text-[11px] font-medium uppercase tracking-wide text-indigo-300">Tool</span>
+              <span class="mono text-xs text-slate-200">@zack/github-issues</span>
+              <span class="mono rounded border border-slate-700 bg-slate-900/70 px-1.5 py-0.5 text-[11px] text-slate-400">0.1.2</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2 border-t border-slate-800 pt-4 text-xs text-slate-400">
+        <span class="flex items-center gap-2"><span class="h-px w-6 edge"></span> Direct dependency (6)</span>
+        <span class="flex items-center gap-2"><span class="h-px w-6 edge-dashed" style="background:repeating-linear-gradient(to right,#334155 0 4px,transparent 4px 8px)"></span> Transitive dependency (1)</span>
+      </div>
+    </section>
+
+    <!-- ── Execution architecture ──────────────────────────────────────── -->
+    <section class="rounded-2xl border border-slate-800 surface p-6">
+      <header class="mb-6 flex items-start justify-between gap-4">
+        <div class="flex items-start gap-3">
+          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-lime-700/50 bg-lime-500/15 text-lime-300">
+            <svg class="h-4.5 w-4.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M11 2 4 11h5l-1 7 7-9h-5l1-7Z"></path></svg>
+          </span>
+          <div>
+            <h2 class="text-base font-semibold text-white">Execution architecture</h2>
+            <p class="text-sm text-slate-400">
+              How it runs, declared by <span class="mono text-lime-300">devwork-triage-loop</span>.
+            </p>
+          </div>
+        </div>
+        <span class="mono shrink-0 rounded border border-slate-700 bg-slate-900/60 px-2 py-1 text-[11px] text-slate-400">max 10 steps</span>
+      </header>
+
+      <!-- Phases are a real ordered sequence, so numbering encodes something true.
+           Flattened to two levels (phase → capability row) rather than the
+           mockup's three-deep nesting, which collapses badly at narrow widths. -->
+      <ol class="space-y-3" role="list">
+        <li class="rounded-xl border border-slate-800 surface-sunken p-4">
+          <div class="flex items-start gap-3">
+            <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-lime-700/50 bg-lime-500/15 text-[11px] font-semibold text-lime-300 tabular-nums">1</span>
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="mono text-sm text-white">inspect-issue</span>
+                <span class="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">entry</span>
+              </div>
+              <p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">
+                Decide whether there is enough evidence to draft a follow-up, or whether the work should hand off.
+              </p>
+              <div class="mt-3 flex flex-wrap gap-1.5">
+                <span class="rounded-md border border-indigo-700/50 bg-indigo-500/15 px-2 py-0.5 text-[11px] text-indigo-300">Tools</span>
+                <span class="rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300">Knowledge</span>
+                <span class="rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300">Memory · read</span>
+              </div>
+              <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                <span>→</span>
+                <span class="mono text-slate-400">draft-comment</span>
+                <span class="text-slate-700">·</span>
+                <span class="mono text-slate-400">handoff</span>
+              </div>
+            </div>
+          </div>
+        </li>
+
+        <li class="rounded-xl border border-slate-800 surface-sunken p-4">
+          <div class="flex items-start gap-3">
+            <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-lime-700/50 bg-lime-500/15 text-[11px] font-semibold text-lime-300 tabular-nums">2</span>
+            <div class="min-w-0 flex-1">
+              <span class="mono text-sm text-white">draft-comment</span>
+              <p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">
+                Draft the next maintainer comment and capture follow-up notes that should survive this review pass.
+              </p>
+              <div class="mt-3 flex flex-wrap gap-1.5">
+                <span class="rounded-md border border-indigo-700/50 bg-indigo-500/15 px-2 py-0.5 text-[11px] text-indigo-300">Tools</span>
+                <span class="rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300">Knowledge</span>
+                <span class="rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300">Memory · read + write</span>
+              </div>
+              <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                <span>→</span>
+                <span class="mono text-slate-400">ready-for-resolution</span>
+                <span class="text-slate-700">·</span>
+                <span class="mono text-slate-400">needs-more-context</span>
+              </div>
+            </div>
+          </div>
+        </li>
+
+        <li class="rounded-xl border border-slate-800 surface-sunken p-4">
+          <div class="flex items-start gap-3">
+            <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-lime-700/50 bg-lime-500/15 text-[11px] font-semibold text-lime-300 tabular-nums">3</span>
+            <div class="min-w-0 flex-1">
+              <span class="mono text-sm text-white">resolve-or-handoff</span>
+              <p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">
+                Decide the outcome. Tool access is withheld here, so the decision cannot take a write action on its own.
+              </p>
+              <div class="mt-3 flex flex-wrap gap-1.5">
+                <!-- Real manifest: access.tools === false. Denial is information,
+                     so it gets a form of its own rather than being omitted. -->
+                <span class="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/50 px-2 py-0.5 text-[11px] text-slate-500 line-through decoration-slate-600">Tools</span>
+                <span class="rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300">Knowledge</span>
+                <span class="rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300">Memory · read + write</span>
+              </div>
+              <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                <span>→</span>
+                <span class="mono text-slate-400">resolve</span>
+                <span class="text-slate-700">·</span>
+                <span class="mono text-slate-400">revise-comment</span>
+                <span class="text-slate-700">·</span>
+                <span class="mono text-slate-400">handoff</span>
+              </div>
+            </div>
+          </div>
+        </li>
+      </ol>
+    </section>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       EVIDENCE ROW — lighter weight than the thesis row above.
+       Three SEPARATE questions kept separate (M6A): is the definition
+       conformant, does this Runner support it, is this machine ready.
+       Every verified label carries its observer (M7A).
+       ════════════════════════════════════════════════════════════════════════ -->
+  <section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
+    <header class="mb-5">
+      <h2 class="text-base font-semibold text-white">Evidence</h2>
+      <p class="mt-1 max-w-[70ch] text-sm text-slate-400">
+        Each row names the check and who performed it. A Registry-performed check is a
+        Registry-reported result, not independent verification.
+      </p>
+    </header>
+
+    <div class="grid gap-4 lg:grid-cols-3">
+
+      <!-- 1. Definition conformance -->
+      <div class="rounded-xl border border-slate-800 surface-sunken p-4">
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <h3 class="text-sm font-medium text-slate-200">APDS conformance</h3>
+          <span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">Passed</span>
+        </div>
+        <dl class="space-y-2.5 text-[13px]">
+          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <dt class="text-slate-400">Standard</dt>
+            <dd class="mono sm:text-right text-slate-200">agentpm / 1.0.0 <span class="text-slate-500">declared</span></dd>
+          </div>
+          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <dt class="text-slate-400">Levels checked</dt>
+            <dd class="sm:text-right text-slate-200">standalone · packaged · resolved</dd>
+          </div>
+          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <dt class="text-slate-400">Resolved graph</dt>
+            <dd class="sm:text-right text-amber-300">Incomplete</dd>
+          </div>
+        </dl>
+        <p class="mt-3 border-t border-slate-800 pt-3 text-[12px] leading-relaxed text-slate-500">
+          Validated by Registry at publish. One selected dependency has a
+          <span class="text-amber-300/90">legacy-inferred</span> standard, so resolved scope stays
+          incomplete. Runner behavior not evaluated.
+        </p>
+      </div>
+
+      <!-- 2. Integrity & provenance — observer attribution on every row -->
+      <div class="rounded-xl border border-slate-800 surface-sunken p-4">
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <h3 class="text-sm font-medium text-slate-200">Integrity &amp; provenance</h3>
+          <span class="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-400">3 checks</span>
+        </div>
+        <ul class="space-y-2.5 text-[13px]" role="list">
+          <li class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <span class="text-slate-400">Artifact digest</span>
+            <span class="sm:text-right text-emerald-300">Verified by Registry</span>
+          </li>
+          <li class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <span class="text-slate-400">Author signature</span>
+            <span class="sm:text-right text-emerald-300">Verified by Registry<br><span class="mono text-[11px] text-slate-500">signer zack</span></span>
+          </li>
+          <li class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <span class="text-slate-400">Registry attestation</span>
+            <span class="sm:text-right text-emerald-300">Verified by Registry<br><span class="mono text-[11px] text-slate-500">key apm-prod-1</span></span>
+          </li>
+          <li class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <span class="text-slate-400">Malware scan</span>
+            <span class="sm:text-right text-emerald-300">Clean<br><span class="text-[11px] text-slate-500">GuardDuty · 1 artifact</span></span>
+          </li>
+        </ul>
+        <p class="mt-3 border-t border-slate-800 pt-3 text-[12px] leading-relaxed text-slate-500">
+          Verify locally instead:
+          <code class="mono text-slate-400">agentpm install --require-signature --require-attestation</code>
+        </p>
+      </div>
+
+      <!-- 3. Local readiness — environment-scoped, cannot come from the Registry -->
+      <div class="rounded-xl border border-slate-800 surface-sunken p-4">
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <h3 class="text-sm font-medium text-slate-200">Runner support</h3>
+          <span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">Supported</span>
+        </div>
+        <dl class="space-y-2.5 text-[13px]">
+          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <dt class="text-slate-400">AgentPM Harness</dt>
+            <dd class="sm:text-right text-slate-200">agentpm / 1.0.0</dd>
+          </div>
+          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <dt class="text-slate-400">Loop present</dt>
+            <dd class="sm:text-right text-slate-200">Yes · 3 phases</dd>
+          </div>
+          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+            <dt class="text-slate-400">Local readiness</dt>
+            <dd class="sm:text-right text-slate-500">Not evaluated</dd>
+          </div>
+        </dl>
+        <p class="mt-3 border-t border-slate-800 pt-3 text-[12px] leading-relaxed text-slate-500">
+          Model and provider configuration are properties of your machine, not of this package.
+          Run <code class="mono text-slate-400">agentpm harness --headless</code> to check readiness locally.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Lightest tier: a plain section, deliberately not a card ──────────── -->
+  <section class="mt-8 border-t border-slate-800 pt-6">
+    <!-- No Readme link here: the Readme has its own tab. -->
+    <h2 class="text-base font-semibold text-white">Source</h2>
+    <div class="mt-4 flex flex-wrap gap-3">
+      <a href="#" class="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3.5 py-2 text-sm text-slate-300 hover:border-slate-700 hover:text-white">
+        <span class="mono text-xs text-slate-500">{ }</span> View agent.json
+      </a>
+      <a href="#" class="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3.5 py-2 text-sm text-slate-300 hover:border-slate-700 hover:text-white">
+        View APDS 1.0.0 specification →
+      </a>
+    </div>
+  </section>
+</main>
+
+<footer class="mt-10 border-t border-slate-800 bg-slate-950">
+  <div class="mx-auto max-w-[1400px] px-6 py-8 text-sm text-slate-500">
+    <div class="flex flex-wrap items-center justify-between gap-4">
+      <span>AgentPM — the package manager for AI agents.</span>
+      <nav class="flex gap-5">
+        <a href="#" class="hover:text-slate-300">Docs</a>
+        <a href="#" class="hover:text-slate-300">Standard</a>
+        <a href="#" class="hover:text-slate-300">Status</a>
+      </nav>
+    </div>
+  </div>
+</footer>
+
+<script>
+  /* Identity gradient — ported verbatim from components/ui/ToolBox.tsx so the
+     mock shows the real mark, not a stand-in. Deterministic per package. */
+  function hashString(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    return function () {
+      let t = (a += 0x6D2B79F5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gradientFromSeed(seed) {
+    const rand = mulberry32(hashString(seed));
+    const h1 = Math.floor(rand() * 360);
+    const direction = rand() < 0.5 ? -1 : 1;
+    const spread = 30 + rand() * 60;
+    const h2 = (h1 + direction * spread + 360) % 360;
+    const s1 = 60 + Math.floor(rand() * 30);
+    const l1 = 45 + Math.floor(rand() * 15);
+    const s2 = 60 + Math.floor(rand() * 30);
+    let l2 = 40 + Math.floor(rand() * 15);
+    if (Math.abs(l2 - l1) < 12) { l2 = l2 > l1 ? l1 + 12 : l1 - 12; }
+    l2 = Math.max(30, Math.min(70, l2));
+    const angle = 90 + Math.floor(rand() * 180);
+    return `linear-gradient(${angle}deg, hsl(${h1}, ${s1}%, ${l1}%), hsl(${h2}, ${s2}%, ${l2}%))`;
+  }
+  const mark = gradientFromSeed('@zack/devwork-copilot');
+  for (const id of ['identity-avatar', 'identity-avatar-sm']) {
+    const el = document.getElementById(id);
+    if (el) el.style.background = mark;
+  }
+</script>

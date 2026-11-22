@@ -242,5 +242,6 @@ These are sourced implementation constraints for the next milestone, not
 unimplemented M7A product features. S2-AC-10's public API and rendered UI remain
 unmet until their assigned milestones. The user confirmed on 2026-11-22 that
 Claude's independent review of the labels and evidence gaps passed with no open
-findings; the M7A trust-label review checklist item is complete. Hosted CI remains
-pending.
+findings; the M7A trust-label review checklist item is complete. The user also
+confirmed hosted CI passed on 2026-11-22, completing M7A. Implementation and the
+operator renewal follow-ups remain in M7B.

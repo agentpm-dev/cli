@@ -1,0 +1,312 @@
+<meta charset="utf-8">
+<title>Composition at Three Densities</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+
+<style>
+  :root { color-scheme: dark; }
+  body {
+    background: #020617; color: #f1f5f9;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .surface { background: rgba(15,23,42,.6); }
+  .surface-sunken { background: rgba(2,6,23,.5); }
+  .edge { background: #334155; }
+  .edge-dashed-x { background: repeating-linear-gradient(to right, #334155 0 4px, transparent 4px 8px); }
+  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 8px; }
+  [aria-expanded="true"] .chev { transform: rotate(180deg); }
+  .chev { transition: transform .15s ease; }
+  @media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
+</style>
+
+<div class="mx-auto max-w-[1100px] px-6 py-10">
+
+  <header class="mb-10 max-w-[70ch]">
+    <p class="text-xs font-medium uppercase tracking-widest text-slate-500">Composition panel</p>
+    <h1 class="mt-2 text-2xl font-semibold tracking-tight text-white">One node per kind, expandable</h1>
+    <p class="mt-3 text-[15px] leading-relaxed text-slate-400">
+      The fan stays the composition story: an Agent Package made of Skills, Tools, Knowledge,
+      Memory, Profiles and a Loop. Each node represents a <em class="not-italic text-slate-300">kind</em>,
+      not a package, so the shape of the graph is constant whether a package has one Tool or thirty.
+      A <span class="mono text-slate-300">+N</span> badge says there is more inside; expanding reveals it
+      without changing the shape. All three packages below are real.
+    </p>
+  </header>
+
+  <!-- ═══ 1. Sparse ════════════════════════════════════════════════════════ -->
+  <section class="mb-8">
+    <div class="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <h2 class="text-sm font-semibold text-white">One of each</h2>
+      <span class="mono text-xs text-slate-500">@zack/devwork-copilot@0.1.10</span>
+      <span class="text-xs text-slate-500">· 6 direct, 1 inherited</span>
+    </div>
+
+    <div class="rounded-2xl border border-slate-800 surface p-5">
+      <div class="flex justify-center">
+        <div class="inline-flex items-center gap-3 rounded-xl border border-amber-700/50 bg-amber-500/10 px-4 py-2.5">
+          <div class="mono text-sm text-white">@zack/devwork-copilot</div>
+          <span class="mono rounded border border-slate-700 bg-slate-900/70 px-1.5 py-0.5 text-[11px] text-slate-300">0.1.10</span>
+        </div>
+      </div>
+      <div class="mx-auto h-5 w-px edge" aria-hidden="true"></div>
+
+      <!-- No +N anywhere: every kind holds exactly one package. -->
+      <ul class="grid grid-cols-2 items-start gap-3 sm:grid-cols-3" role="list">
+        <li class="rounded-xl border border-rose-700/50 bg-rose-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-rose-300">Skill</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">issue-triage-playbook</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.1</div>
+        </li>
+        <li class="rounded-xl border border-indigo-700/50 bg-indigo-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-indigo-300">Tool</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">summarize-text</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.10</div>
+        </li>
+        <li class="rounded-xl border border-fuchsia-700/50 bg-fuchsia-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-fuchsia-300">Knowledge</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">devwork-maintainer-guide</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+        <li class="rounded-xl border border-teal-700/50 bg-teal-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-teal-300">Memory</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">devwork-maintainer-state</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+        <li class="rounded-xl border border-cyan-700/50 bg-cyan-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-cyan-300">Profile</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">devwork-maintainer-style</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+        <li class="rounded-xl border border-lime-700/50 bg-lime-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-lime-300">Loop</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">devwork-triage-loop</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+      </ul>
+
+      <div class="mt-4 rounded-xl border border-slate-800 surface-sunken p-3">
+        <div class="mb-2 text-[11px] uppercase tracking-wide text-slate-500">Inherited</div>
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <span class="mono text-slate-500">via</span>
+          <span class="mono text-rose-300">issue-triage-playbook</span>
+          <span class="h-px w-6 edge-dashed-x" aria-hidden="true"></span>
+          <span class="inline-flex items-center gap-2 rounded-lg border border-dashed border-indigo-700/50 bg-indigo-500/5 px-2.5 py-1.5">
+            <span class="mono text-slate-200">github-issues</span>
+            <span class="mono text-[11px] text-slate-500">0.1.2</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 2. Multiples + an absent kind ════════════════════════════════════ -->
+  <section class="mb-8">
+    <div class="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <h2 class="text-sm font-semibold text-white">Multiples, and a kind that is absent</h2>
+      <span class="mono text-xs text-slate-500">@zack/ops-console@0.1.5</span>
+      <span class="text-xs text-slate-500">· 7 direct, 2 inherited</span>
+    </div>
+
+    <div class="rounded-2xl border border-slate-800 surface p-5">
+      <div class="mb-1 flex justify-end">
+        <button data-expand-all class="rounded-lg border border-slate-700 bg-slate-800/60 px-2.5 py-1 text-[11px] text-slate-300 hover:bg-slate-800">Expand all</button>
+      </div>
+
+      <div class="flex justify-center">
+        <div class="inline-flex items-center gap-3 rounded-xl border border-amber-700/50 bg-amber-500/10 px-4 py-2.5">
+          <div class="mono text-sm text-white">@zack/ops-console</div>
+          <span class="mono rounded border border-slate-700 bg-slate-900/70 px-1.5 py-0.5 text-[11px] text-slate-300">0.1.5</span>
+        </div>
+      </div>
+      <div class="mx-auto h-5 w-px edge" aria-hidden="true"></div>
+
+      <ul class="grid grid-cols-2 items-start gap-3 sm:grid-cols-3" role="list">
+
+        <!-- 3 Skills: primary shown, +2 inside -->
+        <li class="overflow-hidden rounded-xl border border-rose-700/50 bg-rose-500/10">
+          <button type="button" class="w-full p-3 text-left" aria-expanded="false" aria-controls="ops-skills">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-medium uppercase tracking-wide text-rose-300">Skills</span>
+              <span class="inline-flex items-center gap-1 rounded-full border border-rose-700/50 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-medium text-rose-200">
+                +2
+                <svg class="chev h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+              </span>
+            </div>
+            <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">incident-handoff-checklist</div>
+            <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+          </button>
+          <ul id="ops-skills" hidden class="space-y-2 border-t border-rose-700/30 bg-rose-500/5 px-3 pb-3 pt-2.5" role="list">
+            <li><div class="mono break-words text-xs text-slate-200">slack-status-update</div><div class="mono text-[11px] text-slate-400">0.1.0</div></li>
+            <li><div class="mono break-words text-xs text-slate-200">issue-triage-playbook</div><div class="mono text-[11px] text-slate-400">0.1.0</div></li>
+          </ul>
+        </li>
+
+        <!-- 2 Tools: primary shown, +1 inside -->
+        <li class="overflow-hidden rounded-xl border border-indigo-700/50 bg-indigo-500/10">
+          <button type="button" class="w-full p-3 text-left" aria-expanded="false" aria-controls="ops-tools">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-medium uppercase tracking-wide text-indigo-300">Tools</span>
+              <span class="inline-flex items-center gap-1 rounded-full border border-indigo-700/50 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-medium text-indigo-200">
+                +1
+                <svg class="chev h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+              </span>
+            </div>
+            <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">csv-query</div>
+            <div class="mono mt-2 text-[11px] text-slate-400">0.1.4</div>
+          </button>
+          <ul id="ops-tools" hidden class="space-y-2 border-t border-indigo-700/30 bg-indigo-500/5 px-3 pb-3 pt-2.5" role="list">
+            <li><div class="mono break-words text-xs text-slate-200">json-transform</div><div class="mono text-[11px] text-slate-400">0.1.0</div></li>
+          </ul>
+        </li>
+
+        <li class="rounded-xl border border-teal-700/50 bg-teal-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-teal-300">Memory</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">conversation-continuity</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+        <li class="rounded-xl border border-cyan-700/50 bg-cyan-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-cyan-300">Profile</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">incident-operator-style</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+        <li class="rounded-xl border border-lime-700/50 bg-lime-500/10 p-3">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-lime-300">Loop</div>
+          <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">incident-response-loop</div>
+          <div class="mono mt-2 text-[11px] text-slate-400">0.1.0</div>
+        </li>
+        <!-- Knowledge is absent from the manifest, so there is no Knowledge node.
+             No ghosted placeholder, no "0" — missing stays missing. -->
+      </ul>
+
+      <div class="mt-4 rounded-xl border border-slate-800 surface-sunken p-3">
+        <div class="mb-2.5 text-[11px] uppercase tracking-wide text-slate-500">Inherited</div>
+        <div class="space-y-2">
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <span class="mono text-slate-500">via</span>
+            <span class="mono text-rose-300">slack-status-update</span>
+            <span class="h-px w-6 edge-dashed-x" aria-hidden="true"></span>
+            <span class="inline-flex items-center gap-2 rounded-lg border border-dashed border-indigo-700/50 bg-indigo-500/5 px-2.5 py-1.5">
+              <span class="mono text-slate-200">slack-post-message</span>
+              <span class="mono text-[11px] text-slate-500">0.1.1</span>
+            </span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <span class="mono text-slate-500">via</span>
+            <span class="mono text-rose-300">issue-triage-playbook</span>
+            <span class="h-px w-6 edge-dashed-x" aria-hidden="true"></span>
+            <span class="inline-flex items-center gap-2 rounded-lg border border-dashed border-indigo-700/50 bg-indigo-500/5 px-2.5 py-1.5">
+              <span class="mono text-slate-200">github-issues</span>
+              <span class="mono text-[11px] text-slate-500">0.1.2</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 3. Lopsided ══════════════════════════════════════════════════════ -->
+  <section class="mb-10">
+    <div class="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <h2 class="text-sm font-semibold text-white">One kind dominates</h2>
+      <span class="mono text-xs text-slate-500">@zack/research-assistant@0.1.0</span>
+      <span class="text-xs text-slate-500">· 8 direct, no Loop</span>
+    </div>
+
+    <div class="rounded-2xl border border-slate-800 surface p-5">
+      <div class="flex justify-center">
+        <div class="inline-flex items-center gap-3 rounded-xl border border-amber-700/50 bg-amber-500/10 px-4 py-2.5">
+          <div class="mono text-sm text-white">@zack/research-assistant</div>
+          <span class="mono rounded border border-slate-700 bg-slate-900/70 px-1.5 py-0.5 text-[11px] text-slate-300">0.1.0</span>
+        </div>
+      </div>
+      <div class="mx-auto h-5 w-px edge" aria-hidden="true"></div>
+
+      <!-- The whole composition is one kind. The fan collapses to a single node
+           rather than an eight-card grid that implies eight kinds. -->
+      <ul class="grid grid-cols-2 items-start gap-3 sm:grid-cols-3" role="list">
+        <li class="overflow-hidden rounded-xl border border-indigo-700/50 bg-indigo-500/10">
+          <button type="button" class="w-full p-3 text-left" aria-expanded="false" aria-controls="ra-tools">
+            <div class="flex items-start justify-between gap-2">
+              <span class="text-[11px] font-medium uppercase tracking-wide text-indigo-300">Tools</span>
+              <span class="inline-flex items-center gap-1 rounded-full border border-indigo-700/50 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-medium text-indigo-200">
+                +7
+                <svg class="chev h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+              </span>
+            </div>
+            <div class="mono mt-1.5 min-h-[2.25rem] break-words text-xs text-slate-200">wikipedia-scrape</div>
+            <div class="mono mt-2 text-[11px] text-slate-400">0.1.5</div>
+          </button>
+          <ul id="ra-tools" hidden class="space-y-2 border-t border-indigo-700/30 bg-indigo-500/5 px-3 pb-3 pt-2.5" role="list">
+            <li><div class="mono break-words text-xs text-slate-200">translate-text</div><div class="mono text-[11px] text-slate-400">0.1.4</div></li>
+            <li><div class="mono break-words text-xs text-slate-200">resize-image</div><div class="mono text-[11px] text-slate-400">0.1.7</div></li>
+            <li><div class="mono break-words text-xs text-slate-200">sentiment-analysis</div><div class="mono text-[11px] text-slate-400">0.1.4</div></li>
+            <li><div class="mono break-words text-xs text-slate-200">summarize-text</div><div class="mono text-[11px] text-amber-300/80" title="Unpinned in the manifest; resolved from agent.lock">↳ 0.1.10</div></li>
+            <li><div class="mono break-words text-xs text-slate-200">html-to-markdown</div><div class="mono text-[11px] text-amber-300/80" title="Unpinned in the manifest; resolved from agent.lock">↳ 0.1.3</div></li>
+            <li><div class="mono break-words text-xs text-slate-200">http-fetch</div><div class="mono text-[11px] text-amber-300/80" title="Unpinned in the manifest; resolved from agent.lock">↳ 0.1.6</div></li>
+            <li><div class="mono break-words text-xs text-slate-200">pdf-to-text</div><div class="mono text-[11px] text-amber-300/80" title="Unpinned in the manifest; resolved from agent.lock">↳ 0.1.2</div></li>
+          </ul>
+        </li>
+      </ul>
+
+      <div class="mt-4 flex items-start gap-2.5 rounded-xl border border-slate-800 surface-sunken p-3 text-xs">
+        <span class="mt-px shrink-0 rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">No Loop</span>
+        <p class="leading-relaxed text-slate-400">
+          Conformant APDS, and not runnable by Harness — a Loop is required by this Runner, not by
+          the standard. <span class="mono text-slate-500">↳</span> marks a version resolved from
+          <span class="mono text-slate-300">agent.lock</span> rather than pinned in the manifest.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ Notes ════════════════════════════════════════════════════════════ -->
+  <section class="border-t border-slate-800 pt-6">
+    <h2 class="text-sm font-semibold text-white">Why one node per kind</h2>
+    <ul class="mt-3 max-w-[72ch] space-y-2.5 text-[13px] leading-relaxed text-slate-400" role="list">
+      <li><span class="text-slate-200">The shape is the story.</span> "An Agent Package composes Skills, Tools, Knowledge, Memory, Profiles and a Loop" is the positioning claim. A node per package buries that under package names as soon as a graph gets wide.</li>
+      <li><span class="text-slate-200">The graph stops growing.</span> Six nodes at most, whatever the package contains. A 30-Tool package renders at the same size as a 1-Tool package.</li>
+      <li><span class="text-slate-200">Absent kinds vanish.</span> <code class="mono text-slate-300">ops-console</code> has no Knowledge, so there is no Knowledge node — not a ghosted one, not a zero.</li>
+      <li><span class="text-slate-200">Loop carries no badge.</span> It is a single binding in the manifest, not an array, so it can never have a <span class="mono">+N</span>. The UI shape matches the data shape.</li>
+      <li><span class="text-slate-200">Inherited stays separate.</span> Transitive dependencies group under the parent that pulled them in, which is the only thing that makes the edge meaningful once there is more than one.</li>
+    </ul>
+
+    <h2 class="mt-7 text-sm font-semibold text-white">Still open</h2>
+    <ul class="mt-3 max-w-[72ch] space-y-2.5 text-[13px] leading-relaxed text-slate-400" role="list">
+      <li><span class="text-slate-200">Which package is the visible one?</span> Currently manifest order, so the author's first entry wins. Alphabetical is more predictable but discards authored intent.</li>
+      <li><span class="text-slate-200">Very large groups.</span> <span class="mono">+7</span> expands to a readable list; <span class="mono">+40</span> would not. A cap inside the expansion with a link to a full view is probably needed.</li>
+      <li><span class="text-slate-200">Does the badge read as "expandable"?</span> The chevron is inside the count pill. An always-visible affordance may be clearer than one that only appears when <span class="mono">N &gt; 1</span>.</li>
+      <li><span class="text-slate-200">Deep links.</span> Expansion is local state. If Composition is ever linked to from elsewhere, a specific package may need to open expanded and scrolled.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+  // Expand/collapse a kind node. State lives on the button so the chevron,
+  // the badge and assistive tech all read from one source.
+  for (const btn of document.querySelectorAll('[aria-controls]')) {
+    btn.addEventListener('click', () => {
+      const panel = document.getElementById(btn.getAttribute('aria-controls'));
+      if (!panel) return;
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', String(!open));
+      panel.hidden = open;
+    });
+  }
+  for (const toggle of document.querySelectorAll('[data-expand-all]')) {
+    toggle.addEventListener('click', () => {
+      const scope = toggle.closest('.rounded-2xl');
+      const buttons = scope ? scope.querySelectorAll('[aria-controls]') : [];
+      const expand = toggle.textContent.trim() === 'Expand all';
+      for (const btn of buttons) {
+        const panel = document.getElementById(btn.getAttribute('aria-controls'));
+        if (!panel) continue;
+        btn.setAttribute('aria-expanded', String(expand));
+        panel.hidden = !expand;
+      }
+      toggle.textContent = expand ? 'Collapse all' : 'Expand all';
+    });
+  }
+</script>
