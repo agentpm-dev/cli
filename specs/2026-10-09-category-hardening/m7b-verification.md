@@ -4,9 +4,13 @@ Builder verification: **2026-11-22**. Scope: M7B only, D12/D17/D19,
 T-HEALTH-01–05 at the Registry/data boundary, and the backend portion of
 S2-AC-10. Implementation and local verification are complete. The user confirmed
 **independent Claude review passed with no findings on 2026-11-22**.
-**Hosted CI and the separately assigned operator key-set renewal remain pending.**
-No production requests, deployment, root/signing-key rotation or publication
-against the user's local Registry occurred.
+The user confirmed **hosted CI passed on 2026-11-22** and supplied a successful
+strict signature/attestation install result after the key-set renewal.
+**M7B is complete.** M7B code deployment remains a release-band action.
+Implementation tests used isolated local fixtures. The later operator renewal
+was deployed as a configuration-only change and independently checked with a
+read-only production GET, as recorded below. M7B code deployment, root/signing-key
+rotation and publication against the user's local Registry have not occurred.
 
 ## Delivered behavior
 
@@ -155,9 +159,30 @@ compatibility hint becomes a safety claim.
 **Review:** the user confirmed Claude's independent review passed with no findings
 on 2026-11-22, closing the D12/D17 representation/evidence-language review item.
 
-**Still unmet:** hosted CI and Zack's dated operator task to renew/deploy and verify the
-production signed key set before the retained `2026-12-07T22:31:48Z` expiry.
-This implementation has not renewed or inspected that production set. The
-deadline must not wait for M7B or a later release. S2-AC-10's public rendering
+**CI:** the user confirmed hosted CI passed on 2026-11-22.
+
+**Operator progress — 2026-11-22:** the existing production root signed a renewed
+90-day public key set, issued `2026-11-22T19:41:17Z` and expiring
+`2027-02-20T19:41:17Z`. Its signature was verified locally against the audited
+`agentpm-root-1`; the inventory matches the exported `apm-prod-1` public key.
+The deployed file path was operator-confirmed as
+`/etc/secrets/registry-signed-keyset.json`. The user confirmed the configuration
+deployment completed with no new code pushed. At `2026-11-22T19:48:11.060125Z`, a
+read-only production GET returned HTTP 200 and the exact renewed document. Its
+signature, origin and validity were verified locally against the audited root.
+[Retained public document and verification evidence](m7b-keyset-renewal.json)
+record the canonical document SHA-256
+`25778e1acfed6dd12d85d04eba639b39cde3d9ffc265a01def4802ab272393a1`.
+The operator then supplied `{"schema_version":1,"status":"success"}` for the
+requested fresh-consumer install of `@zack/summarize-text@0.1.11` with
+`--require-signature --require-attestation --machine`. This is operator-reported
+CLI output; its local lock/exit status were not independently inspected.
+The renewal task is complete. No root/signing-key rotation or M7B code deployment
+was performed.
+
+**Acceptance:** local implementation/testing, independent review, hosted CI and
+the operator renewal task are complete. The new public key set is deployed and
+independently verified before the old `2026-12-07T22:31:48Z` expiry, with the
+strict install success reported by the operator. S2-AC-10's public rendering
 portion and M10B screenshots remain with M10B; the Registry evidence slice is
 implemented and locally verified.

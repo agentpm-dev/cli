@@ -43,6 +43,12 @@
   }
 
   :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }
+
+  /* Capability chips: only one dropdown open at a time across the panel. */
+  .chev { transition: transform .15s ease; }
+  [aria-expanded="true"] .chev { transform: rotate(180deg); }
+  .cap[aria-expanded="true"] { box-shadow: inset 0 0 0 1px currentColor; }
+
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 
@@ -232,6 +238,24 @@
             </div>
           </div>
 
+          <!-- bindings.consumer_context: a file the consuming project supplies.
+               It is a precondition for running, not a capability grant, so it
+               belongs with the run instructions rather than with composition. -->
+          <div class="rounded-xl border border-amber-700/40 bg-amber-500/5 p-3">
+            <div class="mb-1.5 flex items-center gap-2">
+              <svg class="h-4 w-4 text-amber-300" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 1.5v9"></path><path d="m5 7.5 3 3 3-3"></path><path d="M2.5 13.5h11"></path></svg>
+              <span class="text-sm font-medium text-slate-200">You supply</span>
+            </div>
+            <div class="flex flex-wrap items-baseline gap-x-2">
+              <code class="mono text-[13px] text-amber-200">maintainer-context.md</code>
+              <span class="text-xs text-slate-500">consumer-owned context file</span>
+            </div>
+            <p class="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+              Authored context your project provides. It is not a permission grant and does not
+              bind any Component.
+            </p>
+          </div>
+
           <div class="rounded-xl border border-slate-800 surface-sunken p-3">
             <div class="mb-2 flex items-center justify-between">
               <span class="text-sm font-medium text-slate-200">Load via SDK</span>
@@ -402,11 +426,56 @@
               <p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">
                 Decide whether there is enough evidence to draft a follow-up, or whether the work should hand off.
               </p>
+              <!-- Chips are clickable where something is bound in this phase.
+                   Counts and contents come from bindings.phases["inspect-issue"]. -->
               <div class="mt-3 flex flex-wrap gap-1.5">
-                <span class="rounded-md border border-indigo-700/50 bg-indigo-500/15 px-2 py-0.5 text-[11px] text-indigo-300">Tools</span>
-                <span class="rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300">Knowledge</span>
-                <span class="rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300">Memory · read</span>
+                <button type="button" data-cap="p1-tools" class="cap inline-flex items-center gap-1 rounded-md border border-indigo-700/50 bg-indigo-500/15 px-2 py-0.5 text-[11px] text-indigo-300 hover:bg-indigo-500/25" aria-expanded="false" aria-controls="p1-tools">
+                  Tools <span class="tabular-nums opacity-70">2</span>
+                  <svg class="chev h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+                </button>
+                <button type="button" data-cap="p1-skills" class="cap inline-flex items-center gap-1 rounded-md border border-rose-700/50 bg-rose-500/15 px-2 py-0.5 text-[11px] text-rose-300 hover:bg-rose-500/25" aria-expanded="false" aria-controls="p1-skills">
+                  Skills <span class="tabular-nums opacity-70">1</span>
+                  <svg class="chev h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+                </button>
+                <button type="button" data-cap="p1-knowledge" class="cap inline-flex items-center gap-1 rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300 hover:bg-fuchsia-500/25" aria-expanded="false" aria-controls="p1-knowledge">
+                  Knowledge <span class="tabular-nums opacity-70">1</span>
+                  <svg class="chev h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+                </button>
+                <button type="button" data-cap="p1-memory" class="cap inline-flex items-center gap-1 rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300 hover:bg-teal-500/25" aria-expanded="false" aria-controls="p1-memory">
+                  Memory · read <span class="tabular-nums opacity-70">1</span>
+                  <svg class="chev h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+                </button>
               </div>
+
+              <div id="p1-tools" hidden class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                <ul class="space-y-1.5" role="list">
+                  <li class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5"><span class="mono text-xs text-slate-200">@zack/summarize-text</span><span class="mono text-[11px] text-slate-500">0.1.10</span></li>
+                  <!-- Reachable only because the Skill that declares it is bound here (APDS-SKILL-002). -->
+                  <li class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5"><span class="mono text-xs text-slate-200">@zack/github-issues</span><span class="mono text-[11px] text-slate-500">0.1.2</span><span class="rounded border border-slate-700 bg-slate-800/60 px-1 text-[10px] text-slate-400">via issue-triage-playbook</span></li>
+                </ul>
+              </div>
+              <div id="p1-skills" hidden class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                <ul class="space-y-1.5" role="list">
+                  <li class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/issue-triage-playbook</span><span class="mono text-[11px] text-slate-500">0.1.1</span></li>
+                </ul>
+              </div>
+              <div id="p1-knowledge" hidden class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                <ul class="space-y-1.5" role="list">
+                  <li class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/devwork-maintainer-guide</span><span class="mono text-[11px] text-slate-500">0.1.0</span></li>
+                </ul>
+              </div>
+              <div id="p1-memory" hidden class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                <ul class="space-y-1.5" role="list">
+                  <li>
+                    <div class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/devwork-maintainer-state</span><span class="mono text-[11px] text-slate-500">0.1.0</span></div>
+                    <div class="mt-1 flex flex-wrap gap-1">
+                      <span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">maintainer_profile</span>
+                      <span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">active_work_threads</span>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+
               <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                 <span>→</span>
                 <span class="mono text-slate-400">draft-comment</span>
@@ -425,11 +494,47 @@
               <p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">
                 Draft the next maintainer comment and capture follow-up notes that should survive this review pass.
               </p>
+              <!-- No Skills chip: issue-triage-playbook is bound only in phase 1. -->
               <div class="mt-3 flex flex-wrap gap-1.5">
-                <span class="rounded-md border border-indigo-700/50 bg-indigo-500/15 px-2 py-0.5 text-[11px] text-indigo-300">Tools</span>
-                <span class="rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300">Knowledge</span>
-                <span class="rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300">Memory · read + write</span>
+                <button type="button" data-cap="p2-tools" class="cap inline-flex items-center gap-1 rounded-md border border-indigo-700/50 bg-indigo-500/15 px-2 py-0.5 text-[11px] text-indigo-300 hover:bg-indigo-500/25" aria-expanded="false" aria-controls="p2-tools">
+                  Tools <span class="tabular-nums opacity-70">1</span>
+                  <svg class="chev h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+                </button>
+                <button type="button" data-cap="p2-knowledge" class="cap inline-flex items-center gap-1 rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300 hover:bg-fuchsia-500/25" aria-expanded="false" aria-controls="p2-knowledge">
+                  Knowledge <span class="tabular-nums opacity-70">1</span>
+                  <svg class="chev h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+                </button>
+                <button type="button" data-cap="p2-memory" class="cap inline-flex items-center gap-1 rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300 hover:bg-teal-500/25" aria-expanded="false" aria-controls="p2-memory">
+                  Memory · read + write <span class="tabular-nums opacity-70">1</span>
+                  <svg class="chev h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+                </button>
               </div>
+
+              <div id="p2-tools" hidden class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                <ul class="space-y-1.5" role="list">
+                  <li class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/summarize-text</span><span class="mono text-[11px] text-slate-500">0.1.10</span></li>
+                </ul>
+                <p class="mt-2 border-t border-slate-800 pt-2 text-[11px] leading-relaxed text-slate-500">
+                  <span class="mono text-slate-400">github-issues</span> is not reachable here — the Skill that declares it is bound only to <span class="mono">inspect-issue</span>.
+                </p>
+              </div>
+              <div id="p2-knowledge" hidden class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                <ul class="space-y-1.5" role="list">
+                  <li class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/devwork-maintainer-guide</span><span class="mono text-[11px] text-slate-500">0.1.0</span></li>
+                </ul>
+              </div>
+              <div id="p2-memory" hidden class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                <ul class="space-y-1.5" role="list">
+                  <li>
+                    <div class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/devwork-maintainer-state</span><span class="mono text-[11px] text-slate-500">0.1.0</span></div>
+                    <div class="mt-1 flex flex-wrap gap-1">
+                      <span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">active_work_threads</span>
+                      <span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">follow_up_notes</span>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+
               <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                 <span>→</span>
                 <span class="mono text-slate-400">ready-for-resolution</span>
@@ -448,12 +553,28 @@
               <p class="mt-1.5 text-[13px] leading-relaxed text-slate-400">
                 Decide the outcome. Tool access is withheld here, so the decision cannot take a write action on its own.
               </p>
+              <!-- Three distinct states in one row, all from real data:
+                   denied by the Loop, permitted but nothing bound, and bound. -->
               <div class="mt-3 flex flex-wrap gap-1.5">
-                <!-- Real manifest: access.tools === false. Denial is information,
-                     so it gets a form of its own rather than being omitted. -->
-                <span class="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/50 px-2 py-0.5 text-[11px] text-slate-500 line-through decoration-slate-600">Tools</span>
-                <span class="rounded-md border border-fuchsia-700/50 bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300">Knowledge</span>
-                <span class="rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300">Memory · read + write</span>
+                <span class="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/50 px-2 py-0.5 text-[11px] text-slate-500 line-through decoration-slate-600" title="access.tools is false in this phase">Tools</span>
+                <span class="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/40 px-2 py-0.5 text-[11px] text-slate-500" title="Permitted by the Loop, but nothing of this kind is bound to this phase">Knowledge <span class="opacity-70">none bound</span></span>
+                <button type="button" data-cap="p3-memory" class="cap inline-flex items-center gap-1 rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300 hover:bg-teal-500/25" aria-expanded="false" aria-controls="p3-memory">
+                  Memory · read + write <span class="tabular-nums opacity-70">1</span>
+                  <svg class="chev h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+                </button>
+              </div>
+
+              <div id="p3-memory" hidden class="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                <ul class="space-y-1.5" role="list">
+                  <li>
+                    <div class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/devwork-maintainer-state</span><span class="mono text-[11px] text-slate-500">0.1.0</span></div>
+                    <div class="mt-1 flex flex-wrap gap-1">
+                      <span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">maintainer_profile</span>
+                      <span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">active_work_threads</span>
+                      <span class="rounded border border-teal-700/40 bg-teal-500/10 px-1.5 py-0.5 text-[10px] text-teal-300">follow_up_notes</span>
+                    </div>
+                  </li>
+                </ul>
               </div>
               <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                 <span>→</span>
@@ -467,6 +588,35 @@
           </div>
         </li>
       </ol>
+
+      <!-- bindings.global applies to every phase, so it sits outside the list
+           rather than being repeated three times. -->
+      <div class="mt-4 rounded-xl border border-slate-800 surface-sunken p-3">
+        <div class="mb-2 text-[11px] uppercase tracking-wide text-slate-500">Bound globally · all phases</div>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+          <span class="inline-flex items-center gap-2">
+            <span class="rounded-md border border-cyan-700/50 bg-cyan-500/15 px-2 py-0.5 text-[11px] text-cyan-300">Profile</span>
+            <span class="mono text-slate-300">devwork-maintainer-style</span>
+          </span>
+          <span class="inline-flex flex-wrap items-center gap-2">
+            <span class="rounded-md border border-teal-700/50 bg-teal-500/15 px-2 py-0.5 text-[11px] text-teal-300">Memory operations</span>
+            <span class="mono text-slate-400">refresh_work_thread</span>
+            <span class="mono text-slate-400">consolidate_follow_up_notes</span>
+            <span class="mono text-slate-400">delete_maintainer_state</span>
+          </span>
+        </div>
+        <p class="mt-2 text-[11px] leading-relaxed text-slate-500">
+          Lifecycle operations are separately bound and are not restricted by a phase's direct
+          read/write flags. Eligibility is not invocation.
+        </p>
+
+        <!-- bindings.mcp — Tools this Agent exposes through a named MCP surface.
+             Absent here, and the empty state is stated rather than hidden. -->
+        <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-800 pt-3 text-xs">
+          <span class="rounded-md border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-400">MCP surfaces</span>
+          <span class="text-slate-500">None declared — no Tools are exposed through MCP.</span>
+        </div>
+      </div>
     </section>
   </div>
 
@@ -635,5 +785,24 @@
   for (const id of ['identity-avatar', 'identity-avatar-sm']) {
     const el = document.getElementById(id);
     if (el) el.style.background = mark;
+  }
+
+  /* Capability chips. One open at a time across the whole Execution panel:
+     comparing two phases means scrolling, so stacking dropdowns would push
+     the phase you are comparing against off screen. */
+  const caps = Array.from(document.querySelectorAll('.cap'));
+  for (const chip of caps) {
+    chip.addEventListener('click', () => {
+      const panel = document.getElementById(chip.getAttribute('aria-controls'));
+      if (!panel) return;
+      const wasOpen = chip.getAttribute('aria-expanded') === 'true';
+      for (const other of caps) {
+        const otherPanel = document.getElementById(other.getAttribute('aria-controls'));
+        other.setAttribute('aria-expanded', 'false');
+        if (otherPanel) otherPanel.hidden = true;
+      }
+      chip.setAttribute('aria-expanded', String(!wasOpen));
+      panel.hidden = wasOpen;
+    });
   }
 </script>
