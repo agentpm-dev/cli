@@ -763,25 +763,27 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 
 **Implementation checklist**
 
-- [ ] List all proposed universal signals with exact originating DB fields/services.
-- [ ] Classify each as identity, release, artifact or local-environment scoped.
-- [ ] Define declared standard separate from independently verified APDS conformance result.
-- [ ] Define explicit APDS versus legacy inferred origin in Health terms.
-- [ ] Define verified signature versus merely present author signature.
-- [ ] Define Registry attestation versus unsupported/unverified attestation.
-- [ ] Define malware scan status and unavailable/unknown scan distinction.
-- [ ] Define logical release/artifact digest and integrity evidence from Stage 1.
-- [ ] Define maintenance recency and deprecation only when actual data exists.
-- [ ] Separate star/installs as identity-level popularity, not Health.
-- [ ] Specify status vocabulary and evidence freshness/report link semantics.
-- [ ] Write a signal-to-source matrix as a review artifact before building UI.
-- [ ] Have Claude challenge every trust-related label for overstated claims.
+- [x] List all proposed universal signals with exact originating DB fields/services.
+- [x] Classify each as identity, release, artifact or local-environment scoped.
+- [x] Define declared standard separate from independently verified APDS conformance result.
+- [x] Define explicit APDS versus legacy inferred origin in Health terms.
+- [x] Define verified signature versus merely present author signature.
+- [x] Define Registry attestation versus unsupported/unverified attestation.
+- [x] Define malware scan status and unavailable/unknown scan distinction.
+- [x] Define logical release/artifact digest and integrity evidence from Stage 1.
+- [x] Define maintenance recency and deprecation only when actual data exists.
+- [x] Separate star/installs as identity-level popularity, not Health.
+- [x] Specify status vocabulary and evidence freshness/report link semantics.
+- [x] Write a signal-to-source matrix as a review artifact before building UI.
+- [x] Have Claude challenge every trust-related label for overstated claims.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
 - Inventory authoritative source for every proposed Health signal: APDS declaration/conformance level, release/artifact digests, author signer verification, Registry attestation, scan, license, release date, dependency integrity/resolution, deprecation, Tool targets/platform/runtime/compatibility. Mark unavailable data plainly.
 - Define evidence origin and freshness/verification semantics for each field; signatures can exist without independent verification; clean malware scan ≠ safe; declared platform compatibility ≠ local enforcement; APDS inference ≠ verified conformance.
 - Separate identity-level stars/installs/publisher from selected-version integrity/conformance/release metadata; preserve Stage 1 metrics calculations rather than duplicating scores.
+
+**Builder evidence — 2026-11-22:** [Source inventory and D12/D19 decisions](m7a-health-evidence-inventory.md), [verification and remaining gates](m7a-verification.md). Registry checks: 169 passed plus 11 subtests, including 22 new source probes; Rust provenance: 6 passed, 1 opt-in proof test ignored; existing eight-kind Security UI: 18 passed. APDS bundle parity and touched-file format/static checks pass. No runtime/API/UI/schema/migration changes or production requests. The audit distinguishes stored proof presence from independent verification and records missing freshness/deprecation/report data for M7B. S2-AC-10 is covered only for this evidence-design slice; public aggregation/rendering remains later work. User confirmed independent Claude review passed with no open findings on 2026-11-22, completing the trust-label review item. **M7A remains open for hosted CI.**
 
 **Verification:** the standard four evidence requirements apply — see [Per-milestone evidence requirements](#per-milestone-evidence-requirements). Map the AC and decision IDs listed in this milestone's header.
 
@@ -791,12 +793,22 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 > **Scope note:** Expose a coherent Health evidence envelope with optional kind-specific facts, only where data is supported. Outside this milestone: OS compatibility badge on Profile/Loop/Template unless meaningful and sourced.
 > **Implementation notes:**
 > - Prefer one shared evidence representation with per-kind providers/adapters, not eight diverging APIs or eight copies of security math.
+> - Use the [M7A source inventory](m7a-health-evidence-inventory.md) for authoritative fields, allowed claims and missing-data boundaries. Expose existing evidence and record actual future checks; do not add new vulnerability scanners, formal deprecation infrastructure or retrospective certification to fill absent signals.
+> - **Dated operator dependency:** the retained production key-set evidence expires `2026-12-07T22:31:48Z`. Reconfirm the served set and renew it before expiry even if M7B is not ready. This is signed key-set renewal under the existing Stage 1 custody procedure; it does not require rotating the root or attestation signing keys.
 > - **Dependencies:** M7A; Stage 1 final release artifact model.
 > - **Decisions:** D12, D17, D19. **Acceptance:** S2-AC-10.
 
 **Implementation checklist**
 
 - [ ] Implement universal signal aggregation in Registry with version scope.
+- [ ] Operator (Zack): renew and deploy the production root-signed key set before the recorded `2026-12-07T22:31:48Z` expiry, following Stage 1 M14C's existing custody/renewal procedure. Retain historical attestation verification keys; record the served replacement's validity period, root/origin verification and a strict attestation-install smoke check. Do not wait for M7B completion to meet this deadline.
+- [ ] Reconcile APDS identity/origin with the selected manifest; keep declaration, inferred compatibility and actual validation levels/results distinct, including incomplete or unsupported evidence.
+- [ ] Separate signature/attestation presence from verification results; reuse Stage 1 verifiers for any verified claim and include its observer, named check and subject/trust context, otherwise report not evaluated/unknown. Distinguish Registry-reported checks from actual local verification; local verification instructions are not completed results.
+- [ ] Use full authoritative legacy artifact digests and the selected release's publication date; never substitute display hashes or the latest release's date.
+- [ ] Expose existing per-artifact scan start/finish timestamps and retain progress, result and target coverage separately; a completed clean release summary requires every expected artifact to be covered and complete.
+- [ ] Record actual evaluation timestamps for future Registry APDS validations; keep older untimed results unknown, retain existing scan dates where available, and distinguish evaluation/verification, retrieval and publication times. Do not fabricate timestamp backfills or rewrite historical artifacts/reports.
+- [ ] Preserve unknown/unavailable for missing deprecation, vulnerability/SBOM, scanner-version or report-link evidence; never infer a positive result from absent data, optional columns or an old publication date.
+- [ ] Make cache behavior preserve concrete selected-version identity and source/check timestamps; a fresh HTTP retrieval must not imply fresh validation, scan or cryptographic verification.
 - [ ] Add Tool target, runtime, dependency portability evidence only from real Stage 1 outputs.
 - [ ] Add Agent graph/Runner support evidence without pretending server knows local readiness.
 - [ ] Add Skill declared Tool/reference/script facts with no auto-execute claim.
@@ -809,6 +821,9 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 - [ ] Test one recent and one legacy release for every kind.
 - [ ] Test forged report/status fields cannot override authoritative source.
 - [ ] Test version switching changes release Health but not identity-level star state.
+- [ ] Test existing scan dates, older APDS reports without dates, newly timed validations, partial/running scan coverage and cached evidence; verify honest unknown states and unchanged historical evidence/artifact bytes.
+- [ ] Test that missing observer/trust context cannot yield verified status and that Registry-reported verification cannot be presented as a completed local check.
+- [ ] Add a clock-controlled expired-key-set Health fixture, including the expiry boundary and a previously cached verified result: current attestation verification degrades to unknown/not evaluated with an expired-trust reason, never fresh verified or an invalid-package verdict. Confirm renewed trusted material permits a new attributed verification result, unrelated evidence is unchanged, and existing strict CLI verification remains fail-closed.
 - [ ] Record D12/D17 representation decision and review evidence language.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
@@ -1056,6 +1071,7 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 - [ ] Implement concise release-scoped Health summary with clear status labels.
 - [ ] Implement detailed evidence inspection and source/freshness explanation.
 - [ ] Distinguish signed, verified signature, Registry attestation and scanned facts.
+- [ ] Keep the observer and named check visible in every verified label and accessible name, including compact summaries/badges; prohibit bare "Verified" and attribution available only in tooltips/drill-down. Distinguish "Signature verified by Registry" from instructions to verify locally, and show a completed local check only when actually observed.
 - [ ] Distinguish declared versus inferred APDS, and validation level completeness.
 - [ ] Render not-applicable state for irrelevant kind-specific signals.
 - [ ] Render unknown/unavailable/not evaluated without green checks.
@@ -1065,6 +1081,7 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 - [ ] Verify identity-level stars/install counts do not change with version selector.
 - [ ] Test private/missing/failing evidence, old version and each of eight kinds.
 - [ ] Review warnings and UI copy for certification/safety overclaims.
+- [ ] Test Registry-reported versus completed local verification, missing observer/context and instruction-only states across Health summaries/details; assert no unqualified verified badge or accessible name.
 - [ ] Capture screenshots and Claude audit signal-by-signal against backend evidence.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.

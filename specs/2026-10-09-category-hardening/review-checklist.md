@@ -108,10 +108,13 @@ The implementation is split into **M1A–M17C**, including **M1A.1**, **M8B.1** 
 
 ### 5. Health contract and release data semantics (M7A–M10B)
 
+M7A review entrypoint: [source inventory](m7a-health-evidence-inventory.md) and [verification](m7a-verification.md). Challenge every proposed trust label, especially raw Security presence booleans, incomplete APDS, scan completion/target coverage, missing timestamps, full versus abbreviated digests and selected versus latest dates. Confirm the recorded M14C prerequisite is not treated as a fresh verification verdict for every release. The new public Health projection and private-dependency authorization tests remain M7B work; M7A does not close the broader UI checkboxes below.
+
 - [ ] Health contract clearly separates **identity-level** name/publisher/stars/installs and **version-level** APDS/provenance/integrity/signature/attestation/scan/compatibility/deprecation.
 - [ ] Universal + kind-specific evidence model supports all eight kinds, including *not applicable* for irrelevant checks. Tool OS/architecture does not become generic Loop/Profile “health.”
 - [ ] Every pass/fail/unknown/advisory state backed by correct authoritative source, provenance, verification or absence; status labels differentiate `verified`, `failed`, `incomplete`, `unknown`, `not applicable` and advisory where relevant.
 - [ ] No universal quality score, stars-as-trust, invented suitability/certification, “signed means safe”, “malware scan clean means safe”, “APDS conformant means runnable”, “compatibility declaration means runtime-enforced” claim.
+- [ ] Every public verified label and accessible name identifies its observer and specific check, including compact badges; no bare “Verified” or tooltip/drill-down-only attribution. Registry-reported checks are not presented as independent local verification; instructions to verify locally are not a completed result. M7B preserves observer/check/trust context and M10B tests its rendering.
 - [ ] Legacy inferred standard never shown as independently verified; signed artifact not shown as cryptographically verified unless actually checked. A `verified` registry-attestation state requires Stage 1 **M14C** (root-signed key set + client verification) to be deployed; if it is not, the signal reads unknown/not evaluated rather than verified.
 - [ ] Existing Security detail evidence retained, now discoverable through appropriately scoped Package Health; no loss of target-specific artifact evidence from Stage 1.
 
