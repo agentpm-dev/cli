@@ -1586,6 +1586,38 @@ kind-specific signals. Distinguish **package identity** facts (name, publisher, 
 **specific published version** facts (digest, signing, scan, APDS, dependencies, compatibility). Show
 source/evidence or explain absence; never fabricate verification.
 
+**The three APDS scopes are surfaced immediately, with one shared set of plain-English captions across
+every kind** (operator-confirmed 2026-11-25). The approved Agent and Tool mocks worded the same three
+captions differently, which contradicts the requirement that Tool Health reuse the *same* disclosure
+language rather than a Tool-specific variant. Use one set, authored as explanations rather than labels —
+the Agent mock's wording is the reference:
+
+| Scope | Caption |
+|---|---|
+| Standalone | Manifest structure and rules that can be checked without dependencies. |
+| Packaged content | Required files inside the published artifact and their declared relationships. |
+| Resolved composition | Selected dependency versions and the relationships between them. |
+
+These scopes are **already available from the Registry**: `GET /tools/{id}/{version}/security` returns
+`apds_validation.levels` keyed `standalone` / `packaged` / `resolved`, each with `status`,
+`evaluated_rules`, `issues`, `unevaluated` and `runner_evaluated`. The remaining work is web-side
+plumbing — `get-tool.ts` does not parse the field today — **not** building a conformance evidence source.
+Per-scope findings are rendered from that real data, never hardcoded; an incomplete check must not
+conceal a known failure; and passed scopes must not generate empty accordions.
+
+**Resolved runtime dependencies (the Tool "pinned distributions" panel) are real but unserialized.** The
+Registry already stores the full resolution: `python_resolution` is a JSONB column on the version entity
+(`agentpm-api/app/tools/domain/tools/entities.py`), governed by the frozen `agentpm.python-resolution.v1`
+contract with canonical normalization, a digest and a 2 MB cap, and `health_composition.py` already reads
+it to emit `python_resolution_status` (`not_evaluated` / `unknown` / `passed`). It is simply **never
+serialized into any API response** — `GET /tools/{id}/{version}` returns the seven `resolved_*_dependencies`
+but not this. So the panel requires an API serializer field, a matching web schema field, and a render —
+no new capture, storage or CLI change. Three constraints when it ships: the count is a resolution **set
+spanning platforms** (all 17 entries in the verified example carry platform markers), so it must not be
+presented as "N wheels that install everywhere"; `python_resolution` is nullable, so Node Tools and older
+versions need a real absent state rather than an empty panel; and reuse the existing
+`python_resolution_status` vocabulary rather than inventing new words.
+
 **Universal candidate signals:** declared APDS ID/version; verified/legacy-inferred/unresolved conformance;
 artifact/release digest/integrity; author signature state; Registry attestation/verification; malware scan
 result; release recency; deprecation where genuinely supported. These are present only where the backend
@@ -1658,10 +1690,27 @@ taking selectively**. Selective styling adoption is explicitly allowed; what is 
 anything *by default* because it appeared in an image.
 
 Every element is therefore a deliberate call — **adopt / adapt / reject** — recorded with a one-line reason
-before the shell is built (see **D21** and M8B.1). Three things are never read off the images regardless:
-**copy**, which §12–§15 and M14A/M14B settle, and **every number, name, date, count and badge**, which must
-come from real data. The production site remains the default for brand identity, and a styling element is
-adopted only where the review deliberately chooses it over the current treatment.
+before the shell is built (see **D21** and M8B.1). **Every number, name, date, count and badge** must come
+from real data, regardless of what any image or mock shows. The production site remains the default for
+brand identity, and a styling element is adopted only where the review deliberately chooses it over the
+current treatment.
+
+**Copy is no longer uniformly excluded** (amended 2026-11-25). Specific wording argued through and approved
+on the 2026-11-25 design references is an **agreed positioning direction**, not placeholder for M14 to
+redo. That list is deliberately bounded, and everything outside it stays open to M14A/M14B as before:
+
+- the landing hook, "Build AI agents the way software is supposed to be built";
+- the thesis heading, "Agents are software. Treat them like it.";
+- the core-four section heading and its category/implementation vocabulary — **Standard, Registry,
+  Manager, Runner**, implemented by APDS, AgentPM Registry, AgentPM CLI, AgentPM Harness;
+- the three onboarding path labels and their commands;
+- the Explore contextual filter copy and the three artifact-group shortcut labels;
+- the Agent Package / Component / Template terminology distinctions throughout.
+
+Approval covers **wording**, never factual claims: anything that turns out to be inaccurate, legally
+unsound, or contradicted by actual CLI/API behavior is corrected regardless of approval. Approval also
+does not extend to **type size** — the prose floor below is a readability rule, not a copy decision, and
+applies to approved strings like any other.
 
 **Global elements shared across all three mockups** — these are the locked-in surface:
 
@@ -1672,15 +1721,47 @@ adopted only where the review deliberately chooses it over the current treatment
 | **Section card** | White rounded card with an icon chip top-left, title, one-line subtitle, optional right-aligned action link. The single most repeated primitive in the set | Every route |
 | **Kicker + headline** | Small uppercase letter-spaced kicker above an outsized headline with a supporting paragraph | Landing, Explore |
 | **Kind token system** | One icon + tint + label per kind, used identically in nav filters, cards, composition nodes and capability chips | Every route |
-| **Package card variants** | Hero/featured, 3-up featured, 2-up search result, and composition node — one data model, several densities | Every route |
+| **Package presentation variants** | Hero/featured, 3-up featured, **full-width search result row**, and composition node — one data model, several densities. The Explore search density is a **row, not a 2-up card** (operator-confirmed 2026-11-23; see §13) | Every route |
 | **Command block** | Monospace block with a copy affordance; tabbed on the landing hero, stacked rows on detail | Landing, detail |
 | **Trust/evidence row** | Badge strip on the identity card plus a labeled status list with per-row evidence links | Detail |
 | **Footer** | Logo + tagline + link row + social icons, with a compact variant | Every route |
 
+> **The table above is a historical inventory of what the `-layered` PNGs depicted, not the Stage 2
+> design.** Four of its rows are **superseded** by the design references approved on 2026-11-25
+> (`assets/mocks/chatpgt-updates/`, decisions recorded in
+> `AgentPM_Stage2_Web_Design_Decisions_Handoff.md`). Read the row, then the replacement:
+>
+> - **App shell / header** — the floating rounded inset header is **rejected**. Keep the shipped
+>   full-bleed sticky treatment (`sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b
+>   border-slate-800`) with centered search and its existing mobile behavior. On a dark ground the blur
+>   is the elevation cue, and an inset bar gives up the full-bleed blur edge that makes it legible.
+> - **Page canvas** — "white rounded card surfaces" is **rejected**. The site is dark-committed:
+>   `bg-slate-950` canvas with translucent `slate-900/*` surfaces. Adopt the canvas/surface *separation*,
+>   never the lightness.
+> - **Section card** — the universal "every section is a card" rule is **rejected**. Boxes are now
+>   selective: landing is mostly open sections with restrained dividers and one thesis card; detail uses
+>   panels only where they carry genuinely structured technical content. Do not nest cards inside cards
+>   for visual consistency alone.
+> - **Package presentation variants** — already amended in this table; Explore search is a row.
+
 Two layout decisions worth naming because they are structural, not cosmetic: **global search moves into the
-header** on every route, and the detail page uses an **asymmetric two-column grid** (identity left /
-get-started panel right, then Composition left / Execution architecture right). Explore uses a persistent
-left facet rail. These grids should come from one shared layout system.
+header** on every route, and Explore uses a persistent left facet rail. These grids should come from one
+shared layout system.
+
+**Detail-route geometry is kind-dependent, not a fixed asymmetric two-column grid** (operator-confirmed
+2026-11-25). The earlier rule — identity left / get-started panel right, then Composition left /
+Execution architecture right — is superseded on both halves:
+
+- **Header:** the two tall side-by-side cards were rejected as uneven and box-heavy. Use a wide, unboxed
+  package header: identity, name, description and release metadata on the left; a quiet **At a Glance**
+  on the right; **full-width Get Started below**. At a Glance carries only facts that are real for the
+  selected version — **never force exactly three**, invent zeros, or render blank metric placeholders;
+  one or two meaningful facts is a valid result.
+- **Body:** panel geometry follows actual content density per kind. For an Agent Package, Composition is
+  **stacked above** Execution Architecture on desktop as well as mobile — the two-column pairing left
+  dead space under Composition for longer Loops, and the stack also teaches the right order (what this
+  Agent is made of → how that system can operate). For a Tool, Interface and Runtime side by side works.
+  Deeply nested JSON Schemas may need full width. Do not require equal geometry across kinds.
 
 **Already settled — not open to D21.** Two visual systems are shipped, deliberate, and **preserved as-is**;
 the mockups depict different ones, and those depictions are rejected by default rather than being an open
@@ -1747,6 +1828,40 @@ shell and record it.
 
 ### 10. Agent Package and Component detail pages
 
+**Interaction behavior in the approved mocks is design intent, not scaffolding** (operator-confirmed
+2026-11-25). The handoff's warning that "a mock click/toggle/scroll script is not the required production
+architecture" is about *implementation* — it does not make the behavior optional. Rebuild these with React
+state, the router and proper ARIA; do not port the mock's vanilla listeners, and do not drop the behavior
+because the script was scaffolding. The required behaviors:
+
+- **Two independently staged sticky surfaces.** A compact package identity strip (mark, breadcrumbs, name,
+  version selector) docks under the global nav as soon as the full name/version row scrolls out of view;
+  the tab bar docks **later and separately**, only once it reaches the bottom of that strip. Each reverses
+  independently on scroll back. **There must be no interim scroll position where the package name and
+  version are unavailable** — that gap is the defect this staging exists to prevent. Clicking the compact
+  identity returns to the full header. Account for the taller mobile global header, keep the compact strip
+  short on mobile, let tabs scroll horizontally, and do not build a second global header.
+- **Anchor targets must clear both sticky surfaces.** Every in-page jump — phase links, Readme headings,
+  Health and Bindings entries — lands below the docked identity strip *and* the docked tab bar. This needs
+  real `scroll-margin-top` accounting for both, and correct focus placement for keyboard users, not just
+  visual scroll position.
+- **Cross-links between related regions are part of the explanation**, not decoration. The approved Agent
+  page carries 14 of them; the specific set to preserve: Execution Architecture outcome destinations link
+  to their phase cards so the transition graph is navigable (`draft-comment`, `resolve-or-handoff`,
+  `inspect-issue`); each Bindings phase row offers **View execution phase →** into the matching Overview
+  phase and **View binding JSON ↓** into the selected version's source; the Overview Evidence summary
+  links out to **Health & Security →**; and on Tool detail the required-environment notice links to
+  **Runtime & execution** rather than listing secrets inline. Keep the `→` and `↓` affordances and the
+  backtrack `↶` for reverse transitions, but **remove the `↗`**, which reads as an external link.
+- **Progressive disclosure is stateful and accessible.** The approved pages use ~21 `aria-expanded`
+  controls plus native disclosures for per-scope findings, composition kind groups, collapsed Bindings
+  phase rows and the resolved-distribution list. Collapsed Bindings rows deliberately show kind indicators
+  only, because that answers "what kinds are declared here?" without a wall of nested blocks. Passed
+  scopes must not produce meaningless empty accordions.
+- **Copy affordances are keyboard-accessible and never expose secret values** — environment rows copy the
+  variable *name* only.
+- All of the above respects `prefers-reduced-motion`.
+
 - Agent Package Overview must **lead with human-readable identity, composition and execution
   architecture**, not a raw manifest dump. Show direct and transitive/Skill-inherited Component
   relationships, **exact resolved versions**, identities and links; preserve detailed Bindings, Examples,
@@ -1792,8 +1907,24 @@ shell and record it.
 - Explain **Agent Package → reusable Components → Agent Package Management → Agent Package Manager
   (AgentPM) → compatible Runner (Harness)**. This is a mental model, not an arbitrary required literal
   section order.
+- **The thesis composition animation is an approved design element, not decoration** (operator-confirmed
+  2026-11-25). The real featured Agent's Component families converge toward its Agent Package identity:
+  nodes reveal with a staggered `compose-appear`, the joins trace inward, and the Agent Package identity
+  resolves **last**. Three properties make it acceptable and must be preserved. It fires **once** on
+  entering the viewport (IntersectionObserver) and is static thereafter — no perpetual motion. It is
+  gated behind `prefers-reduced-motion: no-preference`, and reduced-motion visitors receive the same
+  illustration fully composed rather than a degraded or empty one. And it reinforces **composition**, not
+  a runtime dependency graph. Hovers stay restrained. This was explicitly preferred over an
+  animation-heavy marketing style; do not add a second lengthy animated section elsewhere on the page.
 - Reduce long repeated trending-by-kind feature sections; move broader catalog/discovery content into
   Explore. Preserve small Component/Template entry paths.
+- Home **Trending must be a genuine cross-kind ranking** over a comparable score, showing the actual top
+  results. **No curated "balanced" mix of kinds**, no fabricated ecosystem scale, no misleading
+  single-input metric presented as composite, and no false popularity window. It is an acceptable outcome
+  that all nine are Tools, or that a kind is absent. Use the planned low-activity fallback when the
+  ranking is not yet meaningful. Note for implementation: `trending_score` currently equals
+  `installs_last_7d` exactly for every sampled package — including starred ones — so it is **not**
+  composite today; either make it composite or do not describe it as one.
 - Include three clear starter paths and accurate CLI examples; do not claim universal runtime compatibility
   without evidence. Avoid a hero dominated by zero/weak traffic counts; retain useful analytics elsewhere
   if Stage 1 supplies them.
@@ -1809,13 +1940,54 @@ shell and record it.
   Instruction Profiles, Loops) → **Templates** → **Namespaces**. Top-level grouping need not imply new
   backend kinds. Rename product-controlled “Agents” to “Agent Packages” only for artifacts; retain “Agent”
   for runtime references.
-- More informative result cards for all kinds: Agent composition summary; Tool runtime; Skill capabilities
+- More informative result rows for all kinds: Agent composition summary; Tool runtime; Skill capabilities
   and Tool relationships; Knowledge mode/corpus; Memory retrieval/spaces; Profile role; Loop phases;
   Template stack/use case. Do not invent metadata; use available fields or omit gracefully.
-- `/explore` with no search becomes useful **data-driven** discovery (featured Agent Packages/curated
-  sections, trending, Components, Templates, etc.). Curated **Featured** is not measured **Trending** and
-  never inherits dependency metrics. Relevant text queries continue to rank by Stage 1 rules, not boosted
-  solely because `kind: agent`.
+- **Search results are full-width rows, not a 2-up card grid.** Operator-confirmed 2026-11-23, after
+  comparing both against the same real 52-result response (`assets/mocks/explore-rows.html` chosen;
+  `assets/mocks/explore-page.html` retained as the rejected alternative). The reasons are structural, not
+  stylistic, and should survive restyling: names occupy a **single scan column** instead of alternating
+  between two; install counts and dates sit in a **true right-aligned grid track**, so they compare
+  without the eye zigzagging and without the flex/`mt-auto` gymnastics a 2-up grid needs to align them;
+  one hairline-divided container replaces twenty bordered boxes; and the full row width fits the per-kind
+  metadata above on the title line rather than forcing it onto a fifth stacked line. Every package
+  registry solving the same scanning problem has converged on rows. **The no-query state uses the same
+  rows** (operator-confirmed 2026-11-25, reversing an earlier recommendation to switch to a card gallery
+  there): an Agent Package is the category anchor on *Landing*, not a privileged ranking on Explore, and
+  a visitor who uses AgentPM only for Tools must get an equally good discovery path. One row language
+  across both states, not two.
+- **Kind is carried by a colour rail at the row's leading edge**, in the existing kind token, alongside
+  the kind chip and the identity mark. The rail is the one signal that works peripherally: the
+  distribution of kinds in a result set reads while scrolling without anything being counted. This is
+  also why kind colour must not tint the whole row or card — `TemplateCard`'s hash-selected tint from six
+  colours (cyan, emerald, amber, rose, indigo, sky) collides with four kind tokens and with the reserved
+  `Signed` sky, and must be replaced by the single emerald Template token.
+- Result description clamps to **two lines from `sm:` up and three below it**. Measured against the real
+  result set: at desktop row width two lines show every description in full while only a quarter of rows
+  need the second line; at mobile width one line shows almost none. Do not clamp to a single line.
+- `/explore` with no search becomes useful **data-driven** discovery: a **populated, browsable list of
+  genuine cross-kind Trending** from the live Registry, rendered in the same row language as search, with
+  a truthful fallback when activity is weak. **Not** a featured-Agent-first card gallery (superseded
+  2026-11-25). Curated **Featured** is not measured **Trending** and never inherits dependency metrics;
+  where both appear on other routes they stay visibly distinct. Relevant text queries continue to rank by
+  Stage 1 rules, not boosted solely because `kind: agent`.
+- **Three artifact-group shortcuts of equal visual weight**: Agent Packages (complete authored systems,
+  `agent`), Components (the six independently reusable kinds), Templates (project scaffolds, `template`).
+  Shortcuts must invoke the **same real filter state**, never a second parallel filtering system.
+  **Namespaces** remain separately searchable entities — not a fourth artifact group, and not covered by
+  any claim that all results are installable.
+- Group-shortcut marks are **neutral monochrome category symbols**, never generated per-package identity
+  gradients, which belong to named packages only. A single combined six-in-one Components glyph was
+  **rejected as illegible at small size**; the approved Components mark is a simpler three-shape
+  collection (square + ring + overlapping tiles) standing for independent building blocks. It must not be
+  the Tool icon alone, which would misrepresent every Component as a Tool.
+- Heading and description text is **derived from the actual active filters**, not only from which shortcut
+  was clicked, and changes as the selection changes. Result counts are truthful and scoped to the current
+  filters.
+- **Do not render a `Signed` badge on every result row.** All 52 results in the captured sample carried
+  it, so it differentiated nothing while costing a chip slot per row. Retain the optional Signed filter
+  under More filters and retain signing evidence on package detail. Absent badge is not absent evidence,
+  and must not be read as unknown.
 - **Data-driven featured content:** Allow editorial selection/order/placements without rewriting React
   presentation components. **PREFERRED** lightweight configuration or Registry-backed curation based on
   Stage 1 primitives, not full CMS. Eligibility/visibility checks prevent private, missing, unpublished,

@@ -27,9 +27,10 @@
   .hero-band::after {                    /* faint grid, keeps the band from reading flat */
     content: ""; position: absolute; inset: 0; pointer-events: none;
     background-image:
-      linear-gradient(to right, rgba(148,163,184,.045) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(148,163,184,.045) 1px, transparent 1px);
+      linear-gradient(to right, rgba(148,163,184,.075) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(148,163,184,.075) 1px, transparent 1px);
     background-size: 56px 56px;
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
     mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
   }
 
@@ -130,8 +131,8 @@
                seeded by package identity). NOT a per-kind glyph: this slot
                answers "which package", the badge answers "what kind". -->
           <div id="identity-avatar"
-               class="h-14 w-14 sm:h-20 sm:w-20 shrink-0 rounded-xl sm:rounded-2xl ring-1 ring-slate-700/60"
-               role="img" aria-label="Generated identity mark for @zack/devwork-copilot"></div>
+               class="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-slate-800/80 bg-slate-950/80 p-[2px] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:h-20 sm:w-20 sm:rounded-2xl"
+               role="img" aria-label="Identity mark for @zack/devwork-copilot, composed from its Components"></div>
 
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -180,8 +181,8 @@
               <div class="flex items-center gap-1.5">
                 <dt class="sr-only">Downloads</dt>
                 <svg class="h-4 w-4 text-slate-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 2v7"></path><path d="m5 6.5 3 3 3-3"></path><path d="M3 12.5h10"></path></svg>
-                <dd class="tabular-nums text-slate-300">128</dd>
-                <span class="text-slate-500">downloads</span>
+                <dd class="tabular-nums text-slate-300">26</dd>
+                <span class="text-slate-500">installs</span>
               </div>
 
               <div class="flex items-center gap-1.5">
@@ -190,7 +191,7 @@
                   <button class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-white">
                     <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m8 2 1.8 3.9 4.2.5-3.1 2.9.8 4.2L8 11.4 4.3 13.5l.8-4.2L2 6.4l4.2-.5L8 2Z"></path></svg>
                     Star
-                    <span class="tabular-nums text-slate-400">6</span>
+                    <span class="tabular-nums text-slate-400">1</span>
                   </button>
                 </dd>
               </div>
@@ -250,7 +251,7 @@
               <code class="mono text-[13px] text-amber-200">maintainer-context.md</code>
               <span class="text-xs text-slate-500">consumer-owned context file</span>
             </div>
-            <p class="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+            <p class="mt-1.5 text-[13px] leading-relaxed text-slate-500">
               Authored context your project provides. It is not a permission grant and does not
               bind any Component.
             </p>
@@ -316,7 +317,7 @@
       <!-- Root -->
       <div class="flex justify-center">
         <div class="inline-flex items-center gap-3 rounded-xl border border-amber-700/50 bg-amber-500/10 px-4 py-3">
-          <div id="identity-avatar-sm" class="h-9 w-9 shrink-0 rounded-lg ring-1 ring-slate-700/60" role="img" aria-label="Identity mark"></div>
+          <div id="identity-avatar-sm" class="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-slate-800/80 bg-slate-950/80 p-[2px]" role="img" aria-label="Identity mark"></div>
           <div class="min-w-0">
             <div class="mono truncate text-sm text-white">@zack/devwork-copilot</div>
             <div class="text-xs text-amber-300/90">Agent Package</div>
@@ -514,7 +515,7 @@
                 <ul class="space-y-1.5" role="list">
                   <li class="flex flex-wrap items-baseline gap-x-2"><span class="mono text-xs text-slate-200">@zack/summarize-text</span><span class="mono text-[11px] text-slate-500">0.1.10</span></li>
                 </ul>
-                <p class="mt-2 border-t border-slate-800 pt-2 text-[11px] leading-relaxed text-slate-500">
+                <p class="mt-2 border-t border-slate-800 pt-2 text-[13px] leading-relaxed text-slate-500">
                   <span class="mono text-slate-400">github-issues</span> is not reachable here — the Skill that declares it is bound only to <span class="mono">inspect-issue</span>.
                 </p>
               </div>
@@ -605,7 +606,7 @@
             <span class="mono text-slate-400">delete_maintainer_state</span>
           </span>
         </div>
-        <p class="mt-2 text-[11px] leading-relaxed text-slate-500">
+        <p class="mt-2 text-[13px] leading-relaxed text-slate-500">
           Lifecycle operations are separately bound and are not restricted by a phase's direct
           read/write flags. Eligibility is not invocation.
         </p>
@@ -621,105 +622,46 @@
   </div>
 
   <!-- ════════════════════════════════════════════════════════════════════════
-       EVIDENCE ROW — lighter weight than the thesis row above.
-       Three SEPARATE questions kept separate (M6A): is the definition
-       conformant, does this Runner support it, is this machine ready.
-       Every verified label carries its observer (M7A).
+       EVIDENCE — a summary, not the record. Three headline verdicts, each with
+       the one qualifier that changes how it should be read. The full signal set,
+       per-artifact rows and evidence timestamps live on Health & Security;
+       duplicating them here is what made this block too heavy before.
        ════════════════════════════════════════════════════════════════════════ -->
-  <section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
-    <header class="mb-5">
+  <section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/30 p-5">
+    <div class="mb-1 flex flex-wrap items-center justify-between gap-3">
       <h2 class="text-base font-semibold text-white">Evidence</h2>
-      <p class="mt-1 max-w-[70ch] text-sm text-slate-400">
-        Each row names the check and who performed it. A Registry-performed check is a
-        Registry-reported result, not independent verification.
-      </p>
-    </header>
-
-    <div class="grid gap-4 lg:grid-cols-3">
-
-      <!-- 1. Definition conformance -->
-      <div class="rounded-xl border border-slate-800 surface-sunken p-4">
-        <div class="mb-3 flex items-center justify-between gap-2">
-          <h3 class="text-sm font-medium text-slate-200">APDS conformance</h3>
-          <span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">Passed</span>
-        </div>
-        <dl class="space-y-2.5 text-[13px]">
-          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-            <dt class="text-slate-400">Standard</dt>
-            <dd class="mono sm:text-right text-slate-200">agentpm / 1.0.0 <span class="text-slate-500">declared</span></dd>
-          </div>
-          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-            <dt class="text-slate-400">Levels checked</dt>
-            <dd class="sm:text-right text-slate-200">standalone · packaged · resolved</dd>
-          </div>
-          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-            <dt class="text-slate-400">Resolved graph</dt>
-            <dd class="sm:text-right text-amber-300">Incomplete</dd>
-          </div>
-        </dl>
-        <p class="mt-3 border-t border-slate-800 pt-3 text-[12px] leading-relaxed text-slate-500">
-          Validated by Registry at publish. One selected dependency has a
-          <span class="text-amber-300/90">legacy-inferred</span> standard, so resolved scope stays
-          incomplete. Runner behavior not evaluated.
-        </p>
-      </div>
-
-      <!-- 2. Integrity & provenance — observer attribution on every row -->
-      <div class="rounded-xl border border-slate-800 surface-sunken p-4">
-        <div class="mb-3 flex items-center justify-between gap-2">
-          <h3 class="text-sm font-medium text-slate-200">Integrity &amp; provenance</h3>
-          <span class="rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[11px] text-slate-400">3 checks</span>
-        </div>
-        <ul class="space-y-2.5 text-[13px]" role="list">
-          <li class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-            <span class="text-slate-400">Artifact digest</span>
-            <span class="sm:text-right text-emerald-300">Verified by Registry</span>
-          </li>
-          <li class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-            <span class="text-slate-400">Author signature</span>
-            <span class="sm:text-right text-emerald-300">Verified by Registry<br><span class="mono text-[11px] text-slate-500">signer zack</span></span>
-          </li>
-          <li class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-            <span class="text-slate-400">Registry attestation</span>
-            <span class="sm:text-right text-emerald-300">Verified by Registry<br><span class="mono text-[11px] text-slate-500">key apm-prod-1</span></span>
-          </li>
-          <li class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-            <span class="text-slate-400">Malware scan</span>
-            <span class="sm:text-right text-emerald-300">Clean<br><span class="text-[11px] text-slate-500">GuardDuty · 1 artifact</span></span>
-          </li>
-        </ul>
-        <p class="mt-3 border-t border-slate-800 pt-3 text-[12px] leading-relaxed text-slate-500">
-          Verify locally instead:
-          <code class="mono text-slate-400">agentpm install --require-signature --require-attestation</code>
-        </p>
-      </div>
-
-      <!-- 3. Local readiness — environment-scoped, cannot come from the Registry -->
-      <div class="rounded-xl border border-slate-800 surface-sunken p-4">
-        <div class="mb-3 flex items-center justify-between gap-2">
-          <h3 class="text-sm font-medium text-slate-200">Runner support</h3>
-          <span class="rounded-full border border-emerald-700/50 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300">Supported</span>
-        </div>
-        <dl class="space-y-2.5 text-[13px]">
-          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-            <dt class="text-slate-400">AgentPM Harness</dt>
-            <dd class="sm:text-right text-slate-200">agentpm / 1.0.0</dd>
-          </div>
-          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-            <dt class="text-slate-400">Loop present</dt>
-            <dd class="sm:text-right text-slate-200">Yes · 3 phases</dd>
-          </div>
-          <div class="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-            <dt class="text-slate-400">Local readiness</dt>
-            <dd class="sm:text-right text-slate-500">Not evaluated</dd>
-          </div>
-        </dl>
-        <p class="mt-3 border-t border-slate-800 pt-3 text-[12px] leading-relaxed text-slate-500">
-          Model and provider configuration are properties of your machine, not of this package.
-          Run <code class="mono text-slate-400">agentpm harness --headless</code> to check readiness locally.
-        </p>
-      </div>
+      <a href="#" class="text-sm text-sky-400 hover:text-sky-300">Health &amp; Security →</a>
     </div>
+    <p class="mb-3 max-w-[70ch] text-sm text-slate-400">
+      Checked by the Registry, for this version. A Registry-performed check is a Registry-reported
+      result, not independent verification.
+    </p>
+    <dl class="divide-y divide-slate-800 text-sm">
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+        <dt class="text-slate-300">APDS conformance</dt>
+        <dd class="flex flex-wrap items-baseline gap-2">
+          <span class="text-emerald-300">Passed</span>
+          <span class="text-xs text-slate-500">· resolved scope incomplete</span>
+        </dd>
+      </div>
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+        <dt class="text-slate-300">Integrity &amp; provenance</dt>
+        <dd class="flex flex-wrap items-baseline gap-2">
+          <span class="text-emerald-300">Verified by Registry</span>
+          <span class="text-xs text-slate-500">· 4 checks</span>
+        </dd>
+      </div>
+      <!-- Not "Supported": the Registry reports runner_support: not_evaluated
+           because it does not run the Harness. A declared Loop is the strongest
+           honest claim available from the server. -->
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+        <dt class="text-slate-300">Runner support</dt>
+        <dd class="flex flex-wrap items-baseline gap-2">
+          <span class="text-slate-300">Loop declared</span>
+          <span class="text-xs text-slate-500">· readiness not evaluated</span>
+        </dd>
+      </div>
+    </dl>
   </section>
 
   <!-- ── Lightest tier: a plain section, deliberately not a card ──────────── -->
@@ -738,13 +680,47 @@
 </main>
 
 <footer class="mt-10 border-t border-slate-800 bg-slate-950">
-  <div class="mx-auto max-w-[1400px] px-6 py-8 text-sm text-slate-500">
-    <div class="flex flex-wrap items-center justify-between gap-4">
-      <span>AgentPM — the package manager for AI agents.</span>
-      <nav class="flex gap-5">
-        <a href="#" class="hover:text-slate-300">Docs</a>
-        <a href="#" class="hover:text-slate-300">Standard</a>
-        <a href="#" class="hover:text-slate-300">Status</a>
+  <div class="mx-auto max-w-[1400px] px-6 py-10">
+    <!-- One band, not two. The copyright and legal links are fine print, so
+         they sit under the brand rather than in their own divided row, which
+         read as a second footer. Year is hardcoded for the mock; compute it
+         (new Date().getFullYear()) in implementation so it cannot go stale. -->
+    <div class="flex flex-wrap items-start justify-between gap-x-10 gap-y-8">
+      <div class="max-w-[38ch]">
+        <div class="flex items-center gap-2">
+          <span class="h-7 w-7 rounded-lg bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+          <span class="font-semibold tracking-tight text-slate-200">AgentPM&trade;</span>
+        </div>
+        <p class="mt-2.5 text-sm leading-relaxed text-slate-500">
+          The package manager for AI agents.
+        </p>
+        <p class="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-slate-500">
+          <span>&copy; 2026 AgentPM</span>
+          <span class="text-slate-700" aria-hidden="true">&middot;</span>
+          <a href="#" class="hover:text-slate-300">Privacy</a>
+          <span class="text-slate-700" aria-hidden="true">&middot;</span>
+          <a href="#" class="hover:text-slate-300">Terms</a>
+        </p>
+      </div>
+      <nav class="flex flex-wrap gap-x-10 gap-y-4 text-sm">
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Product</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Explore</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Templates</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Pricing</a>
+        </div>
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Develop</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Docs</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">APDS 1.0.0</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">SDKs</a>
+        </div>
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Project</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Blog</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Status</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Changelog</a>
+        </div>
       </nav>
     </div>
   </div>
@@ -781,11 +757,30 @@
     const angle = 90 + Math.floor(rand() * 180);
     return `linear-gradient(${angle}deg, hsl(${h1}, ${s1}%, ${l1}%), hsl(${h2}, ${s2}%, ${l2}%))`;
   }
-  const mark = gradientFromSeed('@zack/devwork-copilot');
-  for (const id of ['identity-avatar', 'identity-avatar-sm']) {
-    const el = document.getElementById(id);
-    if (el) el.style.background = mark;
+  /* AgentBox: a 2x2 grid of gradients, each seeded by one of the Agent's own
+     Components — the mark is literally composed of its parts. Seeds interleave
+     across kinds (tool, skill, knowledge, memory, ...) exactly as
+     seedsForAgent() does, so the quadrants stay stable per package. */
+  const AGENT_SEEDS = [
+    '@zack/summarize-text',            // tool
+    '@zack/issue-triage-playbook',     // skill
+    '@zack/devwork-maintainer-guide',  // knowledge
+    '@zack/devwork-maintainer-state',  // memory
+  ];
+  function renderAgentBox(el, seeds) {
+    if (!el) return;
+    const grid = document.createElement('div');
+    grid.className = 'grid h-full w-full grid-cols-2 grid-rows-2 gap-[2px]';
+    for (let i = 0; i < 4; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'min-h-0 min-w-0 rounded-[4px]';
+      cell.style.background = gradientFromSeed(seeds[i % seeds.length]);
+      grid.appendChild(cell);
+    }
+    el.replaceChildren(grid);
   }
+  renderAgentBox(document.getElementById('identity-avatar'), AGENT_SEEDS);
+  renderAgentBox(document.getElementById('identity-avatar-sm'), AGENT_SEEDS);
 
   /* Capability chips. One open at a time across the whole Execution panel:
      comparing two phases means scrolling, so stacking dropdowns would push

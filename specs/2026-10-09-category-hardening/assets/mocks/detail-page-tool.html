@@ -1,0 +1,542 @@
+<meta charset="utf-8">
+<title>Tool Package Detail</title>
+<meta name="description" content="The detail route for a Tool, showing how the shape differs from an Agent Package, with real @zack/summarize-text data.">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+
+<style>
+  :root { color-scheme: dark; }
+  body {
+    background: #020617; color: #f1f5f9;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  code, kbd, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .hero-band {
+    background:
+      radial-gradient(1100px 420px at 12% -18%, rgba(99,102,241,.11), transparent 62%),
+      radial-gradient(820px 380px at 88% -12%, rgba(56,189,248,.08), transparent 58%),
+      linear-gradient(180deg, rgba(30,41,59,.55) 0%, rgba(2,6,23,0) 78%);
+  }
+  .hero-band::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(148,163,184,.075) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(148,163,184,.075) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
+    mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
+  }
+  .surface { background: rgba(15,23,42,.6); }
+  .surface-sunken { background: rgba(2,6,23,.5); }
+  :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; border-radius: 6px; }
+  .chev { transition: transform .15s ease; }
+  [aria-expanded="true"] .chev { transform: rotate(180deg); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<header class="sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800">
+  <div class="mx-auto grid max-w-[1400px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 sm:px-6">
+    <a href="#" class="flex items-center gap-2 justify-self-start">
+      <span class="h-8 w-8 rounded-xl bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+      <span class="font-semibold tracking-tight">AgentPM™</span>
+    </a>
+    <div class="hidden md:block">
+      <label class="relative block">
+        <span class="sr-only">Search packages, components and docs</span>
+        <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+        <input type="search" placeholder="Search packages, components, docs…" class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-16 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none">
+        <kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 text-[11px] text-slate-400">⌘K</kbd>
+      </label>
+    </div>
+    <div class="md:hidden" aria-hidden="true"></div>
+    <nav class="flex items-center gap-3 justify-self-end text-sm text-slate-300">
+      <a class="hidden hover:text-white lg:inline" href="#">Docs</a>
+      <a class="hidden hover:text-white lg:inline" href="#">Pricing</a>
+      <a class="hidden hover:text-white lg:inline" href="#">Blog</a>
+      <a href="#" class="grid h-8 w-8 place-items-center rounded-full bg-indigo-500/20 text-sm font-semibold text-indigo-300 ring-1 ring-indigo-700/50" aria-label="Your profile">Z</a>
+    </nav>
+  </div>
+  <div class="border-t border-slate-800/70 px-4 py-2.5 md:hidden">
+    <label class="relative block">
+      <span class="sr-only">Search</span>
+      <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="6"></circle><path d="m14 14 3.5 3.5"></path></svg>
+      <input type="search" placeholder="Search packages, components, docs…" class="w-full rounded-lg border border-slate-800 bg-slate-900/60 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500/60 focus:outline-none">
+    </label>
+  </div>
+</header>
+
+<div class="relative hero-band border-b border-slate-800/70">
+  <div class="relative z-10 mx-auto max-w-[1400px] px-6 pt-6 pb-10">
+    <nav class="mb-6 flex items-center gap-2 text-sm text-slate-400" aria-label="Breadcrumb">
+      <a href="#" class="hover:text-slate-200">Packages</a><span class="text-slate-600">/</span>
+      <a href="#" class="hover:text-slate-200">@zack</a><span class="text-slate-600">/</span>
+      <span class="text-slate-200">summarize-text</span>
+    </nav>
+
+    <div class="grid gap-6 lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,1fr)]">
+      <section class="rounded-2xl border border-slate-800 surface p-6">
+        <div class="flex items-start gap-4 sm:gap-5">
+          <div id="identity-avatar" class="h-14 w-14 shrink-0 rounded-xl ring-1 ring-slate-700/60 sm:h-20 sm:w-20 sm:rounded-2xl" role="img" aria-label="Generated identity mark for @zack/summarize-text"></div>
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h1 class="break-all text-xl font-semibold tracking-tight text-white sm:break-words sm:text-2xl lg:text-3xl">@zack/summarize-text</h1>
+              <button class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/70 px-2.5 py-1 text-sm text-slate-200">
+                v0.1.11
+                <svg class="h-3.5 w-3.5 text-slate-400" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+              </button>
+            </div>
+            <p class="mt-2.5 max-w-[65ch] text-[15px] leading-relaxed text-slate-300">
+              Summarize long text to a concise abstract.
+            </p>
+
+            <!-- Tool = indigo. Same badge grammar as the Agent page. -->
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+              <span class="inline-flex items-center gap-1.5 rounded-full border border-indigo-700/50 bg-indigo-500/15 px-3 py-1 text-xs font-medium text-indigo-300">
+                <span class="h-1.5 w-1.5 rounded-full bg-indigo-400"></span> Tool
+              </span>
+              <span class="inline-flex items-center gap-1.5 rounded-full border border-sky-700/50 bg-sky-500/15 px-3 py-1 text-xs font-medium text-sky-300">Signed</span>
+              <span class="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">
+                <span class="text-slate-500">Standard</span> <span class="mono">agentpm / 1.0.0</span>
+                <span class="rounded bg-slate-700/70 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">declared</span>
+              </span>
+              <span class="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/40 px-3 py-1 text-xs text-slate-500">
+                No license declared
+              </span>
+              <span class="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">
+                <span class="mono">python 3.11</span>
+              </span>
+            </div>
+
+            <dl class="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
+              <div class="flex items-center gap-2">
+                <dt class="sr-only">Publisher</dt>
+                <dd class="flex items-center gap-2">
+                  <span class="grid h-6 w-6 place-items-center rounded-full bg-indigo-500/20 text-[11px] font-semibold text-indigo-300 ring-1 ring-indigo-700/50">Z</span>
+                  <a href="#" class="text-slate-200 hover:underline">zack</a>
+                </dd>
+              </div>
+              <div><dt class="inline text-slate-500">Published</dt> <dd class="inline tabular-nums">Nov 20, 2026</dd></div>
+              <div class="flex items-center gap-1.5">
+                <dt class="sr-only">Installs</dt>
+                <svg class="h-4 w-4 text-slate-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 2v7"></path><path d="m5 6.5 3 3 3-3"></path><path d="M3 12.5h10"></path></svg>
+                <dd class="tabular-nums text-slate-300">41</dd><span class="text-slate-500">installs</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <dt class="sr-only">Stars</dt>
+                <dd>
+                  <button class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-white">
+                    <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m8 2 1.8 3.9 4.2.5-3.1 2.9.8 4.2L8 11.4 4.3 13.5l.8-4.2L2 6.4l4.2-.5L8 2Z"></path></svg>
+                    Star <span class="tabular-nums text-slate-400">2</span>
+                  </button>
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <!-- Get started: Run replaces Harness. A Tool executes directly. -->
+      <section class="rounded-2xl border border-slate-800 surface p-6">
+        <div class="flex items-start gap-3">
+          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-indigo-700/50 bg-indigo-500/15 text-indigo-300">
+            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m7 5 6 5-6 5V5Z"></path></svg>
+          </span>
+          <div>
+            <h2 class="text-base font-semibold text-white">Get started</h2>
+            <p class="text-sm text-slate-400">Run it directly, or call it from an Agent.</p>
+          </div>
+        </div>
+
+        <div class="mt-5 space-y-3">
+          <div class="rounded-xl border border-slate-800 surface-sunken p-3">
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-sm font-medium text-slate-200">Install</span>
+              <span class="text-xs text-slate-500">AgentPM CLI</span>
+            </div>
+            <div class="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+              <code class="mono flex-1 overflow-x-auto whitespace-nowrap text-[13px] text-slate-300">agentpm install @zack/summarize-text@0.1.11</code>
+              <button class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-300" aria-label="Copy install command">
+                <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- The Agent page shows "Run with Harness" here. A Tool has no Loop,
+               so the direct-execution action takes that slot instead. -->
+          <div class="rounded-xl border border-slate-800 surface-sunken p-3">
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-sm font-medium text-slate-200">Run</span>
+              <span class="text-xs text-slate-500">JSON in, JSON out</span>
+            </div>
+            <div class="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+              <code class="mono flex-1 overflow-x-auto whitespace-nowrap text-[13px] text-slate-300">agentpm run @zack/summarize-text --input '{"text":"…"}'</code>
+              <button class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-300" aria-label="Copy run command">
+                <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-slate-800 surface-sunken p-3">
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-sm font-medium text-slate-200">Load via SDK</span>
+              <span class="text-xs text-slate-500">Node · Python</span>
+            </div>
+            <div class="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+              <code class="mono flex-1 overflow-x-auto whitespace-nowrap text-[13px] text-slate-300">load("@zack/summarize-text@0.1.11")</code>
+              <button class="shrink-0 rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-300" aria-label="Copy SDK snippet">
+                <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5v5.5a1.5 1.5 0 0 0 1.5 1.5h2"></path></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="border-b border-slate-800 bg-slate-950/40">
+  <div class="mx-auto max-w-[1400px] px-6">
+    <nav class="flex gap-7 overflow-x-auto text-sm" aria-label="Package sections">
+      <!-- No Examples tab: examples are an Agent-level concept. -->
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-sky-400 px-0.5 py-3.5 font-medium text-white">Overview</a>
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200">Readme</a>
+      <a href="#" class="-mb-px whitespace-nowrap border-b-2 border-transparent px-0.5 py-3.5 text-slate-400 hover:text-slate-200">Health &amp; Security</a>
+    </nav>
+  </div>
+</div>
+
+<main class="mx-auto max-w-[1400px] px-6 py-8">
+
+  <!-- The thesis row. For an Agent this is Composition + Execution.
+       A Tool has neither a component graph nor a Loop, so the two questions
+       become: what is its contract, and what does it need to run. -->
+  <div class="grid gap-6 xl:grid-cols-2">
+
+    <!-- ══ Interface ═════════════════════════════════════════════════════ -->
+    <section class="rounded-2xl border border-slate-800 surface p-6">
+      <header class="mb-5 flex items-start gap-3">
+        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-indigo-700/50 bg-indigo-500/15 text-indigo-300">
+          <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M7 4 3 10l4 6"></path><path d="m13 4 4 6-4 6"></path></svg>
+        </span>
+        <div>
+          <h2 class="text-base font-semibold text-white">Interface</h2>
+          <p class="text-sm text-slate-400">The contract a caller must satisfy, from the authored JSON Schema.</p>
+        </div>
+      </header>
+
+      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Input</div>
+      <ul class="space-y-2" role="list">
+        <li class="rounded-xl border border-slate-800 surface-sunken p-3">
+          <div class="flex flex-wrap items-baseline gap-2">
+            <span class="mono text-sm text-slate-200">text</span>
+            <span class="mono text-[11px] text-slate-500">string</span>
+            <span class="rounded border border-rose-700/50 bg-rose-500/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-rose-300">required</span>
+          </div>
+          <p class="mt-1 text-[13px] text-slate-400">The text to be summarized</p>
+        </li>
+        <li class="rounded-xl border border-slate-800 surface-sunken p-3">
+          <div class="flex flex-wrap items-baseline gap-2">
+            <span class="mono text-sm text-slate-200">max_words</span>
+            <span class="mono text-[11px] text-slate-500">integer</span>
+            <span class="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">optional</span>
+          </div>
+          <div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-slate-400">
+            <span>default <span class="mono tabular-nums text-slate-300">200</span></span>
+            <span>range <span class="mono tabular-nums text-slate-300">50–1000</span></span>
+          </div>
+        </li>
+      </ul>
+      <p class="mt-2 text-[13px] text-slate-500">No other input fields are accepted.</p>
+
+      <div class="mb-2 mt-5 text-[11px] font-medium uppercase tracking-wide text-slate-500">Output · one of two shapes</div>
+      <div class="grid gap-2 sm:grid-cols-2">
+        <div class="rounded-xl border border-emerald-700/40 bg-emerald-500/5 p-3">
+          <div class="mb-1.5 flex items-center gap-2">
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+            <span class="text-xs font-medium text-emerald-300">Success</span>
+          </div>
+          <dl class="space-y-1 text-[12px]">
+            <div class="flex gap-2"><dt class="mono text-slate-300">ok</dt><dd class="mono text-slate-500">true</dd></div>
+            <div class="flex gap-2"><dt class="mono text-slate-300">summary</dt><dd class="mono text-slate-500">string</dd></div>
+          </dl>
+        </div>
+        <div class="rounded-xl border border-rose-700/40 bg-rose-500/5 p-3">
+          <div class="mb-1.5 flex items-center gap-2">
+            <span class="h-1.5 w-1.5 rounded-full bg-rose-400"></span>
+            <span class="text-xs font-medium text-rose-300">Error</span>
+          </div>
+          <dl class="space-y-1 text-[12px]">
+            <div class="flex gap-2"><dt class="mono text-slate-300">ok</dt><dd class="mono text-slate-500">false</dd></div>
+            <div class="flex gap-2"><dt class="mono text-slate-300">error.code</dt><dd class="mono text-slate-500">string</dd></div>
+            <div class="flex gap-2"><dt class="mono text-slate-300">error.message</dt><dd class="mono text-slate-500">string</dd></div>
+          </dl>
+        </div>
+      </div>
+      <p class="mt-2 text-[13px] leading-relaxed text-slate-500">
+        A failure is still a successful invocation returning <span class="mono">ok: false</span>, not a crash.
+        Error codes are stable and machine-readable.
+      </p>
+    </section>
+
+    <!-- ══ Runtime & execution ═══════════════════════════════════════════ -->
+    <section class="rounded-2xl border border-slate-800 surface p-6">
+      <header class="mb-5 flex items-start gap-3">
+        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-sky-700/50 bg-sky-500/15 text-sky-300">
+          <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2"></rect><path d="m6.5 9 2 1.5-2 1.5"></path><path d="M10.5 12.5h3"></path></svg>
+        </span>
+        <div>
+          <h2 class="text-base font-semibold text-white">Runtime &amp; execution</h2>
+          <p class="text-sm text-slate-400">What AgentPM provisions and runs on your machine.</p>
+        </div>
+      </header>
+
+      <dl class="divide-y divide-slate-800 text-sm">
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+          <dt class="text-slate-400">Runtime</dt>
+          <dd class="mono text-slate-200">python 3.11</dd>
+        </div>
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+          <dt class="text-slate-400">Entrypoint</dt>
+          <dd class="mono break-all text-right text-slate-200">python -u -m summarize_text</dd>
+        </div>
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+          <dt class="text-slate-400">Timeout</dt>
+          <dd class="mono tabular-nums text-slate-200">120 s</dd>
+        </div>
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+          <dt class="text-slate-400">Declared dependency</dt>
+          <dd class="mono text-slate-200">openai&gt;=1.51.0,&lt;2</dd>
+        </div>
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+          <dt class="text-slate-400">Packaged files</dt>
+          <dd class="text-slate-200">3</dd>
+        </div>
+      </dl>
+
+      <!-- No Agent analogue: one declared requirement expands to a pinned,
+           hash-verified closure. This is the Tool's reproducibility story. -->
+      <div class="mt-4 rounded-xl border border-slate-800 surface-sunken p-3">
+        <button type="button" class="flex w-full items-start justify-between gap-3 text-left" aria-expanded="false" aria-controls="resolved-env">
+          <span class="min-w-0">
+            <span class="block text-sm text-slate-200">Resolved environment</span>
+            <span class="mt-0.5 block text-xs text-slate-400">17 distributions pinned with SHA-256 hashes</span>
+          </span>
+          <svg class="chev mt-1 h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 4.5 3 3 3-3"></path></svg>
+        </button>
+        <div id="resolved-env" hidden class="mt-3 border-t border-slate-800 pt-3">
+          <ul class="flex flex-wrap gap-1.5" role="list">
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">openai</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">pydantic</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">pydantic-core</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">httpx</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">httpcore</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">anyio</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">h11</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">certifi</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">idna</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">sniffio</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">jiter</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">distro</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">tqdm</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">typing-extensions</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">typing-inspection</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">annotated-types</li>
+            <li class="mono rounded border border-slate-700 bg-slate-800/50 px-1.5 py-0.5 text-[11px] text-slate-300">colorama</li>
+          </ul>
+          <p class="mt-3 text-[13px] leading-relaxed text-slate-500">
+            Resolved from <span class="mono text-slate-400">openai&gt;=1.51.0,&lt;2</span> against
+            <span class="mono text-slate-400">python &gt;= 3.11</span>. Every distribution is pinned by hash and
+            re-verified on install, so the same input resolves to the same environment. Platform markers select
+            per-architecture wheels where a distribution ships them.
+          </p>
+        </div>
+      </div>
+
+      <!-- Authored environment.vars — the same treatment as the input schema,
+           because it is the same kind of thing: a contract the caller satisfies. -->
+      <div class="mt-5 mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Environment</div>
+      <ul class="space-y-2" role="list">
+        <li class="rounded-xl border border-slate-800 surface-sunken p-3">
+          <div class="flex flex-wrap items-baseline gap-2">
+            <span class="mono text-sm text-slate-200">OPENAI_API_KEY</span>
+            <span class="rounded border border-rose-700/50 bg-rose-500/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-rose-300">required</span>
+          </div>
+          <p class="mt-1 text-[13px] text-slate-400">API key for OpenAI</p>
+        </li>
+      </ul>
+      <p class="mt-2 text-[13px] leading-relaxed text-slate-500">
+        Declared by the author and read from your environment at run time. AgentPM neither supplies
+        nor proxies credentials, and never stores them.
+      </p>
+    </section>
+  </div>
+
+  <!-- Evidence: same compressed summary, different applicability. -->
+  <section class="mt-6 rounded-2xl border border-slate-800 bg-slate-900/30 p-5">
+    <div class="mb-1 flex flex-wrap items-center justify-between gap-3">
+      <h2 class="text-base font-semibold text-white">Evidence</h2>
+      <a href="#" class="text-sm text-sky-400 hover:text-sky-300">Health &amp; Security →</a>
+    </div>
+    <p class="mb-3 max-w-[70ch] text-sm text-slate-400">
+      Checked by the Registry, for this version. A Registry-performed check is a Registry-reported
+      result, not independent verification.
+    </p>
+    <dl class="divide-y divide-slate-800 text-sm">
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+        <dt class="text-slate-300">APDS conformance</dt>
+        <dd class="flex flex-wrap items-baseline gap-2"><span class="text-emerald-300">Passed</span><span class="text-xs text-slate-500">· standalone · packaged · resolved</span></dd>
+      </div>
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+        <dt class="text-slate-300">Integrity &amp; provenance</dt>
+        <dd class="flex flex-wrap items-baseline gap-2"><span class="text-emerald-300">Verified by Registry</span><span class="text-xs text-slate-500">· 4 checks</span></dd>
+      </div>
+      <!-- Applicable here, and not applicable on an Agent. The inverse of
+           Runner support, which is an Agent signal and N/A for a Tool. -->
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+        <dt class="text-slate-300">Target support</dt>
+        <dd class="flex flex-wrap items-baseline gap-2"><span class="text-slate-300">1 artifact</span><span class="text-xs text-slate-500">· any · provisioning not evaluated</span></dd>
+      </div>
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5">
+        <dt class="text-slate-400">License</dt>
+        <dd class="flex flex-wrap items-baseline gap-2"><span class="text-slate-500">Unknown</span><span class="text-xs text-slate-500">· none declared by the author</span></dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="mt-8 border-t border-slate-800 pt-6">
+    <h2 class="text-base font-semibold text-white">Source</h2>
+    <div class="mt-4 flex flex-wrap gap-3">
+      <a href="#" class="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3.5 py-2 text-sm text-slate-300 hover:border-slate-700 hover:text-white">
+        <span class="mono text-xs text-slate-500">{ }</span> View agent.json
+      </a>
+      <a href="#" class="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3.5 py-2 text-sm text-slate-300 hover:border-slate-700 hover:text-white">
+        View APDS 1.0.0 specification →
+      </a>
+    </div>
+  </section>
+
+  <!-- ══ What changed, for review ══════════════════════════════════════ -->
+  <section class="mt-10 rounded-2xl border border-dashed border-slate-700 bg-slate-900/20 p-5">
+    <div class="text-xs font-medium uppercase tracking-widest text-slate-500">For review</div>
+    <h2 class="mt-1.5 text-base font-semibold text-white">How the shape differs from an Agent</h2>
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full min-w-[620px] text-left text-sm">
+        <thead>
+          <tr class="border-b border-slate-800 text-[11px] uppercase tracking-wide text-slate-500">
+            <th scope="col" class="pb-2 pr-4 font-medium">Slot</th>
+            <th scope="col" class="pb-2 pr-4 font-medium">Agent Package</th>
+            <th scope="col" class="pb-2 font-medium">Tool</th>
+          </tr>
+        </thead>
+        <tbody class="text-[13px]">
+          <tr class="border-b border-slate-800/60"><td class="py-2.5 pr-4 text-slate-400">Left panel</td><td class="py-2.5 pr-4 text-slate-300">Composition — the kinds it is built from</td><td class="py-2.5 text-slate-300">Interface — the I/O contract</td></tr>
+          <tr class="border-b border-slate-800/60"><td class="py-2.5 pr-4 text-slate-400">Right panel</td><td class="py-2.5 pr-4 text-slate-300">Execution architecture — Loop phases</td><td class="py-2.5 text-slate-300">Runtime &amp; execution — what gets provisioned</td></tr>
+          <tr class="border-b border-slate-800/60"><td class="py-2.5 pr-4 text-slate-400">Primary action</td><td class="py-2.5 pr-4 text-slate-300">Run with Harness</td><td class="py-2.5 text-slate-300">Run — JSON in, JSON out</td></tr>
+          <tr class="border-b border-slate-800/60"><td class="py-2.5 pr-4 text-slate-400">Kind-specific signal</td><td class="py-2.5 pr-4 text-slate-300">Runner support (Loop declared)</td><td class="py-2.5 text-slate-300">Target support — <span class="mono">not applicable</span> on an Agent</td></tr>
+          <tr class="border-b border-slate-800/60"><td class="py-2.5 pr-4 text-slate-400">Tabs</td><td class="py-2.5 pr-4 text-slate-300">adds Bindings</td><td class="py-2.5 text-slate-300">no Bindings — a Tool binds nothing</td></tr>
+          <tr><td class="py-2.5 pr-4 text-slate-400">Unchanged</td><td class="py-2.5 pr-4 text-slate-300" colspan="2">Shell, identity block, badge grammar, Evidence summary, Source</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-4 max-w-[72ch] text-[13px] leading-relaxed text-slate-500">
+      Only the two thesis panels and one action swap. That is the argument for the section-card primitive
+      carrying kind-specific content rather than each kind getting a bespoke page: the frame holds, and
+      <span class="text-slate-400">what is this made of / how does it run</span> becomes
+      <span class="text-slate-400">what is its contract / what does it need</span>.
+      Note also the two honest gaps this package happens to expose — no declared license, and a required
+      provider credential AgentPM does not supply.
+    </p>
+  </section>
+</main>
+
+<footer class="mt-10 border-t border-slate-800 bg-slate-950">
+  <div class="mx-auto max-w-[1400px] px-6 py-10">
+    <!-- One band, not two. The copyright and legal links are fine print, so
+         they sit under the brand rather than in their own divided row, which
+         read as a second footer. Year is hardcoded for the mock; compute it
+         (new Date().getFullYear()) in implementation so it cannot go stale. -->
+    <div class="flex flex-wrap items-start justify-between gap-x-10 gap-y-8">
+      <div class="max-w-[38ch]">
+        <div class="flex items-center gap-2">
+          <span class="h-7 w-7 rounded-lg bg-gradient-to-br from-sky-500 to-fuchsia-500"></span>
+          <span class="font-semibold tracking-tight text-slate-200">AgentPM&trade;</span>
+        </div>
+        <p class="mt-2.5 text-sm leading-relaxed text-slate-500">
+          The package manager for AI agents.
+        </p>
+        <p class="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-slate-500">
+          <span>&copy; 2026 AgentPM</span>
+          <span class="text-slate-700" aria-hidden="true">&middot;</span>
+          <a href="#" class="hover:text-slate-300">Privacy</a>
+          <span class="text-slate-700" aria-hidden="true">&middot;</span>
+          <a href="#" class="hover:text-slate-300">Terms</a>
+        </p>
+      </div>
+      <nav class="flex flex-wrap gap-x-10 gap-y-4 text-sm">
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Product</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Explore</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Templates</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Pricing</a>
+        </div>
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Develop</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Docs</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">APDS 1.0.0</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">SDKs</a>
+        </div>
+        <div class="space-y-2">
+          <div class="text-[11px] font-medium uppercase tracking-wide text-slate-500">Project</div>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Blog</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Status</a>
+          <a href="#" class="block text-slate-400 hover:text-slate-200">Changelog</a>
+        </div>
+      </nav>
+    </div>
+  </div>
+</footer>
+
+<script>
+  function hashString(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    return function () {
+      let t = (a += 0x6D2B79F5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gradientFromSeed(seed) {
+    const rand = mulberry32(hashString(seed));
+    const h1 = Math.floor(rand() * 360);
+    const direction = rand() < 0.5 ? -1 : 1;
+    const spread = 30 + rand() * 60;
+    const h2 = (h1 + direction * spread + 360) % 360;
+    const s1 = 60 + Math.floor(rand() * 30);
+    const l1 = 45 + Math.floor(rand() * 15);
+    const s2 = 60 + Math.floor(rand() * 30);
+    let l2 = 40 + Math.floor(rand() * 15);
+    if (Math.abs(l2 - l1) < 12) { l2 = l2 > l1 ? l1 + 12 : l1 - 12; }
+    l2 = Math.max(30, Math.min(70, l2));
+    const angle = 90 + Math.floor(rand() * 180);
+    return `linear-gradient(${angle}deg, hsl(${h1}, ${s1}%, ${l1}%), hsl(${h2}, ${s2}%, ${l2}%))`;
+  }
+  const el = document.getElementById('identity-avatar');
+  if (el) el.style.background = gradientFromSeed('@zack/summarize-text');
+
+  for (const btn of document.querySelectorAll('[aria-controls]')) {
+    btn.addEventListener('click', () => {
+      const panel = document.getElementById(btn.getAttribute('aria-controls'));
+      if (!panel) return;
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', String(!open));
+      panel.hidden = open;
+    });
+  }
+</script>
