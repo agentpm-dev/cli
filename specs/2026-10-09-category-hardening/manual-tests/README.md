@@ -88,3 +88,14 @@ isolated workload and retains a report.
   versions through both protocols, and clean-consumer verification. Real
   production publications; the guide separately lists the remaining direct API
   and historical-reference checks needed before release closure.
+
+- [Versioned APDS website reference and package links (M8A)](WEB_M8A_MANUAL_TESTS.md):
+  real local web/API reads over eleven existing M4A/M5A publications, all eight
+  kinds, two versions of the same Tool and an undeclared legacy release. An
+  ignored `agentpm/web-m8a-test/` run contains a browser index, copied inputs,
+  response evidence and explicit observations. Includes the real private
+  `zack-internal` namespace; no publications or visibility changes. Independent
+  implementation review and hosted CI are user-confirmed passed on 2026-11-25;
+  the user supplied the passing 11-fixture, 60-request, seven-observation audit
+  the same day. Saved evidence was independently rechecked, completing M8A.
+  Coordinated production release remains separate.

@@ -1,6 +1,6 @@
 # M8A implementation and verification
 
-Builder: Codex. Date: 2026-11-25. User confirmed independent Claude review complete with no new findings on 2026-11-25. Hosted CI remains pending.
+Builder: Codex. Date: 2026-11-25. User confirmed independent Claude review complete with no new findings on 2026-11-25. User confirmed all hosted CI passed on 2026-11-25. User supplied the passing manual audit on 2026-11-25; saved evidence was independently rechecked. M8A is complete; coordinated production release remains separate.
 
 ## Scope and D07
 
@@ -178,7 +178,7 @@ Deploy the Registry correction with Web. Any old/cached Security payload without
 the new projection displays unavailable conformance until it is refreshed, rather
 than making an unchecked claim. No database migration, new evidence write,
 additional graph/cryptographic inspection or change to validation policy occurs.
-User confirmed independent review of the corrections complete with no new findings on 2026-11-25; hosted CI remains pending.
+User confirmed independent review of the corrections complete with no new findings on 2026-11-25; user confirmed all hosted CI passed on 2026-11-25.
 
 ## Review correction: extensible projected level names
 
@@ -239,19 +239,65 @@ restored in `finally`; the live workspace implementation was never mutated.
 `pnpm typecheck`, targeted ESLint and Prettier passed. No production code, API
 policy or user-facing behavior changed for this coverage correction.
 
+## Manual runbook preparation and builder replay
+
+The user requested the manual runbook while CI was running, then confirmed all
+hosted CI passed on 2026-11-25 and identified `zack-internal` as the existing
+private user namespace. [The runbook](manual-tests/WEB_M8A_MANUAL_TESTS.md) and
+[helper notes](manual-tests/fixtures/m8a/README.md) use real local web/API reads,
+existing M4A/M5A receipts and publications, seven explicit browser observations
+and one real private-package access check. Artifacts stay in ignored
+`web-m8a-test/<run>/`. No new publications, namespace changes, S3 downloads,
+credential copying or production Registry requests are needed.
+
+Builder verification on 2026-11-25:
+
+- `PYTHONDONTWRITEBYTECODE=1 ../agentpm-api/.venv/bin/python -B -m pytest -q specs/2026-10-09-category-hardening/manual-tests/fixtures/m8a/test_fixture.py` — **17 passed**. Cases cover loopback/redirect constraints, existing-run preservation, code/catalog/input pins, visible HTML versus framework scripts, React interpolation boundaries, unavailable versus recorded evidence, missing observations, real-request versus operator-reported privacy results and stale-pass invalidation.
+- All **10** runbook shell blocks parsed with `zsh -n`; new relative documentation links resolve. Black 23.9.1 and Prettier pass. No Rust or product implementation changed while preparing this guide.
+- Final helper `prepare` and `check` against `http://localhost:3000` and `http://127.0.0.1:5000` passed **11 existing releases / 60 GETs**. Durable ignored evidence: `web-m8a-test/builder-runbook-20261125-6/evidence/20261125T215636.936834Z/`; its current machine result is in `web-m8a-test/builder-runbook-20261125-6/checks.json`.
+- Eight M4A records honestly project `unknown` because their old reports lack the later publication-policy marker. Both newer M5A Tool versions project conformant recorded evidence; the undeclared M5A Tool projects legacy/not-evaluated. The web matched the API's safe projection for each case. No old report was rewritten or promoted to trusted evidence.
+- The supported page/canonical, unknown-version/identity HTTP 404/noindex, all selected raw JSON/header/link checks, exact version pair, concrete `latest` raw link and pages sitemap passed. The helper checks unknown-route HTTP/SEO; the operator verifies its hydrated browser explanation. Early helper replays exposed overly broad issue-link checks and HTML text-boundary assumptions; these were corrected in the helper without changing product code, and earlier attempt evidence remains retained.
+- An actual final-run `audit` attempt was required to fail for the seven missing browser observations. Its summary remains **incomplete**. No builder browser observations or positive private authorization were fabricated; `zack-internal` authenticated/anonymous acceptance remains with the operator. Failed rechecks or observations invalidate the current final summary instead of leaving an old pass visible.
+
+The positive private result is explicitly operator-reported after observing a
+signed-in browser HTTP 200. The helper independently makes the anonymous web/API
+requests to that same real package and requires both 404s. Unit-controlled
+responses are not claimed as a live private-namespace check. The builder replay does not replace operator acceptance; the later operator
+evidence is recorded below.
+
+## Operator acceptance — 2026-11-25
+
+The user supplied a passing audit from
+`web-m8a-test/20261125T215934Z-35556/evidence/summary.json`: **11 fixtures,
+60 local GETs and seven browser observations**. The private check retains an
+explicitly operator-reported signed-in HTTP 200 and two actual anonymous web/API
+HTTP 404 results for the same selected private package.
+
+Read-only inspection of the saved run independently confirmed unchanged helper,
+catalog, copied-input and implementation pins; all 60 retained HTTP response
+records; the successful machine result; all seven latest browser observations
+marked pass; and the saved private results. No live authenticated request or
+independent visual inspection is claimed by that saved-file check.
+
+`operator_signoff: false` remains unchanged in the helper artifact. It means the
+helper does not certify milestone closure. The user's supplied passing manual
+audit, completed independent review and confirmed hosted CI establish acceptance
+in this task record. No operator evidence was rewritten and no production
+request or deployment was performed. **M8A is complete.**
+
 ## Acceptance mapping and outstanding gates
 
-| Requirement | Scoped result                                                                                                                                                                                  |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D07         | Trusted committed bundle with deployment checksum gate; current-shell delivery and M8B.1 adoption assigned. Independent decision review passed, user-confirmed 2026-11-25.                     |
-| S2-AC-12    | Builder tests establish selected-release raw manifest vs immutable standard links and honest declaration/inference/recorded-result separation. Real-browser/operator sign-off remains pending. |
-| S2-AC-17    | Versioned reference and Stage 1 canonical/robots/sitemap integration implemented and tested. Broader category explainer, pricing and redesign work remain with later milestones.               |
+| Requirement | Scoped result                                                                                                                                                                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| D07         | Trusted committed bundle with deployment checksum gate; current-shell delivery and M8B.1 adoption assigned. Independent decision review passed, user-confirmed 2026-11-25.                                                                             |
+| S2-AC-12    | Builder tests establish selected-release raw manifest vs immutable standard links and honest declaration/inference/recorded-result separation. User-supplied browser/private audit passed on 2026-11-25; saved local evidence independently rechecked. |
+| S2-AC-17    | Versioned reference and Stage 1 canonical/robots/sitemap integration implemented and tested. Broader category explainer, pricing and redesign work remain with later milestones.                                                                       |
 
 User confirmed independent Claude review complete with no new findings on
 2026-11-25, including the review corrections and isolated status-allowlist
 regression. The review gate is satisfied.
 
-Outstanding: hosted Web/CLI/API CI appropriate to the changed repositories,
-configured manual browser smoke and coordinated release. M8A is reviewed and
-ready for those checks, **not yet marked complete**. No other milestone is
-completed by this work.
+Independent review, hosted CI and the operator's local browser/API acceptance
+are complete as of 2026-11-25. **M8A is complete.** Coordinated production
+deployment remains with Release Band 3. The broader shell/category work and other
+milestones remain with their assigned owners; none is completed by this record.
