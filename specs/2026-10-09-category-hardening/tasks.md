@@ -848,19 +848,21 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 
 **Implementation checklist**
 
-- [ ] Choose trusted version catalog representation and deployment integration.
-- [ ] Publish human-readable standard overview for `agentpm / 1.0.0`.
-- [ ] Present the short README entry point and readable section/rule navigation before deep technical references; render the frozen normative text faithfully without creating a conflicting or more verbose second authority.
-- [ ] Link to exact JSON Schema (canonical `$id`) and normative `semantics.md`.
-- [ ] Link to fixture/conformance instructions and authoritative GitHub source.
-- [ ] Make raw manifest `View agent.json` links separately point to selected artifact version.
-- [ ] Make APDS declaration distinct from verification status in UI label.
-- [ ] Use inferred legacy label where appropriate, not verified conformance.
-- [ ] Test unknown standard version route yields honest not-supported response.
-- [ ] Ensure no untrusted package URL is fetched for standards content.
-- [ ] Coordinate canonical/robots/sitemap decisions with Stage 1 SEO.
-- [ ] Test stable links, keyboard navigation, accessible code/link typography.
-- [ ] Record D07 trusted-source/build-versus-runtime choice.
+- [x] Choose trusted version catalog representation and deployment integration.
+- [x] Publish human-readable standard overview for `agentpm / 1.0.0`.
+- [x] Present the short README entry point and readable section/rule navigation before deep technical references; render the frozen normative text faithfully without creating a conflicting or more verbose second authority.
+- [x] Link to exact JSON Schema (canonical `$id`) and normative `semantics.md`.
+- [x] Link to fixture/conformance instructions and authoritative GitHub source.
+- [x] Make raw manifest `View agent.json` links separately point to selected artifact version.
+- [x] Make APDS declaration distinct from verification status in UI label.
+- [x] Use inferred legacy label where appropriate, not verified conformance.
+- [x] Test unknown standard version route yields honest not-supported response.
+- [x] Ensure no untrusted package URL is fetched for standards content.
+- [x] Coordinate canonical/robots/sitemap decisions with Stage 1 SEO.
+- [x] Test stable links, keyboard navigation, accessible code/link typography.
+- [x] Record D07 trusted-source/build-versus-runtime choice.
+
+**Builder evidence — 2026-11-25:** [M8A implementation and D07 verification](m8a-verification.md). The web deployment bundles the published README, semantics and schema, checks their frozen hashes before every build, renders the reference at `/standards/agentpm/1.0.0`, and adds separate selected-version manifest/APDS links across all eight kinds. Security and Health share one APDS identity/report validator and safe projection; the web displays only the new additive `apds_evidence` field, never raw JSONB, separately from declarations and legacy inference. Review regressions cover contradictory reports, older/cached API responses without the projection, and sparse/extended projected level maps without a fixed web-side level set. The route deliberately uses the current global shell and existing Panel/prose primitives; its adoption into the new shell is assigned to M8B.1 below. Feature-local MDX explains the links and evidence boundaries. User confirmed independent Claude review is complete with no new findings on **2026-11-25**. Hosted CI, manual browser review and production deployment remain pending; **M8A is not yet marked complete**. Broader S2-AC-17 category/pricing/layout work remains with its assigned later milestones.
 
 **Binding requirements** — authoritative constraints from `spec.md` for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 
@@ -953,7 +955,7 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 - [ ] Verify responsive behavior for every primitive at narrow widths, including header nav collapse, facet rail behavior and card reflow.
 - [ ] Verify keyboard navigation, focus order, visible focus states, ARIA labelling on icon-only controls, and reduced-motion handling in the shell.
 - [ ] Confirm SSR/metadata, canonical links and crawlability from Stage 1 M7 still work under the new shell on every migrated route.
-- [ ] Record the adoption order for the remaining routes and which milestone migrates each, so partial rollout is deliberate and tracked.
+- [ ] Record the adoption order for the remaining routes and which milestone migrates each, so partial rollout is deliberate and tracked. **M8A handoff (2026-11-25):** `/standards/agentpm/1.0.0` is delivered on the current shared shell; migrate it in M8B.1 as the first content-route adoption after the shared shell/Panel primitives are ready, before the M9/M10 package-page migrations. Preserve the immutable rendered text, rule anchors, canonical URL and source-link targets.
 
 **Binding requirements** — authoritative constraints from `spec.md` §9 and §9.1 for this milestone. These are requirements to satisfy and verify, not a second task list; the work itself is in the implementation checklist above.
 

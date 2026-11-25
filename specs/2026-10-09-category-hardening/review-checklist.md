@@ -132,6 +132,8 @@ M7A review entrypoint: [source inventory](m7a-health-evidence-inventory.md) and 
 
 ### 7. Agent Package detail page (M8A–M9B)
 
+**M8A handoff (2026-11-25):** inspect [builder verification](m8a-verification.md). Challenge exact frozen text/checksums and tag-pinned links, unknown-version non-substitution, canonical/noindex/sitemap behavior, all eight selected-release manifest links and private-route handling, and the separation of declaration/inference from recorded evaluation. Confirm no arbitrary `$schema` fetch, no fresh-verification/safety claim and no second global shell. The reference's later shell adoption is explicitly assigned to M8B.1; broader composition/Health redesign is outside this slice. User confirmed independent Claude review complete with no new findings on 2026-11-25; the M8A review gate is satisfied.
+
 - [ ] Default Overview is **human-readable composition and execution structure first**, raw JSON accessible but visually secondary; screenshots and navigation confirm this is a genuine information-hierarchy change.
 - [ ] Direct vs transitive/Skill-inherited dependencies are distinguished, exact resolved Component identity/version links valid, graph cycles/duplicates/unknown metadata handled safely.
 - [ ] Global/phase bindings and Loop graph access represented accurately. UI does not falsely linearize arbitrary graph loops or claim an authored Memory operation automatically executed.

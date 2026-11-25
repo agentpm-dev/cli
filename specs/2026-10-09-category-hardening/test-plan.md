@@ -237,6 +237,8 @@ The `agentpm init` invocation and `agentpm lint` without flags are based on exis
 - **T-DETAIL-05:** All kinds preserve their dedicated previous inspection fields/tabs, plus appropriate Health/APDS details; no flattened generic card regression.
 - **T-DETAIL-06:** Versioned APDS route links pinned schema/semantics/fixtures and cannot fetch attacker-controlled arbitrary URI from package manifest.
 
+**M8A builder evidence (2026-11-25):** [Verification and exact commands](m8a-verification.md). Reference-route tests cover frozen-byte hashes/build rejection on drift, all chapter/rule anchors, pinned resource links, keyboard focus/disclosure controls, unknown-version noindex/404 behavior and absence of fetches. Shared shell/Security tests exercise all eight kinds and selected-version changes, keeping legacy inference, declarations and scoped Registry-recorded evaluation separate. Raw-manifest route tests cover intact selected records, exact-version-only requests, authorization failures, malformed/upstream responses and private/no-store/noindex headers. The review correction additionally pairs Security/Health decisions for 22 stored-evidence cases and prevents the web from falling back to raw `apds_validation` when the safe projection is absent/rejected. These satisfy the scoped T-DETAIL-04/06 builder checks. User confirmed independent Claude review complete with no new findings on 2026-11-25; hosted CI and manual browser review remain pending.
+
 ### G. Website IA, featured, search and content accuracy (M8A–M14B; S2-AC-13–17)
 
 - **T-WEB-01:** Homepage primary heading/value line, hero example and top CTAs communicate Agent Package/AgentPM and lead to real links; Component and Template paths present but secondary.
