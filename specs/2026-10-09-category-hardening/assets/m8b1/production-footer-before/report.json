@@ -1,0 +1,593 @@
+{
+  "status": "captured",
+  "scope": "Anonymous public production footer baseline; fresh isolated profile; non-GET/HEAD requests blocked; no publishing or account actions",
+  "capturedAt": "2026-11-26T17:14:22.800Z",
+  "blockedMethods": ["POST", "POST", "POST"],
+  "results": [
+    {
+      "page": "home",
+      "requestedUrl": "https://agentpackagemanager.com/",
+      "width": 1440,
+      "screenshot": "home-1440.png",
+      "url": "https://agentpackagemanager.com/",
+      "title": "AgentPM - Agent Package Manager",
+      "viewport": 1440,
+      "body": 1425,
+      "headerCount": 1,
+      "headerHeight": 67,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": true
+        },
+        {
+          "label": "Global search (mobile)",
+          "id": "mobile-global-search",
+          "visible": false
+        }
+      ],
+      "headings": ["The package manager for AI agents"],
+      "loading": false,
+      "smallRenderedProse": [
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Minimal AgentPM Harness starter that installs one published Agent package and runs it through the reference Harness TUI or headless CLI."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "AgentPM Harness starter that hosts a local embedding provider for the published AgentPM docs Knowledge package."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "AgentPM Harness starter showing Harness-managed MCP exports and scoped runtime MCP imports in one workspace."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "AgentPM Harness lab for process-hosted model, embedding, KnowledgeRuntime, and MemoryRuntime providers."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Python SDK starter for a local triage worker that combines a published AgentPM agent with one extra direct tool."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Python SDK starter that runs AgentPM Harness through a hosted model, Hook, and approval controller."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Node SDK starter that runs AgentPM Harness through a hosted model, Hook, and approval controller."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Multi-agent workspace starter that combines one published agent root, a support loop, support knowledge, support memory, one published support instruction profile, and local generated agent manifests."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Summarize long text to a concise abstract."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Read and update GitHub issues using a compact, agent-friendly action surface."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Translate text into a target language using LLM."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Resize an image from a URL. Returns base64 JPEG."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Apply deterministic transformation operations to JSON objects and arrays."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Procedural guidance for reviewing issue queues, identifying priority, and drafting follow-through."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Workflow guidance for turning operational findings into concise Slack updates."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Operational handoff checklist for incident updates, shift changes, and follow-through tracking."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Multi-step workflow guidance for gathering sources and producing a concise research brief."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Small vector-mode maintainer guide for issue triage, labeling, and review-comment drafting workflows."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Prepared vector-mode retrieval corpus built from the public AgentPM v0.1 docs set."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Multi-file support response handbook for direct context loading across drafting, escalation, and customer messaging workflows."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Workflow-oriented Memory Blueprint for maintainer preferences, active work threads, and follow-up notes across repository review sessions."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Simple support-facing Memory Blueprint for one durable customer state document with light lifecycle policy."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Flagship multi-space Memory Blueprint for durable conversation continuity across recent interactions, summaries, and saved notes."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable maintainer profile for concise repository triage, review guidance, and explicit approval-minded follow-through."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable incident-operations profile for calm status reporting, explicit risk framing, and structured handoff communication."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable support-response profile for calm, direct customer communication and explicit next-step handling."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable maintainer-review loop for inspecting issues, drafting follow-up comments, and deciding whether to resolve, revise, or hand off."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable ReAct loop for reasoning over context, taking actions, reflecting on results, and iterating until completion or handoff."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable incident-response loop for assess, execute, review, and revision-driven operational follow-through."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable support orchestration loop for triage, response drafting, and escalation handoff decisions."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Interactive GitHub maintainer copilot with explicit approval gates for write actions, packaged maintainer-review orchestration, workflow continuity, and a durable maintainer behavior profile."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Operations assistant for incident assessment, execution, and review workflows, with packaged continuity memory, incident-response orchestration, and durable incident-operator communication style."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Research assistant for crawling public sources, extracting structured content, and producing concise summaries."
+        }
+      ],
+      "canonical": "https://agentpackagemanager.com/"
+    },
+    {
+      "page": "home",
+      "requestedUrl": "https://agentpackagemanager.com/",
+      "width": 768,
+      "screenshot": "home-768.png",
+      "url": "https://agentpackagemanager.com/",
+      "title": "AgentPM - Agent Package Manager",
+      "viewport": 768,
+      "body": 753,
+      "headerCount": 1,
+      "headerHeight": 67,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": true
+        },
+        {
+          "label": "Global search (mobile)",
+          "id": "mobile-global-search",
+          "visible": false
+        }
+      ],
+      "headings": ["The package manager for AI agents"],
+      "loading": false,
+      "smallRenderedProse": [
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Minimal AgentPM Harness starter that installs one published Agent package and runs it through the reference Harness TUI or headless CLI."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "AgentPM Harness starter that hosts a local embedding provider for the published AgentPM docs Knowledge package."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "AgentPM Harness starter showing Harness-managed MCP exports and scoped runtime MCP imports in one workspace."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "AgentPM Harness lab for process-hosted model, embedding, KnowledgeRuntime, and MemoryRuntime providers."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Python SDK starter for a local triage worker that combines a published AgentPM agent with one extra direct tool."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Python SDK starter that runs AgentPM Harness through a hosted model, Hook, and approval controller."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Node SDK starter that runs AgentPM Harness through a hosted model, Hook, and approval controller."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Multi-agent workspace starter that combines one published agent root, a support loop, support knowledge, support memory, one published support instruction profile, and local generated agent manifests."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Summarize long text to a concise abstract."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Read and update GitHub issues using a compact, agent-friendly action surface."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Translate text into a target language using LLM."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Resize an image from a URL. Returns base64 JPEG."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Apply deterministic transformation operations to JSON objects and arrays."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Procedural guidance for reviewing issue queues, identifying priority, and drafting follow-through."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Workflow guidance for turning operational findings into concise Slack updates."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Operational handoff checklist for incident updates, shift changes, and follow-through tracking."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Multi-step workflow guidance for gathering sources and producing a concise research brief."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Small vector-mode maintainer guide for issue triage, labeling, and review-comment drafting workflows."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Prepared vector-mode retrieval corpus built from the public AgentPM v0.1 docs set."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Multi-file support response handbook for direct context loading across drafting, escalation, and customer messaging workflows."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Workflow-oriented Memory Blueprint for maintainer preferences, active work threads, and follow-up notes across repository review sessions."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Simple support-facing Memory Blueprint for one durable customer state document with light lifecycle policy."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Flagship multi-space Memory Blueprint for durable conversation continuity across recent interactions, summaries, and saved notes."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable maintainer profile for concise repository triage, review guidance, and explicit approval-minded follow-through."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable incident-operations profile for calm status reporting, explicit risk framing, and structured handoff communication."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable support-response profile for calm, direct customer communication and explicit next-step handling."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable maintainer-review loop for inspecting issues, drafting follow-up comments, and deciding whether to resolve, revise, or hand off."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable ReAct loop for reasoning over context, taking actions, reflecting on results, and iterating until completion or handoff."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable incident-response loop for assess, execute, review, and revision-driven operational follow-through."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable support orchestration loop for triage, response drafting, and escalation handoff decisions."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Interactive GitHub maintainer copilot with explicit approval gates for write actions, packaged maintainer-review orchestration, workflow continuity, and a durable maintainer behavior profile."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Operations assistant for incident assessment, execution, and review workflows, with packaged continuity memory, incident-response orchestration, and durable incident-operator communication style."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Research assistant for crawling public sources, extracting structured content, and producing concise summaries."
+        }
+      ],
+      "canonical": "https://agentpackagemanager.com/"
+    },
+    {
+      "page": "home",
+      "requestedUrl": "https://agentpackagemanager.com/",
+      "width": 390,
+      "screenshot": "home-390.png",
+      "url": "https://agentpackagemanager.com/",
+      "title": "AgentPM - Agent Package Manager",
+      "viewport": 390,
+      "body": 375,
+      "headerCount": 1,
+      "headerHeight": 116,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": false
+        },
+        {
+          "label": "Global search (mobile)",
+          "id": "mobile-global-search",
+          "visible": true
+        }
+      ],
+      "headings": ["The package manager for AI agents"],
+      "loading": false,
+      "smallRenderedProse": [
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Minimal AgentPM Harness starter that installs one published Agent package and runs it through the reference Harness TUI or headless CLI."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "AgentPM Harness starter that hosts a local embedding provider for the published AgentPM docs Knowledge package."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "AgentPM Harness starter showing Harness-managed MCP exports and scoped runtime MCP imports in one workspace."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "AgentPM Harness lab for process-hosted model, embedding, KnowledgeRuntime, and MemoryRuntime providers."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Python SDK starter for a local triage worker that combines a published AgentPM agent with one extra direct tool."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Python SDK starter that runs AgentPM Harness through a hosted model, Hook, and approval controller."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Node SDK starter that runs AgentPM Harness through a hosted model, Hook, and approval controller."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Multi-agent workspace starter that combines one published agent root, a support loop, support knowledge, support memory, one published support instruction profile, and local generated agent manifests."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Summarize long text to a concise abstract."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Read and update GitHub issues using a compact, agent-friendly action surface."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Translate text into a target language using LLM."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Resize an image from a URL. Returns base64 JPEG."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Apply deterministic transformation operations to JSON objects and arrays."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Procedural guidance for reviewing issue queues, identifying priority, and drafting follow-through."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Workflow guidance for turning operational findings into concise Slack updates."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Operational handoff checklist for incident updates, shift changes, and follow-through tracking."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Multi-step workflow guidance for gathering sources and producing a concise research brief."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Small vector-mode maintainer guide for issue triage, labeling, and review-comment drafting workflows."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Prepared vector-mode retrieval corpus built from the public AgentPM v0.1 docs set."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Multi-file support response handbook for direct context loading across drafting, escalation, and customer messaging workflows."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Workflow-oriented Memory Blueprint for maintainer preferences, active work threads, and follow-up notes across repository review sessions."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Simple support-facing Memory Blueprint for one durable customer state document with light lifecycle policy."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Flagship multi-space Memory Blueprint for durable conversation continuity across recent interactions, summaries, and saved notes."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable maintainer profile for concise repository triage, review guidance, and explicit approval-minded follow-through."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable incident-operations profile for calm status reporting, explicit risk framing, and structured handoff communication."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable support-response profile for calm, direct customer communication and explicit next-step handling."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable maintainer-review loop for inspecting issues, drafting follow-up comments, and deciding whether to resolve, revise, or hand off."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable ReAct loop for reasoning over context, taking actions, reflecting on results, and iterating until completion or handoff."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable incident-response loop for assess, execute, review, and revision-driven operational follow-through."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Portable support orchestration loop for triage, response drafting, and escalation handoff decisions."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Interactive GitHub maintainer copilot with explicit approval gates for write actions, packaged maintainer-review orchestration, workflow continuity, and a durable maintainer behavior profile."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Operations assistant for incident assessment, execution, and review workflows, with packaged continuity memory, incident-response orchestration, and durable incident-operator communication style."
+        },
+        {
+          "tag": "P",
+          "size": "12px",
+          "text": "Research assistant for crawling public sources, extracting structured content, and producing concise summaries."
+        }
+      ],
+      "canonical": "https://agentpackagemanager.com/"
+    }
+  ]
+}

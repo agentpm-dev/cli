@@ -1,0 +1,135 @@
+{
+  "status": "pass",
+  "checkedAt": "2026-11-26T18:03:13.779Z",
+  "scope": "Actual local app, isolated anonymous Chrome, native input events; only GET/HEAD allowed",
+  "blockedMethods": [
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST"
+  ],
+  "results": [
+    {
+      "page": "home",
+      "width": 1440,
+      "landmarks": {
+        "banner": 1,
+        "main": 1,
+        "contentinfo": 1
+      },
+      "shortcuts": "Cmd K, Ctrl K and slash passed",
+      "menu": null,
+      "headerCount": 1,
+      "navDisplay": "flex",
+      "gridSize": "56px 56px, 56px 56px",
+      "gridImage": "linear-gradient(to right, rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px), linear-gradient(rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px)",
+      "mask": "linear-gradient(rgb(0, 0, 0) 0%, rgba(0, 0, 0, 0) 80%)",
+      "washes": "radial-gradient(1200px 520px at 18% -14%, rgba(56, 189, 248, 0.13), rgba(0, 0, 0, 0) 60%), radial-gradient(900px 440px at 84% -8%, rgba(217, 70, 239, 0.1), rgba(0, 0, 0, 0) 58%), linear-gradient(rgba(30, 41, 59, 0.6) 0%, rgba(2, 6, 23, 0) 82%)",
+      "reducedMotion": "0s",
+      "bandLeft": 0,
+      "bandWidth": 1425,
+      "canvasWidth": 1425,
+      "body": 1425,
+      "viewport": 1440
+    },
+    {
+      "page": "home",
+      "width": 768,
+      "landmarks": {
+        "banner": 1,
+        "main": 1,
+        "contentinfo": 1
+      },
+      "shortcuts": "Cmd K, Ctrl K and slash passed",
+      "menu": "native click, Escape and Tab order passed",
+      "headerCount": 1,
+      "navDisplay": "none",
+      "gridSize": "56px 56px, 56px 56px",
+      "gridImage": "linear-gradient(to right, rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px), linear-gradient(rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px)",
+      "mask": "linear-gradient(rgb(0, 0, 0) 0%, rgba(0, 0, 0, 0) 80%)",
+      "washes": "radial-gradient(1200px 520px at 18% -14%, rgba(56, 189, 248, 0.13), rgba(0, 0, 0, 0) 60%), radial-gradient(900px 440px at 84% -8%, rgba(217, 70, 239, 0.1), rgba(0, 0, 0, 0) 58%), linear-gradient(rgba(30, 41, 59, 0.6) 0%, rgba(2, 6, 23, 0) 82%)",
+      "reducedMotion": "0s",
+      "bandLeft": 0,
+      "bandWidth": 753,
+      "canvasWidth": 753,
+      "body": 753,
+      "viewport": 768
+    },
+    {
+      "page": "home",
+      "width": 390,
+      "landmarks": {
+        "banner": 1,
+        "main": 1,
+        "contentinfo": 1
+      },
+      "shortcuts": "Cmd K, Ctrl K and slash passed",
+      "menu": "native click, Escape and Tab order passed",
+      "headerCount": 1,
+      "navDisplay": "none",
+      "gridSize": "56px 56px, 56px 56px",
+      "gridImage": "linear-gradient(to right, rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px), linear-gradient(rgba(148, 163, 184, 0.086) 1px, rgba(0, 0, 0, 0) 1px)",
+      "mask": "linear-gradient(rgb(0, 0, 0) 0%, rgba(0, 0, 0, 0) 80%)",
+      "washes": "radial-gradient(1200px 520px at 18% -14%, rgba(56, 189, 248, 0.13), rgba(0, 0, 0, 0) 60%), radial-gradient(900px 440px at 84% -8%, rgba(217, 70, 239, 0.1), rgba(0, 0, 0, 0) 58%), linear-gradient(rgba(30, 41, 59, 0.6) 0%, rgba(2, 6, 23, 0) 82%)",
+      "reducedMotion": "0s",
+      "bandLeft": 0,
+      "bandWidth": 375,
+      "canvasWidth": 375,
+      "body": 375,
+      "viewport": 390
+    },
+    {
+      "path": "/docs/latest/getting-started/introduction",
+      "headerSearch": true,
+      "canonical": "https://agentpackagemanager.com/docs/v0.1/getting-started/introduction",
+      "robots": "index, follow"
+    },
+    {
+      "path": "/signIn",
+      "headerSearch": true,
+      "robots": "noindex, nofollow"
+    },
+    {
+      "path": "/activate",
+      "headerSearch": true,
+      "robots": "noindex, nofollow"
+    },
+    {
+      "path": "/standards/agentpm/1.0.0",
+      "headerSearch": true,
+      "canonical": "https://agentpackagemanager.com/standards/agentpm/1.0.0",
+      "robots": "index, follow"
+    },
+    {
+      "page": "explore",
+      "actualSubmitUrl": "http://localhost:3000/explore?q=after&kind=tools&kind=skills&runtime=python&sort=Trending",
+      "search": "pass",
+      "headerSearch": false
+    }
+  ]
+}

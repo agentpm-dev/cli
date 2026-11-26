@@ -1,0 +1,233 @@
+{
+  "status": "captured",
+  "scope": "Real primitive SSR fixtures and retained pre-change local APDS HTML; current utility CSS, no hydration or API calls; fresh isolated profile; non-GET/HEAD requests blocked; no publishing or account actions",
+  "capturedAt": "2026-11-26T17:51:42.690Z",
+  "blockedMethods": [],
+  "results": [
+    {
+      "page": "anonymous-compact",
+      "requestedUrl": "file:///private/tmp/m8b1-primitives/anonymous-compact.html",
+      "width": 1440,
+      "screenshot": "anonymous-compact-1440.png",
+      "url": "file:///private/tmp/m8b1-primitives/anonymous-compact.html",
+      "title": "Local M8B.1 layout fixture",
+      "viewport": 1440,
+      "body": 1440,
+      "headerCount": 1,
+      "headerHeight": 67,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": true
+        }
+      ],
+      "headings": ["Shared shell primitives"],
+      "loading": false,
+      "smallRenderedProse": []
+    },
+    {
+      "page": "anonymous-compact",
+      "requestedUrl": "file:///private/tmp/m8b1-primitives/anonymous-compact.html",
+      "width": 768,
+      "screenshot": "anonymous-compact-768.png",
+      "url": "file:///private/tmp/m8b1-primitives/anonymous-compact.html",
+      "title": "Local M8B.1 layout fixture",
+      "viewport": 768,
+      "body": 753,
+      "headerCount": 1,
+      "headerHeight": 117,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": true
+        }
+      ],
+      "headings": ["Shared shell primitives"],
+      "loading": false,
+      "smallRenderedProse": []
+    },
+    {
+      "page": "anonymous-compact",
+      "requestedUrl": "file:///private/tmp/m8b1-primitives/anonymous-compact.html",
+      "width": 390,
+      "screenshot": "anonymous-compact-390.png",
+      "url": "file:///private/tmp/m8b1-primitives/anonymous-compact.html",
+      "title": "Local M8B.1 layout fixture",
+      "viewport": 390,
+      "body": 375,
+      "headerCount": 1,
+      "headerHeight": 117,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": true
+        }
+      ],
+      "headings": ["Shared shell primitives"],
+      "loading": false,
+      "smallRenderedProse": []
+    },
+    {
+      "page": "authenticated-full",
+      "requestedUrl": "file:///private/tmp/m8b1-primitives/authenticated-full.html",
+      "width": 1440,
+      "screenshot": "authenticated-full-1440.png",
+      "url": "file:///private/tmp/m8b1-primitives/authenticated-full.html",
+      "title": "Local M8B.1 layout fixture",
+      "viewport": 1440,
+      "body": 1440,
+      "headerCount": 1,
+      "headerHeight": 67,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": true
+        }
+      ],
+      "headings": ["Shared shell primitives"],
+      "loading": false,
+      "smallRenderedProse": []
+    },
+    {
+      "page": "authenticated-full",
+      "requestedUrl": "file:///private/tmp/m8b1-primitives/authenticated-full.html",
+      "width": 768,
+      "screenshot": "authenticated-full-768.png",
+      "url": "file:///private/tmp/m8b1-primitives/authenticated-full.html",
+      "title": "Local M8B.1 layout fixture",
+      "viewport": 768,
+      "body": 753,
+      "headerCount": 1,
+      "headerHeight": 117,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": true
+        }
+      ],
+      "headings": ["Shared shell primitives"],
+      "loading": false,
+      "smallRenderedProse": []
+    },
+    {
+      "page": "authenticated-full",
+      "requestedUrl": "file:///private/tmp/m8b1-primitives/authenticated-full.html",
+      "width": 390,
+      "screenshot": "authenticated-full-390.png",
+      "url": "file:///private/tmp/m8b1-primitives/authenticated-full.html",
+      "title": "Local M8B.1 layout fixture",
+      "viewport": 390,
+      "body": 375,
+      "headerCount": 1,
+      "headerHeight": 117,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": true
+        }
+      ],
+      "headings": ["Shared shell primitives"],
+      "loading": false,
+      "smallRenderedProse": []
+    },
+    {
+      "page": "apds-before",
+      "requestedUrl": "file:///private/tmp/m8b1-primitives/apds-before.html",
+      "width": 1440,
+      "screenshot": "apds-before-1440.png",
+      "url": "file:///private/tmp/m8b1-primitives/apds-before.html",
+      "title": "APDS 1.0.0 — Agent Package Definition Standard · AgentPM™",
+      "viewport": 1440,
+      "body": 1425,
+      "headerCount": 1,
+      "headerHeight": 116,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": false
+        },
+        {
+          "label": "Global search (mobile)",
+          "id": "mobile-global-search",
+          "visible": true
+        }
+      ],
+      "headings": ["AgentPM APDS 1.0.0"],
+      "loading": false,
+      "smallRenderedProse": [],
+      "canonical": "https://agentpackagemanager.com/standards/agentpm/1.0.0"
+    },
+    {
+      "page": "apds-before",
+      "requestedUrl": "file:///private/tmp/m8b1-primitives/apds-before.html",
+      "width": 768,
+      "screenshot": "apds-before-768.png",
+      "url": "file:///private/tmp/m8b1-primitives/apds-before.html",
+      "title": "APDS 1.0.0 — Agent Package Definition Standard · AgentPM™",
+      "viewport": 768,
+      "body": 753,
+      "headerCount": 1,
+      "headerHeight": 116,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": false
+        },
+        {
+          "label": "Global search (mobile)",
+          "id": "mobile-global-search",
+          "visible": true
+        }
+      ],
+      "headings": ["AgentPM APDS 1.0.0"],
+      "loading": false,
+      "smallRenderedProse": [],
+      "canonical": "https://agentpackagemanager.com/standards/agentpm/1.0.0"
+    },
+    {
+      "page": "apds-before",
+      "requestedUrl": "file:///private/tmp/m8b1-primitives/apds-before.html",
+      "width": 390,
+      "screenshot": "apds-before-390.png",
+      "url": "file:///private/tmp/m8b1-primitives/apds-before.html",
+      "title": "APDS 1.0.0 — Agent Package Definition Standard · AgentPM™",
+      "viewport": 390,
+      "body": 375,
+      "headerCount": 1,
+      "headerHeight": 116,
+      "fontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "searchInputs": [
+        {
+          "label": "Global search",
+          "id": "global-search",
+          "visible": false
+        },
+        {
+          "label": "Global search (mobile)",
+          "id": "mobile-global-search",
+          "visible": true
+        }
+      ],
+      "headings": ["AgentPM APDS 1.0.0"],
+      "loading": false,
+      "smallRenderedProse": [],
+      "canonical": "https://agentpackagemanager.com/standards/agentpm/1.0.0"
+    }
+  ]
+}
