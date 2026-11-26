@@ -14,7 +14,7 @@
   "browser-checks/report.json": "fd50a92f2995cc45cb3dd6e85892abce4d09324b7fddd134d3055b45f9595181",
   "contrast.json": "aaf11eb367e58609d14fd71ddf6b8a0545af356230413851ae695e6aee1bc583",
   "implementation-first-pass.json": "6659775633ec5a80ef52bd697bcb1dddeff9d52c382ac6a185e64aec82ff797f",
-  "implementation-provenance.json": "ded0c2a242443e8dbc5102e8e9eb72ff761d8c94af5ed4ffed78f276e475dcc0",
+  "implementation-provenance.json": "19fec736ea7ea0e1107d3e41621a19429138479da6ed06c2a7de277ec2176166",
   "local-after/explore-1440.png": "f3ce8f30032464eb44e473ee5523830bccc4641326cc1a35a003a08f72e44cbf",
   "local-after/explore-390.png": "970bed2376f5fdaad983b11593596ba7f9a1c1bcc452c37d2b14b9e2bcfbfee0",
   "local-after/explore-768.png": "f204a84b89b124983eab6586f6506f5999fb05e97b6c26b04781d1bf4202ee9f",
@@ -66,6 +66,6 @@
   "prose-dispositions.json": "038fc805e53062ee5eb15c8a27687132584bec8b7d643fd869129a3c108d9e72",
   "provenance.json": "440478b4228ba60fd4919d433c248ebf12c59273df47c94f6a7b147dc83ae112",
   "source-after.json": "b5f306f19c688d9db12d83c901e73ed1f8b6b762cae4805490c16d72dd53e7ee",
-  "summary.json": "64a9b4dac8cbefd1a6b7ad1ff78d5a3f1e22920f2825936f3bb74337a80eec89",
+  "summary.json": "f28318d42f8262af73f81903b5d0299f9eecad75764f783cbb588987b7a970b8",
   "web-tests.txt": "01c73885eb4814096dde50b8d02aa35cd88708cb4e945cd4f6393c3d31c53710"
 }

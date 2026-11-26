@@ -1,5 +1,5 @@
 {
-  "status": "local_builder_verified_review_pending",
+  "status": "local_builder_verified_review_and_ci_passed",
   "owner_approval": "Zack: Approved, 2026-11-26, before implementation; explicit D21-07 correction incorporated",
   "frontend_source_sha256": {
     "scripts/check-shell-browser.mjs": "f16e47d0d593965384eafbdac600d17ef8b24a727cddbdfb2bcb9fdafd1d2793",
@@ -69,8 +69,8 @@
     "tailwind.config.ts": "01a9b0742c1f2bd004c9fe0136232a115d83903f8108ba593742a60b343c9547"
   },
   "docs_sha256": "a5b89f76943bcd44c03b9629941027392659e0415282608f426b0513f5eb5c8b",
-  "hosted_ci_complete": false,
-  "independent_review_complete": false,
+  "hosted_ci_complete": true,
+  "independent_review_complete": true,
   "production_deployed": false,
   "live_authenticated_session_tested": false,
   "revisions": {
@@ -81,5 +81,7 @@
   "phase": "final owner-amended implementation",
   "owner_amendments": "See approved D21 owner amendments: viewport-wide landing/detail bands, terminal chrome, full centered footer with horizontal groups and one SDKs link, integrated search, dedicated Explore field, restored two-row mobile navigation/typography, white brand.",
   "browser_report": "owner-corrections/report.json",
-  "review_corrections": "Responsive header-height defaults and native/hydrated hash placement; explicit header telemetry and restored empty-category browsing. Independent review remains pending."
+  "review_corrections": "Responsive header-height defaults and native/hydrated hash placement; explicit header telemetry and restored empty-category browsing. Independent review and hosted CI passed, as confirmed by Zack.",
+  "independent_review_evidence": "Zack confirmed Claude review complete with no remaining findings, 2026-11-26.",
+  "hosted_ci_evidence": "Zack confirmed all CI passed, 2026-11-26."
 }

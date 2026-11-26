@@ -2,7 +2,7 @@
 
 Scope: M8B.1 only. Zack approved the [D21 adoption sheet](m8b1-d21-adoption.md) on 2026-11-26 before implementation, then explicitly corrected D21-07 to retain the 56px masked grid at .085 and sky .13 / fuchsia .10 washes. That correction is incorporated in the sheet and implementation.
 
-Implementation is ready for independent review. Hosted CI, production deployment and a real signed-in operator session are not claimed by this local record.
+Zack confirmed independent Claude review is complete with no remaining findings on 2026-11-26. Zack confirmed all hosted CI passed on 2026-11-26. CI completion is operator-reported; production deployment and a real signed-in operator session are not claimed by this local record.
 
 ## Changes and boundaries
 
@@ -87,7 +87,7 @@ This optional check uses installed Chrome, an isolated profile and no browser de
 
 The root Header/canvas/full Footer applies to every route. The [signed adoption order](m8b1-d21-adoption.md#route-adoption-order) names all route families: APDS content in M8B.1; Agent detail M9; other details and Health M10; featured inputs M11; homepage M12; Explore and namespaces M13; positioning/pricing/nav copy M14; docs content M17. Existing specialized page bodies retain their layout until those milestones; all eight valid detail identity headers adopt shared background decoration now. M13A builds a reusable row for Explore; M13B decides namespace density and reuses that row if adopted. They share the same global shell throughout.
 
-Remaining delivery gates: independent Claude review and hosted CI on the final revisions. The literal production after-capture task remains unchecked until Release Band 3 deployment; local after views are already retained. Production deployment and signed-in operator observation remain external verification, not local test claims. This milestone does not approve later page migrations or change published APDS material.
+Independent Claude review has passed, as reported by Zack on 2026-11-26. Zack confirmed all hosted CI passed on 2026-11-26. M8B.1 implementation, review and CI are complete. The literal production after-capture task remains unchecked until Release Band 3 deployment; local after views are already retained. Production deployment and signed-in operator observation remain external verification, not local test claims. This milestone does not approve later page migrations or change published APDS material.
 
 ## Review corrections (2026-11-26)
 

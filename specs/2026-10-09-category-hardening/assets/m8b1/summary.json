@@ -26,8 +26,10 @@
   "small_paragraphs_after": 0,
   "small_candidates_before": 175,
   "small_candidates_after": 132,
-  "hosted_ci_complete": false,
-  "independent_review_complete": false,
+  "hosted_ci_complete": true,
+  "independent_review_complete": true,
   "production_after_capture_complete": false,
-  "live_authenticated_session_tested": false
+  "live_authenticated_session_tested": false,
+  "independent_review_evidence": "Zack confirmed Claude review complete with no remaining findings, 2026-11-26.",
+  "hosted_ci_evidence": "Zack confirmed all CI passed, 2026-11-26."
 }
