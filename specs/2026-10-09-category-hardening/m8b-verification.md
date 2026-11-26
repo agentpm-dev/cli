@@ -2,8 +2,8 @@
 
 Builder implementation and local verification are complete. User confirmed
 independent Claude review passed with no remaining findings on 2026-11-25.
-Hosted CI remains pending before milestone completion. No production deployment
-is claimed.
+User confirmed all hosted CI passed. **M8B is complete.** No production
+deployment is claimed.
 
 ## Delivered scope and source contracts
 
@@ -172,6 +172,6 @@ offset integration and page adoption are M9/M10; this slice supplies focusable
 outcome destinations and an anchor-offset hook without building a competing shell.
 No page's search, auth, metadata, canonical rules, tabs or README were redesigned.
 
-There is no known failing scoped automated check. Full end-to-end route adoption,
-off-site distribution and the hosted-CI gate remain
-explicitly outstanding; they must not be inferred from this builder record.
+All M8B implementation, independent review and hosted-CI gates are satisfied.
+Full end-to-end route adoption and off-site distribution remain assigned to later
+milestones; they must not be inferred from M8B completion.

@@ -6,8 +6,8 @@ graph; inherited Tools remain under their parent Skill, and Loop is singular.
 The reusable card keeps an independently useful pinned install command without
 claiming local readiness. Builder evidence includes actual local DTOs and explicit
 synthetic density cases. User confirmed Claude review passed with no remaining
-findings on 2026-11-25. Hosted CI and deployment remain pending; do not announce
-the new cards as a shipped website.
+findings on 2026-11-25, and all hosted CI passed. M8B is complete. Deployment and
+page adoption remain later work; do not announce the new cards as a shipped website.
 
 M1A is an internal contract audit; no standalone announcement is recommended.
 

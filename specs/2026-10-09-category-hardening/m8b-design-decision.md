@@ -1,7 +1,7 @@
 # M8B — D09 Card and composition primitives
 
 Builder selection: 2026-11-25. User confirmed independent Claude review passed with no remaining findings on
-2026-11-25; hosted CI remains pending.
+2026-11-25. User also confirmed all hosted CI passed; M8B is complete.
 
 ## Design authority and inventory
 
