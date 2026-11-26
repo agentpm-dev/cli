@@ -1867,6 +1867,31 @@ because the script was scaffolding. The required behaviors:
   relationships, **exact resolved versions**, identities and links; preserve detailed Bindings, Examples,
   author README and Security inspection. If no Loop or few/no Components, show an honest useful
   empty/limited state rather than implying error or inventing phases.
+- **Composition renders one node per Component *kind*, not one per package, with a `+N` badge revealing
+  the rest.** The approved Agent reference cannot demonstrate this, because `@zack/devwork-copilot`
+  happens to hold exactly one package of each kind and so only ever shows the sparsest density;
+  `assets/mocks/composition-density.html` is the only reference that shows it, at three real densities,
+  and remains **current for this requirement**. The handoff requires the behavior without showing it:
+  *"avoid an unreadable one-node-per-package diagram for Agents with dozens of Tools, but don't hide
+  exact version links behind decorative shapes."* The rules:
+  - **The shape is the story.** "An Agent Package composes Skills, Tools, Knowledge, Memory, Profiles
+    and a Loop" is the positioning claim; a node per package buries it under names as soon as the graph
+    widens.
+  - **The graph stops growing.** Six nodes at most whatever the package contains, so a 30-Tool package
+    renders at the same size as a 1-Tool package.
+  - **Absent kinds vanish** — no ghosted node and no zero. An Agent with no Knowledge has no Knowledge
+    node.
+  - **The Loop never carries a `+N`**, because it is a single binding in the manifest rather than an
+    array. The UI shape must match the data shape.
+  - **Inherited stays separate**: transitive dependencies group under the parent that pulled them in,
+    which is the only thing that makes the edge meaningful once there is more than one.
+  - Expanding reveals exact package identities, selected versions and individual links without changing
+    the graph's shape.
+  - Open and worth settling during M9A rather than at build time: which package is the visible one
+    (manifest order favours authored intent, alphabetical is more predictable); whether very large
+    groups need a cap inside the expansion plus a link to a full view, since `+7` expands to a readable
+    list but `+40` does not; whether the count pill reads as expandable; and whether deep links into
+    Composition must open a specific package already expanded and scrolled.
 - Where a Loop exists, render meaningful phases, ordered/graph transitions, scoped capabilities and access
   restrictions using the **actual resolved graph**. Avoid falsely equating a simple three-column
   visualization with an always-linear Loop; support branches, cycles, terminal outcomes or offer readable
@@ -1945,7 +1970,9 @@ because the script was scaffolding. The required behaviors:
   Template stack/use case. Do not invent metadata; use available fields or omit gracefully.
 - **Search results are full-width rows, not a 2-up card grid.** Operator-confirmed 2026-11-23, after
   comparing both against the same real 52-result response (`assets/mocks/explore-rows.html` chosen;
-  `assets/mocks/explore-page.html` retained as the rejected alternative). The reasons are structural, not
+  `assets/mocks/explore-page.html` retained as the rejected alternative). Both are now **historical**:
+  the decision was carried into the approved `assets/mocks/chatpgt-updates/02-explore-approved.html`,
+  which is what implementation follows. The reasons are structural, not
   stylistic, and should survive restyling: names occupy a **single scan column** instead of alternating
   between two; install counts and dates sit in a **true right-aligned grid track**, so they compare
   without the eye zigzagging and without the flex/`mt-auto` gymnastics a 2-up grid needs to align them;
@@ -2662,7 +2689,7 @@ altering an AGREED requirement. The complete list is retained so none are silent
 | **D06** | Lockfile format | **Retain Stage 1 `agent.lock` v4**, carry standard+explicit/inferred provenance with forward-version safeguards. | [Selected 2026-11-15](d06-lockfile-compatibility.md): extended v4 plus minimum-CLI rollout; strict CLI rejection and SDK 0.1.17 field/version asymmetry verified. Concrete reader/writer and migration evidence remain M5A. |
 | **D07** | Versioned standard web route | **`/standards/agentpm/1.0.0`**, pinned catalog and immutable content. | [M8A builder selection — 2026-11-25](m8a-verification.md): committed trusted bundle, checksum gate before deployment build, static reference with exact-version source links; no author-URI fetch. Current shared shell now; migration explicitly assigned to M8B.1. User confirmed independent Claude review complete with no new findings on 2026-11-25. |
 | **D08** | Homepage design | Problem/value → real Agent Package composition → how management works → components/templates → pathways, layered existing brand. | Layout/copy/animation details; mockups are conceptual and existing design tokens authoritative. |
-| **D09** | Agent Package Card visual architecture | Shared data model and responsive card variants for hero/Explore/detail/OG, real metadata only. | One component vs composable primitives, based on existing Stage 1 shell/OG architecture. |
+| **D09** | Agent Package Card visual architecture | Shared serializable selected-release model and composable React primitives; full/compact cards, fixed direct-kind graph with `+N`, parent-grouped inheritance, pinned install-command floor. | [M8B builder decision — 2026-11-25](m8b-design-decision.md), with [verification](m8b-verification.md): existing panels/identities/tones and static OG budget retained; no second shell or image service. User confirmed Claude approval with no remaining findings on 2026-11-25; hosted CI pending. |
 | **D10** | Featured package selection | Lightweight **data-driven** curated configuration or Registry-backed curation; no fixed IDs in JSX, fallback on unavailability. | Choose source/edit mechanism; compare reuse of Stage 1 namespace pins vs simple config; verify permissions and ordering. |
 | **D11** | Explore no-query state | Curated/featured + measured Trending sections, clear Component/Template paths, retain query results relevance unchanged. | Section/layout implementation, no new algorithm or invisible ranking changes. |
 | **D12** | Package Health representation | Universal evidence record + kind-specific extensions; concise release summary and deeper detail, reuse Security. | Data type, API envelope, tab/section placement; demonstrate support and correct statuses for all eight kinds. |

@@ -1,5 +1,14 @@
 # Content handoff
 
+M8B adds a useful future illustration: Agent composition remains six direct kind
+nodes at most even with dozens of Tools. Exact selected versions expand below the
+graph; inherited Tools remain under their parent Skill, and Loop is singular.
+The reusable card keeps an independently useful pinned install command without
+claiming local readiness. Builder evidence includes actual local DTOs and explicit
+synthetic density cases. User confirmed Claude review passed with no remaining
+findings on 2026-11-25. Hosted CI and deployment remain pending; do not announce
+the new cards as a shipped website.
+
 M1A is an internal contract audit; no standalone announcement is recommended.
 
 The [inventory](m1a-contract-inventory.md) can support a later explanation of how authored composition, immutable definition standards, provenance and Runner readiness differ. Wait for the corresponding implementation and independent review before presenting those guarantees as shipped. The current audit does not establish APDS v1.0.0 or prove portability to other Runners.

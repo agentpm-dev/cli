@@ -1,0 +1,26 @@
+
+ RUN  v2.1.9 /Users/zackhine/projects/agentpm-project/agentpm-web
+
+ ❯ src/lib/package-presentation.test.ts (48 tests | 1 failed) 247ms
+   × a shallow graph at the 256-node/4096-edge limits has bounded reachability work 222ms
+     → expected 1052928 to be less than or equal to 12288
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/package-presentation.test.ts > a shallow graph at the 256-node/4096-edge limits has bounded reachability work
+AssertionError: expected 1052928 to be less than or equal to 12288
+ ❯ src/lib/package-presentation.test.ts:189:19
+    187|     spy.mockRestore();
+    188|   }
+    189|   expect(lookups).toBeLessThanOrEqual(3 * edges.length);
+       |                   ^
+    190| });
+    191| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 47 passed (48)
+   Start at  18:38:07
+   Duration  854ms (transform 83ms, setup 40ms, collect 123ms, tests 247ms, environment 175ms, prepare 27ms)
+

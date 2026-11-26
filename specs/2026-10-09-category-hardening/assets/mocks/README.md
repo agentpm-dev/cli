@@ -1,26 +1,53 @@
-# Layout mocks (dark shell)
+# Layout mocks (dark shell) — SUPERSEDED
 
-Working mocks for the Stage 2 web redesign, built as **self-contained HTML** rather than
-images so they can be pasted into another model, edited, and diffed. They use the real
-Tailwind class names from `agentpm-web`, so changes made here translate almost directly
-into implementation.
+> **These files are historical. They are not the Stage 2 design references.**
+>
+> The approved references are the four files in **`chatpgt-updates/`**, reviewed and approved
+> **2026-11-25**, with every decision recorded in
+> `chatpgt-updates/AgentPM_Stage2_Web_Design_Decisions_Handoff.md`:
+>
+> | Approved reference | Covers |
+> | --- | --- |
+> | `01-landing-approved.html` | Landing / homepage |
+> | `02-explore-approved.html` | Explore, search and no-query browsing |
+> | `03-agent-package-detail-approved.html` | Agent Package detail, incl. Health & Security and Bindings |
+> | `04-tool-detail-approved.html` | Tool detail |
+>
+> Build from those. **Do not build from the files in this directory**, and do not treat anything
+> below as a current decision unless the handoff or `spec.md` repeats it.
+>
+> **One exception: `composition-density.html` is still current.** The approved Agent reference
+> cannot show Composition at more than the sparsest density, because `@zack/devwork-copilot`
+> holds exactly one package of each kind — it renders no `+N` badge at all. The handoff requires
+> the behavior ("avoid an unreadable one-node-per-package diagram for Agents with dozens of
+> Tools") without demonstrating it, and this file is the only reference that does, at three real
+> densities. The rules are now also written into `spec.md` §10 so they survive independently.
+
+## Why these are kept
+
+They are the working set that produced several decisions the approved references inherit, and the
+handoff relies on that provenance rather than restating it. Specifically, the rows-over-cards
+decision was made here by direct comparison — `explore-rows.html` against `explore-page.html` on the
+same real 52-result response — and `02-explore-approved.html` carries it forward. Keeping the pair
+means that comparison is not re-run.
+
+Decisions that originated here and **still hold** (because the approved references adopted them) are
+restated in `spec.md` §9.1/§13 and the relevant `tasks.md` milestones; those are authoritative, not
+this file. Decisions below that the approved references **changed** — most notably the no-query
+Explore state, which switched from a card gallery to the same rows as search — are wrong here and
+right in the handoff.
 
 | File | Covers | Status |
 | ---- | ------ | ------ |
-| `landing-page.html` | Landing / home | Direction settled |
-| `detail-page.html` | Package detail, kind `Agent` | Direction settled |
-| `detail-page-tool.html` | Package detail, kind `Tool` | Direction settled |
-| `explore-rows.html` | **Explore / search results — the chosen treatment** | Direction settled |
-| `explore-page.html` | Explore with 2-up result cards | **Rejected alternative, kept for comparison** |
-| `composition-density.html` | Composition panel at three dependency densities | Resolved, folded into `detail-page.html` |
-| `health-security.html` | Health & Security tab vs. the Overview Evidence section | Resolved, folded into `detail-page.html` |
+| `landing-page.html` | Landing / home | Superseded by `01-landing-approved.html` |
+| `explore-rows.html` | Explore, row results | Superseded by `02-explore-approved.html` |
+| `explore-page.html` | Explore, 2-up cards | Rejected alternative, kept as the comparison |
+| `detail-page.html` | Agent detail | Superseded by `03-agent-package-detail-approved.html` |
+| `detail-page-tool.html` | Tool detail | Superseded by `04-tool-detail-approved.html` |
+| `composition-density.html` | Composition at three densities, `+N` overflow | **Current** — fills a gap the approved set does not cover |
+| `health-security.html` | Health & Security vs Overview Evidence | Resolved exploration |
 
-The two Explore files are the same page differing only in the result list, so they can be
-compared directly. **Rows won** (operator-confirmed 2026-11-23) and `spec.md` §9.1 and §13
-were amended to match — the old "2-up search result" card variant no longer applies. The
-card version is kept so the decision is not re-litigated, not because it is an option.
-
-The `-layered` PNGs are superseded for **direction** everywhere in this set.
+The `-layered` PNGs are superseded for **direction** by both sets.
 
 Open in any browser. Tailwind loads from CDN; everything else is inline.
 

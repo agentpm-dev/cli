@@ -45,7 +45,7 @@ The table below lets Codex and Claude find the relevant **named tests** without 
 | M7A — universal Health | T-HEALTH-01,03 | Missing signature/scan does not become verified |
 | M7B — kind-specific Health | T-HEALTH-02–05 | N/A per kind; private graph data hidden |
 | M8A — APDS web reference | T-DETAIL-04,06 | Source and standard separate; no remote arbitrary fetch |
-| M8B — shared visual primitives | T-DETAIL-01–03, T-WEB-07 | Nonlinear Loop and accessible alternate graph |
+| M8B — shared visual primitives | T-DETAIL-01–03, T-WEB-07 | [Builder evidence](m8b-verification.md): fixed kind nodes/`+N`, singleton Loop, parent-grouped inheritance, Loop reachability/nonlinear flow and responsive cards; Claude review passed; hosted CI pending. Live manual checks belong to M8B.1/M9/M10 after adoption. |
 | M8B.1 — global layout/shell | T-WEB-12 | Signed D21 list predates build; one shell only; Stage 1 search/SEO intact |
 | M9A — composition | T-DETAIL-01–02,05 | Direct vs transitive exact version; no-deps empty state |
 | M9B — phase/actions | T-DETAIL-02–04, T-PUB-09 (web guidance) | No unsupported Harness CTA or fabricated linear phase |
