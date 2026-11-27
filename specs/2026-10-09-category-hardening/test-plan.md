@@ -47,7 +47,7 @@ The table below lets Codex and Claude find the relevant **named tests** without 
 | M8A — APDS web reference | T-DETAIL-04,06 | Source and standard separate; no remote arbitrary fetch |
 | M8B — shared visual primitives | T-DETAIL-01–03, T-WEB-07 | [Builder evidence](m8b-verification.md): fixed kind nodes/`+N`, singleton Loop, parent-grouped inheritance, Loop reachability/nonlinear flow and responsive cards; Claude review and all hosted CI user-confirmed passed; M8B complete. Live manual checks belong to M8B.1/M9/M10 after adoption. |
 | M8B.1 — global layout/shell | T-WEB-12 | Signed D21 list predates build; one shell only; Stage 1 search/SEO intact |
-| M9A — composition | T-DETAIL-01–02,05 | Direct vs transitive exact version; no-deps empty state |
+| M9A — composition | T-DETAIL-01–02,05 | [Builder evidence](m9a-verification.md): exact direct/inherited graph, empty/legacy/private fallbacks, two docks and focused anchors, version/density browser matrix and first-paint regression. User confirmed Claude review passed with no other findings on 2026-11-26; hosted CI pending. |
 | M9B — phase/actions | T-DETAIL-02–04, T-PUB-09 (web guidance) | No unsupported Harness CTA or fabricated linear phase |
 | M10A — specialized details | T-DETAIL-05, T-HEALTH-05, T-PUB-09 (web guidance) | Existing Memory/Knowledge/Loop/Tool/Template tabs preserved |
 | M10B — Health UI | T-HEALTH-01–05 | Correct selected-release status, legacy/unknown/failed |

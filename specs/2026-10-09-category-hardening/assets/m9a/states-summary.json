@@ -1,0 +1,63 @@
+{
+  "scope": "Owner-requested M9A phase state, global/MCP, Runner/consumer-context, license and mobile corrections",
+  "checked_at_utc": "2026-11-27T04:20:45.756552+00:00",
+  "focused_checks": "pass",
+  "independent_review": "pending",
+  "hosted_ci": "pending",
+  "operator_acceptance": "Owner visual review complete, user-confirmed 2026-11-26",
+  "tests": {
+    "exit": 0,
+    "files": 5,
+    "tests": 105,
+    "log": "states-tests.log",
+    "scope": "Phase pill states/inheritance/Memory authority; Agent header commands/context/license; workflow fallback/global preservation; existing presentation guards"
+  },
+  "typecheck": {
+    "exit": 0,
+    "log": "states-typecheck.log"
+  },
+  "lint": {
+    "exit": 0,
+    "log": "states-lint.log"
+  },
+  "docs": {
+    "exit": 0,
+    "log": "states-docs.log"
+  },
+  "formatter": {
+    "exit": 0,
+    "log": "states-format.log"
+  },
+  "commands": {
+    "syntax_verified": "CLI source, current help and existing CLI docs",
+    "help": "harness-command-help.txt",
+    "run": "agentpm harness @owner/name@version",
+    "preflight": "agentpm harness @owner/name@version --json",
+    "runs_executed": 0,
+    "consumer_context": "Rendered beneath both command states when declared"
+  },
+  "license": {
+    "positive": "MIT text is visible inside the header badge group",
+    "negative": "Missing data renders no license pill",
+    "reported_local_subject": "bound-agent 0.1.0 has no license recorded"
+  },
+  "global_case": "global-bindings-followup.json",
+  "mobile": {
+    "report": "mobile-followup/report.json",
+    "width": 390,
+    "assertion": "Compact identity docks against both header rows at earliest real name/picker edge; APDS scopes stack; no body overflow"
+  },
+  "not_repeated": [
+    "Full production build",
+    "Full cross-version/fault/browser matrix"
+  ],
+  "production_registry_writes": 0,
+  "model_requests": 0,
+  "source_checksums": "states-source-checksums.json",
+  "M9B_remaining": "Minimum CLI/update and expanded model/provider/workspace/SDK onboarding, actionable Examples tab; basic Runner/preflight commands explicitly pulled into M9A by owner",
+  "M10B_remaining": "Full Health & Security detail, timestamps and per-artifact trust presentation",
+  "ready_for_independent_review": true,
+  "post_handoff_cosmetic_change": "Owner requested full-width terminal boxes only in outcome destination rows; approval destinations stay compact. Formatted; functional checks were not repeated for this cosmetic change.",
+  "record_status": "Historical; superseded by the full-suite typography re-review checkpoint",
+  "authoritative_current_record": "summary.json"
+}

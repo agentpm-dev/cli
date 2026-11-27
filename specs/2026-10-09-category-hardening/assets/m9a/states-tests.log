@@ -1,0 +1,14 @@
+
+ RUN  v2.1.9 /Users/zackhine/projects/agentpm-project/agentpm-web
+
+ ✓ src/lib/package-presentation.test.ts (48 tests) 45ms
+ ✓ src/components/packages/PhaseBindings.test.tsx (8 tests) 170ms
+ ✓ src/app/agents/[agentId]/[version]/layout.test.tsx (3 tests) 176ms
+ ✓ src/app/agents/[agentId]/[version]/overview/page.test.tsx (8 tests) 285ms
+ ✓ src/components/packages/PackagePrimitives.test.tsx (38 tests) 406ms
+
+ Test Files  5 passed (5)
+      Tests  105 passed (105)
+   Start at  21:19:43
+   Duration  1.55s (transform 465ms, setup 336ms, collect 1.40s, tests 1.08s, environment 2.05s, prepare 187ms)
+

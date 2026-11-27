@@ -1,0 +1,36 @@
+{
+  "status": "pass",
+  "checkedAt": "2026-11-27T02:16:27.367Z",
+  "scope": "Actual local app, isolated anonymous Chrome, native input events; only GET/HEAD allowed",
+  "blockedMethods": [
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST",
+    "POST"
+  ],
+  "results": [
+    {
+      "width": 1440,
+      "text": "Packages\n/\n@zack\n/\nm4a-20261118021301-3daef3-agent\n@zack/m4a-20261118021301-3daef3-agent\nv0.1.0\n\nLocal M4A publication check: agent\n\nInstall\nagentpm install @zack/m4a-20261118021301-3daef3-agent@0.1.0\nCopy\nLoad\nNode\nPython\nimport { loadAgent } from '@agentpm/sdk';\nconst agent = await loadAgent('@zack/m4a-20261118021301-3daef3-agent@0.1.0');\nCopy\n☆\n0 stars\nPackage definition\n\nAPDS declaration: agentpm / 1.0.0.\n\nA declaration is not a validation result. See APDS evaluation and separate security evidence for the selected release.\n\nView agent.json\nView APDS specification\nOverview\nBindings\nExamples\nReadme\nSecurity\nagent.json\n{\n  \"name\": \"m4a-20261118021301-3daef3-agent\",\n  \"version\": \"0.1.0\",\n  \"description\": \"Local M4A publication check: agent\",\n  \"tools\": [],\n  \"skills\": [],\n  \"knowledge\": [],\n  \"memory\": [],\n  \"profiles\": [],\n  \"examples\": [\n    {\n      \"title\": \"Example prompt\",\n      \"prompt\": \"Describe the user request this agent should handle.\"\n    }\n  ],\n  \"standard\": {\n    \"id\": \"agentpm\",\n    \"version\": \"1.0.0\"\n  }\n}\nTool dependencies\nThis agent does not declare any tool dependencies.\nSkill dependencies\nThis agent does not declare any skill dependencies.\nKnowledge dependencies\nThis agent does not declare any knowledge dependencies.\nMemory dependencies\nThis agent does not declare any memory dependencies.\nProfile dependencies\nThis agent does not declare any profile dependencies.\nLoop dependency\nThis agent does not declare a loop dependency.\nInstalls\n0\nAll time\nStars\n0\nUnstarred\nLatest stable\n1w ago\nv0.1.0\nMaintainer\nZ\nZack\n• Author",
+      "url": "http://localhost:3000/agents/239fbac6-2094-4bbe-997f-e196b23de091/v0.1.0/overview"
+    },
+    {
+      "width": 768,
+      "text": "Packages\n/\n@zack\n/\nm4a-20261118021301-3daef3-agent\n@zack/m4a-20261118021301-3daef3-agent\nv0.1.0\n\nLocal M4A publication check: agent\n\nInstall\nagentpm install @zack/m4a-20261118021301-3daef3-agent@0.1.0\nCopy\nLoad\nNode\nPython\nimport { loadAgent } from '@agentpm/sdk';\nconst agent = await loadAgent('@zack/m4a-20261118021301-3daef3-agent@0.1.0');\nCopy\n☆\n0 stars\nPackage definition\n\nAPDS declaration: agentpm / 1.0.0.\n\nA declaration is not a validation result. See APDS evaluation and separate security evidence for the selected release.\n\nView agent.json\nView APDS specification\nInstalls\n0\nAll time\nStars\n0\nUnstarred\nLatest stable\n1w ago\nv0.1.0\nOverview\nBindings\nExamples\nReadme\nSecurity\nagent.json\n{\n  \"name\": \"m4a-20261118021301-3daef3-agent\",\n  \"version\": \"0.1.0\",\n  \"description\": \"Local M4A publication check: agent\",\n  \"tools\": [],\n  \"skills\": [],\n  \"knowledge\": [],\n  \"memory\": [],\n  \"profiles\": [],\n  \"examples\": [\n    {\n      \"title\": \"Example prompt\",\n      \"prompt\": \"Describe the user request this agent should handle.\"\n    }\n  ],\n  \"standard\": {\n    \"id\": \"agentpm\",\n    \"version\": \"1.0.0\"\n  }\n}\nTool dependencies\nThis agent does not declare any tool dependencies.\nSkill dependencies\nThis agent does not declare any skill dependencies.\nKnowledge dependencies\nThis agent does not declare any knowledge dependencies.\nMemory dependencies\nThis agent does not declare any memory dependencies.\nProfile dependencies\nThis agent does not declare any profile dependencies.\nLoop dependency\nThis agent does not declare a loop dependency.\nMaintainer\nZ\nZack\n• Author",
+      "url": "http://localhost:3000/agents/239fbac6-2094-4bbe-997f-e196b23de091/v0.1.0/overview"
+    },
+    {
+      "width": 390,
+      "text": "Packages\n/\n@zack\n/\nm4a-20261118021301-3daef3-agent\n@zack/m4a-20261118021301-3daef3-agent\nv0.1.0\n\nLocal M4A publication check: agent\n\nInstall\nagentpm install @zack/m4a-20261118021301-3daef3-agent@0.1.0\nCopy\nLoad\nNode\nPython\nimport { loadAgent } from '@agentpm/sdk';\nconst agent = await loadAgent('@zack/m4a-20261118021301-3daef3-agent@0.1.0');\nCopy\n☆\n0 stars\nPackage definition\n\nAPDS declaration: agentpm / 1.0.0.\n\nA declaration is not a validation result. See APDS evaluation and separate security evidence for the selected release.\n\nView agent.json\nView APDS specification\nInstalls\n0\nAll time\nStars\n0\nUnstarred\nLatest stable\n1w ago\nv0.1.0\nOverview\nBindings\nExamples\nReadme\nSecurity\nagent.json\n{\n  \"name\": \"m4a-20261118021301-3daef3-agent\",\n  \"version\": \"0.1.0\",\n  \"description\": \"Local M4A publication check: agent\",\n  \"tools\": [],\n  \"skills\": [],\n  \"knowledge\": [],\n  \"memory\": [],\n  \"profiles\": [],\n  \"examples\": [\n    {\n      \"title\": \"Example prompt\",\n      \"prompt\": \"Describe the user request this agent should handle.\"\n    }\n  ],\n  \"standard\": {\n    \"id\": \"agentpm\",\n    \"version\": \"1.0.0\"\n  }\n}\nTool dependencies\nThis agent does not declare any tool dependencies.\nSkill dependencies\nThis agent does not declare any skill dependencies.\nKnowledge dependencies\nThis agent does not declare any knowledge dependencies.\nMemory dependencies\nThis agent does not declare any memory dependencies.\nProfile dependencies\nThis agent does not declare any profile dependencies.\nLoop dependency\nThis agent does not declare a loop dependency.\nMaintainer\nZ\nZack\n• Author",
+      "url": "http://localhost:3000/agents/239fbac6-2094-4bbe-997f-e196b23de091/v0.1.0/overview"
+    }
+  ]
+}

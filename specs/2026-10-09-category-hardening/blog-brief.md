@@ -1,5 +1,13 @@
 # Content handoff
 
+M9A adds a future visual explanation of a whole Agent Package: exact-version
+composition, Skill-inherited Tools, real Loop outcomes and separate portable
+definition versus Runner requirements. The diagram stays at six direct kind nodes
+with large groups disclosed inside their kind cards. Evidence and source remain inspectable; no
+local readiness or historical lock is inferred. Builder checks are complete;
+the user confirmed visual acceptance and independent Claude review passed on 2026-11-26; hosted CI remains pending. Do not announce
+this as deployed or imply that M9B’s remaining onboarding/action work is complete.
+
 M8B adds a useful future illustration: Agent composition remains six direct kind
 nodes at most even with dozens of Tools. Exact selected versions expand below the
 graph; inherited Tools remain under their parent Skill, and Loop is singular.

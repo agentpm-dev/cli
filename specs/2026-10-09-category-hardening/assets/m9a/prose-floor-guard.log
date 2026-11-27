@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/zackhine/projects/agentpm-project/agentpm-web
+
+ ✓ src/components/ShellReadability.test.tsx (2 tests) 128ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  21:28:08
+   Duration  1.20s (transform 31ms, setup 50ms, collect 408ms, tests 128ms, environment 276ms, prepare 35ms)
+

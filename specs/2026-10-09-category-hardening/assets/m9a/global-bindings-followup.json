@@ -1,0 +1,10 @@
+{
+  "local_subject": "@zack/bound-agent@0.1.0",
+  "phase_binding": "triage",
+  "selected_loop_phases": ["assess", "execute", "review"],
+  "specific_warning_visible": true,
+  "global_profile_retained_in_summary": true,
+  "mcp_empty_state_in_same_summary": true,
+  "old_generic_warning_removed": true,
+  "requests": "Local GET only; published records unchanged"
+}

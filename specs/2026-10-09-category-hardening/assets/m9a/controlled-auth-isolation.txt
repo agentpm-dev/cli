@@ -1,0 +1,15 @@
+from pathlib import Path
+import json
+root=Path('/private/tmp/m9a-build-path').read_text().strip(); root=Path(root)
+changes={
+ 'src/app/layout.tsx':[("import { ClerkProvider } from '@clerk/nextjs';",''),("import AnalyticsSession from '@/components/AnalyticsSession';",''),('<ClerkProvider>','<>'),('</ClerkProvider>','</>'),('          <AnalyticsSession />','')],
+ 'src/components/ui/StarRail.tsx':[("import { useClerk } from '@clerk/nextjs';",''),('  const { signOut } = useClerk();','  const signOut = async (_options: { redirectUrl: string }) => {};')]
+}
+for relative,replacements in changes.items():
+ path=root/relative; text=path.read_text()
+ for before,after in replacements:
+  assert text.count(before)==1,(relative,before)
+  text=text.replace(before,after)
+ path.write_text(text)
+(root/'src/middleware.ts').write_text("import { NextResponse } from 'next/server';\nexport default function middleware() { return NextResponse.next(); }\n")
+print('Isolated authentication in task-only fixture build; repository auth source unchanged.')

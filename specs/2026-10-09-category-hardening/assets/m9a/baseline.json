@@ -1,0 +1,28 @@
+{
+  "scope": "M9A source baseline before implementation",
+  "revisions": {
+    "agentpm": "a37d3073d06bbe07e9a1d6898128c4e93b7dcbab",
+    "agentpm-web": "afdcb8808e39157c347cb59c1cabf0f1a8fb0507",
+    "agentpm-api": "555267acfd116d99f0842be5cd54ab46e8e92feb"
+  },
+  "sha256": {
+    "agentpm/specs/2026-10-09-category-hardening/spec.md": "676a6ca8ca8b62f4b62c9d48a9548a7bba0b3c1d82308a84a8f989ffbff4f53b",
+    "agentpm/specs/2026-10-09-category-hardening/tasks.md": "3123acb3c0cb1cb78a876d5717da2e7b990a02937efe4750cddac0a0d9620161",
+    "agentpm/specs/2026-10-09-category-hardening/test-plan.md": "28e3459b5ba82297bde300c4cf6cc93f542adde08b03dc6d32f7924db57ff590",
+    "agentpm/specs/2026-10-09-category-hardening/assets/mocks/chatpgt-updates/03-agent-package-detail-approved.html": "a43e8083bafc99f49ede65db9a42886fab63dfeb04e8aba4d299edae112ff7c1",
+    "agentpm/specs/2026-10-09-category-hardening/assets/mocks/chatpgt-updates/AgentPM_Stage2_Web_Design_Decisions_Handoff.md": "7cfd5f0f425625cdd3d873dc91d6c7b34d9c031d2cd3e84d7c66bf255b2c5eba",
+    "agentpm/specs/2026-10-09-category-hardening/assets/mocks/composition-density.html": "a6edc5c3d3bdabbfd702d30c35e44b30c432e2b4ed915fe968ee3bfaba690676",
+    "agentpm-web/src/app/agents/[agentId]/[version]/tabs-nav.tsx": "4bd251eabb43489299bfe4cb82aeecaa7376b70eb6cd8b64a82fb98e09d03dbe",
+    "agentpm-web/src/app/agents/[agentId]/[version]/layout.tsx": "7fca816cd54a474d1bdc0b7293a510d0eda66e24638af61d5ccb52efa5ba1e06",
+    "agentpm-web/src/app/agents/[agentId]/[version]/binding-sections.tsx": "af87ed701e6e3905454a49b0e828e94571cdc76e0922b391e5b31c2d4519540e",
+    "agentpm-web/src/app/agents/[agentId]/[version]/page.tsx": "024889f7e538c9b3a068b21e442e12df6912960fe60aeb6a31109897042537ea",
+    "agentpm-web/src/app/agents/[agentId]/[version]/layout.test.tsx": "412bbbce2789c171d45b388e280dc10db19971af3adc67016c2eaf28e3381c73",
+    "agentpm-web/src/app/agents/[agentId]/[version]/security/page.tsx": "7d9afaf7c0babb167ba3996d94401c6f7cbba4884ec932fadab3f97b204b2a94",
+    "agentpm-web/src/app/agents/[agentId]/[version]/readme/page.tsx": "6d6fede6c439acdade155b1e9d574e4878d021036e97f174a37c4fe0c537bbed",
+    "agentpm-web/src/app/agents/[agentId]/[version]/examples/page.tsx": "f4a6b5eaa36ac6e2e38980bf30e854492bb0f6da3c7c2ab4bfd020cf583a1746",
+    "agentpm-web/src/app/agents/[agentId]/[version]/bindings/page.test.tsx": "fa1bac645a1a47e2920eae60a9a4c7136a96cb64f8632b43a397606f8c127a6a",
+    "agentpm-web/src/app/agents/[agentId]/[version]/bindings/page.tsx": "b05674106ff6dbd1940edd6de56c5aeb9dc9adda77e492ef46659f0154c10958",
+    "agentpm-web/src/app/agents/[agentId]/[version]/overview/page.test.tsx": "6953a10ef90b49475d06898116ba604d7782ae7e916d193919381d873d06d190",
+    "agentpm-web/src/app/agents/[agentId]/[version]/overview/page.tsx": "d1d09405859eda5d4199bc20da1e3ec53177236fbe25142d7e3c8ef6e258737f"
+  }
+}

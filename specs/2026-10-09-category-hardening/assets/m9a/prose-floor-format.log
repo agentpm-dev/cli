@@ -1,0 +1,5 @@
+src/components/packages/AgentBindingsSummary.tsx 283ms (unchanged)
+src/components/packages/CompositionView.tsx 45ms (unchanged)
+src/components/packages/PhaseBindings.tsx 26ms (unchanged)
+src/app/agents/[agentId]/[version]/layout.tsx 19ms (unchanged)
+src/app/agents/[agentId]/[version]/overview/page.tsx 24ms (unchanged)

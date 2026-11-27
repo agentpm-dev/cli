@@ -1,0 +1,13 @@
+{
+  "status": "pass",
+  "checkedAt": "2026-11-27T02:28:58.911Z",
+  "scope": "Actual local app, isolated anonymous Chrome, native input events; only GET/HEAD allowed",
+  "blockedMethods": [],
+  "results": [
+    {
+      "width": 1440,
+      "text": "Composition\n\nExisting registry packages this Agent is built from.\n\nBrowse components →\n@zack/devwork-copilot\nAgent Package\n0.1.10\nSKILL\nissue-triage-playbook\n↗\n0.1.1\nTOOL\nsummarize-text\n↗\n0.1.10\nKNOWLEDGE\ndevwork-maintainer-guide\n↗\n0.1.0\nMEMORY\ndevwork-maintainer-state\n↗\n0.1.0\nPROFILE\ndevwork-maintainer-style\n↗\n0.1.0\nLOOP\ndevwork-triage-loop\n↗\n0.1.0\nInherited through issue-triage-playbook\nTOOL\n@zack/github-issues\n0.1.2\nDirect dependency (6)\nTransitive dependency (1)\nExecution architecture\n\nHow it runs, declared by devwork-triage-loop.\n\n3 phases · 7 transitions\nmax 10 steps\n↳\ninspect-issue\nENTRY\n\nDecide whether there is enough evidence to draft a follow-up, or whether the work should hand off.\n\nTools\n2\nSkills\n1\nKnowledge\n1\nMemory · read\n1\nON OUTCOME → DESTINATION\ndraft-comment\n→\ndraft-comment\nhandoff\n→\n$handoff\n●\ndraft-comment\n\nDraft the next maintainer comment and capture follow-up notes that should survive this review pass.\n\nTools\n1\nKnowledge\n1\nMemory · read + write\n1\nON OUTCOME → DESTINATION\nready-for-resolution\n→\nresolve-or-handoff\nneeds-more-context\n↶\ninspect-issue\n●\nresolve-or-handoff\n\nDecide the outcome. Tool access is withheld here, so the decision cannot take a write action on its own.\n\nTools\nKnowledge\nnone bound\nMemory · read + write\n1\nON OUTCOME → DESTINATION\nresolve\n→\n$end\nrevise-comment\n↶\ndraft-comment\nhandoff\n→\n$handoff\nBOUND GLOBALLY · ALL PHASES\nProfile\ndevwork-maintainer-style\nMemory operations\nrefresh_work_thread\nconsolidate_follow_up_notes\ndelete_maintainer_state\n\nLifecycle operations are separately bound and are not restricted by a phase's direct read/write flags. Eligibility is not invocation.\n\nMCP surfaces\nNone declared — no Tools are exposed through MCP.\nEvidence\nHealth & Security →\n\nChecked by the Registry, for this version. A Registry-performed check is a Registry-reported result, not independent verification.\n\nAPDS conformance\nStandalone: Passed\nResolved composition: Incomplete (legacy-inferred dependency)\nIntegrity & provenance\nVerified by Registry\n· 4 checks\nRunner support\nLoop declared\n· readiness not evaluated\nSource\n{ }\nView agent.json\nView APDS 1.0.0 specification →",
+      "url": "file:///Users/zackhine/projects/agentpm-project/agentpm/specs/2026-10-09-category-hardening/assets/mocks/chatpgt-updates/03-agent-package-detail-approved.html"
+    }
+  ]
+}

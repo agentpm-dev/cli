@@ -1,0 +1,55 @@
+{
+  "scope": "Owner M9A visual review corrections; no M9B command or M10B deep Health implementation",
+  "checked_at_utc": "2026-11-27T03:47:52.818807+00:00",
+  "focused_checks": "pass",
+  "independent_review": "pending",
+  "operator_acceptance": "in progress",
+  "hosted_ci": "pending",
+  "source_checksums": "polish-source-checksums.json",
+  "tests": {
+    "exit": 0,
+    "tests": 117,
+    "files": 9,
+    "log": "polish-tests.log",
+    "scope": "Agent layout/Overview, shared Composition/Loop/card semantics, deep links, phase binding scopes, APDS projection guards, all-kind shell regression, facts and stars"
+  },
+  "typecheck": {
+    "exit": 0,
+    "log": "polish-typecheck.log"
+  },
+  "lint": {
+    "exit": 0,
+    "pre_existing_warnings": 6,
+    "log": "polish-lint.log"
+  },
+  "docs": {
+    "exit": 0,
+    "tests": 5,
+    "subtests": 173,
+    "log": "polish-docs.log"
+  },
+  "browser": {
+    "status": "pass",
+    "widths": [1440, 390],
+    "scope": "Read-only actual local app, section captures, body overflow and local component-reference disclosure/focus",
+    "report": "polish-browser/report.json"
+  },
+  "final_cosmetic_edits_after_capture": [
+    "Section glyph size/weight, entry-only arrow versus phase bullets, fully opaque tab background; formatter checked without replaying the full matrix"
+  ],
+  "not_repeated": [
+    "Full 478-test suite and production build",
+    "Four-width controlled version/fault matrix",
+    "First-paint hydration matrix"
+  ],
+  "reason": "Owner requested focused verification for batched visual corrections; original broader evidence is retained as historical evidence for the initial implementation",
+  "deferred": {
+    "M9B": "Verified copyable Harness command, actual CLI/workspace/model/context prerequisites and SDK/action guidance; examples enhancements on Examples tab only",
+    "M10B": "Full Health & Security evidence/trust/timestamp/per-artifact presentation"
+  },
+  "registry_mutations": 0,
+  "paid_model_requests": 0,
+  "latest_followup": "states-summary.json",
+  "record_status": "Historical; superseded by the full-suite typography re-review checkpoint",
+  "authoritative_current_record": "summary.json"
+}

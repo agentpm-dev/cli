@@ -2133,16 +2133,18 @@ I inspect and trust this version?*
 2. **Primary actions:** copyable `agentpm install @namespace/name@version`; conditional Harness run; `Load
    via SDK` with actual SDK syntax. Do not surface a dead Harness CTA on nonrunnable packages.
 3. **Overview, first substantial block:** a composition depiction of exact direct dependencies and
-   nested/Skill-inherited dependencies. Show type icons, names, exact resolved versions and links. If
+   nested/Skill-inherited dependencies. Show kind labels, names, exact resolved versions and links; the owner’s 2026-11-26 visual correction removes individual package identity icons from the composition kind cards. If
    installed graph/lock is missing from Registry, qualify the view rather than fabricating resolution.
 4. **Execution architecture:** if an actual Loop exists, show its phases and scoped capabilities,
    transitions, access restrictions and meaningful edge labels. For branches/cycles offer graph/layout or
    readable transitions table; never force a false three-step linear sequence.
-5. **Standard card:** declared APDS ID/version and status separately, `View agent.json`, `View APDS
-   specification` resolved to that exact version. Legacy is labeled inferred.
+5. **Standard/source:** declared APDS ID/version and status remain separate. Per the owner’s
+   2026-11-26 visual correction, use Source links rather than a separate Package definition panel;
+   the header standard badge links to the same supported reference. Legacy is labeled inferred.
 6. **Health summary:** objective evidence plus drill-down, not generic quality score; relevant kinds and
    unknown states.
-7. **Examples:** author-supplied prompts with copyable text, optional configure/run directions. Examples are
+7. **Examples tab:** author-supplied prompts with copyable text, optional configure/run directions.
+   Per the owner’s 2026-11-26 correction, do not duplicate this section on Overview. Examples are
    not evals or certified outcomes.
 8. **Raw manifest:** accessible full immutable source (with version and provenance), visually secondary to
    human-readable Overview. Preserve author README and existing specialized technical tabs.
