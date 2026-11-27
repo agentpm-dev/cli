@@ -1,8 +1,7 @@
 # M9A — Agent Overview verification
 
 Builder evidence for **S2-AC-11**, **D09**, supporting **D21**. User confirmed independent Claude
-review passed with no other findings on 2026-11-26; hosted CI remains pending; owner visual review is complete as confirmed on 2026-11-26; this record does not mark
-the milestone complete or authorize a deployment.
+review passed with no other findings on 2026-11-26; the user confirmed all hosted CI passed on 2026-11-26; owner visual review is complete as confirmed on 2026-11-26; M9A is complete. This record does not claim a deployment.
 
 ## Latest review correction — authoritative current results
 
@@ -27,7 +26,7 @@ handoff record. The original 478-test snapshot is retained separately as
 The focused polish/states records are historical; they are not substitutes for
 this fresh full-suite result. Browser captures and the production build were not
 replayed for this typography-only correction and remain explicitly historical.
-Claude re-review passed, as confirmed by the user on 2026-11-26; hosted CI remains outstanding.
+Claude re-review passed, as confirmed by the user on 2026-11-26; the user subsequently confirmed all hosted CI passed on 2026-11-26.
 
 ## Delivered scope
 
@@ -254,7 +253,7 @@ its exact `@handle`, using the same namespace destination and an initial derived
 from that handle. It no longer presents the publishing user’s display name as
 the namespace. Header tests cover both a different publisher display name and
 an absent publisher display name. Current full-suite results/source pins are in
-the main summary; Claude re-review passed, as confirmed by the user on 2026-11-26; hosted CI remains outstanding.
+the main summary; Claude re-review passed, as confirmed by the user on 2026-11-26; the user subsequently confirmed all hosted CI passed on 2026-11-26.
 
 ### Independent review accepted
 
@@ -263,3 +262,10 @@ after the prose-floor correction and namespace attribution update. This is
 operator-reported independent acceptance, not builder self-certification. All
 implementation/review checklist work is complete; hosted CI is the remaining
 milestone gate. There is no deployment claim.
+
+### Hosted CI accepted — milestone complete
+
+The user confirmed on 2026-11-26 that all hosted CI passed. Together with the
+recorded local checks, owner visual acceptance and independent Claude review,
+this closes M9A. Hosted CI acceptance is operator-reported; this update does not
+claim a new local test run or deployment. M9B and later milestones remain separate.

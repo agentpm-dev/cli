@@ -1,6 +1,6 @@
 # M9A — D09 Agent composition and reading order
 
-Builder decision, 2026-11-26. User confirmed independent Claude review passed with no other findings on 2026-11-26. Hosted CI remains pending.
+Builder decision, 2026-11-26. User confirmed independent Claude review passed with no other findings on 2026-11-26. User confirmed all hosted CI passed on 2026-11-26. M9A is complete.
 
 The design authority is [03-agent-package-detail-approved.html](assets/mocks/chatpgt-updates/03-agent-package-detail-approved.html)
 and the [handoff](assets/mocks/chatpgt-updates/AgentPM_Stage2_Web_Design_Decisions_Handoff.md).
