@@ -1063,9 +1063,10 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 **Exit gate:** The scoped deliverable works against real source contracts; the binding requirements are satisfied, the standard evidence requirements are met, and Claude review has passed.
 
 ## Milestone 10A: Preserve All Specialized Detail Pages Under the New Hierarchy
-> **Scope note:** Retain each Component/Template kind’s technical inspection features while consistently exposing standard, identity and version. Outside this milestone: Do not turn all eight kinds into generic Agent Package marketing views.
+> **Scope note:** Bring relevant detail tabs across all eight kinds, including remaining Agent Package tabs, into the approved design while retaining specialized technical inspection and consistent standard, identity and version. Outside this milestone: Do not turn all eight kinds into generic Agent Package marketing views.
 > **Implementation notes:**
 > - Reuse common shell and source/standard/Health primitives but keep kind-specific data and actions. README prose belongs to authors.
+> - **Owner clarification (2026-11-27):** Completed M9A/M9B do not establish visual completion of every Agent tab. Agent **Bindings** still needs significant design adoption in M10A. Read every relevant approved HTML in `assets/mocks/chatpgt-updates/` and `AgentPM_Stage2_Web_Design_Decisions_Handoff.md`; HTML comments, implementation notes and recorded decisions are part of the design reference, not disposable scaffolding. Keep mock data and prototype plumbing out of production; rebuild approved interactions using existing React/router/ARIA patterns. Full Health & Security adoption remains M10B.
 > - **Dependencies:** M8B primitives, Stage 1 M6 detail shell. **M8B.1 global shell and layout system — adopt it, do not fork it.** This milestone consumes the shared header, page canvas, section card, kind tokens, grid primitives and footer; it must not create a second implementation of any of them. The `-layered` mockups govern structure/layout only (see `spec.md` §9.1); production tokens and §12–§15 copy still win.
 > - **Decisions:** D17. **Acceptance:** S2-AC-11, S2-AC-12.
 
@@ -1073,6 +1074,8 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 
 **Implementation checklist**
 
+- [ ] Compare every relevant tab across all eight kinds against the relevant `chatpgt-updates` approved HTML, its embedded comments/implementation decisions and the handoff document. Record the reference sections, existing matches, actual gaps and any explicitly deferred work; do not infer Agent tab completion from M9A/M9B acceptance. Use Agent and Tool references for their respective surfaces and adapt the shared pattern for other kinds without forcing Agent-only content onto them.
+- [ ] **Redesign Agent Bindings to match the approved compact authored inspector.** Read the Agent HTML’s `BINDINGS` implementation-note block and inspector markup/CSS/interaction notes. Adopt open sections, fine dividers, kind-colored field rows and compact collapsed phase rows with declared-kind indicators; expand to authored references, keeping direct Memory spaces separate from operation selectors. Include consumer context, populated global/phase/MCP groups and complete selected-version source disclosure; omit absent groups without hiding unknown/uninterpretable source. Preserve additive scopes, versionless authored identities, exact dependency links only where unambiguous, and execution-phase/source jumps that open the correct disclosure and clear both sticky bars. Do not turn this tab into Overview’s effective/inherited capability graph. Verify desktop/mobile, keyboard/disclosure/focus, empty/unavailable states and selected-version changes against the approved reference.
 - [ ] Audit existing Tool runtime/input/output/execution detail against proposed shell.
 - [ ] Preserve Skill entrypoint, scripts, references, compatible environments and Tool dependencies.
 - [ ] Preserve Knowledge mode, corpus/docs, embedding/index/provenance, query inspection.
