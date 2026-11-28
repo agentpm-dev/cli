@@ -1072,10 +1072,26 @@ This gives users exact APDS metadata through resolve/install/lock v4, reproducib
 
 **M9B handoff:** Reuse `PackageCliGuidance` for the documented 0.1.36 declaration-tolerance/publication floor and installation/Runner distinction; it is implemented and tested on Agent pages. This milestone must adopt and verify it on the other kinds rather than inventing a second compatibility-copy definition.
 
+**Kind-specific Overview decisions — owner clarification, 2026-11-27:** Decide and record what replaces the Agent’s Composition / Execution Architecture inspection areas for each other kind, rather than merely moving existing panels into the new shell. The starting hierarchy is already documented in the design handoff **§3.2** and the embedded **“Suggested primary inspection questions by kind”** comment in `04-tool-detail-approved.html` (near its At a Glance markup). It is guidance, explicitly **not a mandated two-card layout**:
+
+| Kind | Starting primary inspection areas |
+|---|---|
+| Agent Package | Composition; Execution Architecture |
+| Tool | Interface (inputs/outputs); Runtime & Execution |
+| Skill | Instructions & Resources; Tool Dependencies |
+| Knowledge | Content & Documents; Retrieval Configuration |
+| Memory Blueprint | Spaces & Record Contracts; Lifecycle Operations |
+| Instruction Profile | Identity & Guidance; Constraints & Compatibility |
+| Loop | Phases & Transitions; Access & Execution Policies |
+| Template | Project Structure; Variables & Entrypoints |
+
+The Tool reference’s **“TOOL-ONLY INSPECTION”** comment also permits full-width complex schemas instead of forcing its simple two-column example. Apply that content-density principle to every kind. Shared identity/Get Started/Evidence/Source treatment stays consistent; the primary technical content, number of sections, arrangement and applicable actions remain kind-specific. No additional mock set is required; use the documented direction and actual selected-version data. Full Health detail remains M10B.
+
 **Implementation checklist**
 
 - [ ] Compare every relevant tab across all eight kinds against the relevant `chatpgt-updates` approved HTML, its embedded comments/implementation decisions and the handoff document. Record the reference sections, existing matches, actual gaps and any explicitly deferred work; do not infer Agent tab completion from M9A/M9B acceptance. Use Agent and Tool references for their respective surfaces and adapt the shared pattern for other kinds without forcing Agent-only content onto them.
 - [ ] **Redesign Agent Bindings to match the approved compact authored inspector.** Read the Agent HTML’s `BINDINGS` implementation-note block and inspector markup/CSS/interaction notes. Adopt open sections, fine dividers, kind-colored field rows and compact collapsed phase rows with declared-kind indicators; expand to authored references, keeping direct Memory spaces separate from operation selectors. Include consumer context, populated global/phase/MCP groups and complete selected-version source disclosure; omit absent groups without hiding unknown/uninterpretable source. Preserve additive scopes, versionless authored identities, exact dependency links only where unambiguous, and execution-phase/source jumps that open the correct disclosure and clear both sticky bars. Do not turn this tab into Overview’s effective/inherited capability graph. Verify desktop/mobile, keyboard/disclosure/focus, empty/unavailable states and selected-version changes against the approved reference.
+- [ ] Record the D17 per-kind Overview mapping before building each surface: chosen primary inspection areas, selected-version fields/DTOs supplying them, existing specialized content retained elsewhere, stacked/side-by-side/progressive-disclosure layout, applicable actions and meaningful empty/unavailable states. Cite the handoff and embedded HTML notes above, explain adaptations, and compare the resulting UI to that mapping. Do not reuse Agent Composition/Execution headings for unrelated kinds or force exactly two panels.
 - [ ] Audit existing Tool runtime/input/output/execution detail against proposed shell.
 - [ ] Preserve Skill entrypoint, scripts, references, compatible environments and Tool dependencies.
 - [ ] Preserve Knowledge mode, corpus/docs, embedding/index/provenance, query inspection.
